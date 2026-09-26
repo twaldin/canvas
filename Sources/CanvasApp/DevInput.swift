@@ -185,6 +185,21 @@ enum DevInput {
             guard let event = NSEvent(cgEvent: cg), let frame = content.superview,
                   let hit = content.hitTest(frame.convert(at, from: nil)) else { return }
             hit.scrollWheel(with: event)
+        case "magnify":
+            // A trackpad pinch step: NSEvent can't make gesture events, so drive the scroll view the
+            // way its own magnify(with:) does (live-magnify notifications around the steps).
+            let at = point("x", "y")
+            guard let frame = content.superview, var view = content.hitTest(frame.convert(at, from: nil)) else { return }
+            while !(view is NSScrollView), let parent = view.superview { view = parent }
+            guard let scroll = view as? NSScrollView, scroll.allowsMagnification else { return }
+            let phase = fields["phase"]
+            if phase == nil || phase == "began" {
+                NotificationCenter.default.post(name: NSScrollView.willStartLiveMagnifyNotification, object: scroll)
+            }
+            scroll.setMagnification(scroll.magnification * (1 + number("amount")), centeredAt: scroll.contentView.convert(at, from: nil))
+            if phase == nil || phase == "ended" {
+                NotificationCenter.default.post(name: NSScrollView.didEndLiveMagnifyNotification, object: scroll)
+            }
         default:
             NSLog("DevInput: unknown kind \(fields["kind"] ?? "nil")")
         }

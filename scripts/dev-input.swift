@@ -10,6 +10,7 @@
 //   dev-input <pid> command <selector>               e.g. insertNewline: deleteBackward: cancelOperation:
 //   dev-input <pid> shortcut <key> [--mods cmd]      key equivalent, e.g. shortcut z --mods cmd
 //   dev-input <pid> scroll <x> <y> <dx> <dy>         pan by pixels
+//   dev-input <pid> magnify <x> <y> <amount>         pinch at x,y: zoom × (1 + amount) per step (0.05 in, -0.05 out)
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
 import Foundation
 
@@ -46,6 +47,9 @@ case "shortcut":
 case "scroll":
     guard rest.count >= 4 else { exit(2) }
     info["x"] = rest[0]; info["y"] = rest[1]; info["dx"] = rest[2]; info["dy"] = rest[3]
+case "magnify":
+    guard rest.count >= 3 else { exit(2) }
+    info["x"] = rest[0]; info["y"] = rest[1]; info["amount"] = rest[2]
 default:
     FileHandle.standardError.write(Data("unknown kind \(args[1])\n".utf8))
     exit(2)

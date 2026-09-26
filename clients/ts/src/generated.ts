@@ -268,7 +268,7 @@ export type HistoryEntry = {
   rev: number;
   /** ISO 8601 time */
   at: string;
-  /** `user`, `system`, or `agent:<terminal tile id>` */
+  /** `user`, `system`, or `agent:<terminal tile id>`; a cascade is credited to whoever made the change that caused it */
   actor: string;
   kind: "created" | "updated" | "deleted" | "viewport" | "selection" | "follow" | "restart";
   /** the object (for follow: the follow tile) */
@@ -278,6 +278,8 @@ export type HistoryEntry = {
   summary: string;
   viewport?: Viewport;
   selection?: Id[];
+  /** set on cascades of another change, saying why: a group `fit to its members` (one entry per group per revision, at its net change), an arrow's end freed because its `bound object obj_… deleted` */
+  cause?: string;
 };
 
 export type SystemPingParams = Record<string, unknown>;
@@ -404,7 +406,7 @@ export type ObjectMeasureResult = Size;
 export type ObjectBatchParams = {
   board?: Id;
   ops: ({
-    method: "object.create" | "object.update" | "object.delete" | "layout.place" | "layout.stack";
+    method: "object.create" | "object.update" | "object.delete" | "layout.place" | "layout.stack" | "layout.translate" | "layout.grid";
     params: Record<string, unknown>;
   })[];
   caller?: Id;
@@ -444,6 +446,51 @@ export type LayoutStackParams = {
 };
 export type LayoutStackResult = {
   frames: Record<string, unknown>;
+};
+
+export type LayoutTranslateParams = {
+  ids: Id[];
+  dx: number;
+  dy: number;
+  caller?: Id;
+};
+export type LayoutTranslateResult = {
+  frames: Record<string, unknown>;
+};
+
+export type LayoutGridParams = {
+  cells: {
+    id: Id;
+    row: number;
+    col: number;
+  }[];
+  colGap?: number;
+  rowGap?: number;
+  /** across the column: left edges (start), centers, or right edges line up */
+  colAlign?: "start" | "center" | "end";
+  /** down the row: top edges (start), middles, or bottom edges line up */
+  rowAlign?: "start" | "center" | "end";
+  /** the grid's top-left; default the cells' current top-left */
+  origin?: {
+    x: number;
+    y: number;
+  };
+  caller?: Id;
+};
+export type LayoutGridResult = {
+  frames: Record<string, unknown>;
+  /** used columns, left to right */
+  columns: {
+    col?: number;
+    x?: number;
+    w?: number;
+  }[];
+  /** used rows, top to bottom */
+  rows: {
+    row?: number;
+    y?: number;
+    h?: number;
+  }[];
 };
 
 export type LayoutCheckParams = {
@@ -696,7 +743,7 @@ export interface CanvasApi {
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
     /** Intrinsic size: the whole frame (tile title bar included) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
-    /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"]). */
+    /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;
   };
   layout: {
@@ -704,6 +751,10 @@ export interface CanvasApi {
     place(params: LayoutPlaceParams): Promise<LayoutPlaceResult>;
     /** Lay objects out in a row (left to right) or column (top to bottom), `gap` apart, starting where the first one is or at `origin` (one undo step). With `wrapAt`, a line longer than that many points wraps into a new line. Groups move as a whole, so stacking groups lays out lanes. */
     stack(params: LayoutStackParams): Promise<LayoutStackResult>;
+    /** Move objects by (dx, dy) in one undo step. Groups move with their members (a member listed beside its group moves once), arrows carry their free ends, and arrows bound to moved objects follow. For build-offscreen-then-swap: create a layout far away in a batch, then translate it into place. */
+    translate(params: LayoutTranslateParams): Promise<LayoutTranslateResult>;
+    /** Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups. */
+    grid(params: LayoutGridParams): Promise<LayoutGridResult>;
     /** Layout problems for `ids`, for what intersects `rect`, or for the whole board: overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, and code/note/text whose content doesn't fit its frame (points missing in x and y). */
     check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
@@ -782,6 +833,8 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     layout: {
       place: (params: LayoutPlaceParams) => call("layout.place", params ?? {}, ["caller"]) as Promise<LayoutPlaceResult>,
       stack: (params: LayoutStackParams) => call("layout.stack", params ?? {}, ["caller"]) as Promise<LayoutStackResult>,
+      translate: (params: LayoutTranslateParams) => call("layout.translate", params ?? {}, ["caller"]) as Promise<LayoutTranslateResult>,
+      grid: (params: LayoutGridParams) => call("layout.grid", params ?? {}, ["caller"]) as Promise<LayoutGridResult>,
       check: (params?: LayoutCheckParams) => call("layout.check", params ?? {}, ["board","caller"]) as Promise<LayoutCheckResult>,
     },
     tray: {
@@ -815,4 +868,4 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;

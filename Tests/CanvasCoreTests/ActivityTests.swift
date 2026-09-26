@@ -199,9 +199,9 @@ struct ActivityTests {
         }
         let entries = board.activity.query(since: .seq(before), limit: 100).entries
         #expect(entries.allSatisfy { $0.actor == .agent(agent.id) && $0.rev == board.revision }, "\(entries.map { "\($0.actor.name) \($0.summary)" })")
-        #expect(entries.filter { $0.kind == .deleted }.map(\.id) == [a.id, b.id])
+        #expect(entries.filter { $0.kind == .deleted }.compactMap(\.id) == [a.id, b.id])
         let updates = entries.filter { $0.kind == .updated }
-        #expect(updates.map(\.id).sorted() == [toC.id, between.id, lane.id].sorted(), "one entry each, though `between` lost both ends and the lane two members")
+        #expect(updates.compactMap(\.id).sorted() == [toC.id, between.id, lane.id].sorted(), "one entry each, though `between` lost both ends and the lane two members")
         #expect(updates.first { $0.id == between.id }?.cause == "bound object \(a.id) deleted")
         let refit = try #require(updates.first { $0.id == lane.id })
         #expect(refit.cause == GroupSpec.refitCause)

@@ -155,10 +155,39 @@ function genPy(): string {
     "",
     "from __future__ import annotations",
     "",
-    "from typing import Any, Callable, Literal, NotRequired, Required, TypedDict, Union",
+    "import functools",
+    "import inspect",
+    "import re",
+    "from typing import Any, Callable, Literal, NotRequired, Required, TypedDict, TypeVar, Union",
     "",
     `SCHEMA_VERSION = ${catalog.version}`,
     `ENV_DEFAULTS = ${JSON.stringify(ENV_DEFAULTS)}`,
+    "",
+    '_Api = TypeVar("_Api")',
+    "",
+    "",
+    "def _snake_case_hints(cls: type[_Api]) -> type[_Api]:",
+    '    """A keyword spelled the wire\'s camelCase way (`timeoutMs`, as `canvas methods` prints it) fails naming the snake_case parameter."""',
+    "    for name, method in list(vars(cls).items()):",
+    '        if name.startswith("_") or not callable(method):',
+    "            continue",
+    "        accepted = set(inspect.signature(method).parameters)",
+    "",
+    "        def hinted(method: Callable[..., Any] = method, accepted: set[str] = accepted) -> Callable[..., Any]:",
+    "            @functools.wraps(method)",
+    "            def call(self: Any, *args: Any, **kwargs: Any) -> Any:",
+    "                for key in kwargs:",
+    '                    snake = re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\\1", key).lower()',
+    '                    for hint in (snake, snake + "_"):',
+    "                        if key not in accepted and hint in accepted:",
+    "                            raise TypeError(f\"{method.__qualname__}() got an unexpected keyword argument '{key}'; the Python SDK spells it '{hint}'\")",
+    "                return method(self, *args, **kwargs)",
+    "",
+    "            return call",
+    "",
+    "        setattr(cls, name, hinted())",
+    "    return cls",
+    "",
     "",
   ];
   // TypedDicts whose field names are Python keywords (e.g. "from") use the functional syntax.
@@ -196,7 +225,7 @@ function genPy(): string {
   // The client drops None values and fills the env keys from its own tile/board.
   const callType = "Callable[[str, dict[str, Any], list[str]], Any]";
   for (const [ns, lines] of namespaces) {
-    out.push(`class ${pascal(ns)}Api:`, `    def __init__(self, call: ${callType}) -> None:`, "        self._call = call", "", ...lines);
+    out.push("@_snake_case_hints", `class ${pascal(ns)}Api:`, `    def __init__(self, call: ${callType}) -> None:`, "        self._call = call", "", ...lines);
   }
   out.push("class GeneratedApi:", `    def __init__(self, call: ${callType}) -> None:`);
   for (const ns of namespaces.keys()) out.push(`        self.${pyName(ns)} = ${pascal(ns)}Api(call)`);

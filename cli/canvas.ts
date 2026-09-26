@@ -107,6 +107,8 @@ function typeText(s: Schema, refs: Set<string>): string {
 }
 
 function fieldLines(schema: Schema, refs: Set<string>, kind: "param" | "result"): string[] {
+  // A whole result given as a type (object.measure → Size) lists that type's fields.
+  if (schema.$ref) return fieldLines(definitions[schema.$ref.replace("#/definitions/", "")], refs, kind);
   const required = schema.required ?? [];
   const fields = Object.entries(schema.properties ?? {});
   if (fields.length === 0) return ["  (none)"];

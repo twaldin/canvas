@@ -342,13 +342,14 @@
         "seq": { "type": "integer", "description": "log cursor; pass the largest seen as `since`" },
         "rev": { "type": "integer", "description": "board revision right after the entry (viewport/selection entries don't change it)" },
         "at": { "type": "string", "description": "ISO 8601 time" },
-        "actor": { "type": "string", "description": "`user`, `system`, or `agent:<terminal tile id>`" },
+        "actor": { "type": "string", "description": "`user`, `system`, or `agent:<terminal tile id>`; a cascade is credited to whoever made the change that caused it" },
         "kind": { "enum": ["created", "updated", "deleted", "viewport", "selection", "follow", "restart"] },
         "id": { "$ref": "#/definitions/Id", "description": "the object (for follow: the follow tile)" },
         "type": { "$ref": "#/definitions/ObjectType" },
         "summary": { "type": "string", "description": "one human-readable line" },
         "viewport": { "$ref": "#/definitions/Viewport" },
-        "selection": { "type": "array", "items": { "$ref": "#/definitions/Id" } }
+        "selection": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
+        "cause": { "type": "string", "description": "set on cascades of another change, saying why: a group `fit to its members` (one entry per group per revision, at its net change), an arrow's end freed because its `bound object obj_… deleted`" }
       },
       "additionalProperties": false
     }
@@ -516,7 +517,7 @@
       "result": { "$ref": "#/definitions/Size" }
     },
     "object.batch": {
-      "description": "Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack with their usual params; the string \"$n\" anywhere in an op's params stands for the id created by op n (e.g. an arrow from \"$0\" to \"$1\", a group with members [\"$0\", \"$1\"]).",
+      "description": "Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string \"$n\" anywhere in an op's params stands for the id created by op n (e.g. an arrow from \"$0\" to \"$1\", a group with members [\"$0\", \"$1\"], a grid cell {\"id\": \"$2\", \"row\": 0, \"col\": 1}).",
       "params": {
         "type": "object",
         "required": ["ops"],
@@ -528,7 +529,7 @@
             "items": {
               "type": "object",
               "required": ["method", "params"],
-              "properties": { "method": { "enum": ["object.create", "object.update", "object.delete", "layout.place", "layout.stack"] }, "params": { "type": "object" } },
+              "properties": { "method": { "enum": ["object.create", "object.update", "object.delete", "layout.place", "layout.stack", "layout.translate", "layout.grid"] }, "params": { "type": "object" } },
               "additionalProperties": false
             }
           },
@@ -576,6 +577,56 @@
         "additionalProperties": false
       },
       "result": { "type": "object", "required": ["frames"], "properties": { "frames": { "type": "object", "additionalProperties": { "$ref": "#/definitions/Frame" } } } }
+    },
+    "layout.translate": {
+      "description": "Move objects by (dx, dy) in one undo step. Groups move with their members (a member listed beside its group moves once), arrows carry their free ends, and arrows bound to moved objects follow. For build-offscreen-then-swap: create a layout far away in a batch, then translate it into place.",
+      "params": {
+        "type": "object",
+        "required": ["ids", "dx", "dy"],
+        "properties": {
+          "ids": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/Id" } },
+          "dx": { "type": "number" },
+          "dy": { "type": "number" },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "type": "object", "required": ["frames"], "properties": { "frames": { "type": "object", "additionalProperties": { "$ref": "#/definitions/Frame" } } } }
+    },
+    "layout.grid": {
+      "description": "Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups.",
+      "params": {
+        "type": "object",
+        "required": ["cells"],
+        "properties": {
+          "cells": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "row", "col"],
+              "properties": { "id": { "$ref": "#/definitions/Id" }, "row": { "type": "integer", "minimum": 0 }, "col": { "type": "integer", "minimum": 0 } },
+              "additionalProperties": false
+            }
+          },
+          "colGap": { "type": "number", "default": 40 },
+          "rowGap": { "type": "number", "default": 40 },
+          "colAlign": { "enum": ["start", "center", "end"], "default": "start", "description": "across the column: left edges (start), centers, or right edges line up" },
+          "rowAlign": { "enum": ["start", "center", "end"], "default": "start", "description": "down the row: top edges (start), middles, or bottom edges line up" },
+          "origin": { "type": "object", "required": ["x", "y"], "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "additionalProperties": false, "description": "the grid's top-left; default the cells' current top-left" },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["frames", "columns", "rows"],
+        "properties": {
+          "frames": { "type": "object", "additionalProperties": { "$ref": "#/definitions/Frame" } },
+          "columns": { "type": "array", "items": { "type": "object", "properties": { "col": { "type": "integer" }, "x": { "type": "number" }, "w": { "type": "number" } } }, "description": "used columns, left to right" },
+          "rows": { "type": "array", "items": { "type": "object", "properties": { "row": { "type": "integer" }, "y": { "type": "number" }, "h": { "type": "number" } } }, "description": "used rows, top to bottom" }
+        }
+      }
     },
     "layout.check": {
       "description": "Layout problems for `ids`, for what intersects `rect`, or for the whole board: overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, and code/note/text whose content doesn't fit its frame (points missing in x and y).",

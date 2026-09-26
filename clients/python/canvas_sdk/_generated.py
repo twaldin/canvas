@@ -2,10 +2,39 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Literal, NotRequired, Required, TypedDict, Union
+import functools
+import inspect
+import re
+from typing import Any, Callable, Literal, NotRequired, Required, TypedDict, TypeVar, Union
 
 SCHEMA_VERSION = 1
 ENV_DEFAULTS = {"caller":"CANVAS_TILE_ID","board":"CANVAS_BOARD_ID"}
+
+_Api = TypeVar("_Api")
+
+
+def _snake_case_hints(cls: type[_Api]) -> type[_Api]:
+    """A keyword spelled the wire's camelCase way (`timeoutMs`, as `canvas methods` prints it) fails naming the snake_case parameter."""
+    for name, method in list(vars(cls).items()):
+        if name.startswith("_") or not callable(method):
+            continue
+        accepted = set(inspect.signature(method).parameters)
+
+        def hinted(method: Callable[..., Any] = method, accepted: set[str] = accepted) -> Callable[..., Any]:
+            @functools.wraps(method)
+            def call(self: Any, *args: Any, **kwargs: Any) -> Any:
+                for key in kwargs:
+                    snake = re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", key).lower()
+                    for hint in (snake, snake + "_"):
+                        if key not in accepted and hint in accepted:
+                            raise TypeError(f"{method.__qualname__}() got an unexpected keyword argument '{key}'; the Python SDK spells it '{hint}'")
+                return method(self, *args, **kwargs)
+
+            return call
+
+        setattr(cls, name, hinted())
+    return cls
+
 
 Id = str
 
@@ -160,7 +189,9 @@ class HistoryEntry(TypedDict):
     summary: Required[str]
     viewport: NotRequired["Viewport"]
     selection: NotRequired[list["Id"]]
+    cause: NotRequired[str]
 
+@_snake_case_hints
 class SystemApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -170,6 +201,7 @@ class SystemApi:
         params = {}
         return self._call("system.ping", params, [])
 
+@_snake_case_hints
 class BoardApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -199,6 +231,7 @@ class BoardApi:
         params = {"board": board, "path": path}
         return self._call("board.export", params, ["board"])
 
+@_snake_case_hints
 class ObjectApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -229,10 +262,11 @@ class ObjectApi:
         return self._call("object.measure", params, ["board","caller"])
 
     def batch(self, *, ops: list[dict[str, Any]], board: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"])."""
+        """Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1})."""
         params = {"board": board, "ops": ops, "caller": caller}
         return self._call("object.batch", params, ["board","caller"])
 
+@_snake_case_hints
 class LayoutApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -247,11 +281,22 @@ class LayoutApi:
         params = {"ids": ids, "direction": direction, "gap": gap, "wrapAt": wrap_at, "align": align, "origin": origin, "caller": caller}
         return self._call("layout.stack", params, ["caller"])
 
+    def translate(self, *, ids: list["Id"], dx: float, dy: float, caller: "Id" | None = None) -> dict[str, Any]:
+        """Move objects by (dx, dy) in one undo step. Groups move with their members (a member listed beside its group moves once), arrows carry their free ends, and arrows bound to moved objects follow. For build-offscreen-then-swap: create a layout far away in a batch, then translate it into place."""
+        params = {"ids": ids, "dx": dx, "dy": dy, "caller": caller}
+        return self._call("layout.translate", params, ["caller"])
+
+    def grid(self, *, cells: list[dict[str, Any]], col_gap: float | None = None, row_gap: float | None = None, col_align: Literal["start", "center", "end"] | None = None, row_align: Literal["start", "center", "end"] | None = None, origin: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups."""
+        params = {"cells": cells, "colGap": col_gap, "rowGap": row_gap, "colAlign": col_align, "rowAlign": row_align, "origin": origin, "caller": caller}
+        return self._call("layout.grid", params, ["caller"])
+
     def check(self, *, board: "Id" | None = None, ids: list["Id"] | None = None, rect: "Frame" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
         """Layout problems for `ids`, for what intersects `rect`, or for the whole board: overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, and code/note/text whose content doesn't fit its frame (points missing in x and y)."""
         params = {"board": board, "ids": ids, "rect": rect, "caller": caller}
         return self._call("layout.check", params, ["board","caller"])
 
+@_snake_case_hints
 class TrayApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -281,6 +326,7 @@ class TrayApi:
         params = {"board": board, "ids": ids}
         return self._call("tray.commit", params, ["board"])
 
+@_snake_case_hints
 class AgentApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -320,6 +366,7 @@ class AgentApi:
         params = {"target": target, "lines": lines}
         return self._call("agent.read", params, [])
 
+@_snake_case_hints
 class FollowApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -329,6 +376,7 @@ class FollowApi:
         params = {"tile": tile, "path": path, "range": range, "action": action}
         return self._call("follow.report", params, [])
 
+@_snake_case_hints
 class ViewApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -353,6 +401,7 @@ class ViewApi:
         params = {"board": board, "out": out, "format": format}
         return self._call("view.snapshot", params, ["board"])
 
+@_snake_case_hints
 class EventsApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
@@ -374,4 +423,4 @@ class GeneratedApi:
         self.view = ViewApi(call)
         self.events = EventsApi(call)
 
-METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"]
+METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"]

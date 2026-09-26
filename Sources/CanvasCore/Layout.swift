@@ -86,6 +86,12 @@ public enum Layout {
         public var index: Int
         public var start: CGFloat
         public var length: CGFloat
+
+        public init(index: Int, start: CGFloat, length: CGFloat) {
+            self.index = index
+            self.start = start
+            self.length = length
+        }
     }
 
     public struct Grid: Equatable, Sendable {

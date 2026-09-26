@@ -5,6 +5,10 @@ import CanvasCore
 
 private typealias G = DrawingGeometry
 
+private func moved(_ frame: Frame, _ dx: Double, _ dy: Double) -> Frame {
+    Frame(x: frame.x + dx, y: frame.y + dy, w: frame.w, h: frame.h)
+}
+
 // Literal params keep the request bodies below readable.
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByArrayLiteral {
     public init(stringLiteral value: String) { self = .string(value) }
@@ -202,14 +206,14 @@ final class LayoutApiTests {
     @Test func translateInABatchMovesGroupsAndArrowEnds() async throws {
         let a = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         let lane = board.create(type: .group, props: .object(["members": .array([.string(a.id)])]))
-        let free = board.create(type: .arrow, props: .object(["from": .object(["object": .string(a.id)]), "to": .object(["x": 500, "y": 50])]))
+        let free = board.create(type: .arrow, props: .object(["from": .object(["object": .string(a.id)]), "to": .object(["point": [500, 50]])]))
         let reply = try await result("object.batch", .object(["ops": .array([
             .object(["method": "layout.translate", "params": .object(["ids": .array([.string(lane.id), .string(a.id), .string(free.id)]), "dx": -12000, "dy": 30])]),
         ])]))
         #expect(try board.object(a.id).frame == Frame(x: -12000, y: 30, w: 200, h: 100), "listed beside its group, it still moves once")
-        #expect(reply["results"]?[0]?["frames"]?[lane.id] == (try JSONValue.encode(lane.frame.offsetBy(dx: -12000, dy: 30))))
+        #expect(reply["results"]?.array?.first?["frames"]?[lane.id] == (try JSONValue.encode(moved(lane.frame, -12000, 30))))
         let spec = try #require(ArrowSpec(try board.object(free.id).props))
-        #expect(spec.to == .point(CGPoint(x: -11500, y: 80)) && spec.from == .object(a.id, nil, nil))
+        #expect(spec.to == .point(CGPoint(x: -11500, y: 80)) && spec.from == .object(a.id))
     }
 
     // MARK: Check
@@ -414,7 +418,7 @@ struct LayoutBoardTests {
         let steps = board.history.undoSteps.count
         let placed = try board.grid([(a.id, 0, 0), (b.id, 0, 1), (c.id, 1, 0), (d.id, 1, 1)], colGap: 40, rowGap: 200)
         #expect(placed.frames[b.id]?.x == 340 && placed.frames[d.id]?.x == 340, "column 1 starts past column 0's widest cell")
-        #expect(try board.object(bottom.id).frame.minY == 300 - GroupSpec.defaultPadding - GroupSpec.titleHeight, "row 1 starts at 100 + rowGap; its lane follows")
+        #expect(try board.object(bottom.id).frame.y == 300 - GroupSpec.defaultPadding - GroupSpec.titleHeight, "row 1 starts at 100 + rowGap; its lane follows")
         #expect(board.history.undoSteps.count == steps + 1)
         board.undo()
         #expect(try board.object(d.id).frame == d.frame && (try board.object(top.id).frame) == top.frame)
@@ -430,10 +434,10 @@ struct LayoutBoardTests {
         let bound = board.create(type: .arrow, props: .object(["from": .object(["object": .string(b.id)]), "to": .object(["object": .string(c.id)])]))
         let before = board.revision
         let frames = try board.translate([outer.id, b.id], dx: 100, dy: -50)
-        #expect(try board.object(a.id).frame.origin == CGPoint(x: 100, y: -50))
-        #expect(try board.object(b.id).frame.origin == CGPoint(x: 400, y: -50))
-        #expect(frames[outer.id] == outer.frame.offsetBy(dx: 100, dy: -50))
-        #expect(try board.object(inner.id).frame == inner.frame.offsetBy(dx: 100, dy: -50))
+        #expect(try board.object(a.id).frame.rect.origin == CGPoint(x: 100, y: -50))
+        #expect(try board.object(b.id).frame.rect.origin == CGPoint(x: 400, y: -50))
+        #expect(frames[outer.id] == moved(outer.frame, 100, -50))
+        #expect(try board.object(inner.id).frame == moved(inner.frame, 100, -50))
         #expect(try board.object(c.id).frame == c.frame)
         #expect(try board.object(bound.id).props == bound.props, "a bound arrow follows by routing, not by rewriting")
         #expect(board.revision == before + 1)

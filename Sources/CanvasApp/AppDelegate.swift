@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         registry.store.flush(Array(registry.boards.values))
         server?.stop()
+        CodeNavigation.shutdown()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -9,12 +9,13 @@ final class CodeTile: NSView, TileContent {
     private(set) var object: CanvasObject
     private let board: Board
     private let scroll = NSScrollView()
-    private let text: NSTextView
-    private var lineStarts: [Int] = []
-    private var numberWidth = 0
+    let text: NSTextView
+    private(set) var lineStarts: [Int] = []
+    private(set) var numberWidth = 0
     private var watcher: DispatchSourceFileSystemObject?
     private var watchedPath: String?
     private var pendingScrollLine: Int?
+    private var navigation: CodeNavigation?
     var onFocusRelease: (() -> Void)?
 
     static let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -42,6 +43,7 @@ final class CodeTile: NSView, TileContent {
         scroll.autoresizingMask = [.width, .height]
         addSubview(scroll)
         reload()
+        navigation = CodeNavigation(host: self, board: board, tile: object.id)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -84,7 +86,7 @@ final class CodeTile: NSView, TileContent {
         watch(url.path)
     }
 
-    private func scrollTo(line: Int) {
+    func scrollTo(line: Int) {
         guard line >= 1, line <= lineStarts.count else { return }
         // Before the tile is in a window the text view has no layout to scroll; retry once it is.
         guard window != nil else {
@@ -135,7 +137,7 @@ final class CodeTile: NSView, TileContent {
     }
 
     /// 1-based source line at a character index.
-    private func line(atCharacter index: Int) -> Int {
+    func line(atCharacter index: Int) -> Int {
         var low = 0
         var high = lineStarts.count - 1
         while low < high {

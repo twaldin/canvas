@@ -89,15 +89,3 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         completionHandler()
     }
 }
-
-extension CanvasView {
-    /// Centers the tile at 100%, selects it, and gives a terminal keyboard focus.
-    func focus(tile id: ObjectID) {
-        guard let tile = tiles[id] else { return }
-        magnification = 1
-        let visible = documentVisibleRect
-        contentView.scroll(to: NSPoint(x: tile.frame.midX - visible.width / 2, y: tile.frame.midY - visible.height / 2))
-        reflectScrolledClipView(contentView)
-        select(id, extend: false)
-    }
-}

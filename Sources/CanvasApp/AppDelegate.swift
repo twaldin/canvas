@@ -104,8 +104,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newTerminal(_ sender: Any?) { keyController?.newTerminal(sender) }
     @objc func newBrowserTile(_ sender: Any?) {
-        guard let board = keyController?.board else { return }
-        BrowserTile.promptForNew(on: board)
+        guard let controller = keyController, let window = controller.window else { return }
+        BrowserTile.promptForNew(on: controller.board, in: window)
     }
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }

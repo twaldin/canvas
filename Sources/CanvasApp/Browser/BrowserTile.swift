@@ -378,8 +378,9 @@ final class BrowserTile: NSView, TileContent {
         if url != webView.url?.absoluteString { load(url) }
     }
 
-    /// File > New Browser Tile: asks for an address and opens it in the viewport.
-    static func promptForNew(on board: Board) {
+    /// File > New Browser Tile: asks for an address and opens it in the viewport. A sheet, not
+    /// an app-modal alert, so the sockets keep answering agents while the user types.
+    static func promptForNew(on board: Board, in window: NSWindow) {
         let alert = NSAlert()
         alert.messageText = "New Browser Tile"
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
@@ -388,10 +389,12 @@ final class BrowserTile: NSView, TileContent {
         alert.addButton(withTitle: "Open")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let text = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard let url = text.isEmpty ? URL(string: "about:blank") : BrowserURL.normalize(text) else { return NSSound.beep() }
-        board.create(type: .browser, props: .object(["url": .string(url.absoluteString)]))
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            let text = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard let url = text.isEmpty ? URL(string: "about:blank") : BrowserURL.normalize(text) else { return NSSound.beep() }
+            board.create(type: .browser, props: .object(["url": .string(url.absoluteString)]))
+        }
     }
 }
 

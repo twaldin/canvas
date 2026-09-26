@@ -78,6 +78,9 @@ public final class Board {
     public var onChange: (() -> Void)?
     /// Viewport center in canvas coordinates, for user-created objects without a frame.
     public var viewportCenter: () -> (x: Double, y: Double) = { (0, 0) }
+    /// An arrow's route as currently drawn (canvas coordinates), so deleting what it points at
+    /// keeps its end exactly where the user saw it. Without it, routes come from object frames.
+    public var arrowRoute: ((ObjectID) -> (start: CGPoint, end: CGPoint)?)?
 
     public init(id: BoardID, root: URL) {
         self.id = id
@@ -141,6 +144,11 @@ public final class Board {
     }
 
     public func delete(_ id: ObjectID) throws {
+        guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
+        // Arrows bound to it detach within the same undo step, so one ⌘Z restores both.
+        history.begin()
+        defer { history.end() }
+        detachArrows(from: id)
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         revision += 1

@@ -51,7 +51,7 @@ public enum MentionContext {
             }
         case .dom(let object, let url, let selector, let text):
             let textPart = text.map { " \"\(clip($0, 80))\"" } ?? ""
-            lines.append("[\(index)] dom \(url) · \(selector)\(textPart) · browser tile \(object)\(edited)")
+            lines.append("[\(index)] dom \(url) · \(selector)\(textPart) · \(board.objects[object]?.type.rawValue ?? "browser") tile \(object)\(edited)")
         case .terminal(let object, let text):
             lines.append("[\(index)] terminal tile \(object)\(edited)")
             lines.append(contentsOf: text.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
@@ -90,8 +90,14 @@ public enum MentionContext {
         let title = title(of: object)
         if !title.isEmpty { parts.append("\"\(clip(title, 60))\"") }
         if object.type == .shape { parts.append("(\(author))") }
-        let enclosed = board.objects.values.filter { $0.id != object.id && $0.type != .arrow && object.frame.contains($0.frame) }.map(\.id).sorted()
-        if object.type == .shape, !enclosed.isEmpty { parts.append("· encloses \(enclosed.joined(separator: ", "))") }
+        if object.type == .shape {
+            let enclosed = board.enclosed(by: object).map(\.id)
+            if !enclosed.isEmpty { parts.append("· encloses \(enclosed.joined(separator: ", "))") }
+            for (_, spec) in board.arrows(enclosedBy: object) {
+                let relation = spec.relation.map { " (\($0))" } ?? ""
+                parts.append("· inner arrow \(endName(spec.from)) → \(endName(spec.to))\(relation)")
+            }
+        }
         for arrow in board.objects.values where arrow.type == .arrow {
             let relation = arrow.props["relation"]?.string.map { " (\($0))" } ?? ""
             if arrow.props["from"]?["object"]?.string == object.id, let to = arrow.props["to"]?["object"]?.string {
@@ -100,7 +106,22 @@ public enum MentionContext {
                 parts.append("· arrow ← \(from)\(relation)")
             }
         }
+        if object.type == .arrow, let spec = ArrowSpec(object.props) {
+            let relation = spec.relation.map { " (\($0))" } ?? ""
+            parts.append("· \(endName(spec.from)) → \(endName(spec.to))\(relation)")
+        }
         return parts.joined(separator: " ")
+    }
+
+    static func endName(_ binding: ArrowBinding) -> String {
+        switch binding {
+        case .object(let id, let lines, let selector):
+            let detail = lines.map { ":\($0.start)-\($0.end)" } ?? selector.map { " \($0)" } ?? ""
+            return id + detail
+        case .point(let point):
+            // Coordinates are any JSON number; an Int conversion would trap on huge ones.
+            return String(format: "(%.0f, %.0f)", Double(point.x), Double(point.y))
+        }
     }
 
     static func title(of object: CanvasObject) -> String {

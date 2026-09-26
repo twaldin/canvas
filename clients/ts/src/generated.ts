@@ -77,9 +77,12 @@ export type NoteProps = {
 };
 
 export type HtmlProps = {
+  /** page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded */
   html: string;
   title?: string;
   allowNetwork?: string[];
+  /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
+  state?: Record<string, unknown>;
 };
 
 export type ShapeProps = {
@@ -87,7 +90,10 @@ export type ShapeProps = {
   text?: string;
   /** ink points [x, y, pressure?] in object-local coordinates */
   points?: number[][];
+  /** palette name (black, grey, blue, green, orange, red, violet) or #rrggbb */
   color?: string;
+  /** rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it */
+  fill?: "none" | "semi" | "solid";
 };
 
 export type Binding = {
@@ -104,6 +110,8 @@ export type ArrowProps = {
   /** semantic edge type, e.g. hypothesis_about, calls, depends_on */
   relation?: string;
   label?: string;
+  /** palette name or #rrggbb, as ShapeProps.color */
+  color?: string;
 };
 
 export type GroupProps = {
@@ -419,13 +427,13 @@ export interface CanvasApi {
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
   object: {
-    /** Read one object. `as: graph` adds structural relations (encloses, overlaps, arrows in/out); `as: image` returns a PNG crop as base64. */
+    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow; `as: image` returns a PNG crop as base64 (a tile's content, or the canvas region under a drawn object including the tiles and ink inside it). */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
-    /** Delete an object (and remove it from any staged mentions). */
+    /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
   };
   tray: {

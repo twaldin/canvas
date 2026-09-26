@@ -1,3 +1,4 @@
+import CoreGraphics
 import Darwin
 import Foundation
 import Testing
@@ -119,6 +120,45 @@ final class ApiRouterTests {
         #expect(get["id"] == .string("g"))
         #expect(get["result"]?["object"]?["props"]?["markdown"] == .string("v19"))
     }
+
+    @Test func shapeGraphDescribesEnclosureOverlapsAndArrows() async throws {
+        let box = board.create(type: .shape, props: .object(["kind": .string("rect"), "text": .string("auth path?")]), frame: Frame(x: 0, y: 0, w: 1000, h: 800))
+        let a = board.create(type: .terminal, props: .object([:]), frame: Frame(x: 50, y: 50, w: 300, h: 200))
+        let b = board.create(type: .code, props: .object(["path": .string("a.swift")]), frame: Frame(x: 500, y: 50, w: 300, h: 200))
+        let outside = board.create(type: .note, props: .object([:]), frame: Frame(x: 2000, y: 0, w: 300, h: 200))
+        let straddling = board.create(type: .note, props: .object([:]), frame: Frame(x: 900, y: 600, w: 300, h: 200))
+        let inner = board.create(type: .arrow, props: ArrowSpec(from: .object(a.id), to: .object(b.id), relation: "calls").props)
+        let scribble = board.create(type: .arrow, props: ArrowSpec(from: .point(CGPoint(x: 100, y: 500)), to: .object(b.id)).props)
+        let out = board.create(type: .arrow, props: ArrowSpec(from: .object(box.id), to: .object(outside.id), relation: "hypothesis_about").props)
+        // Leaves the box: not drawn inside it, so not part of its structure.
+        _ = board.create(type: .arrow, props: ArrowSpec(from: .object(a.id), to: .object(outside.id)).props)
+
+        let client = try connect()
+        client.send(#"{"id":"g","method":"object.get","params":{"id":"\#(box.id)","as":"graph"}}"#)
+        let graph = try #require(try await client.next()["result"]?["graph"])
+        #expect(graph["encloses"] == .array([a.id, b.id].sorted().map(JSONValue.string)))
+        #expect(graph["overlaps"] == .array([.string(straddling.id)]))
+        #expect(graph["arrowsOut"]?.array?.first?["to"] == .string(outside.id))
+        #expect(graph["arrowsOut"]?.array?.first?["relation"] == .string("hypothesis_about"))
+        let arrows = graph["arrows"]?.array ?? []
+        #expect(arrows.compactMap { $0["arrow"]?.string } == [inner.id, scribble.id].sorted())
+        let calls = arrows.first { $0["arrow"] == .string(inner.id) }
+        #expect(calls?["from"]?["object"] == .string(a.id))
+        #expect(calls?["to"]?["object"] == .string(b.id))
+        #expect(calls?["relation"] == .string("calls"))
+
+        client.send(#"{"id":"r","method":"object.get","params":{"id":"\#(out.id)","as":"graph"}}"#)
+        let arrowGraph = try #require(try await client.next()["result"]?["graph"])
+        #expect(arrowGraph["from"]?["object"] == .string(box.id))
+        #expect(arrowGraph["to"]?["object"] == .string(outside.id))
+
+        // The prompt context says the same thing in one line.
+        try board.stage(.object(box.id))
+        let context = await board.drain().context
+        #expect(context.contains("encloses \([a.id, b.id].sorted().joined(separator: ", "))"))
+        #expect(context.contains("inner arrow \(a.id) → \(b.id) (calls)"))
+        #expect(context.contains("arrow → \(outside.id) (hypothesis_about)"))
+    }
 }
 
 /// Minimal blocking NDJSON client; reads happen off the main actor so the server can answer.
@@ -154,18 +194,25 @@ final class LineClient: @unchecked Sendable {
         }
     }
 
-    /// Next response line, failing after `timeout` seconds.
-    func next(timeout: Double = 5) async throws -> JSONValue {
+    /// Next response line, failing after `timeout` seconds (the timeout only detects hangs).
+    func next(timeout: Double = 30) async throws -> JSONValue {
         try JSONDecoder().decode(JSONValue.self, from: try await nextLine(timeout: timeout))
     }
 
     /// Next response line as text, for protocols that answer some commands outside JSON.
-    func nextText(timeout: Double = 5) async throws -> String {
+    func nextText(timeout: Double = 30) async throws -> String {
         String(decoding: try await nextLine(timeout: timeout), as: UTF8.self)
     }
 
+    /// The blocking read runs on a GCD thread, never on Swift's cooperative pool: suites run in
+    /// parallel, and a pool full of threads parked in poll() starves the server tasks that would
+    /// answer them.
     private func nextLine(timeout: Double) async throws -> Data {
-        try await Task.detached { try self.readLine(timeout: timeout) }.value
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(with: Result { try self.readLine(timeout: timeout) })
+            }
+        }
     }
 
     private func readLine(timeout: Double) throws -> Data {

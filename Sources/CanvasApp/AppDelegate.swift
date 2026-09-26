@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.resume()
         terminationSignal = termination
         DevInput.install()
+        DrawingStyle.registerFonts()
         registry.onEvent = { [weak self] board, event in
             self?.controllers[board.id]?.apply(event)
             self?.notifier.observe(event, on: board)
@@ -55,11 +56,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controllers[board.id]?.canvas.raiseAttention(id, message: message)
         }
         router.readTerminal = { _, tile, lines in
-            await Task.detached { TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines) }.value
+            // A blocking subprocess read: keep it on GCD so it can't park Swift's cooperative
+            // threads, which the socket servers' request tasks need.
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(returning: TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines))
+                }
+            }
         }
         router.objectImage = { [weak self] board, id in
-            guard let image = self?.controllers[board.id]?.canvas.tiles[id]?.content.snapshot(),
-                  let tiff = image.tiffRepresentation else { return nil }
+            guard let canvas = self?.controllers[board.id]?.canvas else { return nil }
+            guard let tile = canvas.tiles[id] else { return canvas.drawnObjectPNG(id) }
+            guard let image = tile.content.snapshot(), let tiff = image.tiffRepresentation else { return nil }
             return NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
         }
         let router = router
@@ -148,6 +156,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BrowserTile.promptForNew(on: controller.board, in: window)
     }
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
+    @objc func newHtmlTile(_ sender: Any?) {
+        keyController?.board.create(type: .html, props: .object(["html": .string(HtmlKit.emptyTemplate), "title": .string("HTML")]))
+    }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
@@ -201,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("New Browser Tile…", #selector(newBrowserTile(_:)), "b", [.command, .shift]),
             item("Open Board…", #selector(openBoard(_:)), "o", [.command, .shift]),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
+            item("New HTML Tile", #selector(newHtmlTile(_:)), "h", [.command, .shift]),
         ])
         submenu("Edit", [
             item("Undo", #selector(undoCanvas(_:)), "z"),

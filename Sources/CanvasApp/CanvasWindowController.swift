@@ -9,6 +9,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let tray = TrayBar(frame: .zero)
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
+    private var drawing: ShapeLayer?
 
     init(board: Board, registry: BoardRegistry) {
         self.board = board
@@ -39,6 +40,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             tray.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
         ])
         window.contentView = container
+        drawing = ShapeLayer.install(on: canvas, toolbarIn: container)
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
@@ -52,6 +54,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     func apply(_ event: BoardEvent) {
         canvas.apply(event)
+        drawing?.apply(event)
         switch event {
         case .trayChanged, .objectDeleted: refreshTray()
         case .objectUpdated(let object) where object.id == canvas.promptTarget: refreshTray()

@@ -62,7 +62,7 @@ public enum HtmlChannel {
             try board.update(existing.id, props: .object(["range": rangeValue, "symbol": symbol.map(JSONValue.string) ?? .null]))
             return .object(["tile": .string(existing.id), "created": .bool(false)])
         }
-        var props: [String: JSONValue] = ["path": .string(path), "mode": .string("source"), "range": rangeValue]
+        var props: [String: JSONValue] = ["path": .string(path), "range": rangeValue]
         if let symbol { props["symbol"] = .string(symbol) }
         let size = Board.defaultSize(.code)
         let created = board.create(type: .code, props: .object(props.filter { $0.value != .null }), frame: board.place(width: size.w, height: size.h, near: tile))

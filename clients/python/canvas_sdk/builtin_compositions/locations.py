@@ -10,15 +10,16 @@ from typing import Any
 _LOCATION = re.compile(r"^(?P<path>.+?)(?:#L(?P<a>\d+)(?:-L?(?P<b>\d+))?|:(?P<c>\d+)(?:-(?P<d>\d+)|:\d+)?)?$")
 
 
-def open(canvas: Any, locations: list[str], beside: str | None = None, mode: str = "source", columns: int | None = None) -> list[str]:
+def open(canvas: Any, locations: list[str], beside: str | None = None, columns: int | None = None) -> list[str]:
     """Create one code tile per location (`path`, `path:12`, `path:12-40`, `path#L12-L40`) and
-    arrange them in a grid beside `beside` (default: your terminal). `mode` is "source" or
-    "diff" (merge-base diff). Returns the new tile ids in input order."""
+    arrange them in a grid beside `beside` (default: your terminal). Each tile shows its whole
+    file scrolled to the location, with changes against the merge-base in the gutter. Returns the
+    new tile ids in input order."""
     root = canvas.board.get()["root"]
     ids = []
     for location in locations:
         path, line_range = parse(location)
-        props: dict[str, Any] = {"path": relative(path, root), "mode": mode}
+        props: dict[str, Any] = {"path": relative(path, root)}
         if line_range is not None:
             props["range"] = line_range
         ids.append(canvas.object.create(type="code", props=props)["object"]["id"])

@@ -109,8 +109,13 @@ public struct FileDiff: Sendable, Equatable {
         case missing
         /// Outside any git repository; `new` holds the file as source.
         case notRepository
-        /// Either side exceeds `GitDiffEngine.maxFileSize`.
+        /// No commit to compare with (unborn HEAD, no default branch, unknown commit); `new`
+        /// holds the file as source and `baseLabel` says why.
+        case noBase
+        /// The file on disk exceeds `GitDiffEngine.maxFileSize`: nothing to show.
         case tooLarge
+        /// The base version or the patch exceeds the limits; `new` holds the file as source.
+        case diffTooLarge
         /// A gitlink (submodule) in the base or on disk: not a text file.
         case submodule
         /// The file kept changing while it was being diffed; the next write reloads it.
@@ -240,8 +245,10 @@ public enum UnifiedDiff {
                   mapping.modified.upperBound - 1 <= new.lineCount else { return nil }
             if unchanged > 0 {
                 let start = new.lineStarts[next - 1]
-                let end = new.lineStarts[mapping.modified.lowerBound - 1]
+                // A deletion at the end of the file sits after the last line.
+                let end = mapping.modified.lowerBound <= new.lineCount ? new.lineStarts[mapping.modified.lowerBound - 1] : new.utf16Count
                 out.append(source.substring(with: NSRange(location: start, length: end - start)))
+                if end == new.utf16Count, !out.hasSuffix("\n") { out.append("\n") }
             }
             for old in mapping.original {
                 guard let line = parsed.removed[old] else { return nil }

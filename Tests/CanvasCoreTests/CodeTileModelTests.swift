@@ -59,21 +59,6 @@ struct SyntaxTests {
         #expect(SyntaxLanguage(path: "home/.zshrc") == .bash)
         #expect(SyntaxLanguage(path: "README.md") == nil)
     }
-
-    @Test func deletedRowsTakeOldSideHighlightsAndOthersTheNewSide() throws {
-        let old = SideText("let a = 1\nlet b = \"x\"\n")
-        let new = SideText("let a = 1\nvar b = 2\n")
-        let diff = FileDiff(state: .modified, base: "abc", baseLabel: nil, old: old, new: new, hunks: [DiffHunk(mappings: [LineRangeMapping(original: 2..<3, modified: 2..<3)])])
-        let display = DiffDisplay(diff, mode: .diff)
-        let placed = display.place(old: Syntax.analyze(old.text, language: .swift).spans, new: Syntax.analyze(new.text, language: .swift).spans, diff: diff)
-        let text = display.text as NSString
-        func style(of token: String) -> SyntaxStyle? {
-            let range = text.range(of: token)
-            return placed.last { NSLocationInRange(range.location, $0.range) }?.style
-        }
-        #expect(style(of: "\"x\"") == .string, "the deleted row keeps its old-side string highlight")
-        #expect(style(of: "var") == .keyword)
-    }
 }
 
 @MainActor
@@ -101,12 +86,12 @@ struct CodeBoardTests {
         let base = try await repo.commit("base")
         try await repo.write("lib.rs", "fn new()\n")
         let board = Board(id: "brd_test", root: repo.root)
-        let tile = board.create(type: .code, props: .object(["path": .string("lib.rs"), "mode": .string("diff"), "diffBase": .string("merge-base")]))
+        let tile = board.create(type: .code, props: .object(["path": .string("lib.rs"), "diffBase": .string("merge-base")]))
         try board.stage(.code(object: tile.id, path: "lib.rs", lines: LineRange(start: 2, end: 2), side: "old", symbol: nil, commit: base))
         try board.stage(.code(object: tile.id, path: "lib.rs", lines: LineRange(start: 1, end: 1), side: "new", symbol: nil, commit: base))
         try board.stage(.code(object: tile.id, path: "lib.rs", lines: LineRange(start: 1, end: 1), side: nil, symbol: nil, commit: base))
-        // The reusable tile moves on to another file in source mode before the prompt is sent.
-        try board.update(tile.id, props: .object(["path": .string("other.rs"), "mode": .string("source")]))
+        // The reusable tile moves on to another file before the prompt is sent.
+        try board.update(tile.id, props: .object(["path": .string("other.rs")]))
 
         let context = await board.drain().context
         let short = base.prefix(7)
@@ -118,7 +103,7 @@ struct CodeBoardTests {
         #expect(context.contains("  > 1    fn old()"), "a pinned excerpt reads the commit")
         #expect(!context.contains("unrelated"))
 
-        let source = board.create(type: .code, props: .object(["path": .string("lib.rs"), "mode": .string("source")]))
+        let source = board.create(type: .code, props: .object(["path": .string("lib.rs")]))
         try board.stage(.code(object: source.id, path: "lib.rs", lines: LineRange(start: 1, end: 1)))
         #expect(!(await board.drain().context.contains("diff vs")), "working-tree mentions name no base")
     }

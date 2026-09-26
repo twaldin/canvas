@@ -6,17 +6,18 @@ import type { Composer, LineRange } from "../index";
 const LOCATION = /^(?<path>.+?)(?:#L(?<a>\d+)(?:-L?(?<b>\d+))?|:(?<c>\d+)(?:-(?<d>\d+)|:\d+)?)?$/;
 
 /** Create one code tile per location and arrange them in a grid beside `beside` (default: your
- * terminal). `mode` is "source" or "diff" (merge-base diff). Returns the new tile ids in order. */
+ * terminal). Each tile shows its whole file scrolled to the location, with changes against the
+ * merge-base in the gutter. Returns the new tile ids in order. */
 export async function open(
   canvas: Composer,
   locations: string[],
-  options: { beside?: string; mode?: "source" | "diff"; columns?: number } = {},
+  options: { beside?: string; columns?: number } = {},
 ): Promise<string[]> {
   const { root } = await canvas.board.get();
   const ids: string[] = [];
   for (const location of locations) {
     const [path, range] = parse(location);
-    const props: Record<string, unknown> = { path: relative(path, root), mode: options.mode ?? "source" };
+    const props: Record<string, unknown> = { path: relative(path, root) };
     if (range) props.range = range;
     ids.push((await canvas.object.create({ type: "code", props })).object.id);
   }

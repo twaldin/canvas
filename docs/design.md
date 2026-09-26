@@ -20,7 +20,7 @@ flowchart TB
     Ink["Shape layer (arrows, notes, rect/ellipse, freehand)"]
     T["Terminal tiles (libghostty-spm) → zmx sessions"]
     B["Browser tiles (WKWebView, shared data store)"]
-    C["Code/diff tiles (TextKit 2 + tree-sitter)"]
+    C["Code tiles (drawn rows + tree-sitter, gitsigns)"]
     H["HTML tiles (sandboxed WKWebView + bundled kit)"]
     L["Language service (one server per language+root)"]
     Sock["Canvas socket: API schema, cmux browser subset"]
@@ -68,9 +68,9 @@ flowchart TB
 
 - **Terminal**: libghostty-spm surface running `zmx attach <session> <cmd>`. Agents survive app quit, crash, and rebuild; after a reboot, agent tiles relaunch with their recorded session (`omp --resume=<id>`).
 - **Browser**: WKWebView, all tiles share one website data store (one browser profile, separate screens). Created lazily; snapshotted and detached when not visible. omp's native `browser` tool drives them through the cmux-compatible subset (`browser.open_split` spawns a tile beside the calling terminal).
-- **Code/diff**: read-only TextKit 2 + tree-sitter. Default view is a git diff against the merge-base with the default branch. Diff engine: `git diff --diff-algorithm=histogram` against a pinned merge-base SHA; model follows VS Code's range mappings; display buffer contains real deleted and added rows mapped back to source; old and new sides are highlighted separately. "Edit here" opens nvim at file:line in a terminal tile.
-  - **Follow mode**: each agent terminal has one follow tile that re-aims at the latest file:line it read or edited, with a short history strip. Pin turns the current view into a permanent diff tile.
-  - Minimal editor features: hover signature, symbol highlight, go to definition (same tile or new tile), references, next/previous hunk, outline, canvas actions such as "open callers as graph".
+- **Code**: read-only, one view (no diff/source modes): the whole current file scrolled to its range, with changes against the diff base (merge-base with the default branch by default, or HEAD) shown in context like nvim gitsigns: a green bar on added lines, blue on modified, a red wedge where lines were deleted; clicking a sign peeks the base lines inline. No commits, no default branch, or a diff too large shows plain source with a header warning; a deleted file shows its base version. Diff engine: `git diff --diff-algorithm=histogram` against a pinned base SHA; model follows VS Code's range mappings; both sides are highlighted with tree-sitter. Rows are drawn directly (a CTLine per visible row, `CodeMetrics` geometry), not by a text system. "Edit here" opens nvim at file:line in a terminal tile.
+  - **Follow mode**: each agent terminal has one follow tile that re-aims at the latest file:line it read, edited, or wrote, with a short history strip; the rows an edit or write changed flash for ~3 s. While the user scrolls, clicks, or selects in it, re-aims wait ~10 s ("N new ▸" catches up). Pin turns the current view into a permanent code tile.
+  - Minimal editor features: hover signature, symbol highlight, go to definition (same tile or new tile), references, next/previous change, outline, canvas actions such as "open callers as graph".
 - **Notes**: markdown. Code fences have three modes, all plain markdown for agents:
   - Excerpt: ```` ```ts file=path#L10-40 ```` or `symbol=Name`, rendered live from disk with full language features.
   - Proposed change: same anchor plus `propose`, rendered as a diff against the real range.
@@ -132,14 +132,16 @@ Command Line Tools ship no Instruments, so the spike measured with `footprint`, 
 | 12 tiles zoomed out and back in: card images held | 126 MB | 13 MB while zoomed out, <1 MB after |
 | Zoom-out with N terminals: main-thread `zmx history` calls | N × ~40 ms | 0 |
 
+Code tiles (astra-skyblock replica, 205 objects with 62 code tiles; every code tile visited at 100% and back to fit, then a fixed pan/zoom sequence with three ⌘9↔⌘0 transitions): the TextKit 2 tile left the app at 559 MB footprint (+267 MB over the fresh board, ~4.3 MB per code tile) and spent 5.19 s CPU on the sequence; drawing only visible rows from a compact model (no NSScrollView, nothing in the window while not live) leaves it at 319 MB (+19 MB, ~0.3 MB per tile) and 2.93 s CPU.
+
 Standing costs, measured: empty board 46 MB and ~0% idle CPU. The first Ghostty surface adds ~224 MB of GPU memory (28 × 8 MiB Metal allocations, independent of size; Ghostty.app shows the identical pattern), each further terminal ~12 MB plus ~23 MB of triple-buffered IOSurfaces while it renders (860×560 pt), released when not live. Code tile +20 MB (1,000-line Swift file), note +6 MB, HTML tile +13 MB in-app plus ~23 MB WebContent, browser tile ~18 MB WebContent. Heavy terminal output costs zmx (the session relay) far more CPU than Canvas: a 9M-line burst took 2.6–4.5 s of zmx CPU and ≤0.14 s of Canvas CPU.
 
 ## v0 acceptance
 
 Real use on real repos with the logged-in omp, not mocks:
 
-1. **Grounded work loop**: omp in a terminal tile does a real task in a worktree; its follow tile shows reads and edits as merge-base diffs; it verifies the change in a visible browser tile.
-2. **Mention loop**: Hyper-click a diff hunk, a DOM element, and a drawn box; dictate a question into the terminal; the prompt drains the tray; the agent answers by editing or annotating objects.
+1. **Grounded work loop**: omp in a terminal tile does a real task in a worktree; its follow tile shows reads and edits with merge-base gutter signs; it verifies the change in a visible browser tile.
+2. **Mention loop**: Hyper-click a change in a code tile, a DOM element, and a drawn box; dictate a question into the terminal; the prompt drains the tray; the agent answers by editing or annotating objects.
 3. **HTML explainer**: the agent (or a subagent) builds a sandboxed HTML tile with grounded `<canvas-code>` excerpts and file:line links that open code tiles.
 4. **Survive rebuild**: quit or rebuild mid-task; agents keep running under zmx; the board restores exactly; after a reboot omp tiles resume their sessions.
 
@@ -164,7 +166,7 @@ Question cards (`canvas_ask`), MCP server, `canvas lsp-proxy`, multi-agent overv
 - zmx: bracketed paste passes through (a pasted prompt plus Enter arrives as one submit). Sockets live under `$TMPDIR/zmx-<uid>`; GUI apps get a long `/var/folders/…` TMPDIR, which caps session names at 46 bytes, hence `canvas-<tileId>` with board/tile labels. Kitty image restore on reattach is unsupported.
 - libghostty-spm builds and links with Command Line Tools only. Ghostty renders through Metal, which `cacheDisplay` can't capture; terminal snapshots are drawn from the zmx session text.
 - A window on an unviewed space (or fully covered) stops redrawing, so window-server captures go stale. `view.snapshot` renders the window in-process instead, which also lets agents see the canvas as the user does.
-- TextKit 2 text views draw their text into per-fragment layers, which `cacheDisplay` (and so `view.snapshot`) never captures, and on an unviewed Space the fragment views aren't even created until `textViewportLayoutController.layoutViewport()` runs. Code tiles draw their visible fragments into an image for `showSnapshot`/`snapshot()` (`CodeTextView.renderVisible`).
+- TextKit 2 text views draw their text into per-fragment layers, which `cacheDisplay` (and so `view.snapshot`) never captures, and on an unviewed Space the fragment views aren't even created until `textViewportLayoutController.layoutViewport()` runs. Code tiles later dropped TextKit for rows they draw themselves (`CodeRowsView`), which `cacheDisplay` captures directly.
 
 ## Acceptance findings
 

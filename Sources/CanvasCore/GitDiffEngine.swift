@@ -48,6 +48,8 @@ public actor GitDiffEngine {
     /// Files larger than this on either side render as a notice instead of a diff.
     public static let maxFileSize = 4 << 20
 
+    /// A base commit and how it was chosen (`merge-base with main`), or no commit and why not
+    /// (`no commits yet`, `no default branch`).
     public struct ResolvedBase: Equatable, Sendable {
         public var sha: String?
         public var label: String
@@ -174,10 +176,10 @@ public actor GitDiffEngine {
         let resolved = await resolve(base, in: repository)
         let binary = data.map(Self.looksBinary) ?? false
         guard let sha = resolved.sha else {
-            // No commit to compare with (unborn HEAD, unknown SHA): the file is all new.
+            // No commit to compare with (unborn HEAD, no default branch): plain source.
             if data == nil { return result(.missing, base: nil, label: resolved.label) }
             if binary { return result(.binary, base: nil, label: resolved.label) }
-            return result(.added, base: nil, label: resolved.label, new: new, hunks: Self.allAdded(new))
+            return result(.noBase, base: nil, label: resolved.label, new: new)
         }
         let path = Self.relative(Self.realPath(file), to: repository.toplevel)
         let hash = await offPool { data.map { Data(SHA256.hash(data: $0)) } ?? Data() }
@@ -190,7 +192,8 @@ public actor GitDiffEngine {
         if patch.entry == .gitlink || parsed.gitlink {
             diff = result(.submodule, base: sha, label: resolved.label)
         } else if patch.tooLarge {
-            diff = result(.tooLarge, base: sha, label: resolved.label)
+            // A deleted file's only text is the oversized base; otherwise show the file as source.
+            diff = result(data == nil ? .tooLarge : .diffTooLarge, base: sha, label: resolved.label, new: data == nil ? SideText("") : new)
         } else if parsed.binary || binary {
             diff = result(.binary, base: sha, label: resolved.label)
         } else if data == nil {
@@ -433,19 +436,20 @@ public actor GitDiffEngine {
         }
         switch base {
         case .head:
-            return ResolvedBase(sha: await verify("HEAD"), label: "HEAD")
+            let sha = await verify("HEAD")
+            return ResolvedBase(sha: sha, label: sha == nil ? "no commits yet" : "HEAD")
         case .commit(let revision):
-            return ResolvedBase(sha: await verify(revision), label: revision)
+            let sha = await verify(revision)
+            return ResolvedBase(sha: sha, label: sha == nil ? "unknown commit \(revision)" : revision)
         case .mergeBase:
+            guard await verify("HEAD") != nil else { return ResolvedBase(sha: nil, label: "no commits yet") }
             guard let branch = await defaultBranch(in: toplevel, runner: runner) else {
-                return ResolvedBase(sha: await verify("HEAD"), label: "HEAD (no default branch)")
+                return ResolvedBase(sha: nil, label: "no default branch")
             }
             let shortName = branch.replacingOccurrences(of: "refs/remotes/", with: "").replacingOccurrences(of: "refs/heads/", with: "")
-            guard let data = try? await runner.run(["merge-base", branch, "HEAD"], in: toplevel) else {
-                return ResolvedBase(sha: await verify("HEAD"), label: "HEAD (no merge-base with \(shortName))")
-            }
-            let sha = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-            return ResolvedBase(sha: sha.isEmpty ? nil : sha, label: "merge-base with \(shortName)")
+            let data = try? await runner.run(["merge-base", branch, "HEAD"], in: toplevel)
+            let sha = data.map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            return sha.isEmpty ? ResolvedBase(sha: nil, label: "no merge-base with \(shortName)") : ResolvedBase(sha: sha, label: "merge-base with \(shortName)")
         }
     }
 

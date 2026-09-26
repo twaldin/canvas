@@ -82,12 +82,12 @@
       "required": ["path"],
       "properties": {
         "path": { "type": "string", "description": "path relative to the board root" },
-        "range": { "$ref": "#/definitions/LineRange" },
+        "range": { "$ref": "#/definitions/LineRange", "description": "lines to scroll to and tint; the tile always shows the whole file" },
         "symbol": { "type": "string" },
-        "mode": { "enum": ["diff", "source"], "default": "diff" },
-        "diffBase": { "type": "string", "default": "merge-base", "description": "merge-base | head | <sha>" },
+        "caption": { "type": "string", "description": "one-line subtitle under the tile's header (plain text, `inline code` allowed); truncated, never wraps" },
+        "diffBase": { "type": "string", "default": "merge-base", "description": "gutter signs show changes against this: merge-base | head | <sha>" },
         "followOf": { "$ref": "#/definitions/Id", "description": "terminal tile this follow tile tracks" },
-        "lastAction": { "enum": ["read", "edit", "lsp", "search"], "description": "follow tiles: what the agent last did at this location" },
+        "lastAction": { "enum": ["read", "edit", "write", "lsp", "search"], "description": "follow tiles: what the agent last did at this location" },
         "history": {
           "type": "array",
           "maxItems": 8,
@@ -98,7 +98,7 @@
             "properties": {
               "path": { "type": "string" },
               "range": { "$ref": "#/definitions/LineRange" },
-              "action": { "enum": ["read", "edit", "lsp", "search"] }
+              "action": { "enum": ["read", "edit", "write", "lsp", "search"] }
             },
             "additionalProperties": false
           }
@@ -731,7 +731,7 @@
       }
     },
     "follow.report": {
-      "description": "Report a file location an agent just read or edited; re-aims that terminal's follow tile. Files outside the board root and the terminal's cwd are ignored.",
+      "description": "Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile (unless the user is working in it, which holds re-aims for ~10 s). Files outside the board root and the terminal's cwd are ignored.",
       "params": {
         "type": "object",
         "required": ["tile", "path", "action"],
@@ -739,7 +739,7 @@
           "tile": { "$ref": "#/definitions/Id" },
           "path": { "type": "string", "description": "absolute path or path relative to the board root" },
           "range": { "$ref": "#/definitions/LineRange" },
-          "action": { "enum": ["read", "edit", "lsp", "search"] }
+          "action": { "enum": ["read", "edit", "write", "lsp", "search"] }
         },
         "additionalProperties": false
       },

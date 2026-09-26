@@ -4,14 +4,19 @@ import CanvasCore
 /// What a code view offers the language features. Implemented by code tiles.
 @MainActor
 protocol CodeNavigationHost: AnyObject {
-    /// Board-relative path of the file shown (the new side of a diff).
+    /// Board-relative path of the file shown.
     var navigationPath: String { get }
-    var navigationTextView: NSTextView { get }
-    /// Source position under `point` (in `navigationTextView`'s coordinates): 1-based line,
-    /// 0-based UTF-16 column on the current side; nil over deleted rows and gutters.
+    /// The view showing the code; hover, ⌘-click, and right-click are handled over it.
+    var navigationView: NSView { get }
+    /// Height of one row, so panels open just below the hovered line.
+    var navigationLineHeight: CGFloat { get }
+    /// Source position under `point` (in `navigationView`'s coordinates): 1-based line,
+    /// 0-based UTF-16 column on the current side; nil over peeked base rows and gutters.
     func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)?
     /// Scrolls a 1-based source line into view.
     func reveal(line: Int)
+    /// Re-aims the view at lines of its own file (a same-file definition).
+    func aim(at lines: LineRange)
 }
 
 /// Language features for one code view, answered by the app's shared language servers:
@@ -47,7 +52,7 @@ final class CodeNavigation: NSObject {
     private static var monitor: Any?
 
     private weak var host: CodeNavigationHost?
-    private weak var textView: NSTextView?
+    private weak var codeView: NSView?
     private let board: Board
     private let tile: ObjectID
 
@@ -76,20 +81,30 @@ final class CodeNavigation: NSObject {
         self.host = host
         self.board = board
         self.tile = tile
-        let textView = host.navigationTextView
-        self.textView = textView
+        let codeView = host.navigationView
+        self.codeView = codeView
         super.init()
-        textView.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-        // Scrolling or new content (a re-aim, a reload) moves what the panels point at.
-        if let clip = textView.enclosingScrollView?.contentView {
-            NotificationCenter.default.addObserver(self, selector: #selector(contentMoved), name: NSView.boundsDidChangeNotification, object: clip)
-        }
-        if let storage = textView.textStorage {
-            NotificationCenter.default.addObserver(self, selector: #selector(textEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: storage)
-        }
+        setActive(true)
         installOutlineButton(in: accessories, reservedWidth: reservedWidth)
         Self.controllers.add(self)
         Self.installMonitor()
+    }
+
+    private var hoverArea: NSTrackingArea?
+
+    /// Hover tracking exists only while the host's view is live: a tracking area on a tile the
+    /// canvas has zoomed out or scrolled away is rebuilt on every frame of a pan.
+    func setActive(_ active: Bool) {
+        guard active != (hoverArea != nil), let codeView else { return }
+        if active {
+            let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+            codeView.addTrackingArea(area)
+            hoverArea = area
+        } else if let hoverArea {
+            codeView.removeTrackingArea(hoverArea)
+            self.hoverArea = nil
+            dismissAll()
+        }
     }
 
     private var file: URL? {
@@ -99,7 +114,7 @@ final class CodeNavigation: NSObject {
     // MARK: Hover
 
     @objc func mouseMoved(with event: NSEvent) {
-        guard let textView, event.window === textView.window else { return }
+        guard let codeView, event.window === codeView.window else { return }
         pointer = event.locationInWindow
         if let hoverPanel, hoverPanel.superview != nil {
             if hoverPanel.contains(windowPoint: event.locationInWindow, in: event.window) { return }
@@ -122,13 +137,9 @@ final class CodeNavigation: NSObject {
 
     @objc func mouseEntered(with event: NSEvent) {}
 
-    @objc private func contentMoved() {
-        dismissAll()
-    }
-
-    @objc private func textEdited(_ note: Notification) {
-        // Attribute-only passes (highlighting) leave the text, and so the panels, valid.
-        guard (note.object as? NSTextStorage)?.editedMask.contains(.editedCharacters) == true else { return }
+    /// The host scrolled or showed new content (a re-aim, a reload): panels point at what was
+    /// there.
+    func contentChanged() {
         dismissAll()
     }
 
@@ -157,8 +168,8 @@ final class CodeNavigation: NSObject {
             return
         }
         hoverScheduled = false
-        guard let pointer, let textView, let file, let position = position(atWindowPoint: pointer) else { return }
-        let anchor = textView.convert(pointer, from: nil)
+        guard let pointer, let codeView, let file, let position = position(atWindowPoint: pointer) else { return }
+        let anchor = codeView.convert(pointer, from: nil)
         let root = board.root
         lease(file)
         let generation = hoverGeneration
@@ -171,14 +182,14 @@ final class CodeNavigation: NSObject {
 
     /// Shows hover docs for `position` below `anchor` (in the text view's coordinates).
     func showHover(_ hover: LSPHover, at position: LSPPosition, anchor: NSPoint) {
-        guard let textView else { return }
+        guard let codeView else { return }
         let panel = NavigationPanel.hover(hover.markdown)
         panel.onPointerExit = { [weak self, weak panel] in
             guard let self, let panel, self.hoverPanel === panel else { return }
             self.dismissHover()
         }
-        panel.show(below: anchor, lineHeight: lineHeight, in: textView)
-        observeTileFrame(textView)
+        panel.show(below: anchor, lineHeight: lineHeight, in: codeView)
+        observeTileFrame(codeView)
         hoverPanel = panel
         hoverShown = (position, hover.range)
     }
@@ -194,14 +205,14 @@ final class CodeNavigation: NSObject {
     }
 
     private func position(atWindowPoint point: NSPoint) -> LSPPosition? {
-        guard let host, let textView else { return nil }
-        let local = textView.convert(point, from: nil)
-        guard textView.visibleRect.contains(local), let position = host.sourcePosition(atViewPoint: local) else { return nil }
+        guard let host, let codeView else { return nil }
+        let local = codeView.convert(point, from: nil)
+        guard codeView.visibleRect.contains(local), let position = host.sourcePosition(atViewPoint: local) else { return nil }
         return LSPPosition(line: position.line - 1, character: position.character)
     }
 
     private var lineHeight: CGFloat {
-        (textView?.font).map { ceil($0.ascender - $0.descender + $0.leading) + 2 } ?? 18
+        host?.navigationLineHeight ?? 18
     }
 
     // MARK: Definition and references
@@ -262,15 +273,16 @@ final class CodeNavigation: NSObject {
         showMessage([text, server?.config.emptyResultHint].compactMap { $0 }.joined(separator: ". "), anchor: anchor)
     }
 
-    /// Same file: re-aim this tile. Another file (or `newTile`): a code tile beside this one.
+    /// Same file: re-aim this tile (the user's own jump, never held back like an agent's
+    /// re-aim). Another file (or `newTile`): a code tile beside this one.
     private func open(_ location: LSPLocation, newTile: Bool) {
         guard let host else { return }
         let path = boardPath(location.url)
         let lines = location.range.lines
-        let range = JSONValue.object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
         if !newTile, path == boardPath(board.absoluteURL(host.navigationPath)) {
-            _ = try? board.update(tile, props: .object(["range": range]))
+            host.aim(at: lines)
         } else {
+            let range = JSONValue.object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
             let size = Board.defaultSize(.code)
             board.create(type: .code, props: .object(["path": .string(path), "range": range]), frame: board.place(width: size.w, height: size.h, near: tile))
         }
@@ -299,8 +311,8 @@ final class CodeNavigation: NSObject {
     }
 
     @objc private func outlineClicked(_ sender: NSButton) {
-        guard let textView else { return }
-        let anchor = textView.convert(NSPoint(x: sender.frame.maxX, y: sender.frame.midY), from: sender.superview)
+        guard let codeView else { return }
+        let anchor = codeView.convert(NSPoint(x: sender.frame.maxX, y: sender.frame.midY), from: sender.superview)
         showOutline(anchor: NSPoint(x: max(0, anchor.x - 240), y: anchor.y))
     }
 
@@ -322,12 +334,12 @@ final class CodeNavigation: NSObject {
     // MARK: Context menu
 
     func contextMenu(for event: NSEvent) {
-        guard let host, let textView else { return }
-        let point = textView.convert(event.locationInWindow, from: nil)
+        guard let host, let codeView else { return }
+        let point = codeView.convert(event.locationInWindow, from: nil)
         let position = host.sourcePosition(atViewPoint: point)
         menuContext = (position, point)
         // Build on the view's own menu (copied: AppKit shares it) so its items stay available.
-        let menu = (textView.menu(for: event)?.copy() as? NSMenu) ?? NSMenu()
+        let menu = (codeView.menu(for: event)?.copy() as? NSMenu) ?? NSMenu()
         var items: [NSMenuItem] = []
         if position != nil {
             items.append(NSMenuItem(title: "Go to Definition", action: #selector(menuDefinition), keyEquivalent: ""))
@@ -340,7 +352,7 @@ final class CodeNavigation: NSObject {
             item.target = self
             menu.insertItem(item, at: index)
         }
-        NSMenu.popUpContextMenu(menu, with: event, for: textView)
+        NSMenu.popUpContextMenu(menu, with: event, for: codeView)
     }
 
     @objc private func menuDefinition() {
@@ -390,17 +402,17 @@ final class CodeNavigation: NSObject {
     }
 
     private func present(_ panel: NavigationPanel, anchor: NSPoint) {
-        guard let textView else { return }
-        panel.show(below: anchor, lineHeight: lineHeight, in: textView)
-        observeTileFrame(textView)
+        guard let codeView else { return }
+        panel.show(below: anchor, lineHeight: lineHeight, in: codeView)
+        observeTileFrame(codeView)
         self.panel = panel
     }
 
     /// Panels sit in the canvas document, not the tile, so a moved or resized tile would leave
     /// them behind: dismiss them when the tile's frame changes.
-    private func observeTileFrame(_ textView: NSTextView) {
+    private func observeTileFrame(_ codeView: NSView) {
         guard !observingTileFrame,
-              let tileView = sequence(first: textView as NSView, next: \.superview).first(where: { $0.superview is CanvasDocumentView }) else { return }
+              let tileView = sequence(first: codeView, next: \.superview).first(where: { $0.superview is CanvasDocumentView }) else { return }
         observingTileFrame = true
         NotificationCenter.default.addObserver(self, selector: #selector(dismissAll), name: NSView.frameDidChangeNotification, object: tileView)
     }
@@ -431,11 +443,11 @@ final class CodeNavigation: NSObject {
         guard !flags.contains(.control), let contentView = event.window?.contentView else { return false }
         let point = contentView.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
         guard let hit = contentView.hitTest(point),
-              let controller = controllers.allObjects.first(where: { $0.textView.map { hit.isDescendant(of: $0) } ?? false }),
-              let textView = controller.textView else { return false }
+              let controller = controllers.allObjects.first(where: { $0.codeView.map { hit.isDescendant(of: $0) } ?? false }),
+              let codeView = controller.codeView else { return false }
         switch (event.type, flags) {
         case (.leftMouseDown, [.command]), (.leftMouseDown, [.command, .option]):
-            controller.goToDefinition(atViewPoint: textView.convert(event.locationInWindow, from: nil), newTile: flags.contains(.option))
+            controller.goToDefinition(atViewPoint: codeView.convert(event.locationInWindow, from: nil), newTile: flags.contains(.option))
             return true
         case (.rightMouseDown, []):
             controller.contextMenu(for: event)

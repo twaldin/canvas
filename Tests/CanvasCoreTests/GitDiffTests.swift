@@ -176,20 +176,6 @@ struct GitDiffTests {
         #expect(diff.hunks.map(\.mappings.count) == [1, 1, 2], "changes within 6 lines of each other share a hunk, like git -U3")
         #expect(diff.hunks[2].mentionLines.side == .new && diff.hunks[2].mentionLines.lines == LineRange(start: 39, end: 41))
         #expect(diff.old.text == numbered(1...40), "the old side is the base version of the file")
-
-        let display = DiffDisplay(diff, mode: .diff)
-        #expect(display.rows.filter { $0.kind == .deleted }.map(\.oldLine) == [2, 37, 38])
-        #expect(display.rows.filter { $0.kind == .added }.map(\.newLine) == [2, 11, 12, 41])
-        #expect(display.rows.filter { $0.kind == .header }.map(\.hunk) == [0, 1, 2])
-        // Context rows after the insertion carry both numbers, offset by the two new lines.
-        let row = try #require(display.row(showing: 13, side: .new))
-        #expect(display.rows[row].kind == .context && display.rows[row].oldLine == 11)
-        let deletedRow = try #require(display.row(showing: 37, side: .old))
-        let text = (display.text as NSString).substring(with: display.range(ofRow: deletedRow))
-        #expect(text == " 37     - line 37", "deleted rows show only the old number")
-
-        let source = DiffDisplay(diff, mode: .source)
-        #expect(source.rows.count == 41 && source.rows.allSatisfy { $0.kind == .context })
     }
 
     @Test func pureDeletionHunkIsMentionedOnTheOldSide() async throws {
@@ -203,10 +189,6 @@ struct GitDiffTests {
         let hunk = try #require(diff.hunks.first)
         #expect(diff.hunks.count == 1)
         #expect(hunk.mentionLines.side == .old && hunk.mentionLines.lines == LineRange(start: 20, end: 22))
-        let display = DiffDisplay(diff, mode: .diff)
-        let rows = try #require(display.rows(for: hunk.mentionLines.lines, side: .old, hunks: diff.hunks))
-        #expect(display.rows[rows.lowerBound].kind == .header, "a hunk mention outlines the header and its rows")
-        #expect(rows.count == 4)
     }
 
     @Test func untrackedAddedDeletedBinaryAndMissingFilesHaveClearStates() async throws {
@@ -221,11 +203,10 @@ struct GitDiffTests {
 
         let fresh = await engine.diff(file: repo.url("fresh.txt"), base: .mergeBase)
         #expect(fresh.state == .added)
-        #expect(DiffDisplay(fresh, mode: .diff).rows.filter { $0.kind == .added }.map(\.newLine) == [1, 2])
+        #expect(CodeDocument(path: "fresh.txt", diff: fresh).signs == [GitSign(kind: .added, lines: 1..<3, old: 1..<1)])
 
         let gone = await engine.diff(file: repo.url("gone.txt"), base: .mergeBase)
-        #expect(gone.state == .deleted)
-        #expect(DiffDisplay(gone, mode: .diff).rows.filter { $0.kind == .deleted }.map(\.oldLine) == [1, 2, 3])
+        #expect(gone.state == .deleted && gone.old.lineCount == 3)
 
         #expect(await engine.diff(file: repo.url("keep.txt"), base: .mergeBase).state == .unchanged)
         #expect(await engine.diff(file: repo.url("image.png"), base: .mergeBase).state == .binary)

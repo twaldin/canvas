@@ -69,6 +69,8 @@ public final class Board {
     private var lifecycleSeq: [String: Int] = [:]
 
     public var onEvent: ((BoardEvent) -> Void)?
+    /// Content changes by anyone, for ⌘Z; see UndoHistory.
+    public let history = UndoHistory()
     /// Called after any persisted change; BoardStore debounces saves.
     public var onChange: (() -> Void)?
     /// Viewport center in canvas coordinates, for user-created objects without a frame.
@@ -112,34 +114,51 @@ public final class Board {
         let z = (objects.values.map(\.z).max() ?? 0) + 1
         let object = CanvasObject(id: IDs.make("obj"), type: type, frame: placed, z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(), props: props)
         commit(object)
+        history.record(.created(object))
         onEvent?(.objectCreated(object))
         return object
     }
 
     @discardableResult
-    public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, props: JSONValue? = nil, caller: ObjectID? = nil) throws -> CanvasObject {
-        var object = try object(id)
-        if let rev, rev != object.rev { throw BoardError.conflict("object \(id) is at rev \(object.rev), not \(rev)") }
+    public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil) throws -> CanvasObject {
+        let before = try object(id)
+        if let rev, rev != before.rev { throw BoardError.conflict("object \(id) is at rev \(before.rev), not \(rev)") }
+        var object = before
         if let frame { object.frame = frame }
+        if let z { object.z = z }
         if let props { object.props = object.props.merging(props) }
         object.rev += 1
         object.updatedAt = Date()
         object.updatedBy = Actor(caller: caller)
         commit(object)
+        history.record(.updated(before: before, after: object))
         markMentionsEdited(for: id)
         onEvent?(.objectUpdated(object))
         return object
     }
 
     public func delete(_ id: ObjectID) throws {
-        guard objects.removeValue(forKey: id) != nil else { throw BoardError.notFound("object \(id)") }
+        guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         revision += 1
+        history.record(.deleted(removed))
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         onChange?()
         onEvent?(.objectDeleted(id))
         if tray.count != before { trayChanged() }
+    }
+
+    /// Undo/redo: puts an object state back verbatim (same id and z), announced as a normal change.
+    func restore(_ object: CanvasObject) {
+        let existed = objects[object.id] != nil
+        commit(object)
+        if existed {
+            markMentionsEdited(for: object.id)
+            onEvent?(.objectUpdated(object))
+        } else {
+            onEvent?(.objectCreated(object))
+        }
     }
 
     private func commit(_ object: CanvasObject) {

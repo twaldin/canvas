@@ -56,6 +56,7 @@ class HtmlProps(TypedDict):
     html: Required[str]
     title: NotRequired[str]
     allowNetwork: NotRequired[list[str]]
+    state: NotRequired[dict[str, Any]]
 
 class ShapeProps(TypedDict):
     kind: Required[Literal["rect", "ellipse", "text", "ink"]]

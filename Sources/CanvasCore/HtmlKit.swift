@@ -13,6 +13,30 @@ public enum HtmlKit {
         URL(string: "\(scheme)://\(host)/\(tile)")!
     }
 
+    /// The served page: the kit head, then the tile's html as written. Elements before an
+    /// author's own `<html>`/`<head>` land in the implied head, so both fragments and full
+    /// documents work. The kit script runs first so its Tailwind theme exists when Tailwind starts.
+    public static func document(html: String) -> String {
+        """
+        <!doctype html>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width">
+        <meta name="color-scheme" content="light dark">
+        <link rel="stylesheet" href="/kit/canvas-kit.css">
+        <script src="/kit/canvas-kit.js"></script>
+        <script src="/kit/vendor/tailwindcss-browser.js"></script>
+        \(html)
+        """
+    }
+
+    /// Starting content for File > New HTML Tile.
+    public static let emptyTemplate = """
+    <main class="space-y-3">
+      <h1 class="text-xl font-semibold">Untitled</h1>
+      <p class="text-muted-foreground">Edit this tile's <code>html</code> prop. Tailwind, Mermaid, and the canvas components are preloaded.</p>
+    </main>
+    """
+
     /// The board file a page asks for. Paths are board-relative and must stay inside the root even
     /// after symlinks resolve; absolute paths, `~`, and `..` components are rejected outright.
     public static func boardFile(_ path: String, root: URL) throws -> (relative: String, url: URL) {

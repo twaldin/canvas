@@ -69,9 +69,12 @@ export type NoteProps = {
 };
 
 export type HtmlProps = {
+  /** page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded */
   html: string;
   title?: string;
   allowNetwork?: string[];
+  /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
+  state?: Record<string, unknown>;
 };
 
 export type ShapeProps = {

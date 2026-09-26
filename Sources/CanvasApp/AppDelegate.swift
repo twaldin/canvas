@@ -85,6 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newTerminal(_ sender: Any?) { keyController?.newTerminal(sender) }
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
+    @objc func newHtmlTile(_ sender: Any?) {
+        keyController?.board.create(type: .html, props: .object(["html": .string(HtmlKit.emptyTemplate), "title": .string("HTML")]))
+    }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
     @objc func closeSelected(_ sender: Any?) { keyController?.closeSelected(sender) }
@@ -107,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
+            item("New HTML Tile", #selector(newHtmlTile(_:)), "h", [.command, .shift]),
             item("Close Selected Tiles", #selector(closeSelected(_:)), "w", [.command, .shift]),
         ])
         submenu("Edit", [

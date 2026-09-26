@@ -79,6 +79,22 @@ Read more with the canvas SDK or CLI: canvas get <id> --as graph|image
 
 Rules: numbered in staging order; each entry is one location line plus an optional short excerpt (at most 12 lines: mentioned lines marked `>`, with up to 3 unmarked lines of surrounding context while it fits); edited-since-staging entries are marked `(edited)`; the block is omitted entirely when the tray is empty.
 
+## HTML tiles
+
+- Each tile's page is `canvas-kit://html/<tileId>`, served by the tile's own scheme handler: the kit head (`resources/kit/canvas-kit.css`, `canvas-kit.js`, `vendor/tailwindcss-browser.js`) followed by `props.html`. `/kit/…` serves `resources/kit` (Mermaid loads from there only when a page has diagrams). DOM mentions of HTML tiles use that URL.
+- Sandbox: non-persistent website data store per tile; a WKContentRuleList (WebKit's default rule list store, identifiers `canvas-html-<hash>`) blocks `http(s):`, `ws(s):`, and `file:` except `props.allowNetwork` hosts (`host`, `host:port`, `*.host`; other entries are ignored). The main frame never navigates away from its page; popups are refused.
+- The only native access is the `canvas` script message handler (`window.webkit.messageHandlers.canvas.postMessage(msg)` → promise), accepted from the tile's own top-level page only. Messages are strict (`Sources/CanvasCore/HtmlMessage.swift`: known `type`, only its fields, 64 KiB per message):
+
+| `type` | Fields | Reply |
+| --- | --- | --- |
+| `code.excerpt` | `path`, `lines?` (`"N"`/`"N-M"`), `symbol?` | `SourceExcerpt` (`start`, `end`, `lines`, `language`, `stale`, `reason`, `truncated`) |
+| `code.open` | `path`, `lines?`, `symbol?` | `{tile, created}`: re-aims the topmost non-follow code tile for `path`, else creates one beside the HTML tile |
+| `state.get` | `key?` | `{value}` from `props.state` |
+| `state.set` | `key` (`[A-Za-z0-9_.:-]{1,128}`), `value` (≤ 16 KiB, `null` deletes) | `{}`; `props.state` is capped at 256 KiB |
+| `view.rendered` | `scrollY?` | `{}`; the tile refreshes its snapshot and remembers the scroll |
+
+- Paths are board-relative; absolute paths, `~`, `..`, and symlinks resolving outside the board root are rejected.
+
 ## Lifecycle authority
 
 - The omp extension is authoritative for omp tiles (`source: "canvas-omp"`).

@@ -98,10 +98,12 @@ public enum MentionContext {
                 parts.append("· inner arrow \(endName(spec.from)) → \(endName(spec.to))\(relation)")
             }
             // A box drawn on top of something (a tile region, a bigger box) points at part of it:
-            // name the topmost object underneath that contains it, and where, in its local units.
+            // name the topmost object underneath that contains it, and where, in its local units
+            // (a tile's start below its title bar, where its content does).
             let region = object.frame.rect
             if let host = board.objects.values.filter({ $0.type != .arrow && $0.type != .group && $0.z < object.z && $0.frame.rect.contains(region) }).max(by: { $0.z < $1.z }) {
-                let local = region.offsetBy(dx: -host.frame.rect.minX, dy: -host.frame.rect.minY)
+                let top = host.frame.rect.minY + (RenderMath.isTile(host.type) ? RenderMath.tileTitleHeight : 0)
+                let local = region.offsetBy(dx: -host.frame.rect.minX, dy: -top)
                 parts.append(String(format: "· over %@ %@ at (%.0f, %.0f) %.0f×%.0f", host.type.rawValue, host.id,
                                     Double(local.minX), Double(local.minY), Double(local.width), Double(local.height)))
             }

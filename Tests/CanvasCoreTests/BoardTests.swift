@@ -166,13 +166,42 @@ struct BoardTests {
 
         let page = board.create(type: .browser, props: .object(["url": .string("http://localhost/")]), frame: Frame(x: 1000, y: 0, w: 600, h: 400))
         let upper = board.create(type: .browser, props: .object(["url": .string("http://localhost/b")]), frame: Frame(x: 1000, y: 0, w: 600, h: 400))
-        let circle = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 1240, y: 200, w: 125, h: 120))
+        let circle = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 1240, y: 226, w: 125, h: 120))
         let straddling = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 1500, y: 300, w: 200, h: 50))
         try board.stage(.object(circle.id))
         try board.stage(.object(straddling.id))
         let over = await board.drain().context
-        #expect(over.contains("\(circle.id) \"ellipse\" (drawn by user) · over browser \(upper.id) at (240, 200) 125×120"), "the topmost containing tile, in its local units")
+        #expect(over.contains("\(circle.id) \"ellipse\" (drawn by user) · over browser \(upper.id) at (240, 200) 125×120"), "the topmost containing tile, in its local units (below its title bar)")
         #expect(!over.contains(page.id))
         #expect(!over.contains("\(straddling.id) \"rect\" (drawn by user) · over"), "a box that only partly covers a tile isn't drawn on it")
+    }
+
+    @Test func boardsSavedBeforeFormat2GrowTileFramesByTheTitleBarOnce() throws {
+        // Format 1 stored a tile's body; its 26 pt title bar drew above it. Shapes were exact.
+        let legacy = """
+        {"id":"brd_old","root":"/tmp","revision":3,"objects":[
+          {"id":"obj_code","type":"code","frame":{"x":10,"y":20,"w":640,"h":240},"z":1,"rev":1,"createdBy":{"kind":"user"},"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","props":{"path":"a.swift"}},
+          {"id":"obj_note","type":"note","frame":{"x":700,"y":20,"w":280,"h":240},"z":2,"rev":1,"createdBy":{"kind":"user"},"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","props":{"markdown":"n"}},
+          {"id":"obj_box","type":"shape","frame":{"x":0,"y":400,"w":100,"h":50},"z":3,"rev":1,"createdBy":{"kind":"user"},"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","props":{"kind":"rect"}},
+          {"id":"obj_lane","type":"group","frame":{"x":0,"y":0,"w":0,"h":0},"z":4,"rev":1,"createdBy":{"kind":"user"},"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","props":{"members":["obj_code"],"padding":24}}
+        ]}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let snapshot = try decoder.decode(BoardSnapshot.self, from: Data(legacy.utf8))
+        #expect(snapshot.format == nil)
+        let board = Board(snapshot: snapshot)
+        #expect(try board.object("obj_code").frame == Frame(x: 10, y: 20, w: 640, h: 266), "the same box on screen, now all of it")
+        #expect(try board.object("obj_note").frame.h == 266)
+        #expect(try board.object("obj_box").frame == Frame(x: 0, y: 400, w: 100, h: 50), "shapes were already their drawn box")
+        let lane = try board.object("obj_lane").frame
+        #expect(lane.maxY == 20 + 266 + 24, "groups wrap the migrated tile, bottom padding intact")
+
+        let saved = board.snapshot
+        #expect(saved.format == Board.format)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let reloaded = Board(snapshot: try decoder.decode(BoardSnapshot.self, from: try encoder.encode(saved)))
+        #expect(try reloaded.object("obj_code").frame.h == 266, "a format-2 board loads as saved")
     }
 }

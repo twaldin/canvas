@@ -29,15 +29,8 @@ public enum ObjectMeasure {
     public static func size(type: ObjectType, props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
         switch type {
         case .code:
-            guard let path = props["path"]?.string else { throw Failure.invalidParams("code props need a path") }
-            let range = try? props["range"]?.decode(LineRange.self)
-            let fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: props["symbol"]?.string)
-            let excerpt = await NoteSource.excerpt(for: fence, root: root, captured: nil)
-            guard excerpt.range != nil else {
-                if case .stale(let reason) = excerpt.status { throw Failure.unavailable(reason) }
-                throw Failure.unavailable("cannot resolve \(path)")
-            }
-            let caption = props["caption"]?.string.map { !$0.isEmpty } ?? false
+            let excerpt = try await codeExcerpt(props, root: root)
+            let caption = props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
             return code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil)
         case .note:
             let markdown = props["markdown"]?.string ?? ""
@@ -55,13 +48,43 @@ public enum ObjectMeasure {
         }
     }
 
-    /// A code tile showing exactly `lines` of a file with `fileLineCount` lines.
-    public static func code(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool) -> CGSize {
-        let longest = lines.map { CodeMetrics.columns($0) }.max() ?? 0
-        var size = CodeMetrics.size(lines: lines.count, longestLine: longest, caption: caption)
-        size.width += CodeMetrics.gutterWidth(lineCount: fileLineCount) - CodeMetrics.gutterWidth(lineCount: 1)
-        if follow { size.height += CodeMetrics.historyHeight }
+    /// The lines a code tile's `range` (or symbol, or whole file) resolves to, read from disk.
+    public static func codeExcerpt(_ props: JSONValue, root: URL) async throws -> NoteExcerpt {
+        guard let path = props["path"]?.string else { throw Failure.invalidParams("code props need a path") }
+        let range = try? props["range"]?.decode(LineRange.self)
+        let fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: props["symbol"]?.string)
+        let excerpt = await NoteSource.excerpt(for: fence, root: root, captured: nil)
+        guard excerpt.range != nil else {
+            if case .stale(let reason) = excerpt.status { throw Failure.unavailable(reason) }
+            throw Failure.unavailable("cannot resolve \(path)")
+        }
+        return excerpt
+    }
+
+    /// A code tile showing exactly `lines` of a file with `fileLineCount` lines, wide enough for
+    /// its whole `caption` too.
+    public static func code(lines: [String], fileLineCount: Int, caption: String?, follow: Bool) -> CGSize {
+        var size = codeRows(lines: lines, fileLineCount: fileLineCount, caption: caption != nil, follow: follow)
+        if let caption { size.width = max(size.width, captionWidth(caption)) }
         return size
+    }
+
+    /// `code` without the caption's width: the frame the rows themselves need.
+    public static func codeRows(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool) -> CGSize {
+        let longest = lines.map { CodeMetrics.columns($0) }.max() ?? 0
+        let header = CodeMetrics.chromeHeight(caption: caption, history: follow) - CodeMetrics.titleHeight
+        var size = CodeMetrics.content(rows: lines.count, longestLine: longest, gutterWidth: CodeMetrics.gutterWidth(lineCount: fileLineCount), headerHeight: header)
+        size.height += CodeMetrics.titleHeight
+        return size
+    }
+
+    /// Narrowest code tile frame whose caption strip shows `caption` untruncated: the header's
+    /// caption text (`CodeCaption.string`), `CodeMetrics.captionInset` on each side, and the
+    /// label cell's 2-point text padding on each side, plus a point of slack.
+    public static func captionWidth(_ caption: String) -> CGFloat {
+        let text = CodeCaption.string(caption)
+        let width = text.boundingRect(with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).width
+        return (ceil(width) + 2 * CodeMetrics.captionInset + 4 + 1).rounded(.up)
     }
 
     /// A note of `width` points whose rendered markdown fits without scrolling.
@@ -114,5 +137,26 @@ public enum ObjectMeasure {
     static func textBounds(_ text: NSAttributedString, width: CGFloat?) -> CGSize {
         let size = text.boundingRect(with: NSSize(width: width ?? .greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
         return CGSize(width: ceil(size.width) + 2, height: ceil(size.height) + 2)
+    }
+}
+
+/// The one-line caption strip of a code tile, as the header draws it (live and offscreen) and as
+/// `ObjectMeasure` sizes it.
+public enum CodeCaption {
+    /// Newlines become spaces: the strip is one line.
+    public static func text(_ caption: String) -> String {
+        caption.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// `inline code` in backticks is set in the code font.
+    public static func string(_ caption: String) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11.5), .foregroundColor: NSColor.labelColor]
+        let code: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.labelColor,
+                                                   .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.25)]
+        for (index, part) in text(caption).split(separator: "`", omittingEmptySubsequences: false).enumerated() {
+            out.append(NSAttributedString(string: String(part), attributes: index % 2 == 1 ? code : body))
+        }
+        return out
     }
 }

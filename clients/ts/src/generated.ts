@@ -57,7 +57,7 @@ export type CodeProps = {
   /** lines to scroll to and tint; the tile always shows the whole file */
   range?: LineRange;
   symbol?: string;
-  /** one-line subtitle under the tile's header (plain text, `inline code` allowed); truncated, never wraps */
+  /** one-line subtitle under the tile's header (plain text, `inline code` allowed); never wraps: object.measure and size "fit" widen the tile to show all of it, and layout.check reports a caption its frame cuts off (`truncated`) */
   caption?: string;
   /** gutter signs show changes against this: merge-base | head | <sha> */
   diffBase?: string;
@@ -101,6 +101,7 @@ export type ShapeProps = {
 
 export type Binding = {
   object: Id;
+  /** on a code tile, the end attaches to the tile's left or right edge at the row of `lines.start` as the tile shows it (scrolled to its range: up to 3 rows of context above it); a line scrolled out of view attaches at the top of the code or the bottom of the tile. Other tiles: the whole tile */
   lines?: LineRange;
   selector?: string;
 } | {
@@ -243,13 +244,13 @@ export type Viewport = {
 export type RenderedObject = {
   id: Id;
   type: ObjectType;
-  /** image pixels, top-left origin; a tile's rect includes its 26 pt title bar */
+  /** image pixels, top-left origin; a tile's rect is its frame (its 26 pt title bar is inside it) */
   pixelRect: Frame;
   /** placeholder: content not loaded in time or not renderable (a stand-in was drawn); failed: rendering errored */
   state: "rendered" | "placeholder" | "failed";
   /** why a tile is a placeholder or failed */
   reason?: string;
-  /** the content's own extent in points at the tile's width (tiles only) */
+  /** the content's own extent in points at the tile's width, below its title bar (tiles only); code: its range's rows and longest line under the header, the whole file without a range (what size "fit" shows) */
   contentSize?: {
     w?: number;
     h?: number;
@@ -505,10 +506,21 @@ export type LayoutCheckResult = {
     arrow: Id;
     crosses: Id[];
   }[];
+  labelOverlaps: {
+    arrow: Id;
+    /** objects under the label; an arrow id means that arrow's label */
+    overlaps: Id[];
+  }[];
   overflow: {
     id: Id;
     x: number;
     y: number;
+  }[];
+  truncated: {
+    id: Id;
+    what: "caption";
+    /** points of width missing to show all of it */
+    x: number;
   }[];
 };
 
@@ -741,7 +753,7 @@ export interface CanvasApi {
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
-    /** Intrinsic size: the whole frame (tile title bar included) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`. */
+    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set, and at least as wide as the whole caption; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;
@@ -755,7 +767,7 @@ export interface CanvasApi {
     translate(params: LayoutTranslateParams): Promise<LayoutTranslateResult>;
     /** Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups. */
     grid(params: LayoutGridParams): Promise<LayoutGridResult>;
-    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board: overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, and code/note/text whose content doesn't fit its frame (points missing in x and y). */
+    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text whose content doesn't fit its frame (points missing in x and y; code: its range's rows), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated. */
     check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
   tray: {
@@ -795,7 +807,7 @@ export interface CanvasApi {
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
     /** What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, and whether the window is visible on screen. */
     get(params?: ViewGetParams): Promise<ViewGetResult>;
-    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML/code scroll height, code line width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. */
+    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. */
     render(params: ViewRenderParams): Promise<ViewRenderResult>;
     /** The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render. */
     snapshot(params?: ViewSnapshotParams): Promise<ViewSnapshotResult>;

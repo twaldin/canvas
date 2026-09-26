@@ -58,19 +58,27 @@ extension DrawingGeometry {
     // MARK: Orthogonal
 
     /// Leaves the facing side, jogs once halfway, and enters the other's facing side; runs
-    /// straight when the sides line up.
+    /// straight when the sides line up. A row end (a bound line) always leaves sideways: when
+    /// the two overlap horizontally the route loops around their right edges.
     static func orthogonal(from: ArrowEnd, to: ArrowEnd, offset: CGFloat, gap: CGFloat) -> [CGPoint] {
-        let a = from.aim
-        let b = to.aim
+        let a = from.box ?? from.aim
+        let b = to.box ?? to.aim
         let gapX = max(b.minX - a.maxX, a.minX - b.maxX)
         let gapY = max(b.minY - a.maxY, a.minY - b.maxY)
         guard gapX > 0 || gapY > 0 else { return path(from: from, to: to, style: .straight, offset: offset, gap: gap) }
-        let horizontal = gapX >= gapY
+        let rows = from.isRow || to.isRow
+        if rows, gapX <= 0 {
+            let start = port(from, horizontal: true, toward: true, across: -offset, other: to.aim, gap: gap)
+            let end = port(to, horizontal: true, toward: true, across: -offset, other: from.aim, gap: gap)
+            let x = max(a.maxX, b.maxX) + gap + 24 + offset
+            return simplified([start, CGPoint(x: x, y: start.y), CGPoint(x: x, y: end.y), end])
+        }
+        let horizontal = rows || gapX >= gapY
         // Offsets are perpendicular to travel; along a horizontal run that is -y when heading right.
         let forward = horizontal ? b.midX >= a.midX : b.midY >= a.midY
         let across = horizontal ? (forward ? -offset : offset) : (forward ? offset : -offset)
-        let start = port(from, horizontal: horizontal, toward: forward, across: across, other: b, gap: gap)
-        let end = port(to, horizontal: horizontal, toward: !forward, across: across, other: a, gap: gap)
+        let start = port(from, horizontal: horizontal, toward: forward, across: across, other: to.aim, gap: gap)
+        let end = port(to, horizontal: horizontal, toward: !forward, across: across, other: from.aim, gap: gap)
         if horizontal {
             let jog = (start.x + end.x) / 2 + (forward ? offset : -offset)
             return simplified([start, CGPoint(x: jog, y: start.y), CGPoint(x: jog, y: end.y), end])
@@ -80,9 +88,15 @@ extension DrawingGeometry {
     }
 
     /// Where a route leaves `end` along an axis: the middle of its side (moved `across` along the
-    /// side, and lined up with `other` when their extents overlap), `gap` off the outline.
+    /// side, and lined up with `other` when their extents overlap), `gap` off the outline. A row
+    /// end leaves its left or right edge at its row.
     static func port(_ end: ArrowEnd, horizontal: Bool, toward positive: Bool, across: CGFloat, other: CGRect, gap: CGFloat) -> CGPoint {
-        guard case .bound(let outline) = end else { return end.aim.origin }
+        let outline: Outline
+        switch end {
+        case .point(let point): return point
+        case .row(let rect, let y): return CGPoint(x: positive ? rect.maxX + gap : rect.minX - gap, y: y)
+        case .bound(let bound): outline = bound
+        }
         let rect = outline.bounds
         if horizontal {
             let shared = overlap(rect.minY, rect.maxY, other.minY, other.maxY)
@@ -129,7 +143,7 @@ extension DrawingGeometry {
         var blocks = obstacles
             .filter { rect in rect.intersects(local) && !ends.contains { rect.contains(CGPoint(x: $0.midX, y: $0.midY)) } }
             .map { $0.insetBy(dx: -margin, dy: -margin) }
-        for case .bound(let outline) in [from, to] { blocks.append(outline.bounds.insetBy(dx: -margin, dy: -margin)) }
+        for box in [from.box, to.box].compactMap({ $0 }) { blocks.append(box.insetBy(dx: -margin, dy: -margin)) }
 
         let starts = ports(from, offset: offset, gap: gap, margin: margin)
         let goals = ports(to, offset: offset, gap: gap, margin: margin)
@@ -242,11 +256,18 @@ extension DrawingGeometry {
     }
 
     /// The four side middles of a bound end, moved `offset` along each side so parallel arrows
-    /// leave from distinct points; a free point is its own port, left in any direction.
+    /// leave from distinct points; a row end's left and right edges at its row; a free point is
+    /// its own port, left in any direction.
     static func ports(_ end: ArrowEnd, offset: CGFloat, gap: CGFloat, margin: CGFloat) -> [Port] {
-        guard case .bound(let outline) = end else {
-            let point = end.aim.origin
+        let outline: Outline
+        switch end {
+        case .point(let point):
             return (0..<4).map { Port(point: point, stub: point, heading: $0) }
+        case .row(let rect, let y):
+            let out = margin + 1
+            return [Port(point: CGPoint(x: rect.maxX + gap, y: y), stub: CGPoint(x: rect.maxX + out, y: y), heading: 0),
+                    Port(point: CGPoint(x: rect.minX - gap, y: y), stub: CGPoint(x: rect.minX - out, y: y), heading: 2)]
+        case .bound(let bound): outline = bound
         }
         let rect = outline.bounds
         return (0..<4).map { heading in

@@ -260,6 +260,24 @@ public struct CodeDocument: Sendable {
         return start...min(max(start, range.end), text.lineCount)
     }
 
+    /// Width of everything left of the text, for this file and its base.
+    public var gutterWidth: CGFloat {
+        CodeMetrics.gutterWidth(lineCount: max(text.lineCount, diff.old.lineCount))
+    }
+
+    /// A code tile's content (body coordinates) showing this document at `range`: the header
+    /// strips (`headerHeight`) over the range's `rows` and its longest line, or every row and
+    /// the file's longest line without a range. What `size: "fit"` makes the body show, and
+    /// what `view.render` reports as the tile's `contentSize`.
+    public func content(range: LineRange?, rows: CodeRows, headerHeight: CGFloat) -> CGSize {
+        guard let range, let lines = lines(for: range) else {
+            return CodeMetrics.content(rows: rows.count, longestLine: longestLine, gutterWidth: gutterWidth, headerHeight: headerHeight)
+        }
+        let first = rows.index(ofLine: lines.lowerBound)
+        let longest = lines.map { CodeMetrics.columns(text.line($0)) }.max() ?? 0
+        return CodeMetrics.content(rows: rows.index(ofLine: lines.upperBound) - first + 1, longestLine: longest, gutterWidth: gutterWidth, headerHeight: headerHeight)
+    }
+
     /// The commit mentions of this tile's lines name: the diff base while the tile shows changes
     /// against it, or the base a deleted file's rows come from.
     public var mentionCommit: String? {

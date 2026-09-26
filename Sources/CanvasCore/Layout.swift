@@ -243,6 +243,9 @@ extension Board {
         public var overlaps: [[ObjectID]]
         /// Arrows whose route runs through objects other than their own ends.
         public var crossings: [Crossing]
+        /// Arrows whose label lies on a tile, text, or filled shape (their own ends included), or
+        /// on another arrow's label.
+        public var labelOverlaps: [LabelOverlap]
     }
 
     public struct Crossing: Equatable, Sendable {
@@ -250,11 +253,18 @@ extension Board {
         public var crosses: [ObjectID]
     }
 
-    /// Overlaps and arrow crossings involving `scope` (every object when nil). Not overlaps: a
-    /// group and its (nested) members, and an unfilled rect/ellipse around what it contains
-    /// (a drawn region). Arrow routes are computed as drawn (parallel offsets, `avoid`); an arrow
+    public struct LabelOverlap: Equatable, Sendable {
+        public var arrow: ObjectID
+        /// Objects under the label; an arrow id means that arrow's label.
+        public var overlaps: [ObjectID]
+    }
+
+    /// Overlaps, arrow crossings, and label overlaps involving `scope` (every object when nil).
+    /// Not overlaps: a group and its (nested) members, and an unfilled rect/ellipse around what
+    /// it contains (a drawn region). Arrow routes and labels are computed as drawn (parallel
+    /// offsets, `avoid`, line-bound ends with `rows`, labels placed by `labelRect`); an arrow
     /// never crosses its own ends or what contains them.
-    public func layoutCheck(scope: Set<ObjectID>? = nil) -> LayoutReport {
+    public func layoutCheck(scope: Set<ObjectID>? = nil, rows: [ObjectID: CodeRows] = [:]) -> LayoutReport {
         let solid = objects.values.filter { object in
             switch object.type {
             case .arrow: return false
@@ -290,7 +300,7 @@ extension Board {
                 overlaps.append([a.id, b.id])
             }
         }
-        let routes = routes()
+        let routes = routes(rows: rows)
         let blockers = objects.values.filter(Self.blocksRoutes).sorted { $0.id < $1.id }
         var crossings: [Crossing] = []
         for (arrowID, path) in routes.sorted(by: { $0.key < $1.key }) where scope == nil || scope!.contains(arrowID) {
@@ -313,6 +323,14 @@ extension Board {
             }.map(\.id)
             if !crossed.isEmpty { crossings.append(Crossing(arrow: arrowID, crosses: crossed)) }
         }
-        return LayoutReport(overlaps: overlaps, crossings: crossings)
+        let labels = labelRects(routes: routes)
+        var labelOverlaps: [LabelOverlap] = []
+        for (arrowID, label) in labels.sorted(by: { $0.key < $1.key }) where scope == nil || scope!.contains(arrowID) {
+            let inner = label.insetBy(dx: 0.5, dy: 0.5)
+            let under = blockers.filter { $0.frame.rect.intersects(inner) }.map(\.id)
+                + labels.filter { $0.key != arrowID && $0.value.intersects(inner) }.map(\.key).sorted()
+            if !under.isEmpty { labelOverlaps.append(LabelOverlap(arrow: arrowID, overlaps: under)) }
+        }
+        return LayoutReport(overlaps: overlaps, crossings: crossings, labelOverlaps: labelOverlaps)
     }
 }

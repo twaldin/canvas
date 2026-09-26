@@ -118,29 +118,29 @@ public struct ViewState: Sendable {
 }
 
 public enum RenderMath {
-    /// Title bar above every tile's body (the tile's frame is the body; its outline includes this).
+    /// Title bar at the top of every tile, inside its frame: a tile's `frame` is its whole drawn
+    /// box, and its content (the body) is the frame below this.
     public static let tileTitleHeight: Double = 26
     /// Largest image `view.render` produces; bigger requests render at a lower scale.
     public static let pixelBudget: Double = 32_000_000
     /// Tallest a tile's full content is drawn, in points (a runaway page can't allocate gigabytes).
     public static let maxContentExtent: Double = 20_000
 
-    /// What an object covers on the canvas. A tile's `frame.h` is its body; the tile also draws a
-    /// 26-point title bar, so its outline is `h + 26` tall from `frame.y`.
-    public static func outline(_ object: CanvasObject) -> Frame {
-        guard isTile(object.type) else { return object.frame }
-        return Frame(x: object.frame.x, y: object.frame.y, w: object.frame.w, h: object.frame.h + tileTitleHeight)
+    /// A tile's content area: its frame below the title bar.
+    public static func body(_ frame: Frame) -> CGSize {
+        CGSize(width: frame.w, height: max(0, frame.h - tileTitleHeight))
     }
 
     public static func isTile(_ type: ObjectType) -> Bool {
         ![.shape, .arrow, .group].contains(type)
     }
 
-    /// The tile's outline grown to show `content` when drawing full content (never shrunk).
-    public static func extended(_ outline: Frame, body: CGSize, content: CGSize) -> Frame {
+    /// A tile's frame grown to show `content` (body coordinates) when drawing full content
+    /// (never shrunk).
+    public static func extended(_ frame: Frame, body: CGSize, content: CGSize) -> Frame {
         let w = min(max(Double(body.width), Double(content.width)), maxContentExtent)
         let h = min(max(Double(body.height), Double(content.height)), maxContentExtent)
-        return Frame(x: outline.x, y: outline.y, w: w, h: outline.h - Double(body.height) + h)
+        return Frame(x: frame.x, y: frame.y, w: w, h: frame.h - Double(body.height) + h)
     }
 
     /// Content beyond the frame, in points; nil when it fits (sub-point differences are layout noise).

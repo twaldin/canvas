@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.resume()
         terminationSignal = termination
         DevInput.install()
+        DrawingStyle.registerFonts()
         registry.onEvent = { [weak self] board, event in
             self?.controllers[board.id]?.apply(event)
         }
@@ -30,8 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         router.snapshotBoard = { [weak self] board in self?.controllers[board.id]?.snapshotPNG() }
         router.objectImage = { [weak self] board, id in
-            guard let image = self?.controllers[board.id]?.canvas.tiles[id]?.content.snapshot(),
-                  let tiff = image.tiffRepresentation else { return nil }
+            guard let canvas = self?.controllers[board.id]?.canvas else { return nil }
+            guard let tile = canvas.tiles[id] else { return canvas.drawnObjectPNG(id) }
+            guard let image = tile.content.snapshot(), let tiff = image.tiffRepresentation else { return nil }
             return NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
         }
         let router = router

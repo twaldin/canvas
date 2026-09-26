@@ -137,7 +137,7 @@ final class CanvasView: NSScrollView {
         }
         tile.onClose = { [weak self] in self?.close(object.id) }
         tile.onSelect = { [weak self] extend in self?.select(object.id, extend: extend) }
-        document.addSubview(tile, positioned: .below, relativeTo: overlay)
+        document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
         tiles[object.id] = tile
         scheduleLiveness()
     }
@@ -166,6 +166,7 @@ final class CanvasView: NSScrollView {
             selection.insert(id)
         }
         tiles[id]?.isSelected = selection.contains(id)
+        onSelectionChange?()
         if let tile = tiles[id], let terminal = tile.content as? TerminalTile {
             terminal.focus()
         }
@@ -234,6 +235,22 @@ final class CanvasView: NSScrollView {
     var shapeHitTest: ((NSPoint) -> ObjectID?)?
     /// Document-space outline of a drawn object, for hover highlights.
     var shapeOutline: ((ObjectID) -> NSRect?)?
+
+    /// The drawing layer: above every tile, below the Hyper outline.
+    private(set) var shapeLayer: NSView?
+    /// While true for a document point, the drawing layer owns the pointer there (a drawing tool
+    /// is active, or the point is on a resize handle), so scene click/marquee handling stands down.
+    var drawingOwnsPoint: (NSPoint) -> Bool = { _ in false }
+    var onSelectionChange: (() -> Void)?
+    /// Props patch merged into a drawn object's move (e.g. an arrow's free `point` ends).
+    var moveProps: ((CanvasObject, _ dx: Double, _ dy: Double) -> JSONValue?)?
+    /// Live selection-drag offset in document points; `.zero` just before the move commits.
+    var onSelectionDrag: ((Set<ObjectID>, NSSize) -> Void)?
+
+    func installShapeLayer(_ view: NSView) {
+        shapeLayer = view
+        document.addSubview(view, positioned: .below, relativeTo: overlay)
+    }
 
     func shape(atWindowPoint point: NSPoint) -> ObjectID? {
         shapeHitTest?(document.convert(point, from: nil))

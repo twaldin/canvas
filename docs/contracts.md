@@ -59,6 +59,16 @@ Arrows, shapes, and groups have no tile; the canvas draws them.
 
 Tiles never read or write the board store directly; they go through the board model on the main actor, which persists and broadcasts events.
 
+## Drawing layer
+
+`.shape` and `.arrow` objects are drawn by `ShapeLayer` (`Sources/CanvasApp/Drawing/`), one view in document coordinates above every tile and below the Hyper outline. Geometry lives in `Sources/CanvasCore/Drawing*.swift`.
+
+- A shape's `frame` is exactly its drawn box (no title bar). Ink `points` are relative to the frame origin; the frame is the painted stroke bounds.
+- An arrow's route is derived, never stored: bound ends attach to the facing edge of the bound object's current outline (the tile including its title bar, a shape's frame, the curve of an ellipse), so arrows follow moves and resizes without writes. An arrow's `frame` records its route bounds when it was drawn. Free ends (`{"point": [x, y]}`) are canvas coordinates.
+- Only strokes, text, labels, and fills (`fill: semi|solid`) take the mouse; an unfilled shape's interior passes clicks to the tiles beneath.
+- `CanvasView` seams the layer sets: `shapeHitTest`, `shapeOutline`, `drawingOwnsPoint` (a drawing tool is active or the point is a resize handle), `moveProps` (an arrow's free ends move with it), `onSelectionDrag` (live move preview), `onSelectionChange`, and `installShapeLayer`.
+- `object.get --as image` on a drawn object renders the canvas region under it (tiles, terminals, and ink included).
+
 ## Mention context format
 
 `tray.drain` returns a `context` string that the omp extension injects as hidden context with the submitted prompt. Shape:

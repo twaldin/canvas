@@ -151,8 +151,30 @@ final class TerminalTile: NSView, TileContent {
 
     // MARK: TileContent
 
+    private var isLive = true
+    private var occlusionObserver: NSObjectProtocol?
+
     func setLive(_ live: Bool) {
-        terminal.setSurfaceVisible(live)
+        isLive = live
+        updateSurfaceVisibility()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        occlusionObserver.map(NotificationCenter.default.removeObserver)
+        occlusionObserver = window.map { window in
+            NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateSurfaceVisibility() }
+            }
+        }
+        updateSurfaceVisibility()
+    }
+
+    /// Ghostty renders every display-link tick while output streams, even into a window nobody
+    /// sees (another Space, covered, minimized): ~18% CPU for one busy terminal. Draw only while
+    /// the tile is live and its window visible; the session keeps running either way.
+    private func updateSurfaceVisibility() {
+        terminal.setSurfaceVisible(isLive && window?.occlusionState.contains(.visible) == true)
     }
 
     /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so snapshots (LOD cards,

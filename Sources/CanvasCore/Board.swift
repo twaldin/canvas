@@ -70,6 +70,8 @@ public final class Board {
     /// Highest `rev` ever issued per object, kept across deletes so an object brought back by
     /// undo/redo never reuses a revision a stale writer might still hold.
     private var revHighWater: [ObjectID: Int] = [:]
+    /// While an atomic step runs, every change shares this one board revision.
+    private var pinnedRevision: Int?
 
     public var onEvent: ((BoardEvent) -> Void)?
     /// Content changes by anyone, for ⌘Z; see UndoHistory.
@@ -78,8 +80,9 @@ public final class Board {
     public let activity = ActivityLog()
     /// Set while a change's own entry is written by its caller (follow re-aims).
     private var activityMuted = false
-    /// "undo"/"redo" while one replays, so its changes are logged as such.
+    /// "undo"/"redo" while one replays, so its changes are logged as such, credited to `replayActor`.
     var replayVerb: String?
+    var replayActor: ActivityActor = .user
     /// Called after any persisted change; BoardStore debounces saves.
     public var onChange: (() -> Void)?
     /// Viewport center in canvas coordinates, for user-created objects without a frame.
@@ -97,9 +100,25 @@ public final class Board {
         id = snapshot.id
         root = URL(fileURLWithPath: snapshot.root)
         revision = snapshot.revision
-        for object in snapshot.objects {
+        for var object in snapshot.objects {
+            // Groups were labelled by `name` before they became titled regions.
+            if object.type == .group, var props = object.props.object, let name = props.removeValue(forKey: "name") {
+                if props["title"] == nil { props["title"] = name }
+                object.props = .object(props)
+            }
             objects[object.id] = object
             changedAt[object.id] = snapshot.revision
+        }
+        // Group frames follow their members (older boards stored placeholders); nested groups
+        // settle within a few passes.
+        for _ in 0..<8 {
+            var changed = false
+            for group in objects.values where group.type == .group {
+                guard let frame = fittedFrame(ofGroup: group), frame != group.frame else { continue }
+                objects[group.id]?.frame = frame
+                changed = true
+            }
+            if !changed { break }
         }
         tray = (snapshot.tray ?? []).filter { $0.target.objectIDs.allSatisfy { objects[$0] != nil } }
     }
@@ -122,9 +141,13 @@ public final class Board {
     @discardableResult
     public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil) -> CanvasObject {
         let size = Self.defaultSize(type)
-        let placed = frame ?? place(width: size.w, height: size.h, near: caller)
         let z = (objects.values.map(\.z).max() ?? 0) + 1
-        let object = CanvasObject(id: IDs.make("obj"), type: type, frame: placed, z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(), props: props)
+        var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(), props: props)
+        if let fitted = fittedFrame(ofGroup: object) {
+            object.frame = fitted
+        } else if frame == nil {
+            object.frame = place(width: size.w, height: size.h, near: caller)
+        }
         commit(object)
         history.record(.created(object))
         log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(object.frame))")
@@ -132,19 +155,29 @@ public final class Board {
         return object
     }
 
+    /// Patches an object. A group's frame is never taken from `frame`: it follows its members.
     /// `actor` names who the activity log credits when it isn't the caller (the app's own
     /// write-backs are `.system`).
     @discardableResult
     public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws -> CanvasObject {
+        try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: [])
+    }
+
+    /// `update`, re-bounding the groups that contain the object in the same undo step.
+    /// `refitting` holds the groups already being re-bounded (nested groups, cycles).
+    func write(_ id: ObjectID, rev: Int?, frame: Frame?, z: Double?, props: JSONValue?, caller: ObjectID?, actor: ActivityActor? = nil, refitting: Set<ObjectID>) throws -> CanvasObject {
         let before = try object(id)
         if let rev, rev != before.rev { throw BoardError.conflict("object \(id) is at rev \(before.rev), not \(rev)") }
         var object = before
         if let frame { object.frame = frame }
         if let z { object.z = z }
         if let props { object.props = object.props.merging(props) }
+        if let fitted = fittedFrame(ofGroup: object) { object.frame = fitted }
         object.rev += 1
         object.updatedAt = Date()
         object.updatedBy = Actor(caller: caller)
+        history.begin()
+        defer { history.end() }
         commit(object)
         history.record(.updated(before: before, after: object))
         if let changes = ActivityLog.changes(from: before, to: object) {
@@ -152,6 +185,7 @@ public final class Board {
         }
         markMentionsEdited(for: id)
         onEvent?(.objectUpdated(object))
+        if before.frame != object.frame { refitGroups(containing: id, visited: refitting) }
         return object
     }
 
@@ -163,7 +197,7 @@ public final class Board {
         detachArrows(from: id)
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
-        revision += 1
+        bumpRevision()
         history.record(.deleted(removed))
         log(.deleted, removed, actor: ActivityActor(caller: caller), "deleted \(ActivityLog.describe(removed))")
         let before = tray.count
@@ -171,12 +205,13 @@ public final class Board {
         onChange?()
         onEvent?(.objectDeleted(id))
         if tray.count != before { trayChanged() }
+        refitGroups(containing: id)
     }
 
     private func log(_ kind: ActivityEntry.Kind, _ object: CanvasObject, actor: ActivityActor, _ summary: String) {
         guard !activityMuted else { return }
         let text = replayVerb.map { "\($0): \(summary)" } ?? summary
-        activity.record(kind, actor: replayVerb == nil ? actor : .user, rev: revision, id: object.id, type: object.type, summary: text)
+        activity.record(kind, actor: replayVerb == nil ? actor : replayActor, rev: revision, id: object.id, type: object.type, summary: text)
     }
 
     /// Undo/redo: puts an object state back verbatim (same id and z), announced as a normal change.
@@ -188,22 +223,51 @@ public final class Board {
         commit(object)
         if let previous {
             if let changes = ActivityLog.changes(from: previous, to: object) {
-                log(.updated, object, actor: .user, "\(ActivityLog.describe(object)): \(changes)")
+                log(.updated, object, actor: replayActor, "\(ActivityLog.describe(object)): \(changes)")
             }
             markMentionsEdited(for: object.id)
             onEvent?(.objectUpdated(object))
         } else {
-            log(.created, object, actor: .user, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(object.frame))")
+            log(.created, object, actor: replayActor, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(object.frame))")
             onEvent?(.objectCreated(object))
         }
     }
 
     private func commit(_ object: CanvasObject) {
-        revision += 1
+        bumpRevision()
         objects[object.id] = object
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
         onChange?()
+    }
+
+    private func bumpRevision() {
+        revision = pinnedRevision ?? revision + 1
+    }
+
+    /// Runs `body` as one undo step and one board revision; when it throws, every change it
+    /// made is reverted (announced as normal changes) and the error rethrown.
+    public func atomically<T>(_ body: () throws -> T) throws -> T {
+        let outermost = pinnedRevision == nil
+        if outermost { pinnedRevision = revision + 1 }
+        history.begin()
+        let mark = history.openCount
+        defer {
+            history.end()
+            if outermost { pinnedRevision = nil }
+        }
+        do {
+            return try body()
+        } catch {
+            replayVerb = "reverted (batch failed)"
+            replayActor = .system
+            defer {
+                replayVerb = nil
+                replayActor = .user
+            }
+            revert(history.discard(from: mark))
+            throw error
+        }
     }
 
     public static func defaultSize(_ type: ObjectType) -> (w: Double, h: Double) {

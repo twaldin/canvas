@@ -68,6 +68,8 @@ final class ShapeLayer: NSView {
     private var paintOrderStale = true
     /// Arrows bound to each object, so a move re-routes only those.
     private var arrowsBound: [ObjectID: Set<ObjectID>] = [:]
+    /// Arrows routed around tiles: any tile move may change their way.
+    private var avoiding: Set<ObjectID> = []
     /// Selection-drag preview from the scene: these drawn objects are painted offset.
     private var dragPreview: (ids: Set<ObjectID>, offset: NSSize) = ([], .zero)
 
@@ -122,6 +124,7 @@ final class ShapeLayer: NSView {
     @objc private func viewFrameChanged(_ note: Notification) {
         guard let tile = note.object as? TileFrameView, tile.superview === canvas.document else { return }
         reroute(boundTo: tile.objectID)
+        rerouteAvoiding()
     }
 
     override var isFlipped: Bool { true }
@@ -157,12 +160,18 @@ final class ShapeLayer: NSView {
         case .objectCreated(let object), .objectUpdated(let object):
             refresh(object)
             reroute(boundTo: object.id)
+            if object.type != .arrow, object.type != .group { rerouteAvoiding() }
         case .objectDeleted(let id):
             if let item = items.removeValue(forKey: id) {
                 invalidate(item)
                 paintOrderStale = true
-                if let spec = item.arrow?.spec { unbind(arrow: id, spec) }
+                avoiding.remove(id)
+                if let spec = item.arrow?.spec {
+                    unbind(arrow: id, spec)
+                    rerouteParallels(of: spec)
+                }
             }
+            rerouteAvoiding()
             // Arrows bound to a deleted object keep their last route; undo re-binds them.
         default:
             break
@@ -180,7 +189,11 @@ final class ShapeLayer: NSView {
             guard let spec = ArrowSpec(object.props) else { return }
             if let oldSpec = old?.arrow?.spec { unbind(arrow: object.id, oldSpec) }
             for id in [spec.from.objectID, spec.to.objectID].compactMap({ $0 }) { arrowsBound[id, default: []].insert(object.id) }
+            if spec.route == .avoid { avoiding.insert(object.id) } else { avoiding.remove(object.id) }
             items[object.id] = routed(object, spec, previous: old)
+            // Siblings between the same two objects shift to make room (or close up).
+            if let oldSpec = old?.arrow?.spec, oldSpec.from != spec.from || oldSpec.to != spec.to { rerouteParallels(of: oldSpec, except: object.id) }
+            rerouteParallels(of: spec, except: object.id)
         default:
             return
         }
@@ -198,14 +211,52 @@ final class ShapeLayer: NSView {
 
     func reroute(boundTo id: ObjectID) {
         guard let arrows = arrowsBound[id] else { return }
-        for arrowID in arrows {
-            guard let old = items[arrowID], let spec = old.arrow?.spec else { continue }
-            let item = routed(old.object, spec, previous: old)
-            guard item.arrow?.start != old.arrow?.start || item.arrow?.end != old.arrow?.end else { continue }
-            invalidate(old)
-            items[arrowID] = item
-            invalidate(item)
+        for arrowID in arrows { reroute(arrow: arrowID) }
+    }
+
+    private func reroute(arrow id: ObjectID) {
+        guard let old = items[id], let spec = old.arrow?.spec else { return }
+        let item = routed(old.object, spec, previous: old)
+        guard item.arrow?.path != old.arrow?.path || item.labelRect != old.labelRect else { return }
+        invalidate(old)
+        items[id] = item
+        invalidate(item)
+    }
+
+    private func rerouteAvoiding() {
+        for id in avoiding { reroute(arrow: id) }
+    }
+
+    /// Arrows bound to both of `spec`'s objects, in either direction.
+    private func parallels(of spec: ArrowSpec) -> Set<ObjectID> {
+        guard let a = spec.from.objectID, let b = spec.to.objectID, a != b else { return [] }
+        return (arrowsBound[a] ?? []).intersection(arrowsBound[b] ?? [])
+    }
+
+    private func rerouteParallels(of spec: ArrowSpec, except id: ObjectID? = nil) {
+        for sibling in parallels(of: spec) where sibling != id { reroute(arrow: sibling) }
+    }
+
+    /// This arrow's sideways offset among the arrows between the same two objects.
+    private func parallelOffset(_ id: ObjectID, _ spec: ArrowSpec) -> CGFloat {
+        let siblings = parallels(of: spec).union([id])
+        guard siblings.count > 1 else { return 0 }
+        let entries = siblings.compactMap { sibling -> (id: ObjectID, from: ObjectID?, to: ObjectID?)? in
+            let siblingSpec = sibling == id ? spec : items[sibling]?.arrow?.spec ?? board.objects[sibling].flatMap { ArrowSpec($0.props) }
+            return siblingSpec.map { (sibling, $0.from.objectID, $0.to.objectID) }
         }
+        return DrawingGeometry.parallelOffsets(entries)[id] ?? 0
+    }
+
+    /// What arrows route and set their labels around, in document coordinates: tiles as shown
+    /// (mid-drag included) and blocking shapes, minus `excluded`.
+    private func obstacles(near area: NSRect, excluding excluded: Set<ObjectID>) -> [CGRect] {
+        var rects = canvas.tiles.compactMap { id, tile in excluded.contains(id) || !tile.frame.intersects(area) ? nil : tile.frame }
+        for (id, item) in items where !excluded.contains(id) && item.frame.intersects(area) {
+            guard let object = board.objects[id], Board.blocksRoutes(object) else { continue }
+            rects.append(item.frame)
+        }
+        return rects
     }
 
     private func routed(_ object: CanvasObject, _ spec: ArrowSpec, previous: DrawnItem?) -> DrawnItem {
@@ -219,17 +270,23 @@ final class ShapeLayer: NSView {
                 return outline(of: id).map { .bound($0) }
             }
         }
+        let ends = Set([spec.from.objectID, spec.to.objectID].compactMap { $0 })
         if let from = end(spec.from), let to = end(spec.to) {
-            let route = DrawingGeometry.route(from: from, to: to)
-            return DrawnItem.arrow(object, spec, start: route.start, end: route.end)
+            let offset = parallelOffset(object.id, spec)
+            let reach = from.aim.union(to.aim).insetBy(dx: -600, dy: -600)
+            let blockers = spec.route == .avoid ? obstacles(near: reach, excluding: ends.union([object.id])) : []
+            let path = DrawingGeometry.path(from: from, to: to, style: spec.route, offset: offset, obstacles: blockers)
+            let xs = path.map { $0.x }, ys = path.map { $0.y }
+            let span = NSRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!).insetBy(dx: -300, dy: -300)
+            return DrawnItem.arrow(object, spec, path: path, labelSide: offset, obstacles: obstacles(near: span, excluding: [object.id]))
         }
         // A bound object is gone (deleted, possibly about to be restored by undo): keep the last
         // route, or fall back to the arrow's recorded frame.
         if let previous = previous?.arrow {
-            return DrawnItem.arrow(object, spec, start: previous.start, end: previous.end)
+            return DrawnItem.arrow(object, spec, path: previous.path)
         }
         let rect = Self.docRect(object.frame)
-        return DrawnItem.arrow(object, spec, start: NSPoint(x: rect.minX, y: rect.minY), end: NSPoint(x: rect.maxX, y: rect.maxY))
+        return DrawnItem.arrow(object, spec, path: [NSPoint(x: rect.minX, y: rect.minY), NSPoint(x: rect.maxX, y: rect.maxY)])
     }
 
     /// Where an arrow bound to `id` attaches, as currently shown (tiles mid-drag included).
@@ -430,13 +487,7 @@ final class ShapeLayer: NSView {
 
     /// A moved arrow carries its free ends along; bound ends follow their objects.
     static func moveProps(_ object: CanvasObject, dx: Double, dy: Double) -> JSONValue? {
-        guard object.type == .arrow, var spec = ArrowSpec(object.props) else { return nil }
-        func moved(_ binding: ArrowBinding) -> ArrowBinding {
-            guard case .point(let point) = binding else { return binding }
-            return .point(CGPoint(x: point.x + dx, y: point.y + dy))
-        }
-        spec.from = moved(spec.from)
-        spec.to = moved(spec.to)
+        guard object.type == .arrow, let spec = ArrowSpec(object.props)?.translated(dx: dx, dy: dy) else { return nil }
         return .object(["from": spec.from.json, "to": spec.to.json])
     }
 }

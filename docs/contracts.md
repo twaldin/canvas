@@ -57,6 +57,16 @@ Integrations report only when `CANVAS_ENV=1` and the variables they need are pre
 
 zmx session names: `canvas-<tileId>`, labelled `canvas.board=<boardId> canvas.tile=<tileId>`. Names stay short because zmx sockets live under `$TMPDIR/zmx-<uid>` (a long `/var/folders/…` path for GUI apps) and a socket path is capped at 104 bytes. Tiles inherit the app's `TMPDIR`, so `zmx list` inside a tile shows canvas sessions.
 
+## Client connection
+
+The Python SDK, TS client, and CLI find the socket in this order: an explicit value (`connect(socket=…)`, `new CanvasClient({ socketPath })`), then `CANVAS_SOCKET`, then `~/Library/Application Support/Canvas/canvas.sock` only if that file exists; otherwise they fail with `unavailable`, naming `CANVAS_SOCKET`, the path checked, and the explicit-connect fix. `caller` and `board` come from the client's own tile/board (explicit, else `CANVAS_TILE_ID`/`CANVAS_BOARD_ID` at construction). omp's `eval` Python kernel runs with an allowlisted environment that drops `CANVAS_*`, so the omp extension prints the explicit `connect(...)` line in the system prompt.
+
+Connection failures are always `unavailable`; clients never surface raw socket errors. A request that never left (connect failed, write failed, or its newline was unflushed when the connection closed) is sent once more on a fresh connection after waiting up to 15 s for the socket (an app restart). A request that left and lost its reply is not resent: `unavailable: … it may or may not have applied — re-read before retrying`. Image methods (`view.render`, `view.snapshot`) take `out` as an absolute path the app writes (format by extension, png or jpg); clients resolve a relative `out` against their cwd.
+
+## Activity log
+
+`board.history` reads `Board.activity` (`Sources/CanvasCore/ActivityLog.swift`): in memory, the newest 2000 entries per board, restarted with a `restart` entry when the app opens the board. Board mutations log themselves with their actor (`caller` → `agent:<tile>`, none → `user`, the app's own write-backs and group re-fits → `system`; undo/redo → `user`, prefixed `undo:`/`redo:`). Terminal bookkeeping (lifecycle, session, title) is never logged. Follow re-aims log one `follow` entry, not the create/update beneath. The canvas reports viewport and selection changes continuously; the log records them once they have been still for 0.8 s and differ from the last logged state.
+
 ## On-disk locations
 
 | Path | Holds | Owner |
@@ -79,6 +89,11 @@ A composition is a module in a compositions directory. Functions whose first par
 - `createdBy`/`updatedBy` record the actor. An agent is identified by its terminal tile.
 - Deleting an object removes every staged mention that targets it.
 - A board belongs to one root directory; code paths are stored relative to it.
+- A group's `frame` is derived: its members' bounds (arrows excluded) plus `padding` and a `GroupSpec.titleHeight` title band, recomputed by `Board` in the same undo step as any change to a member's frame (nested groups outward), and on load. Frames written to a group are ignored. Stored groups labelled by the old `name` prop load with it as `title`.
+
+## Layout
+
+`object.measure`, `size: "fit"`, `layout.place`/`layout.stack`, `object.batch`, and `layout.check` live in CanvasCore (`ObjectMeasure`, `Layout`, `Board.atomically`). Measured sizes are whole object frames, tile title bar included: code follows `CodeMetrics` (`ObjectMeasure.code`), notes lay out `NoteRenderer` output with TextKit 2 at the note tile's own insets (`ObjectMeasure.note`, `noteInset`; `NoteRenderer`, `NoteLayout`, and `DrawingStyle` are in CanvasCore for this), text shapes use `DrawingStyle`'s font. Measuring reads files, so `object.measure`, a `size: "fit"` create/update, `object.batch`, and `layout.check` are resolved asynchronously; a batch measures every op first, then applies all of them synchronously inside `Board.atomically`, so no other request interleaves with its writes. `Board.atomically { }` is one undo step and one board revision; when its body throws, the changes it made are reverted (announced as normal changes, not recorded) and the error is rethrown.
 
 ## Swift tile protocol
 
@@ -87,14 +102,18 @@ Every tile's content view conforms to `TileContent` (`Sources/CanvasApp/TileCont
 ```swift
 @MainActor
 protocol TileContent: NSView {
-    func setLive(_ live: Bool)                                  // false: detach heavy resources, show snapshot()
-    func snapshot() -> NSImage?                                  // cheap image for zoomed-out cards; nil draws a title card
+    func setLive(_ live: Bool)                                  // false: detach heavy resources, show the card
+    func render(_ request: TileRenderRequest) async -> TileRender   // offscreen image for view.render
+    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void)  // default: render at card scale
+    func showSnapshot(_ show: Bool)                              // view.snapshot: cover Metal/WebKit content
     func mentionTarget(at point: NSPoint) -> MentionTarget?      // what a Hyper-click here mentions (element level)
     func outline(for target: MentionTarget) -> NSRect?           // hover highlight, in this view's coordinates
     var takesKeyboardFocus: Bool { get }                         // terminal, browser: true; code, note, HTML: false
     func update(_ object: CanvasObject)                          // a new revision of the backing object
 }
 ```
+
+`render` draws the content offscreen for `view.render`, independent of liveness, window, Space, and viewport: from the tile's model, never by capturing live views. `TileRenderRequest` = `size` (the frame body in points), `scale` (pixels per point), `full` (the whole content, not the frame's window), `appearance` (resolve colors under it). `TileRender` = `image` (points, top-left at the body; `max(size, contentSize)` when full), `contentSize` (the content's extent at that width; overflow = content − size), `state` (`rendered`, or `placeholder`/`failed` with a `reason`; never `rendered` with a blank image). The renderer cancels a render at the request's deadline (tiles should return what they have when cancelled) and reports a tile that still hasn't answered a second later as a placeholder. Tile chrome (title bar, border) is drawn around the image by the renderer; app chrome never is.
 
 Arrows, shapes, and groups have no tile; the canvas draws them.
 
@@ -121,10 +140,9 @@ The controller adds a tracking area to the text view, handles ⌘/⌥⌘-click a
 `.shape` and `.arrow` objects are drawn by `ShapeLayer` (`Sources/CanvasApp/Drawing/`), one view in document coordinates above every tile and below the Hyper outline. Geometry lives in `Sources/CanvasCore/Drawing*.swift`. Selection and moves of drawn objects are the scene's (see Scene seams); the layer supplies rendering, hit tests, outlines, resize handles, tools and editors, arrow routing, and region images.
 
 - A shape's `frame` is exactly its drawn box (no title bar). Ink `points` are relative to the frame origin; the frame is the painted stroke bounds.
-- An arrow's route is derived, never stored: bound ends attach to the facing edge of the bound object's current outline (the tile including its title bar, a shape's frame, the curve of an ellipse), so arrows follow moves and resizes without writes. An arrow's `frame` records its route bounds when it was drawn. Free ends (`{"point": [x, y]}`) are canvas coordinates. Deleting a bound object turns that end into a free point where it last attached, in the delete's undo step, so the arrow keeps its direction and its other end keeps following.
+- An arrow's route is derived, never stored: bound ends attach to the facing edge of the bound object's current outline (the tile including its title bar, a shape's frame, the curve of an ellipse), so arrows follow moves and resizes without writes. `DrawingGeometry.path` (CanvasCore) routes by `props.route`: `straight`, `orthogonal` (one jog between facing sides), or `avoid` (an orthogonal grid search around every object `Board.blocksRoutes`: tiles, text, filled shapes, keeping `avoidMargin`). Arrows bound to the same two objects in either direction get `parallelOffsets` (`parallelSpacing` apart, relative to each arrow's direction, so opposite arrows take opposite sides); labels go beside the route on the offset's side (`labelRect`), at the first spot clear of tiles. The layer draws, hit-tests, and selects the routed polyline; `Board.routes()` computes the same routes from frames for `layout.check` and detaching. An arrow's `frame` records its route bounds when it was drawn. Free ends (`{"point": [x, y]}`) are canvas coordinates. Deleting a bound object turns that end into a free point where it last attached, in the delete's undo step, so the arrow keeps its direction and its other end keeps following.
 - The layer never takes keyboard focus (it stays with the prompt-target terminal); tool keys V/R/O/A/T/P/Esc arrive as key equivalents and only act when no terminal or text view has the keyboard. Inline text and arrow editors take focus while open and give it back on Enter/Esc/click-away, never over a responder that took focus meanwhile.
 - Only strokes, text, labels, and fills (`fill: semi|solid`) take the mouse; an unfilled shape's interior passes clicks to the tiles beneath.
-- `object.get --as image` on a drawn object renders the canvas region under it (tiles, terminals, and ink included).
 
 ## Scene seams
 
@@ -140,11 +158,11 @@ The controller adds a tracking area to the text view, handles ⌘/⌥⌘-click a
 | `onSelectionDrag(ids, offset)` | scene → drawing | Live drag offset in document points; `.zero` just before the move commits. |
 | `selection`, `onSelectionChange` | scene → all | Current selection (tiles, drawn objects, groups). |
 
-Groups (`type: group`, props `{members, name?}`, frame = union of member frames) are drawn by the scene as regions behind their members. `focus(tile:)` zooms a tile to 100%, centers, selects, and focuses it; `raiseAttention(_:message:)` backs `view.attention`.
+Groups (`type: group`, props `{members, title?, color?, padding?}`, frame derived by the board, see Object model rules) are drawn by the scene as titled, tinted regions behind their members (`GroupView`), following members live mid-drag with the same `GroupSpec.frame`; only the title band takes the mouse, and zoomed out the title grows upward out of the band. `focus(tile:)` zooms a tile to 100%, centers, selects, and focuses it; `raiseAttention(_:message:)` backs `view.attention`.
 
 ## Undo
 
-`Board.history` records every create, update, and delete from any actor; ⌘Z (`Board.undo()`) reverts the latest step even when an agent made it, and every undo or redo is a new revision, newer than any the object ever had, even across a delete and re-creation. Terminal bookkeeping props (`lifecycle`, `agent`, `title`) are never recorded and never rewound. Multi-object gestures wrap their updates in `Board.transaction { }` to form one step. Undoing a delete restores the object with the same id and `z`; staged mentions of it are not restored. When undo/redo removes a terminal and later brings it back, it returns with the bookkeeping it last had. History lives in memory only.
+`Board.history` records every create, update, and delete from any actor; ⌘Z (`Board.undo()`) reverts the latest step even when an agent made it, and every undo or redo is a new revision, newer than any the object ever had, even across a delete and re-creation. Terminal bookkeeping props (`lifecycle`, `agent`, `title`) are never recorded and never rewound. Multi-object gestures wrap their updates in `Board.transaction { }` to form one step; API writes that must succeed or fail together (`object.batch`, `layout.*`) use `Board.atomically { }`, which also rolls back on error. Undoing a delete restores the object with the same id and `z`; staged mentions of it are not restored. When undo/redo removes a terminal and later brings it back, it returns with the bookkeeping it last had. History lives in memory only.
 
 ## Mention context format
 
@@ -161,7 +179,7 @@ Groups (`type: group`, props `{members, name?}`, frame = union of member frames)
 [2] dom http://localhost:3000/login · button#submit "Sign in" · browser tile obj_…
 [3] shape rect obj_… "auth path?" (drawn by user) · encloses obj_…, obj_… · arrow → obj_… (hypothesis_about)
 [4] shape ellipse obj_… (drawn by user) · over browser obj_… at (240, 200) 125×120
-Read more with the canvas SDK or CLI: canvas get <id> --as graph|image
+Read more with the canvas SDK or CLI: canvas get <id> --as graph; look with canvas render <id>
 </canvas-mentions>
 ```
 

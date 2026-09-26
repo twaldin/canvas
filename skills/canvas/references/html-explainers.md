@@ -79,4 +79,4 @@ For review results or an investigation. Findings sorted by severity; each is a c
 
 ## Check your tile
 
-After creating or updating an explainer, look at it: `canvas view.snapshot --out /tmp/c.png` (or `canvas get <id> --as image --out /tmp/t.png`) and read the image. Fix overflow, unreadable contrast, or broken diagrams before telling the user it's there. Then point at it with `view.attention` rather than moving their viewport.
+After creating or updating an explainer, look at it: `canvas view.snapshot --out /tmp/c.png` (or `canvas render <id> --full --out /tmp/t.png`, which renders the whole page offscreen and reports `overflow`) and read the image. Fix overflow, unreadable contrast, or broken diagrams before telling the user it's there. Then point at it with `view.attention` rather than moving their viewport.

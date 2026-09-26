@@ -90,7 +90,7 @@ Terminals are drawn from their session text in the terminal's font and colors. A
 
 Create objects when a visual helps the user more than terminal text: a plan they will come back to, code they should look at, a comparison, a diagram. Don't mirror your whole transcript onto the canvas.
 
-Omit `frame` and the canvas places new objects beside your terminal without covering anything. Pass a frame only when you are deliberately laying things out (`canvas.compositions.grid.arrange(ids)` does it for you).
+Omit `frame` and the canvas places new objects beside your terminal without covering anything. When you lay things out deliberately, let the canvas do the geometry: `size: "fit"` sizes a tile to its content, `layout.place`/`layout.stack` position objects (groups move whole), `object.batch` applies a whole layout as one ⌘Z step with `"$0"` references to objects it creates, and `layout.check` reports overlaps, arrows through tiles, and content that doesn't fit. Details and an example: `references/api.md` "Layout".
 
 | Want | Create |
 | --- | --- |
@@ -132,8 +132,8 @@ Ground every code claim with `<canvas-code>`/`<canvas-link>` instead of pasting 
   - `color`: `black` (the default ink; white in dark mode), `grey`, `blue`, `green`, `orange`, `red`, `violet`, or `#rrggbb`. Arrows take `color` too.
   - `fill` (rect/ellipse): `none` (default; the interior passes clicks through), `semi` (a 14% wash of the color, for regions), `solid` (85%).
   - Text sizing: a `text` shape draws its text in 20 pt handwriting from the frame's top-left, wrapping at the frame width; one line needs about 30 pt of height (`h ≈ 30 × lines`). A rect/ellipse `text` is an 18 pt label centered in the frame, wrapping at `w − 16`. Arrow labels are 15 pt, wrapping at 240 pt, centered on the shaft.
-- `arrow`: `{"from": {"object": "obj_…"}, "to": {"object": "obj_…", "lines": {"start": 41, "end": 48}}, "relation": "calls", "label": "…"}`. Endpoints bind to objects (optionally a line range or a DOM `selector`) or to a `{"point": [x, y]}`. `relation` is the machine-readable edge (`calls`, `depends_on`, `hypothesis_about`, …); `label` is what the user reads.
-- `group`: `{"members": [ids], "name": "…"}`. It draws as a dashed rounded region 20 pt around its members' outlines with its name in a pill on top (so it is itself a visible box: don't also draw a rect around the same members). Its `frame` is derived from the members, whatever you pass.
+- `arrow`: `{"from": {"object": "obj_…"}, "to": {"object": "obj_…", "lines": {"start": 41, "end": 48}}, "relation": "calls", "label": "…", "route": "avoid"}`. Endpoints bind to objects (optionally a line range or a DOM `selector`) or to a `{"point": [x, y]}`. `relation` is the machine-readable edge (`calls`, `depends_on`, `hypothesis_about`, …); `label` is what the user reads. `route`: `straight` (default), `orthogonal`, or `avoid` (goes around tiles in the way). Arrows between the same two objects are drawn apart automatically, both directions.
+- `group`: `{"members": [ids], "title": "…", "color": "blue", "padding": 24}` is a titled, tinted region whose frame always wraps its members (plus padding and a title band) as they move; use one per lane or cluster instead of a rect plus a text label.
 
 `canvas get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
 

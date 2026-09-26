@@ -77,13 +77,13 @@ extension CanvasView {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
         appearance.performAsCurrentDrawingAppearance {
-            CanvasDocumentView.drawBackground(in: docRegion, pointsPerUnit: scale)
+            CanvasDocumentView.drawBackground(in: docRegion, pointsPerUnit: scale, pixelsPerPoint: 1)
 
             if !excluded.contains(.group) {
                 for group in board.objects.values.filter({ $0.type == .group }).sorted(by: { $0.z < $1.z }) {
                     guard let rect = groupRegion(group), rect.intersects(docRegion) else { continue }
-                    let view = GroupView(object: group)
-                    view.frame = rect
+                    guard let view = GroupView(object: group) else { continue }
+                    view.show(region: rect)
                     cg.saveGState()
                     cg.translateBy(x: rect.minX, y: rect.minY)
                     view.draw(view.bounds)
@@ -96,7 +96,7 @@ extension CanvasView {
             // above drawn objects too.
             let extended = request.full ? Set(outlines.keys) : []
             let tiled = board.objects.values.filter { renders[$0.id] != nil }.sorted { $0.z < $1.z }
-            func paint(_ object: CanvasObject) {
+            @MainActor func paint(_ object: CanvasObject) {
                 guard let render = renders[object.id] else { return }
                 let frame = outlines[object.id] ?? RenderMath.outline(object)
                 drawTile(object, render: render, in: NSRect(x: frame.x + origin.x, y: frame.y + origin.y, width: frame.w, height: frame.h))
@@ -135,15 +135,9 @@ extension CanvasView {
         return doc.map { Frame(x: $0.minX - origin.x, y: $0.minY - origin.y, w: $0.width, h: $0.height) }
     }
 
-    /// A group's region at 100% label size, from its members' current outlines.
+    /// A group's region: its frame wraps its members, padding, and title band.
     private func groupRegion(_ group: CanvasObject) -> NSRect? {
-        let members = group.props["members"]?.array?.compactMap(\.string) ?? []
-        let rects = members.compactMap { id -> NSRect? in
-            guard let member = board.objects[id], member.type != .group else { return nil }
-            if TileFactory.hasTile(member.type) { return CanvasView.docRect(member.frame) }
-            return shapeOutline?(id) ?? CanvasView.drawnRect(member.frame)
-        }
-        return GroupView.region(around: rects, scale: 1)
+        group.frame.w > 0 && group.frame.h > 0 ? CanvasView.drawnRect(group.frame) : nil
     }
 
     private func tileJob(_ id: ObjectID, scale: Double, full: Bool, appearance: NSAppearance) -> TileJob? {

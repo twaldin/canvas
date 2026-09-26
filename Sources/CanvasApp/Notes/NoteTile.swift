@@ -8,7 +8,7 @@ import Markdown
 /// A conflicting change by someone else is only overwritten by an explicit ⌘↩.
 @MainActor
 final class NoteTile: NSView, TileContent {
-    static let placeholder = "Double-click to write a note"
+    static let placeholder = ObjectMeasure.notePlaceholder
     /// File changes arrive in bursts (editors write, rename, and touch); resolve once they settle.
     static let debounce: TimeInterval = 0.25
 
@@ -52,8 +52,8 @@ final class NoteTile: NSView, TileContent {
         display.isEditable = false
         display.isSelectable = false
         display.drawsBackground = false
-        display.textContainerInset = NSSize(width: 8, height: 10)
-        display.textContainer?.lineFragmentPadding = 2
+        display.textContainerInset = ObjectMeasure.noteInset
+        display.textContainer?.lineFragmentPadding = ObjectMeasure.noteLineFragmentPadding
         display.autoresizingMask = [.width]
         display.textLayoutManager?.delegate = layoutDelegate
         configure(displayScroll, document: display)

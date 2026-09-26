@@ -68,11 +68,24 @@ class ShapeProps(TypedDict):
 
 Binding = Union[dict[str, Any], dict[str, Any]]
 
-ArrowProps = TypedDict("ArrowProps", {"from": Required["Binding"], "to": Required["Binding"], "relation": NotRequired[str], "label": NotRequired[str], "color": NotRequired[str]})
+ArrowProps = TypedDict("ArrowProps", {"from": Required["Binding"], "to": Required["Binding"], "relation": NotRequired[str], "label": NotRequired[str], "color": NotRequired[str], "route": NotRequired[Literal["straight", "orthogonal", "avoid"]]})
 
 class GroupProps(TypedDict):
-    name: NotRequired[str]
+    """A group is a region: its frame is always its members' bounds plus `padding`, with a 32 pt title band on top, kept current as members move, resize, or go away (a `frame` passed for a group is ignored). `object.get --as graph` encloses what lies inside that frame."""
     members: Required[list["Id"]]
+    title: NotRequired[str]
+    color: NotRequired[str]
+    padding: NotRequired[float]
+
+class FitFrame(TypedDict):
+    """with size: fit, where the object goes; the rest of its frame is measured"""
+    x: Required[float]
+    y: Required[float]
+    w: NotRequired[float]
+
+class Size(TypedDict):
+    w: Required[float]
+    h: Required[float]
 
 ObjectType = Literal["terminal", "browser", "code", "note", "html", "shape", "arrow", "group"]
 
@@ -190,20 +203,49 @@ class ObjectApi:
         params = {"id": id, "as": as_}
         return self._call("object.get", params, [])
 
-    def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: "Frame" | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
-        params = {"board": board, "type": type, "props": props, "frame": frame, "parent": parent, "caller": caller}
+    def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`). The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
+        params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "caller": caller}
         return self._call("object.create", params, ["board","caller"])
 
-    def update(self, *, id: "Id", rev: int | None = None, frame: "Frame" | None = None, props: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency."""
-        params = {"id": id, "rev": rev, "frame": frame, "props": props, "caller": caller}
+    def update(self, *, id: "Id", rev: int | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, props: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width, or at `frame` x, y, w."""
+        params = {"id": id, "rev": rev, "frame": frame, "size": size, "props": props, "caller": caller}
         return self._call("object.update", params, ["caller"])
 
     def delete(self, *, id: "Id", caller: "Id" | None = None) -> dict[str, Any]:
         """Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached."""
         params = {"id": id, "caller": caller}
         return self._call("object.delete", params, ["caller"])
+
+    def measure(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, width: float | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Intrinsic size: the whole frame (tile title bar included) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`."""
+        params = {"board": board, "type": type, "props": props, "width": width, "caller": caller}
+        return self._call("object.measure", params, ["board","caller"])
+
+    def batch(self, *, ops: list[dict[str, Any]], board: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"])."""
+        params = {"board": board, "ops": ops, "caller": caller}
+        return self._call("object.batch", params, ["board","caller"])
+
+class LayoutApi:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
+        self._call = call
+
+    def place(self, *, id: "Id", near: "Id", side: Literal["right", "left", "above", "below"] | None = None, gap: float | None = None, align: Literal["start", "center", "end"] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Move an object `gap` points beside another (one undo step). Groups move their members; arrows follow their bound ends."""
+        params = {"id": id, "near": near, "side": side, "gap": gap, "align": align, "caller": caller}
+        return self._call("layout.place", params, ["caller"])
+
+    def stack(self, *, ids: list["Id"], direction: Literal["row", "column"] | None = None, gap: float | None = None, wrap_at: float | None = None, align: Literal["start", "center", "end"] | None = None, origin: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Lay objects out in a row (left to right) or column (top to bottom), `gap` apart, starting where the first one is or at `origin` (one undo step). With `wrapAt`, a line longer than that many points wraps into a new line. Groups move as a whole, so stacking groups lays out lanes."""
+        params = {"ids": ids, "direction": direction, "gap": gap, "wrapAt": wrap_at, "align": align, "origin": origin, "caller": caller}
+        return self._call("layout.stack", params, ["caller"])
+
+    def check(self, *, board: "Id" | None = None, ids: list["Id"] | None = None, rect: "Frame" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Layout problems for `ids`, for what intersects `rect`, or for the whole board: overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, and code/note/text whose content doesn't fit its frame (points missing in x and y)."""
+        params = {"board": board, "ids": ids, "rect": rect, "caller": caller}
+        return self._call("layout.check", params, ["board","caller"])
 
 class TrayApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
@@ -320,10 +362,11 @@ class GeneratedApi:
         self.system = SystemApi(call)
         self.board = BoardApi(call)
         self.object = ObjectApi(call)
+        self.layout = LayoutApi(call)
         self.tray = TrayApi(call)
         self.agent = AgentApi(call)
         self.follow = FollowApi(call)
         self.view = ViewApi(call)
         self.events = EventsApi(call)
 
-METHODS = ["system.ping","board.get","board.history","board.list","board.export","object.get","object.create","object.update","object.delete","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"]
+METHODS = ["system.ping","board.get","board.history","board.list","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"]

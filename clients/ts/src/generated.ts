@@ -113,11 +113,32 @@ export type ArrowProps = {
   label?: string;
   /** palette name or #rrggbb, as ShapeProps.color */
   color?: string;
+  /** straight: one segment between the facing sides; orthogonal: horizontal/vertical segments with one jog; avoid: horizontal/vertical segments around every tile (and text or filled shape) in the way. Arrows between the same two objects (either direction) are drawn apart automatically; labels sit beside the route, clear of boxes where possible. */
+  route?: "straight" | "orthogonal" | "avoid";
 };
 
+/** A group is a region: its frame is always its members' bounds plus `padding`, with a 32 pt title band on top, kept current as members move, resize, or go away (a `frame` passed for a group is ignored). `object.get --as graph` encloses what lies inside that frame. */
 export type GroupProps = {
-  name?: string;
   members: Id[];
+  /** shown in the title band; the band is the group's drag handle */
+  title?: string;
+  /** palette name or #rrggbb, as ShapeProps.color; tints the region and title */
+  color?: string;
+  /** space between the members' bounds and the region's edge */
+  padding?: number;
+};
+
+/** with size: fit, where the object goes; the rest of its frame is measured */
+export type FitFrame = {
+  x: number;
+  y: number;
+  /** wrap width for notes and text */
+  w?: number;
+};
+
+export type Size = {
+  w: number;
+  h: number;
 };
 
 export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "shape" | "arrow" | "group";
@@ -259,7 +280,9 @@ export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
   props: Record<string, unknown>;
-  frame?: Frame;
+  frame?: Frame | FitFrame;
+  /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note or text) */
+  size?: "fit";
   parent?: Id;
   /** calling tile id; clients fill from CANVAS_TILE_ID */
   caller?: Id;
@@ -271,7 +294,9 @@ export type ObjectCreateResult = {
 export type ObjectUpdateParams = {
   id: Id;
   rev?: number;
-  frame?: Frame;
+  frame?: Frame | FitFrame;
+  /** measure the frame's size from the content */
+  size?: "fit";
   props?: Record<string, unknown>;
   caller?: Id;
 };
@@ -284,6 +309,80 @@ export type ObjectDeleteParams = {
   caller?: Id;
 };
 export type ObjectDeleteResult = Record<string, unknown>;
+
+export type ObjectMeasureParams = {
+  board?: Id;
+  type: ObjectType;
+  props: Record<string, unknown>;
+  /** wrap width for notes and text */
+  width?: number;
+  caller?: Id;
+};
+export type ObjectMeasureResult = Size;
+
+export type ObjectBatchParams = {
+  board?: Id;
+  ops: ({
+    method: "object.create" | "object.update" | "object.delete" | "layout.place" | "layout.stack";
+    params: Record<string, unknown>;
+  })[];
+  caller?: Id;
+};
+export type ObjectBatchResult = {
+  /** each op's result, in order */
+  results: unknown[];
+  revision: number;
+};
+
+export type LayoutPlaceParams = {
+  id: Id;
+  near: Id;
+  side?: "right" | "left" | "above" | "below";
+  gap?: number;
+  /** along the side: start lines up top (or left) edges, end bottom (or right) edges */
+  align?: "start" | "center" | "end";
+  caller?: Id;
+};
+export type LayoutPlaceResult = {
+  frames: Record<string, unknown>;
+};
+
+export type LayoutStackParams = {
+  ids: Id[];
+  direction?: "row" | "column";
+  gap?: number;
+  /** maximum line length in points */
+  wrapAt?: number;
+  /** across the line: rows align tops (start), middles, or bottoms */
+  align?: "start" | "center" | "end";
+  origin?: {
+    x: number;
+    y: number;
+  };
+  caller?: Id;
+};
+export type LayoutStackResult = {
+  frames: Record<string, unknown>;
+};
+
+export type LayoutCheckParams = {
+  board?: Id;
+  ids?: Id[];
+  rect?: Frame;
+  caller?: Id;
+};
+export type LayoutCheckResult = {
+  overlaps: Id[][];
+  arrowCrossings: {
+    arrow: Id;
+    crosses: Id[];
+  }[];
+  overflow: {
+    id: Id;
+    x: number;
+    y: number;
+  }[];
+};
 
 export type TrayListParams = {
   board?: Id;
@@ -430,12 +529,24 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow; `as: image` returns a PNG crop as base64 (a tile's content, or the canvas region under a drawn object including the tiles and ink inside it). */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`). The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
-    /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. */
+    /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width, or at `frame` x, y, w. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
+    /** Intrinsic size: the whole frame (tile title bar included) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`. */
+    measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
+    /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"]). */
+    batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;
+  };
+  layout: {
+    /** Move an object `gap` points beside another (one undo step). Groups move their members; arrows follow their bound ends. */
+    place(params: LayoutPlaceParams): Promise<LayoutPlaceResult>;
+    /** Lay objects out in a row (left to right) or column (top to bottom), `gap` apart, starting where the first one is or at `origin` (one undo step). With `wrapAt`, a line longer than that many points wraps into a new line. Groups move as a whole, so stacking groups lays out lanes. */
+    stack(params: LayoutStackParams): Promise<LayoutStackResult>;
+    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board: overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, and code/note/text whose content doesn't fit its frame (points missing in x and y). */
+    check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
   tray: {
     /** Staged mentions, in staging order. */
@@ -507,6 +618,13 @@ export function bindMethods(call: (method: string, params: object) => Promise<un
       create: (params: ObjectCreateParams) => call("object.create", withEnv(params ?? {}, ["board","caller"])) as Promise<ObjectCreateResult>,
       update: (params: ObjectUpdateParams) => call("object.update", withEnv(params ?? {}, ["caller"])) as Promise<ObjectUpdateResult>,
       delete: (params: ObjectDeleteParams) => call("object.delete", withEnv(params ?? {}, ["caller"])) as Promise<ObjectDeleteResult>,
+      measure: (params: ObjectMeasureParams) => call("object.measure", withEnv(params ?? {}, ["board","caller"])) as Promise<ObjectMeasureResult>,
+      batch: (params: ObjectBatchParams) => call("object.batch", withEnv(params ?? {}, ["board","caller"])) as Promise<ObjectBatchResult>,
+    },
+    layout: {
+      place: (params: LayoutPlaceParams) => call("layout.place", withEnv(params ?? {}, ["caller"])) as Promise<LayoutPlaceResult>,
+      stack: (params: LayoutStackParams) => call("layout.stack", withEnv(params ?? {}, ["caller"])) as Promise<LayoutStackResult>,
+      check: (params?: LayoutCheckParams) => call("layout.check", withEnv(params ?? {}, ["board","caller"])) as Promise<LayoutCheckResult>,
     },
     tray: {
       list: (params?: TrayListParams) => call("tray.list", withEnv(params ?? {}, ["board"])) as Promise<TrayListResult>,
@@ -537,4 +655,4 @@ export function bindMethods(call: (method: string, params: object) => Promise<un
   };
 }
 
-export const METHODS = ["system.ping","board.get","board.list","board.export","object.get","object.create","object.update","object.delete","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","board.get","board.list","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.snapshot","events.subscribe"] as const;

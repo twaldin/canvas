@@ -108,13 +108,15 @@ public struct ArrowSpec: Equatable, Sendable {
     public var relation: String?
     public var label: String?
     public var color: String?
+    public var route: ArrowRouteStyle
 
-    public init(from: ArrowBinding, to: ArrowBinding, relation: String? = nil, label: String? = nil, color: String? = nil) {
+    public init(from: ArrowBinding, to: ArrowBinding, relation: String? = nil, label: String? = nil, color: String? = nil, route: ArrowRouteStyle = .straight) {
         self.from = from
         self.to = to
         self.relation = relation
         self.label = label
         self.color = color
+        self.route = route
     }
 
     public init?(_ props: JSONValue) {
@@ -124,6 +126,7 @@ public struct ArrowSpec: Equatable, Sendable {
         relation = props["relation"]?.string
         label = props["label"]?.string
         color = props["color"]?.string
+        route = props["route"]?.string.flatMap(ArrowRouteStyle.init) ?? .straight
     }
 
     public var props: JSONValue {
@@ -131,6 +134,7 @@ public struct ArrowSpec: Equatable, Sendable {
         if let relation { props["relation"] = .string(relation) }
         if let label { props["label"] = .string(label) }
         if let color { props["color"] = .string(color) }
+        if route != .straight { props["route"] = .string(route.rawValue) }
         return .object(props)
     }
 }

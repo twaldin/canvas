@@ -169,16 +169,35 @@
         "to": { "$ref": "#/definitions/Binding" },
         "relation": { "type": "string", "description": "semantic edge type, e.g. hypothesis_about, calls, depends_on" },
         "label": { "type": "string" },
-        "color": { "type": "string", "description": "palette name or #rrggbb, as ShapeProps.color" }
+        "color": { "type": "string", "description": "palette name or #rrggbb, as ShapeProps.color" },
+        "route": {
+          "enum": ["straight", "orthogonal", "avoid"],
+          "default": "straight",
+          "description": "straight: one segment between the facing sides; orthogonal: horizontal/vertical segments with one jog; avoid: horizontal/vertical segments around every tile (and text or filled shape) in the way. Arrows between the same two objects (either direction) are drawn apart automatically; labels sit beside the route, clear of boxes where possible."
+        }
       },
       "additionalProperties": false
     },
     "GroupProps": {
       "type": "object",
       "required": ["members"],
-      "properties": { "name": { "type": "string" }, "members": { "type": "array", "items": { "$ref": "#/definitions/Id" } } },
+      "description": "A group is a region: its frame is always its members' bounds plus `padding`, with a 32 pt title band on top, kept current as members move, resize, or go away (a `frame` passed for a group is ignored). `object.get --as graph` encloses what lies inside that frame.",
+      "properties": {
+        "members": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
+        "title": { "type": "string", "description": "shown in the title band; the band is the group's drag handle" },
+        "color": { "type": "string", "description": "palette name or #rrggbb, as ShapeProps.color; tints the region and title" },
+        "padding": { "type": "number", "minimum": 0, "default": 24, "description": "space between the members' bounds and the region's edge" }
+      },
       "additionalProperties": false
     },
+    "FitFrame": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number", "description": "wrap width for notes and text" } },
+      "additionalProperties": false,
+      "description": "with size: fit, where the object goes; the rest of its frame is measured"
+    },
+    "Size": { "type": "object", "required": ["w", "h"], "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "additionalProperties": false },
     "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "shape", "arrow", "group"] },
     "CanvasObject": {
       "type": "object",
@@ -357,7 +376,7 @@
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). The caller's tile (CANVAS_TILE_ID) becomes createdBy.",
+      "description": "Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`). The caller's tile (CANVAS_TILE_ID) becomes createdBy.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
@@ -365,7 +384,8 @@
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
           "props": { "type": "object" },
-          "frame": { "$ref": "#/definitions/Frame" },
+          "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }] },
+          "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note or text)" },
           "parent": { "$ref": "#/definitions/Id" },
           "caller": { "$ref": "#/definitions/Id", "description": "calling tile id; clients fill from CANVAS_TILE_ID" }
         },
@@ -374,14 +394,15 @@
       "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" } } }
     },
     "object.update": {
-      "description": "Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency.",
+      "description": "Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width, or at `frame` x, y, w.",
       "params": {
         "type": "object",
         "required": ["id"],
         "properties": {
           "id": { "$ref": "#/definitions/Id" },
           "rev": { "type": "integer" },
-          "frame": { "$ref": "#/definitions/Frame" },
+          "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }] },
+          "size": { "const": "fit", "description": "measure the frame's size from the content" },
           "props": { "type": "object" },
           "caller": { "$ref": "#/definitions/Id" }
         },
@@ -398,6 +419,112 @@
         "additionalProperties": false
       },
       "result": { "type": "object", "properties": {} }
+    },
+    "object.measure": {
+      "description": "Intrinsic size: the whole frame (tile title bar included) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`.",
+      "params": {
+        "type": "object",
+        "required": ["type", "props"],
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "type": { "$ref": "#/definitions/ObjectType" },
+          "props": { "type": "object" },
+          "width": { "type": "number", "description": "wrap width for notes and text" },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "$ref": "#/definitions/Size" }
+    },
+    "object.batch": {
+      "description": "Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack with their usual params; the string \"$n\" anywhere in an op's params stands for the id created by op n (e.g. an arrow from \"$0\" to \"$1\", a group with members [\"$0\", \"$1\"]).",
+      "params": {
+        "type": "object",
+        "required": ["ops"],
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "ops": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["method", "params"],
+              "properties": { "method": { "enum": ["object.create", "object.update", "object.delete", "layout.place", "layout.stack"] }, "params": { "type": "object" } },
+              "additionalProperties": false
+            }
+          },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["results", "revision"],
+        "properties": { "results": { "type": "array", "description": "each op's result, in order" }, "revision": { "type": "integer" } }
+      }
+    },
+    "layout.place": {
+      "description": "Move an object `gap` points beside another (one undo step). Groups move their members; arrows follow their bound ends.",
+      "params": {
+        "type": "object",
+        "required": ["id", "near"],
+        "properties": {
+          "id": { "$ref": "#/definitions/Id" },
+          "near": { "$ref": "#/definitions/Id" },
+          "side": { "enum": ["right", "left", "above", "below"], "default": "right" },
+          "gap": { "type": "number", "default": 40 },
+          "align": { "enum": ["start", "center", "end"], "default": "start", "description": "along the side: start lines up top (or left) edges, end bottom (or right) edges" },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "type": "object", "required": ["frames"], "properties": { "frames": { "type": "object", "additionalProperties": { "$ref": "#/definitions/Frame" } } } }
+    },
+    "layout.stack": {
+      "description": "Lay objects out in a row (left to right) or column (top to bottom), `gap` apart, starting where the first one is or at `origin` (one undo step). With `wrapAt`, a line longer than that many points wraps into a new line. Groups move as a whole, so stacking groups lays out lanes.",
+      "params": {
+        "type": "object",
+        "required": ["ids"],
+        "properties": {
+          "ids": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/Id" } },
+          "direction": { "enum": ["row", "column"], "default": "row" },
+          "gap": { "type": "number", "default": 40 },
+          "wrapAt": { "type": "number", "description": "maximum line length in points" },
+          "align": { "enum": ["start", "center", "end"], "default": "start", "description": "across the line: rows align tops (start), middles, or bottoms" },
+          "origin": { "type": "object", "required": ["x", "y"], "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "additionalProperties": false },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "type": "object", "required": ["frames"], "properties": { "frames": { "type": "object", "additionalProperties": { "$ref": "#/definitions/Frame" } } } }
+    },
+    "layout.check": {
+      "description": "Layout problems for `ids`, for what intersects `rect`, or for the whole board: overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, and code/note/text whose content doesn't fit its frame (points missing in x and y).",
+      "params": {
+        "type": "object",
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "ids": { "type": "array", "minItems": 1, "items": { "$ref": "#/definitions/Id" } },
+          "rect": { "$ref": "#/definitions/Frame" },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["overlaps", "arrowCrossings", "overflow"],
+        "properties": {
+          "overlaps": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "minItems": 2, "maxItems": 2 } },
+          "arrowCrossings": {
+            "type": "array",
+            "items": { "type": "object", "required": ["arrow", "crosses"], "properties": { "arrow": { "$ref": "#/definitions/Id" }, "crosses": { "type": "array", "items": { "$ref": "#/definitions/Id" } } }, "additionalProperties": false }
+          },
+          "overflow": {
+            "type": "array",
+            "items": { "type": "object", "required": ["id", "x", "y"], "properties": { "id": { "$ref": "#/definitions/Id" }, "x": { "type": "number" }, "y": { "type": "number" } }, "additionalProperties": false }
+          }
+        }
+      }
     },
     "tray.list": {
       "description": "Staged mentions, in staging order.",

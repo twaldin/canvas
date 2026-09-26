@@ -32,27 +32,52 @@ extension Board {
     /// Before `id` is deleted, every arrow bound to it gets a free end where it last attached, so
     /// the arrow keeps its drawn direction (also after a reload) and its other end keeps routing.
     func detachArrows(from id: ObjectID) {
+        let computed = arrowRoute == nil ? routes() : [:]
         for arrow in objects.values.sorted(by: { $0.id < $1.id }) where arrow.type == .arrow && arrow.id != id {
-            guard var spec = ArrowSpec(arrow.props), spec.from.objectID == id || spec.to.objectID == id,
-                  let route = arrowRoute?(arrow.id) ?? route(of: spec) else { continue }
+            guard var spec = ArrowSpec(arrow.props), spec.from.objectID == id || spec.to.objectID == id else { continue }
+            let drawn = arrowRoute?(arrow.id) ?? computed[arrow.id].map { (start: $0[0], end: $0[$0.count - 1]) }
+            guard let route = drawn else { continue }
             if spec.from.objectID == id { spec.from = .point(route.start) }
             if spec.to.objectID == id { spec.to = .point(route.end) }
             _ = try? update(arrow.id, props: .object(["from": spec.from.json, "to": spec.to.json]))
         }
     }
 
-    /// An arrow's route from object frames alone (no app to ask for what is drawn).
-    func route(of spec: ArrowSpec) -> (start: CGPoint, end: CGPoint)? {
-        func end(_ binding: ArrowBinding) -> DrawingGeometry.ArrowEnd? {
-            switch binding {
-            case .point(let point): return .point(point)
-            case .object(let id, _, _):
-                guard let object = objects[id] else { return nil }
-                let isEllipse = object.type == .shape && ShapeSpec(object.props)?.kind == .ellipse
-                return .bound(isEllipse ? .ellipse(object.frame.rect) : .rect(object.frame.rect))
-            }
+    /// Whether arrows route around this object and count as crossing it: tiles, text, and filled
+    /// shapes. Unfilled rects and ellipses are regions drawn around things; ink, arrows, and
+    /// groups never block.
+    public static func blocksRoutes(_ object: CanvasObject) -> Bool {
+        switch object.type {
+        case .terminal, .browser, .code, .note, .html: return true
+        case .shape:
+            guard let spec = ShapeSpec(object.props) else { return false }
+            return spec.kind == .text || (spec.kind != .ink && spec.fill != .none)
+        case .arrow, .group: return false
         }
-        guard let from = end(spec.from), let to = end(spec.to) else { return nil }
-        return DrawingGeometry.route(from: from, to: to)
+    }
+
+    /// Every arrow's routed polyline from object frames alone (the app routes the same way from
+    /// what it draws): parallel arrows offset apart, `avoid` routes around blocking objects.
+    public func routes() -> [ObjectID: [CGPoint]] {
+        let arrows = objects.values.filter { $0.type == .arrow }.compactMap { arrow in ArrowSpec(arrow.props).map { (arrow, $0) } }
+        let offsets = DrawingGeometry.parallelOffsets(arrows.map { ($0.0.id, $0.1.from.objectID, $0.1.to.objectID) })
+        let blockers = objects.values.filter(Self.blocksRoutes)
+        var result: [ObjectID: [CGPoint]] = [:]
+        for (arrow, spec) in arrows {
+            func end(_ binding: ArrowBinding) -> DrawingGeometry.ArrowEnd? {
+                switch binding {
+                case .point(let point): return .point(point)
+                case .object(let id, _, _):
+                    guard let object = objects[id] else { return nil }
+                    let isEllipse = object.type == .shape && ShapeSpec(object.props)?.kind == .ellipse
+                    return .bound(isEllipse ? .ellipse(object.frame.rect) : .rect(object.frame.rect))
+                }
+            }
+            guard let from = end(spec.from), let to = end(spec.to) else { continue }
+            let ends = Set([spec.from.objectID, spec.to.objectID].compactMap { $0 })
+            let obstacles = spec.route == .avoid ? blockers.filter { !ends.contains($0.id) }.map(\.frame.rect) : []
+            result[arrow.id] = DrawingGeometry.path(from: from, to: to, style: spec.route, offset: offsets[arrow.id] ?? 0, obstacles: obstacles)
+        }
+        return result
     }
 }

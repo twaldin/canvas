@@ -142,7 +142,7 @@ public enum MentionContext {
         case .html: return props["title"]?.string ?? "html"
         case .shape: return props["text"]?.string ?? props["kind"]?.string ?? ""
         case .arrow: return props["label"]?.string ?? props["relation"]?.string ?? ""
-        case .group: return props["name"]?.string ?? ""
+        case .group: return props["title"]?.string ?? ""
         }
     }
 

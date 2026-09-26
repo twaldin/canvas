@@ -1,20 +1,19 @@
 import AppKit
-import CanvasCore
 
 extension NSAttributedString.Key {
     /// `NoteBlock` raw value on every paragraph that draws a full-width decoration.
-    static let noteBlock = NSAttributedString.Key("canvas.note.block")
+    public static let noteBlock = NSAttributedString.Key("canvas.note.block")
     /// A link target (`NoteLink.encoded`); the note draws and handles links itself because its
     /// display view is not selectable (it never takes keyboard focus).
-    static let noteLink = NSAttributedString.Key("canvas.note.link")
+    public static let noteLink = NSAttributedString.Key("canvas.note.link")
     /// `NoteCodeRow` on each row of an excerpt or proposal that maps to a real source line.
-    static let noteCodeRow = NSAttributedString.Key("canvas.note.codeRow")
+    public static let noteCodeRow = NSAttributedString.Key("canvas.note.codeRow")
     /// 1-based markdown line a rendered paragraph came from, to put the caret there on edit.
-    static let noteMarkdownLine = NSAttributedString.Key("canvas.note.markdownLine")
+    public static let noteMarkdownLine = NSAttributedString.Key("canvas.note.markdownLine")
 }
 
 /// Paragraph decorations, drawn behind the text by `NoteBlockFragment`.
-enum NoteBlock: String {
+public enum NoteBlock: String, Sendable {
     /// A grounded row read from a real file.
     case excerpt
     /// A free-written (authored) fence row.
@@ -27,7 +26,7 @@ enum NoteBlock: String {
     case rule
     case tableHeader
 
-    var fill: NSColor? {
+    public var fill: NSColor? {
         switch self {
         case .excerpt: NSColor.textBackgroundColor.withAlphaComponent(0.85)
         case .authored: NSColor.systemOrange.withAlphaComponent(0.10)
@@ -41,42 +40,42 @@ enum NoteBlock: String {
 }
 
 /// The source line under an excerpt or proposal row: what a Hyper-click there mentions.
-final class NoteCodeRow: NSObject {
-    let path: String
-    let line: Int
-    let symbol: String?
+public final class NoteCodeRow: NSObject {
+    public let path: String
+    public let line: Int
+    public let symbol: String?
     /// The excerpt is pinned to this revision.
-    let commit: String?
+    public let commit: String?
 
-    init(path: String, line: Int, symbol: String?, commit: String?) {
+    public init(path: String, line: Int, symbol: String?, commit: String?) {
         self.path = path
         self.line = line
         self.symbol = symbol
         self.commit = commit
     }
 
-    override func isEqual(_ object: Any?) -> Bool {
+    public override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? NoteCodeRow else { return false }
         return path == other.path && line == other.line && symbol == other.symbol && commit == other.commit
     }
 
-    override var hash: Int { path.hashValue ^ line }
+    public override var hash: Int { path.hashValue ^ line }
 }
 
 /// Where a click on a rendered link goes.
-enum NoteLink: Equatable {
+public enum NoteLink: Equatable {
     /// Open a code tile beside the note.
     case code(path: String, lines: LineRange?)
     case web(URL)
 
-    var encoded: String {
+    public var encoded: String {
         switch self {
         case .code(let path, let lines): "code:" + path + (lines.map { "#L\($0.start)-\($0.end)" } ?? "")
         case .web(let url): url.absoluteString
         }
     }
 
-    init?(encoded: String) {
+    public init?(encoded: String) {
         if encoded.hasPrefix("code:") {
             self = Self.code(String(encoded.dropFirst(5)))
         } else if let url = URL(string: encoded), url.scheme != nil {
@@ -97,8 +96,10 @@ enum NoteLink: Equatable {
 }
 
 /// Hands `NoteBlockFragment`s to paragraphs that carry a `.noteBlock` decoration.
-final class NoteLayoutDelegate: NSObject, NSTextLayoutManagerDelegate {
-    func textLayoutManager(_ textLayoutManager: NSTextLayoutManager, textLayoutFragmentFor location: NSTextLocation, in textElement: NSTextElement) -> NSTextLayoutFragment {
+public final class NoteLayoutDelegate: NSObject, NSTextLayoutManagerDelegate {
+    public override init() {}
+
+    public func textLayoutManager(_ textLayoutManager: NSTextLayoutManager, textLayoutFragmentFor location: NSTextLocation, in textElement: NSTextElement) -> NSTextLayoutFragment {
         if let paragraph = textElement as? NSTextParagraph, paragraph.attributedString.length > 0,
            let raw = paragraph.attributedString.attribute(.noteBlock, at: 0, effectiveRange: nil) as? String,
            let block = NoteBlock(rawValue: raw) {
@@ -111,8 +112,8 @@ final class NoteLayoutDelegate: NSObject, NSTextLayoutManagerDelegate {
 /// A paragraph with a full-width band (code rows, diff rows, captions), a quote bar, or a rule.
 /// Bands cover only the typographic lines, not paragraph spacing, so consecutive rows join
 /// into one block and the block ends where its spacing begins.
-final class NoteBlockFragment: NSTextLayoutFragment {
-    static let inset: CGFloat = 6
+public final class NoteBlockFragment: NSTextLayoutFragment {
+    public static let inset: CGFloat = 6
     private let block: NoteBlock
 
     init(textElement: NSTextElement, range: NSTextRange?, block: NoteBlock) {
@@ -134,11 +135,11 @@ final class NoteBlockFragment: NSTextLayoutFragment {
         return CGRect(x: Self.inset - layoutFragmentFrame.minX, y: top, width: max(0, containerWidth - 2 * Self.inset), height: bottom - top)
     }
 
-    override var renderingSurfaceBounds: CGRect {
+    public override var renderingSurfaceBounds: CGRect {
         super.renderingSurfaceBounds.union(band)
     }
 
-    override func draw(at point: CGPoint, in context: CGContext) {
+    public override func draw(at point: CGPoint, in context: CGContext) {
         let rect = band.offsetBy(dx: point.x, dy: point.y)
         context.saveGState()
         switch block {

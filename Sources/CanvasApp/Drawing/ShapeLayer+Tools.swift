@@ -259,7 +259,8 @@ extension ShapeLayer {
         switch object.type {
         case .arrow:
             guard let item = items[object.id], let arrow = item.arrow else { return }
-            attach(ArrowLabelEditor(layer: self, arrow: object, spec: arrow.spec, at: NSPoint(x: (arrow.start.x + arrow.end.x) / 2, y: (arrow.start.y + arrow.end.y) / 2)))
+            let at = item.labelRect.map { NSPoint(x: $0.midX, y: $0.midY) } ?? NSPoint(x: (arrow.start.x + arrow.end.x) / 2, y: (arrow.start.y + arrow.end.y) / 2)
+            attach(ArrowLabelEditor(layer: self, arrow: object, spec: arrow.spec, at: at))
         case .shape:
             guard let spec = ShapeSpec(object.props), spec.kind != .ink else { return }
             let frame = Self.docRect(object.frame)

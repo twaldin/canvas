@@ -123,6 +123,14 @@ public final class ApiRouter {
                 let drained = try await board(params).drain(peek: params["peek"]?.bool ?? false)
                 return Self.ok(id, .object(["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)]))
             }
+            switch method {
+            case "object.measure": return Self.ok(id, try await measure(params))
+            case "object.batch": return Self.ok(id, try await batch(params))
+            case "layout.check": return Self.ok(id, try await check(params))
+            case "object.create", "object.update":
+                return Self.ok(id, try dispatch(method, try fitted(method, params, size: try await fitSize(method, params))))
+            default: break
+            }
             return Self.ok(id, try dispatch(method, params))
         } catch let failure as Failure {
             return Self.error(id, failure)
@@ -130,6 +138,12 @@ public final class ApiRouter {
             switch error {
             case .notFound(let message): return Self.error(id, Failure("not_found", message))
             case .conflict(let message): return Self.error(id, Failure("conflict", message))
+            case .invalidParams(let message): return Self.error(id, Failure("invalid_params", message))
+            }
+        } catch let failure as ObjectMeasure.Failure {
+            switch failure {
+            case .unsupported(let message): return Self.error(id, Failure("unsupported", message))
+            case .unavailable(let message): return Self.error(id, Failure("unavailable", message))
             case .invalidParams(let message): return Self.error(id, Failure("invalid_params", message))
             }
         } catch {
@@ -332,6 +346,27 @@ public final class ApiRouter {
             try board(forObject: id).delete(id)
             return .object([:])
 
+        case "layout.place":
+            let id = try string(p, "id")
+            let board = try board(forObject: id)
+            let near = try string(p, "near")
+            guard board.objects[near] != nil else { throw BoardError.notFound("object \(near) on this board") }
+            let frames = try board.place(id, near: near, side: try option(p, "side", Layout.Side.self) ?? .right, gap: p["gap"]?.number ?? Layout.defaultGap,
+                                         align: try option(p, "align", Layout.Align.self) ?? .start, caller: caller(p, on: board))
+            return .object(["frames": try JSONValue.encode(frames)])
+
+        case "layout.stack":
+            guard let ids = p["ids"]?.array?.compactMap(\.string), !ids.isEmpty else { throw Failure("invalid_params", "ids must be a non-empty array of object ids") }
+            let board = try board(forObject: ids[0])
+            for id in ids where board.objects[id] == nil { throw BoardError.notFound("object \(id) on this board") }
+            let origin = try p["origin"].map { value -> CGPoint in
+                guard let x = value["x"]?.number, let y = value["y"]?.number else { throw Failure("invalid_params", "origin needs x and y") }
+                return CGPoint(x: x, y: y)
+            }
+            let frames = try board.stack(ids, direction: try option(p, "direction", Layout.Direction.self) ?? .row, gap: p["gap"]?.number ?? Layout.defaultGap,
+                                         wrapAt: p["wrapAt"]?.number, align: try option(p, "align", Layout.Align.self) ?? .start, origin: origin, caller: caller(p, on: board))
+            return .object(["frames": try JSONValue.encode(frames)])
+
         case "tray.list":
             return .object(["mentions": try JSONValue.encode(try board(p).tray)])
 
@@ -406,6 +441,195 @@ public final class ApiRouter {
         default:
             throw Failure("invalid_params", "unknown method \(method)")
         }
+    }
+
+    // MARK: Layout
+
+    /// An optional enum parameter; an unknown value is invalid rather than ignored.
+    func option<T: RawRepresentable & CaseIterable>(_ p: JSONValue, _ key: String, _ type: T.Type) throws -> T? where T.RawValue == String {
+        guard let raw = p[key]?.string else { return nil }
+        guard let value = T(rawValue: raw) else {
+            throw Failure("invalid_params", "\(key) must be one of \(T.allCases.map(\.rawValue).joined(separator: ", "))")
+        }
+        return value
+    }
+
+    /// `object.measure`: the intrinsic frame size for a type and props (notes and text wrap at
+    /// `width`). Paths resolve against the caller's (or the given) board.
+    private func measure(_ p: JSONValue) async throws -> JSONValue {
+        guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
+        let size = try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: p["width"]?.number, root: try board(p).root)
+        return .object(["w": .number(size.width), "h": .number(size.height)])
+    }
+
+    /// The measured size an `object.create`/`object.update` with `size: "fit"` gets; nil without
+    /// `size`. Notes and text wrap at the given frame's `w` (an update keeps its current width).
+    /// `pending` are the params of creates earlier in the same batch, for updates of `$n`.
+    func fitSize(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> CGSize? {
+        guard let size = p["size"] else { return nil }
+        guard size.string == "fit" else { throw Failure("invalid_params", "size must be \"fit\"") }
+        let width = p["frame"]?["w"]?.number
+        if method == "object.create" {
+            guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
+            return try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: width, root: try board(p).root)
+        }
+        let id = try string(p, "id")
+        let base: (type: ObjectType, props: JSONValue, width: Double?, root: URL)
+        if let index = Self.reference(id) {
+            guard let created = pending[index], let type = ObjectType(rawValue: try string(created, "type")) else {
+                throw Failure("invalid_params", "\(id) must name an earlier create op")
+            }
+            base = (type, created["props"] ?? .object([:]), created["frame"]?["w"]?.number, try board(created).root)
+        } else {
+            let board = try board(forObject: id)
+            let object = try board.object(id)
+            base = (object.type, object.props, object.frame.w, board.root)
+        }
+        let props = p["props"].map { base.props.merging($0) } ?? base.props
+        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? base.width, root: base.root)
+    }
+
+    /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
+    /// current, or automatically placed) origin.
+    func fitted(_ method: String, _ p: JSONValue, size: CGSize?) throws -> JSONValue {
+        guard let size, var params = p.object else { return p }
+        params.removeValue(forKey: "size")
+        let origin: (x: Double, y: Double)
+        if let x = p["frame"]?["x"]?.number, let y = p["frame"]?["y"]?.number {
+            origin = (x, y)
+        } else if method == "object.create" {
+            let board = try board(p)
+            let placed = board.place(width: size.width, height: size.height, near: caller(p, on: board))
+            origin = (placed.x, placed.y)
+        } else {
+            let id = try string(p, "id")
+            let current = try board(forObject: id).object(id).frame
+            origin = (current.x, current.y)
+        }
+        params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
+        return .object(params)
+    }
+
+    /// `$n` → n, the index of an earlier batch op.
+    static func reference(_ text: String) -> Int? {
+        guard text.hasPrefix("$") else { return nil }
+        return Int(text.dropFirst())
+    }
+
+    static let batchMethods: Set<String> = ["object.create", "object.update", "object.delete", "layout.place", "layout.stack"]
+
+    /// `object.batch`: every op applies or none does, as one board revision and one undo step.
+    /// Sizes are measured before anything changes, so nothing else interleaves with the writes.
+    private func batch(_ p: JSONValue) async throws -> JSONValue {
+        guard let ops = p["ops"]?.array, !ops.isEmpty else { throw Failure("invalid_params", "ops must be a non-empty array") }
+        let board = try board(p)
+        func prepared(_ method: String, _ raw: JSONValue) -> JSONValue {
+            var params = raw.object ?? [:]
+            if method == "object.create" { params["board"] = .string(board.id) }
+            if params["caller"] == nil, let caller = p["caller"] { params["caller"] = caller }
+            return .object(params)
+        }
+        var pending: [Int: JSONValue] = [:]
+        var sizes: [CGSize?] = []
+        for (index, op) in ops.enumerated() {
+            let method = op["method"]?.string ?? ""
+            guard Self.batchMethods.contains(method) else {
+                throw Failure("invalid_params", "op \(index): method must be one of \(Self.batchMethods.sorted().joined(separator: ", "))")
+            }
+            let params = prepared(method, op["params"] ?? .object([:]))
+            do {
+                sizes.append(try await fitSize(method, params, pending: pending))
+            } catch {
+                throw Self.labelled(error, op: index, method)
+            }
+            if method == "object.create" { pending[index] = params }
+        }
+        var results: [JSONValue] = []
+        try board.atomically {
+            for (index, op) in ops.enumerated() {
+                let method = op["method"]?.string ?? ""
+                do {
+                    let params = prepared(method, try resolve(op["params"] ?? .object([:]), results: results, index: index))
+                    for id in [params["id"], params["near"]].compactMap({ $0?.string }) + (params["ids"]?.array?.compactMap(\.string) ?? []) where board.objects[id] == nil {
+                        throw BoardError.notFound("object \(id) on board \(board.id)")
+                    }
+                    results.append(try dispatch(method, try fitted(method, params, size: sizes[index])))
+                } catch {
+                    throw Self.labelled(error, op: index, method)
+                }
+            }
+        }
+        return .object(["results": .array(results), "revision": .number(Double(board.revision))])
+    }
+
+    /// A batch op's failure, naming the op, with the code it would have had on its own.
+    static func labelled(_ error: Error, op index: Int, _ method: String) -> Error {
+        let prefix = "op \(index) (\(method)): "
+        switch error {
+        case let failure as Failure: return Failure(failure.code, prefix + failure.message)
+        case BoardError.notFound(let message): return Failure("not_found", prefix + message)
+        case BoardError.conflict(let message): return Failure("conflict", prefix + message)
+        case BoardError.invalidParams(let message): return Failure("invalid_params", prefix + message)
+        case ObjectMeasure.Failure.unsupported(let message): return Failure("unsupported", prefix + message)
+        case ObjectMeasure.Failure.unavailable(let message): return Failure("unavailable", prefix + message)
+        case ObjectMeasure.Failure.invalidParams(let message): return Failure("invalid_params", prefix + message)
+        default: return Failure("invalid_params", prefix + String(describing: error))
+        }
+    }
+
+    /// Replaces every string `"$n"` in `value` with the id op n created.
+    private func resolve(_ value: JSONValue, results: [JSONValue], index: Int) throws -> JSONValue {
+        switch value {
+        case .string(let text):
+            guard let n = Self.reference(text) else { return value }
+            guard n < index, let id = results[n]["object"]?["id"] else { throw Failure("invalid_params", "\(text) must name an earlier create op") }
+            return id
+        case .array(let items): return .array(try items.map { try resolve($0, results: results, index: index) })
+        case .object(let fields): return .object(try fields.mapValues { try resolve($0, results: results, index: index) })
+        default: return value
+        }
+    }
+
+    /// `layout.check`: accidental overlaps, arrows through tiles, and content that doesn't fit
+    /// its frame, for `ids`, for what intersects `rect`, or for the whole board.
+    private func check(_ p: JSONValue) async throws -> JSONValue {
+        let board: Board
+        var scope: Set<ObjectID>?
+        if let ids = p["ids"]?.array?.compactMap(\.string) {
+            guard let first = ids.first else { throw Failure("invalid_params", "ids must not be empty") }
+            board = try self.board(forObject: first)
+            for id in ids where board.objects[id] == nil { throw BoardError.notFound("object \(id) on this board") }
+            scope = Set(ids)
+        } else {
+            board = try self.board(p)
+            if let rect = try p["rect"].map({ try $0.decode(Frame.self) }) {
+                let routes = board.routes()
+                scope = Set(board.objects.values.filter { object in
+                    if let path = routes[object.id] { return DrawingGeometry.path(path, crosses: rect.rect) || path.contains { rect.rect.contains($0) } }
+                    return object.frame.intersects(rect)
+                }.map(\.id))
+            }
+        }
+        let report = board.layoutCheck(scope: scope)
+        var overflow: [JSONValue] = []
+        let measurable = board.objects.values
+            .filter { scope?.contains($0.id) ?? true }
+            .filter { $0.type == .code || $0.type == .note || ($0.type == .shape && ShapeSpec($0.props)?.kind == .text) }
+            .sorted { $0.id < $1.id }
+        for object in measurable {
+            // Code has one intrinsic size; notes and text wrap at the frame's width.
+            guard let size = try? await ObjectMeasure.size(type: object.type, props: object.props, width: object.type == .code ? nil : object.frame.w, root: board.root),
+                  let current = board.objects[object.id]?.frame else { continue }
+            let x = max(0, size.width - current.w)
+            let y = max(0, size.height - current.h)
+            guard x >= 1 || y >= 1 else { continue }
+            overflow.append(.object(["id": .string(object.id), "x": .number(x.rounded(.up)), "y": .number(y.rounded(.up))]))
+        }
+        return .object([
+            "overlaps": .array(report.overlaps.map { .array($0.map(JSONValue.string)) }),
+            "arrowCrossings": .array(report.crossings.map { .object(["arrow": .string($0.arrow), "crosses": .array($0.crosses.map(JSONValue.string))]) }),
+            "overflow": .array(overflow),
+        ])
     }
 
     // MARK: Helpers

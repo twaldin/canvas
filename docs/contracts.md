@@ -79,6 +79,22 @@ Read more with the canvas SDK or CLI: canvas get <id> --as graph|image
 
 Rules: numbered in staging order; each entry is one location line plus an optional short excerpt (at most 12 lines: mentioned lines marked `>`, with up to 3 unmarked lines of surrounding context while it fits); edited-since-staging entries are marked `(edited)`; the block is omitted entirely when the tray is empty.
 
+## Note fences
+
+A note's `markdown` is plain markdown; the code fence info string selects how the tile renders a fence (parsed by `NoteFence` in CanvasCore):
+
+| Info string | Renders |
+| --- | --- |
+| `ts file=src/app.ts#L10-40` (`#L10`, `#L10-L40`; no range = whole file) | Live excerpt of the file with line numbers |
+| `ts symbol=restoreSnapshot` / `swift file=Sources/Board.swift symbol=Board.update` | Live excerpt of the declaration (best-effort, language-agnostic; `Outer.inner` searches inside `Outer`; without `file=`, the first tracked file that declares it) |
+| `… file=src/app.ts@1a2b3c4#L10-40` | Excerpt pinned to a commit (`git show`) |
+| any anchored form plus `propose` | The fence body as a diff against the resolved range |
+| anything else | Free-written (authored) code; `path:line` references in it open code tiles |
+
+Anchor resolution, in order: a symbol that resolves wins; otherwise the line range is checked against `anchor="first line text"`, else against the text the tile captured when it first resolved the range (kept in memory for the app session), else against the fence body (a proposal's own lines vote for where they sit). A range that moved renders with "moved from L…"; one that can't be found renders a **stale** badge over the last text it showed. Agents that want anchors to survive app restarts should write `anchor="…"`.
+
+Hyper-click on an excerpt or proposal row mentions `code` (object = the note, the row's real path and line; an added proposal row mentions the line it would be inserted before); anywhere else mentions the note.
+
 ## Lifecycle authority
 
 - The omp extension is authoritative for omp tiles (`source: "canvas-omp"`).

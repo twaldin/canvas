@@ -147,7 +147,7 @@ public enum NoteReferences {
 
     // A path needs a file extension, so `localhost:3000` and `12:30` never match; the lookbehind
     // keeps `https://example.com:443` out.
-    nonisolated(unsafe) private static let pattern = try! NSRegularExpression(
+    private static let pattern = try! NSRegularExpression(
         pattern: #"(?<![\w./@:~-])((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*\.[A-Za-z][A-Za-z0-9]*):(\d+)(?:-(\d+))?(?!\d)"#)
 
     public static func find(in text: String) -> [Reference] {

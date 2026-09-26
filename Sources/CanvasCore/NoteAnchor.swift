@@ -20,7 +20,9 @@ public enum NoteAnchor {
     /// Longest excerpt a symbol expands to; past this the declaration is shown truncated.
     static let maxSymbolLines = 400
 
-    public static func resolve(_ fence: NoteFence, in source: [String], captured: [String]?) -> Resolution {
+    /// `body` is the fence's own text: a proposal's new code, or code an agent pasted into an
+    /// excerpt fence. Without an `anchor` or captured text it re-finds a moved range by content.
+    public static func resolve(_ fence: NoteFence, in source: [String], captured: [String]?, body: [String] = []) -> Resolution {
         if let symbol = fence.symbol {
             if let range = symbolRange(symbol, in: source) { return Resolution(range: range, status: .exact) }
             if fence.lines == nil { return Resolution(range: nil, status: .stale("symbol \(symbol) not found")) }
@@ -32,10 +34,13 @@ public enum NoteAnchor {
         let length = lines.end - lines.start
         let expected = fence.anchor.map { [$0] } ?? captured ?? []
         guard let (offset, key) = expected.enumerated().first(where: { !normalized($0.element).isEmpty }).map({ ($0.offset, normalized($0.element)) }) else {
-            guard lines.start <= source.count else {
-                return Resolution(range: nil, status: .stale("lines \(lines.start)-\(lines.end) are past the end of the file (\(source.count) lines)"))
+            guard let moved = placement(of: body, in: source, near: lines.start - 1, length: length + 1) else {
+                guard lines.start <= source.count else {
+                    return Resolution(range: nil, status: .stale("lines \(lines.start)-\(lines.end) are past the end of the file (\(source.count) lines)"))
+                }
+                return Resolution(range: LineRange(start: lines.start, end: min(lines.end, source.count)), status: .exact)
             }
-            return Resolution(range: LineRange(start: lines.start, end: min(lines.end, source.count)), status: .exact)
+            return Resolution(range: LineRange(start: moved + 1, end: min(moved + 1 + length, source.count)), status: .relocated(from: lines.start))
         }
         let wanted = lines.start - 1 + offset
         if wanted < source.count, normalized(source[wanted]) == key {
@@ -61,6 +66,39 @@ public enum NoteAnchor {
         }
         let start = best.index + 1
         return Resolution(range: LineRange(start: start, end: min(start + length, source.count)), status: .relocated(from: lines.start))
+    }
+
+    /// 0-based start where `body` sits in `source` when that differs from `written`. Every body
+    /// line found in the source nominates the start it implies; each nominee is scored by how many
+    /// lines a diff of its window against the body keeps (so a proposal's inserted lines don't
+    /// skew it). The winner must beat the written start and keep at least two lines (one, for a
+    /// one-line body), so a lone `}` moves nothing.
+    static func placement(of body: [String], in source: [String], near written: Int, length: Int) -> Int? {
+        let wanted = body.enumerated().filter { !normalized($0.element).isEmpty }.map { ($0.offset, normalized($0.element)) }
+        guard !wanted.isEmpty else { return nil }
+        let keys = Set(wanted.map(\.1))
+        var positions: [String: [Int]] = [:]
+        for (index, line) in source.enumerated() {
+            let key = normalized(line)
+            if keys.contains(key) { positions[key, default: []].append(index) }
+        }
+        var nominees = Set<Int>()
+        for (offset, key) in wanted {
+            for index in positions[key] ?? [] where index >= offset { nominees.insert(index - offset) }
+        }
+        let normalizedBody = body.map(normalized)
+        func kept(_ start: Int) -> Int {
+            guard start < source.count else { return 0 }
+            let window = source[start..<min(source.count, start + length)].map(normalized)
+            return NoteDiff.lines(window, normalizedBody).filter { if case .same = $0 { true } else { false } }.count
+        }
+        var best: (start: Int, kept: Int)?
+        for start in nominees.sorted(by: { abs($0 - written) < abs($1 - written) }) {
+            let score = kept(start)
+            if best == nil || score > best!.kept { best = (start, score) }
+        }
+        guard let best, best.start != written, best.kept > kept(written), best.kept >= min(2, wanted.count) else { return nil }
+        return best.start
     }
 
     // MARK: Symbols

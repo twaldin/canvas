@@ -18,9 +18,9 @@ public struct NoteExcerpt: Equatable, Sendable {
 public enum NoteSource {
     /// Resolve a fence against disk (or `git show` for a pinned commit). `captured` is the text the
     /// range showed when first resolved; it re-finds the range when lines move and stands in when
-    /// the anchor is lost.
+    /// the anchor is lost. `body` is the fence's own text (see `NoteAnchor.resolve`).
     @concurrent
-    public static func excerpt(for fence: NoteFence, root: URL, captured: [String]?) async -> NoteExcerpt {
+    public static func excerpt(for fence: NoteFence, root: URL, captured: [String]?, body: [String] = []) async -> NoteExcerpt {
         var path = fence.path
         if path == nil, let symbol = fence.symbol {
             path = await locate(symbol: symbol, root: root)
@@ -36,7 +36,7 @@ public enum NoteSource {
             return NoteExcerpt(path: path, range: nil, lines: captured ?? [], status: .stale("cannot read \(place)"))
         }
         let source = lines(of: text)
-        let resolution = NoteAnchor.resolve(fence, in: source, captured: captured)
+        let resolution = NoteAnchor.resolve(fence, in: source, captured: captured, body: body)
         guard let range = resolution.range else {
             return NoteExcerpt(path: path, range: nil, lines: captured ?? [], status: resolution.status)
         }

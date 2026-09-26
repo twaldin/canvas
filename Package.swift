@@ -16,6 +16,8 @@ let package = Package(
     dependencies: [
         // Pinned: binary, headers and wrapper must move together (docs/design.md).
         .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260922"),
+        // Note tiles: CommonMark + GFM (tables, strikethrough, task lists) AST. Apache-2.0.
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.9.0"),
     ],
     targets: [
         .target(name: "CanvasCore"),
@@ -24,6 +26,7 @@ let package = Package(
             dependencies: [
                 "CanvasCore",
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                .product(name: "Markdown", package: "swift-markdown"),
             ]
         ),
         .executableTarget(

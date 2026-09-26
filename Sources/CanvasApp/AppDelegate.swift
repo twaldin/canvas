@@ -85,6 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func newTerminal(_ sender: Any?) { keyController?.newTerminal(sender) }
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
+    /// An empty note at the viewport center; it shows a double-click-to-edit placeholder.
+    @objc func newNote(_ sender: Any?) {
+        keyController?.board.create(type: .note, props: .object(["markdown": .string("")]))
+    }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
     @objc func closeSelected(_ sender: Any?) { keyController?.closeSelected(sender) }
@@ -106,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("Canvas", [item("Quit Canvas", #selector(NSApplication.terminate(_:)), "q")])
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
+            item("New Note", #selector(newNote(_:)), "n"),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
             item("Close Selected Tiles", #selector(closeSelected(_:)), "w", [.command, .shift]),
         ])

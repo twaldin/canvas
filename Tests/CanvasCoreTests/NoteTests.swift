@@ -96,6 +96,21 @@ struct NoteAnchorTests {
         #expect(resolution.status == .relocated(from: 3))
     }
 
+    @Test func proposalBodyRelocatesItsRangeWithoutCapturedText() {
+        // After a restart nothing is captured; the proposal's own lines still find the range.
+        let fence = NoteFence(path: "a.swift", lines: LineRange(start: 7, end: 9), propose: true)
+        let proposed = ["func save() {", "    write()", "    flush()", "}"]
+        let moved = ["// a", "// b", "// c"] + source
+        #expect(NoteAnchor.resolve(fence, in: moved, captured: nil, body: proposed).range == LineRange(start: 10, end: 12))
+        // Unmoved, the written range stands even though every `}` votes elsewhere too.
+        #expect(NoteAnchor.resolve(fence, in: source, captured: nil, body: proposed).status == .exact)
+        // An inserted line shifts the votes of every line below it; the top lines decide.
+        let inserting = ["func save() {", "    validate()", "    write()", "}"]
+        #expect(NoteAnchor.resolve(fence, in: moved, captured: nil, body: inserting).range == LineRange(start: 10, end: 12))
+        // A body that matches nothing leaves the range as written.
+        #expect(NoteAnchor.resolve(fence, in: moved, captured: nil, body: ["brand new"]).range == LineRange(start: 7, end: 9))
+    }
+
     @Test func duplicateAnchorLinesPreferTheCapturedNeighbours() {
         let file = ["}", "func a() {", "    one()", "}", "func a() {", "    two()", "}"]
         let fence = NoteFence(path: "a.swift", lines: LineRange(start: 2, end: 4))

@@ -4,14 +4,15 @@
 // functions whose first parameter is named `canvas` receive the client (every API namespace plus
 // `compositions`); `client.compositions.<name>.<fn>(...)` passes it for you. Other exports (pure
 // helpers, constants) come through unchanged. Search order, first match wins, so a helper you
-// improve shadows the shipped one: `~/.canvas/compositions`, then Canvas's `compositions/`.
+// improve shadows the shipped one: `~/.canvas/compositions`, then `builtin_compositions/` next to
+// this file (shipped with the client).
 // Modules load lazily on first access (Bun's synchronous `require`), like the Python SDK.
 // `reload()` picks up edited files. Bun caches directory listings in its resolver, so a file
 // added to an already-loaded directory needs a new process (the Python SDK has no such limit).
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, extname, join } from "node:path";
 import type { CanvasApi } from "./generated";
 
 const EXTENSIONS = [".ts", ".mjs", ".js"];
@@ -28,8 +29,7 @@ export type Compositions = {
 } & Record<string, Record<string, any>>;
 
 export function defaultCompositionDirs(): string[] {
-  // src/ -> ts/ -> clients/ -> repo root (or the app bundle's Resources/)
-  return [join(homedir(), ".canvas/compositions"), resolve(import.meta.dir, "../../../compositions")];
+  return [join(homedir(), ".canvas/compositions"), join(import.meta.dir, "builtin_compositions")];
 }
 
 function files(dirs: string[]): Map<string, string> {

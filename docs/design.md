@@ -100,7 +100,7 @@ flowchart TB
   - **CLI**: for agents without a REPL.
   - **TS client**: used by the omp extension and usable from JS eval.
 - MCP later, as another wrapper over the same schema.
-- A shared `compositions/` folder, auto-imported by both SDKs, holds reusable helpers agents write and improve.
+- A shared `~/.canvas/compositions/` folder, auto-imported by both SDKs, holds reusable helpers agents write and improve; each SDK also ships its own built-in compositions, which user ones shadow by name.
 - The shipped default skill (`skills/canvas`): persistent REPL → Python SDK; otherwise → CLI; touch user objects only when the user is collaborating. omp's skill discovery can't be extended by an extension, so the omp extension announces the skill (name, description, absolute path) in the system prompt only when `CANVAS_ENV=1`; nothing is added to the user's global omp config.
 
 ### Persistence

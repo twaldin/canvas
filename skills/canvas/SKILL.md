@@ -122,7 +122,7 @@ canvas agent.read --target reviewer --lines 80       # the tail of its terminal 
 
 ## Compositions
 
-Reusable helpers live in `compositions/`: the ones shipped with Canvas plus your own in `~/.canvas/compositions` (yours shadow shipped ones of the same name). In Python:
+Reusable helpers come built into the SDKs, plus your own in `~/.canvas/compositions` (yours shadow built-in ones of the same name). In Python:
 
 ```python
 canvas.compositions.available()                              # name -> summary

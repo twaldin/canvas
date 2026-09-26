@@ -36,7 +36,7 @@ zmx session names: `canvas-<tileId>`, labelled `canvas.board=<boardId> canvas.ti
 | --- | --- | --- |
 | `~/Library/Application Support/Canvas/boards/<boardId>.json` | Stored boards (`CANVAS_HOME` relocates the whole directory) | App |
 | `<board root>/.canvas/board.json` | `board.export` snapshot (default path), for committing with the repo | Written on request only |
-| `compositions/` (repo, or the bundle's `Resources/`) | Shipped compositions (`<name>.py`, `<name>.ts`) | Canvas |
+| `clients/python/canvas_sdk/builtin_compositions/`, `clients/ts/src/builtin_compositions/` | Shipped compositions, installed with each client (wheel, bundle, checkout) | Canvas |
 | `~/.canvas/compositions/` | The user's and agents' own compositions; searched first, so they shadow shipped ones | User/agents |
 | `skills/canvas/` (repo, or the bundle's `Resources/`) | The shipped agent skill; the omp extension announces it only when `CANVAS_ENV=1` | Canvas |
 

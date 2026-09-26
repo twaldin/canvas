@@ -11,7 +11,7 @@ passes it for you. Other attributes (pure helpers, constants) come through uncha
     canvas.compositions.review.pin_notes(["one", "two"])
 
 Search order (first match wins, so a helper you improve shadows the shipped one):
-`~/.canvas/compositions`, then the `compositions/` directory shipped with Canvas.
+`~/.canvas/compositions`, then the compositions shipped inside this package (`builtin_compositions/`).
 """
 
 from __future__ import annotations
@@ -28,9 +28,8 @@ __all__ = ["Compositions", "default_dirs"]
 
 
 def default_dirs() -> list[Path]:
-    # canvas_sdk/ -> python/ -> clients/ -> repo root (or the app bundle's Resources/)
-    shipped = Path(__file__).resolve().parents[3] / "compositions"
-    return [Path.home() / ".canvas" / "compositions", shipped]
+    # Shipped as package files, so they come along with the checkout, the app bundle, or a wheel.
+    return [Path.home() / ".canvas" / "compositions", Path(__file__).resolve().parent / "builtin_compositions"]
 
 
 class Compositions:

@@ -1,5 +1,5 @@
 // Arrange objects in a tidy grid beside a terminal (yours by default), clear of other tiles.
-import type { Composer, Frame } from "../clients/ts/src/index";
+import type { Composer, Frame } from "../index";
 
 export const GAP = 24;
 // Drawings never block placement (same rule as the canvas's own placement).

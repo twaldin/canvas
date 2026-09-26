@@ -1,6 +1,6 @@
 // Open a set of file:line locations (e.g. search hits, a stack trace) as code tiles in a grid.
 import { isAbsolute, normalize, relative as relativeTo, sep } from "node:path";
-import type { Composer, LineRange } from "../clients/ts/src/index";
+import type { Composer, LineRange } from "../index";
 
 // path, path:12, path:12-40, path:12:5 (column dropped), path#L12, path#L12-L40
 const LOCATION = /^(?<path>.+?)(?:#L(?<a>\d+)(?:-L?(?<b>\d+))?|:(?<c>\d+)(?:-(?<d>\d+)|:\d+)?)?$/;

@@ -35,7 +35,7 @@ export type CanvasClientOptions = {
   socketPath?: string;
   /** Per-call timeout. Omit for none (agent.wait can legitimately block for minutes). */
   timeoutMs?: number;
-  /** Where `compositions` looks; default `~/.canvas/compositions`, then Canvas's `compositions/`. */
+  /** Where `compositions` looks; default `~/.canvas/compositions`, then the shipped `builtin_compositions/`. */
   compositionsDirs?: string[];
 };
 

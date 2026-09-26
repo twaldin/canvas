@@ -112,6 +112,14 @@ class Agent(TypedDict):
     sessionId: NotRequired[str]
     lifecycle: Required["Lifecycle"]
 
+class BoardInfo(TypedDict):
+    board: Required["Id"]
+    root: Required[str]
+    archived: Required[bool]
+    open: Required[bool]
+    updatedAt: NotRequired[str]
+    objects: Required[int]
+
 def _with_env(params: dict[str, Any], keys: list[str]) -> dict[str, Any]:
     for k in keys:
         if params.get(k) is None and os.environ.get(ENV_DEFAULTS[k]):
@@ -135,6 +143,16 @@ class BoardApi:
         """Board manifest: all objects (props summarized for heavy types) plus a change cursor. Objects created or changed since `since` are flagged."""
         params = {"board": board, "since": since}
         return self._call("board.get", _with_env(params, ["board"]))
+
+    def list(self) -> dict[str, Any]:
+        """Every stored board, open or not, including archived boards whose root directory is gone."""
+        params = {}
+        return self._call("board.list", _with_env(params, []))
+
+    def export(self, *, board: "Id" | None = None, path: str | None = None) -> dict[str, Any]:
+        """Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller."""
+        params = {"board": board, "path": path}
+        return self._call("board.export", _with_env(params, ["board"]))
 
 class ObjectApi:
     def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
@@ -223,6 +241,11 @@ class AgentApi:
         params = {"target": target, "until": until, "timeoutMs": timeout_ms}
         return self._call("agent.wait", _with_env(params, []))
 
+    def read(self, *, target: str, lines: int | None = None) -> dict[str, Any]:
+        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed."""
+        params = {"target": target, "lines": lines}
+        return self._call("agent.read", _with_env(params, []))
+
 class FollowApi:
     def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
         self._call = call
@@ -266,4 +289,4 @@ class GeneratedApi:
         self.view = ViewApi(call)
         self.events = EventsApi(call)
 
-METHODS = ["system.ping","board.get","object.get","object.create","object.update","object.delete","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","follow.report","view.attention","view.snapshot","events.subscribe"]
+METHODS = ["system.ping","board.get","board.list","board.export","object.get","object.create","object.update","object.delete","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.snapshot","events.subscribe"]

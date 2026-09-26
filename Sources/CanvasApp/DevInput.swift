@@ -37,6 +37,12 @@ enum DevInput {
         return flags
     }
 
+    private static func button(in view: NSView?, keyEquivalent key: String) -> NSButton? {
+        guard let view else { return nil }
+        if let button = view as? NSButton, !key.isEmpty, button.keyEquivalent == key { return button }
+        return view.subviews.lazy.compactMap { button(in: $0, keyEquivalent: key) }.first
+    }
+
     static func replay(_ fields: [String: String]) {
         guard fields["pid"] == String(getpid()) else { return }
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.windowController is CanvasWindowController }),
@@ -81,13 +87,20 @@ enum DevInput {
                 NSApp.postEvent(event, atStart: false)
             }
         case "text":
-            (window.firstResponder as? NSTextInputClient)?.insertText(fields["text"] ?? "", replacementRange: NSRange(location: NSNotFound, length: 0))
+            // Typing goes to a sheet (e.g. the group-name prompt) when one is open.
+            ((window.attachedSheet ?? window).firstResponder as? NSTextInputClient)?.insertText(fields["text"] ?? "", replacementRange: NSRange(location: NSNotFound, length: 0))
         case "command":
-            window.firstResponder?.doCommand(by: NSSelectorFromString(fields["selector"] ?? ""))
+            (window.attachedSheet ?? window).firstResponder?.doCommand(by: NSSelectorFromString(fields["selector"] ?? ""))
         case "shortcut":
             let key = fields["key"] ?? ""
             guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                                windowNumber: window.windowNumber, context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0) else { return }
+            // A sheet in a window that isn't key ignores key equivalents (an alert's default button
+            // only gets Return once key), so press the matching button, or accept on Return.
+            if let sheet = window.attachedSheet {
+                if let pressed = button(in: sheet.contentView, keyEquivalent: key) { return pressed.performClick(nil) }
+                if key == "\r" || key == "\n" { return window.endSheet(sheet, returnCode: .alertFirstButtonReturn) }
+            }
             if !window.performKeyEquivalent(with: event) { _ = NSApp.mainMenu?.performKeyEquivalent(with: event) }
         case "scroll":
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(number("dy")), wheel2: Int32(number("dx")), wheel3: 0) else { return }

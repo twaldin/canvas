@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards))
     private lazy var router = ApiRouter(registry: registry)
     private var server: SocketServer?
+    private var cmuxServer: SocketServer?
+    private lazy var cmux = CmuxRouter(registry: registry, password: AppPaths.cmuxPassword)
     private var controllers: [BoardID: CanvasWindowController] = [:]
     private var terminationSignal: DispatchSourceSignal?
     private lazy var hyper = HyperMonitor { [weak self] window in
@@ -44,6 +46,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             NSLog("Canvas: cannot listen on \(AppPaths.apiSocket): \(error)")
         }
+        cmux.perform = { [weak self] board, object, command in
+            guard let tile = self?.controllers[board.id]?.canvas.tiles[object.id]?.content as? BrowserTile else {
+                throw CmuxError("unavailable", "browser surface \(object.id) is not open in a window")
+            }
+            return try await tile.perform(command)
+        }
+        let cmux = cmux
+        let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { request, connection in
+            await cmux.handle(request, connection: connection)
+        }
+        do {
+            try cmuxServer.start()
+            self.cmuxServer = cmuxServer
+        } catch {
+            NSLog("Canvas: cannot listen on \(AppPaths.cmuxSocket): \(error)")
+        }
         hyper.install()
         open(root: Self.initialRoot())
         // Testing on a shared machine: CANVAS_NO_ACTIVATE=1 keeps the app from taking focus.
@@ -55,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         registry.store.flush(Array(registry.boards.values))
         server?.stop()
+        cmuxServer?.stop()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -84,6 +103,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func newTerminal(_ sender: Any?) { keyController?.newTerminal(sender) }
+    @objc func newBrowserTile(_ sender: Any?) {
+        guard let board = keyController?.board else { return }
+        BrowserTile.promptForNew(on: board)
+    }
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
@@ -106,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("Canvas", [item("Quit Canvas", #selector(NSApplication.terminate(_:)), "q")])
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
+            item("New Browser Tile…", #selector(newBrowserTile(_:)), "b", [.command, .shift]),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
             item("Close Selected Tiles", #selector(closeSelected(_:)), "w", [.command, .shift]),
         ])

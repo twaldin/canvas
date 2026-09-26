@@ -326,6 +326,18 @@ export type BoardListResult = {
   boards: BoardInfo[];
 };
 
+export type BoardOpenParams = {
+  /** absolute directory path (`~` allowed); one board per directory */
+  root: string;
+  /** bring the board's tab to the front */
+  select?: boolean;
+};
+export type BoardOpenResult = {
+  board: Id;
+  root: string;
+  objects: number;
+};
+
 export type BoardExportParams = {
   board?: Id;
   /** absolute, or relative to the board root; default .canvas/board.json */
@@ -680,6 +692,8 @@ export interface CanvasApi {
     history(params?: BoardHistoryParams): Promise<BoardHistoryResult>;
     /** Every stored board, open or not, including archived boards whose root directory is gone. */
     list(params?: BoardListParams): Promise<BoardListResult>;
+    /** Open the board for a directory (creating it if new) as a tab of the frontmost board window. The user's current tab stays in front unless `select` is true. Opening an already-open board only selects it when `select` is true. */
+    open(params: BoardOpenParams): Promise<BoardOpenResult>;
     /** Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller. */
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
@@ -766,6 +780,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       get: (params?: BoardGetParams) => call("board.get", params ?? {}, ["board"]) as Promise<BoardGetResult>,
       history: (params?: BoardHistoryParams) => call("board.history", params ?? {}, ["board"]) as Promise<BoardHistoryResult>,
       list: (params?: BoardListParams) => call("board.list", params ?? {}, []) as Promise<BoardListResult>,
+      open: (params: BoardOpenParams) => call("board.open", params ?? {}, []) as Promise<BoardOpenResult>,
       export: (params?: BoardExportParams) => call("board.export", params ?? {}, ["board"]) as Promise<BoardExportResult>,
     },
     object: {
@@ -812,4 +827,4 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","board.get","board.history","board.list","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;

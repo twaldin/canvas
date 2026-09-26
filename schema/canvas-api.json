@@ -407,6 +407,23 @@
       "params": { "type": "object", "properties": {}, "additionalProperties": false },
       "result": { "type": "object", "required": ["boards"], "properties": { "boards": { "type": "array", "items": { "$ref": "#/definitions/BoardInfo" } } } }
     },
+    "board.open": {
+      "description": "Open the board for a directory (creating it if new) as a tab of the frontmost board window. The user's current tab stays in front unless `select` is true. Opening an already-open board only selects it when `select` is true.",
+      "params": {
+        "type": "object",
+        "required": ["root"],
+        "properties": {
+          "root": { "type": "string", "description": "absolute directory path (`~` allowed); one board per directory" },
+          "select": { "type": "boolean", "default": false, "description": "bring the board's tab to the front" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["board", "root", "objects"],
+        "properties": { "board": { "$ref": "#/definitions/Id" }, "root": { "type": "string" }, "objects": { "type": "integer" } }
+      }
+    },
     "board.export": {
       "description": "Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller.",
       "params": {

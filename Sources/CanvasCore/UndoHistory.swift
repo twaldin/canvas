@@ -112,6 +112,8 @@ extension Board {
     @discardableResult
     public func undo() -> Bool {
         guard let step = history.popUndo() else { return false }
+        replayVerb = "undo"
+        defer { replayVerb = nil }
         history.pushRedo(revert(step))
         return true
     }
@@ -141,6 +143,8 @@ extension Board {
     @discardableResult
     public func redo() -> Bool {
         guard let step = history.popRedo() else { return false }
+        replayVerb = "redo"
+        defer { replayVerb = nil }
         var replayed: [UndoHistory.Change] = []
         replay {
             for change in step {

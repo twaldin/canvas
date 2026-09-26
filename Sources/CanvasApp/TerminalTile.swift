@@ -177,58 +177,66 @@ final class TerminalTile: NSView, TileContent {
         terminal.setSurfaceVisible(isLive && window?.occlusionState.contains(.visible) == true)
     }
 
-    /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so snapshots (LOD cards,
-    /// `view.snapshot`, `object.get --as image`) render the tail of the zmx session's text instead.
-    func snapshot() -> NSImage? {
-        guard let rows = snapshotRows else { return nil }
-        return Self.history(session: sessionName, lines: rows).map { render($0.text) }
+    /// The grid Ghostty reports for this surface, in points; nil until it first lays out.
+    private var grid: TerminalRender.Grid?
+
+    fileprivate func resized(_ metrics: TerminalGridMetrics) {
+        let scale = window?.backingScaleFactor ?? 2
+        guard metrics.columns > 0, metrics.rows > 0, metrics.cellWidthPixels > 0, metrics.cellHeightPixels > 0 else { return }
+        grid = TerminalRender.Grid(columns: Int(metrics.columns), rows: Int(metrics.rows),
+                                   cell: CGSize(width: CGFloat(metrics.cellWidthPixels) / scale, height: CGFloat(metrics.cellHeightPixels) / scale))
     }
 
-    /// Zooming out flips every terminal at once; each `zmx history` takes tens of milliseconds,
-    /// so cards read it on GCD instead of stalling the main thread once per terminal.
-    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
-        guard let rows = snapshotRows else { return deliver(nil) }
+    /// The session's styled screen text: the last `rows` lines of `zmx history --vt` and the
+    /// row the cursor ends on. Blocks until zmx exits; nil when zmx or the session is missing.
+    nonisolated static func styledHistory(session: String, rows: Int) -> (lines: [TerminalLine], cursorRow: Int?)? {
+        guard let zmx = AppPaths.zmx else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: zmx)
+        process.arguments = ["history", session, "--vt"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        var tail = TerminalStyledTail(limit: rows)
+        let reader = output.fileHandleForReading
+        while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
+            tail.append(chunk)
+        }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let lines = tail.finish()
+        return (lines, tail.cursorRow)
+    }
+
+    /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so renders, cards, and
+    /// `view.snapshot` covers draw the session's styled text on the tile's grid instead.
+    func render(_ request: TileRenderRequest) async -> TileRender {
+        let grid = TerminalRender.grid(for: request.size, known: grid)
         let session = sessionName
-        DispatchQueue.global(qos: .utility).async {
-            let tail = Self.history(session: session, lines: rows)
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { [weak self] in deliver(tail.flatMap { self?.render($0.text) }) }
-            }
+        let rows = grid.rows
+        guard let history = await offPool(qos: .userInitiated, { Self.styledHistory(session: session, rows: rows) }) else {
+            return .placeholder(request, "terminal session \(session) is not running")
         }
-    }
-
-    private static let snapshotFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-    private static let snapshotLineHeight = ceil(snapshotFont.ascender - snapshotFont.descender + snapshotFont.leading) + 2
-
-    private var snapshotRows: Int? {
-        guard bounds.width > 0, bounds.height > 0 else { return nil }
-        return max(1, Int((bounds.height - 12) / Self.snapshotLineHeight))
-    }
-
-    private func render(_ text: String) -> NSImage {
-        let visible = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let attributes: [NSAttributedString.Key: Any] = [.font: Self.snapshotFont, .foregroundColor: NSColor(white: 0.85, alpha: 1)]
-        let lineHeight = Self.snapshotLineHeight
-        return NSImage(size: bounds.size, flipped: true) { rect in
-            NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.13, alpha: 1).setFill()
-            rect.fill()
-            for (index, line) in visible.enumerated() {
-                NSString(string: String(line)).draw(at: NSPoint(x: 6, y: 6 + CGFloat(index) * lineHeight), withAttributes: attributes)
-            }
-            return true
-        }
+        let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: rows)
+        let image = request.image { bounds in TerminalRender.draw(screen, grid: grid, in: bounds, appearance: request.appearance) }
+        return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
     }
 
     private var snapshotView: NSImageView?
 
-    /// Temporarily covers the Metal surface with its text snapshot so `cacheDisplay` can capture it.
+    /// Temporarily covers the Metal surface with its text so `cacheDisplay` can capture it
+    /// (synchronous: `view.snapshot` renders in one pass).
     func showSnapshot(_ show: Bool) {
         snapshotView?.removeFromSuperview()
         snapshotView = nil
         terminal.isHidden = false
-        guard show, let image = snapshot() else { return }
+        let grid = TerminalRender.grid(for: bounds.size, known: grid)
+        guard show, let history = Self.styledHistory(session: sessionName, rows: grid.rows) else { return }
+        let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: grid.rows)
+        let request = TileRenderRequest(size: bounds.size, scale: window?.backingScaleFactor ?? 2, full: false, appearance: effectiveAppearance)
         let view = NSImageView(frame: bounds)
-        view.image = image
+        view.image = request.image { rect in TerminalRender.draw(screen, grid: grid, in: rect, appearance: request.appearance) }
         view.imageScaling = .scaleAxesIndependently
         addSubview(view)
         snapshotView = view
@@ -251,8 +259,12 @@ final class TerminalTile: NSView, TileContent {
 
 /// Retained delegate for the terminal view (its delegate reference is weak).
 @MainActor
-private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate {
+private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate {
     weak var tile: TerminalTile?
+
+    func terminalDidResize(_ size: TerminalGridMetrics) {
+        tile?.resized(size)
+    }
 
     func terminalDidChangeTitle(_ title: String) {
         tile?.titleChanged(title)

@@ -23,8 +23,8 @@ export default function canvas(pi: ExtensionAPI): void {
 
   const guidance = canvasGuidance(tile);
 
-  // Short timeout: a missing or wedged app must never stall the user's prompt.
-  const client = new CanvasClient({ timeoutMs: 1500 });
+  // Short timeouts: a missing, wedged, or restarting app must never stall the user's prompt.
+  const client = new CanvasClient({ timeoutMs: 1500, reconnectTimeoutMs: 0 });
   let seq = Date.now() * 1000;
   let active = false;
   // omp runs subagents in this process with this extension rebound to each, headless (no UI).
@@ -186,9 +186,13 @@ const SKILL_PATH = resolve(import.meta.dir, "../../skills/canvas/SKILL.md");
 
 /** System-prompt text for a Canvas tile. The shipped skill is announced the way omp lists
  * skills (name + description) and read on demand from its absolute path: omp's skill discovery
- * isn't extensible from an extension, and global skill config would leak outside Canvas. */
+ * isn't extensible from an extension, and global skill config would leak outside Canvas.
+ * The connection values are spelled out because omp starts its eval Python kernel with an
+ * allowlisted environment (PATH, HOME, PYTHONPATH, LC_/XDG_/PI_ …) that drops CANVAS_*. */
 function canvasGuidance(tile: string): string {
   const description = /^description:\s*(.+)$/m.exec(readFileSync(SKILL_PATH, "utf8"))?.[1]?.trim() ?? "";
+  const socket = process.env.CANVAS_SOCKET ?? "";
+  const board = process.env.CANVAS_BOARD_ID ?? "";
   return [
     `You are running in a Canvas terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>.`,
     "Canvas provides this skill for the session (not reachable through skill://):",
@@ -196,5 +200,8 @@ function canvasGuidance(tile: string): string {
     `- canvas: ${description}`,
     "</skills>",
     `Before reading or changing the canvas, or when the user refers to things on it, you MUST read ${SKILL_PATH} with the read tool. Its relative references (e.g. references/html-explainers.md) live in ${dirname(SKILL_PATH)}/.`,
+    `Canvas connection: CANVAS_SOCKET=${socket} CANVAS_TILE_ID=${tile} CANVAS_BOARD_ID=${board}. The bash tool inherits these; the eval Python kernel does not, so connect there explicitly:`,
+    `  from canvas_sdk import connect; canvas = connect(socket=${JSON.stringify(socket)}, tile=${JSON.stringify(tile)}, board=${JSON.stringify(board)})`,
+    "Subprocesses started from eval (e.g. the `canvas` CLI) need those three variables in their env.",
   ].join("\n");
 }

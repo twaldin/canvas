@@ -52,7 +52,7 @@ extension Board {
             .sorted { $0.id < $1.id }
         for group in parents {
             guard let frame = fittedFrame(ofGroup: group), frame != group.frame else { continue }
-            _ = try? write(group.id, rev: nil, frame: frame, z: nil, props: nil, caller: nil, refitting: visited.union([id]))
+            _ = try? write(group.id, rev: nil, frame: frame, z: nil, props: nil, caller: nil, actor: .system, refitting: visited.union([id]))
         }
     }
 

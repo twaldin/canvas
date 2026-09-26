@@ -85,17 +85,23 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         registry.frontmost = board.id
     }
 
-    /// The window content as the user sees it. Content drawn outside AppKit (Ghostty's Metal,
-    /// WebKit) is missing from `cacheDisplay`, so visible tiles swap in images of it while rendering.
-    func snapshotPNG() -> (png: Data, width: Int, height: Int)? {
-        guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+    /// The window content as the user sees it, with the viewport it shows. Content drawn outside
+    /// AppKit (Ghostty's Metal, WebKit) is missing from `cacheDisplay`, so visible tiles swap in
+    /// images of it while rendering.
+    func snapshot(format: ImageFormat) -> (output: RenderOutput, viewport: Viewport)? {
+        guard let window, let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         let visible = canvas.documentVisibleRect
         let live = canvas.tiles.values.filter { $0.isLive && $0.frame.intersects(visible) }.map(\.content)
         live.forEach { $0.showSnapshot(true) }
         view.cacheDisplay(in: view.bounds, to: rep)
         live.forEach { $0.showSnapshot(false) }
-        guard let png = rep.representation(using: .png, properties: [:]) else { return nil }
-        return (png, rep.pixelsWide, rep.pixelsHigh)
+        let encoded = format == .png ? rep.representation(using: .png, properties: [:]) : rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
+        guard let encoded else { return nil }
+        let backing = Double(rep.pixelsWide) / max(view.bounds.width, 1)
+        let viewport = canvas.viewport
+        let output = RenderOutput(image: encoded, format: format, width: rep.pixelsWide, height: rep.pixelsHigh, canvasRect: viewport.rect,
+                                  scale: backing * viewport.zoom, objects: canvas.visibleObjects(pixelsPerPoint: backing))
+        return (output, viewport)
     }
 
     // MARK: Actions

@@ -20,7 +20,6 @@ final class BrowserTile: NSView, TileContent {
     static let refreshInterval: TimeInterval = 1
     /// How long a page counts as agent-driven after the last cmux command.
     static let drivenIdle: TimeInterval = 60
-    private static let stageID = NSUserInterfaceItemIdentifier("canvas.browserStage")
 
     let objectID: ObjectID
     let board: Board
@@ -229,7 +228,7 @@ final class BrowserTile: NSView, TileContent {
         drivenTimer = Timer.scheduledTimer(withTimeInterval: Self.drivenIdle, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.endDriven() }
         }
-        Self.setOcclusionDetection(false, on: webView)
+        WebStage.setOcclusionDetection(false, on: webView)
         if !isLive { stage(webView) }
         if webView.superview == nil { scheduleRelease() }
     }
@@ -237,7 +236,7 @@ final class BrowserTile: NSView, TileContent {
     private func endDriven() {
         drivenTimer = nil
         guard let webView else { return }
-        Self.setOcclusionDetection(true, on: webView)
+        WebStage.setOcclusionDetection(true, on: webView)
         if webView.superview === self {
             // WebKit re-reads occlusion only on the next window change; re-parenting forces it.
             webView.removeFromSuperview()
@@ -250,27 +249,10 @@ final class BrowserTile: NSView, TileContent {
 
     /// Parks the web view in the window's stage: in the window and never hidden, clipped to nothing.
     private func stage(_ webView: WKWebView) {
-        guard let content = window?.contentView else { return }
-        let stage = content.subviews.first { $0.identifier == Self.stageID } ?? {
-            let view = NSView(frame: .zero)
-            view.identifier = Self.stageID
-            view.clipsToBounds = true
-            content.addSubview(view)
-            return view
-        }()
-        guard webView.superview !== stage else { return }
+        guard !WebStage.isParked(webView), window != nil else { return }
         releaseTimer?.invalidate()
         releaseTimer = nil
-        webView.frame = pageFrame
-        stage.addSubview(webView)
-    }
-
-    /// WebKit SPI `-[WKWebView _setWindowOcclusionDetectionEnabled:]` (macOS 10.13+); skipped if absent.
-    private static func setOcclusionDetection(_ enabled: Bool, on webView: WKWebView) {
-        let selector = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
-        guard webView.responds(to: selector) else { return }
-        typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
-        unsafeBitCast(webView.method(for: selector), to: Setter.self)(webView, selector, enabled)
+        WebStage.park(webView, frame: pageFrame, in: window)
     }
 
     func load(_ address: String) {
@@ -444,7 +426,29 @@ final class BrowserTile: NSView, TileContent {
         }
     }
 
-    func snapshot() -> NSImage? { cachedImage }
+    /// The address bar and the page as loaded now. A page that isn't loaded (the tile has been
+    /// offscreen) isn't loaded just for a render, which would navigate the user's app: it shows
+    /// its last capture and reports a placeholder.
+    func render(_ request: TileRenderRequest) async -> TileRender {
+        let bar = request.image(of: chrome)
+        var page: NSImage?
+        var reason: String?
+        if let webView, webView.window != nil, !webView.isLoading, webView.bounds.width > 0, webView.bounds.height > 0 {
+            page = try? await webView.takeSnapshot(configuration: WKSnapshotConfiguration())
+            if page == nil { reason = "the page did not produce a snapshot" }
+        } else {
+            reason = webView?.isLoading == true ? "the page is still loading" : "the page isn't loaded (tile offscreen)"
+            if let cachedImage { reason! += "; showing its last capture" }
+        }
+        let shown = page ?? cachedImage
+        let image = request.image { bounds in
+            NSColor.textBackgroundColor.setFill()
+            bounds.fill()
+            bar?.drawUpright(in: NSRect(x: 0, y: 0, width: bounds.width, height: Self.chromeHeight))
+            shown?.drawUpright(in: NSRect(x: 0, y: Self.chromeHeight, width: bounds.width, height: max(0, bounds.height - Self.chromeHeight)))
+        }
+        return TileRender(image: image, contentSize: request.size, state: page == nil ? .placeholder : .rendered, reason: page == nil ? reason : nil)
+    }
 
     func showSnapshot(_ show: Bool) {
         let covering = show && webView?.superview === self && cachedImage != nil

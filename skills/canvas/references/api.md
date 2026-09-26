@@ -18,7 +18,7 @@ Error codes: `not_found` (no such object/agent/board), `conflict` (stale `rev`: 
 
 - `board.get` returns every object with heavy props trimmed (long markdown, HTML source); `object.get` returns one object whole.
 - Poll cheaply: keep `revision` from one `board.get` and pass it as `since` next time; `changed` lists ids created or changed after it.
-- `object.get --as graph` gives `encloses`, `enclosedBy`, `overlaps`, `arrowsOut`, `arrowsIn`; `--as image` a PNG (`--out file.png` with the CLI).
+- `object.get --as graph` gives `encloses`, `enclosedBy`, `overlaps`, `arrowsOut`, `arrowsIn`. To look at an object use `view.render` (`canvas render <id> --out file.png`).
 - `tray.list` shows what the user has staged but not yet sent. Don't drain the tray yourself; your harness attaches it to the user's next prompt.
 
 ## Objects

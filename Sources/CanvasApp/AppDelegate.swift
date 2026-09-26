@@ -54,9 +54,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return false }
             return terminal.paste(text, submit: true)
         }
-        router.snapshotBoard = { [weak self] board in self?.controllers[board.id]?.snapshotPNG() }
+        router.snapshotBoard = { [weak self] board, format in self?.controllers[board.id]?.snapshot(format: format) }
+        router.renderView = { [weak self] board, request, format in
+            guard let canvas = self?.controllers[board.id]?.canvas else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
+            return try await canvas.render(request, format: format)
+        }
+        router.viewState = { [weak self] board in self?.controllers[board.id]?.canvas.viewState }
         router.raiseAttention = { [weak self] board, id, message in
             self?.controllers[board.id]?.canvas.raiseAttention(id, message: message)
+        }
+        router.clearAttention = { [weak self] board, id in
+            self?.controllers[board.id]?.canvas.clearAttention(id) ?? false
         }
         router.readTerminal = { _, tile, lines in
             // A blocking subprocess read: keep it on GCD so it can't park Swift's cooperative
@@ -66,12 +74,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     continuation.resume(returning: TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines))
                 }
             }
-        }
-        router.objectImage = { [weak self] board, id in
-            guard let canvas = self?.controllers[board.id]?.canvas else { return nil }
-            guard let tile = canvas.tiles[id] else { return canvas.drawnObjectPNG(id) }
-            guard let image = tile.content.snapshot(), let tiff = image.tiffRepresentation else { return nil }
-            return NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
         }
         let router = router
         let server = SocketServer(path: AppPaths.apiSocket) { request, connection in

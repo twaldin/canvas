@@ -98,6 +98,16 @@ Arrows, shapes, and groups have no tile; the canvas draws them.
 
 Tiles never read or write the board store directly; they go through the board model on the main actor, which persists and broadcasts events.
 
+## Drawing layer
+
+`.shape` and `.arrow` objects are drawn by `ShapeLayer` (`Sources/CanvasApp/Drawing/`), one view in document coordinates above every tile and below the Hyper outline. Geometry lives in `Sources/CanvasCore/Drawing*.swift`. Selection and moves of drawn objects are the scene's (see Scene seams); the layer supplies rendering, hit tests, outlines, resize handles, tools and editors, arrow routing, and region images.
+
+- A shape's `frame` is exactly its drawn box (no title bar). Ink `points` are relative to the frame origin; the frame is the painted stroke bounds.
+- An arrow's route is derived, never stored: bound ends attach to the facing edge of the bound object's current outline (the tile including its title bar, a shape's frame, the curve of an ellipse), so arrows follow moves and resizes without writes. An arrow's `frame` records its route bounds when it was drawn. Free ends (`{"point": [x, y]}`) are canvas coordinates. Deleting a bound object turns that end into a free point where it last attached, in the delete's undo step, so the arrow keeps its direction and its other end keeps following.
+- The layer never takes keyboard focus (it stays with the prompt-target terminal); tool keys V/R/O/A/T/P/Esc arrive as key equivalents and only act when no terminal or text view has the keyboard. Inline text and arrow editors take focus while open and give it back on Enter/Esc/click-away, never over a responder that took focus meanwhile.
+- Only strokes, text, labels, and fills (`fill: semi|solid`) take the mouse; an unfilled shape's interior passes clicks to the tiles beneath.
+- `object.get --as image` on a drawn object renders the canvas region under it (tiles, terminals, and ink included).
+
 ## Scene seams
 
 `CanvasView` (`Sources/CanvasApp/CanvasView.swift`) owns selection, moves, groups, attention markers, and the viewport. Drawn objects (shapes, arrows) have no view of their own; the drawing layer plugs in through:

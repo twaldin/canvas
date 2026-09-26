@@ -63,10 +63,11 @@ class ShapeProps(TypedDict):
     text: NotRequired[str]
     points: NotRequired[list[list[float]]]
     color: NotRequired[str]
+    fill: NotRequired[Literal["none", "semi", "solid"]]
 
 Binding = Union[dict[str, Any], dict[str, Any]]
 
-ArrowProps = TypedDict("ArrowProps", {"from": Required["Binding"], "to": Required["Binding"], "relation": NotRequired[str], "label": NotRequired[str]})
+ArrowProps = TypedDict("ArrowProps", {"from": Required["Binding"], "to": Required["Binding"], "relation": NotRequired[str], "label": NotRequired[str], "color": NotRequired[str]})
 
 class GroupProps(TypedDict):
     name: NotRequired[str]
@@ -158,7 +159,7 @@ class ObjectApi:
         self._call = call
 
     def get(self, *, id: "Id", as_: Literal["raw", "graph", "image"] | None = None) -> dict[str, Any]:
-        """Read one object. `as: graph` adds structural relations (encloses, overlaps, arrows in/out); `as: image` returns a PNG crop as base64."""
+        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow; `as: image` returns a PNG crop as base64 (a tile's content, or the canvas region under a drawn object including the tiles and ink inside it)."""
         params = {"id": id, "as": as_}
         return self._call("object.get", _with_env(params, []))
 
@@ -173,7 +174,7 @@ class ObjectApi:
         return self._call("object.update", _with_env(params, ["caller"]))
 
     def delete(self, *, id: "Id", caller: "Id" | None = None) -> dict[str, Any]:
-        """Delete an object (and remove it from any staged mentions)."""
+        """Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached."""
         params = {"id": id, "caller": caller}
         return self._call("object.delete", _with_env(params, ["caller"]))
 

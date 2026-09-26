@@ -972,6 +972,7 @@ final class CanvasView: NSScrollView {
         overlay.outline = docRect.map { overlay.convert($0, from: document) }
     }
 
+
     func shape(atWindowPoint point: NSPoint) -> ObjectID? {
         shapeHitTest?(document.convert(point, from: nil))
     }

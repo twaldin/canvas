@@ -451,7 +451,7 @@ public final class ApiRouter {
 
     func graph(of object: CanvasObject, on board: Board) -> JSONValue {
         let others = board.objects.values.filter { $0.id != object.id && $0.type != .arrow }
-        let encloses = others.filter { object.frame.contains($0.frame) }.map(\.id).sorted()
+        let encloses = board.enclosed(by: object).map(\.id)
         let enclosedBy = others.filter { $0.frame.contains(object.frame) }.map(\.id).sorted()
         let overlaps = others.filter { $0.frame.intersects(object.frame) && !encloses.contains($0.id) && !enclosedBy.contains($0.id) }.map(\.id).sorted()
         var arrowsOut: [JSONValue] = []
@@ -465,12 +465,23 @@ public final class ApiRouter {
                 arrowsIn.append(.object(["arrow": .string(arrow.id), "from": .string(from), "relation": relation]))
             }
         }
-        return .object([
+        // Arrows drawn inside the object connect what it encloses: the structure a drawn box means.
+        let arrows: [JSONValue] = board.arrows(enclosedBy: object).map { arrow, spec in
+            .object(["arrow": .string(arrow.id), "from": spec.from.json, "to": spec.to.json,
+                     "relation": spec.relation.map(JSONValue.string) ?? .null, "label": spec.label.map(JSONValue.string) ?? .null])
+        }
+        var graph: [String: JSONValue] = [
             "encloses": .array(encloses.map(JSONValue.string)),
             "enclosedBy": .array(enclosedBy.map(JSONValue.string)),
             "overlaps": .array(overlaps.map(JSONValue.string)),
             "arrowsOut": .array(arrowsOut),
             "arrowsIn": .array(arrowsIn),
-        ])
+            "arrows": .array(arrows),
+        ]
+        if let spec = ArrowSpec(object.props), object.type == .arrow {
+            graph["from"] = spec.from.json
+            graph["to"] = spec.to.json
+        }
+        return .object(graph)
     }
 }

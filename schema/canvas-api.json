@@ -115,7 +115,8 @@
         "kind": { "enum": ["rect", "ellipse", "text", "ink"] },
         "text": { "type": "string" },
         "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 }, "description": "ink points [x, y, pressure?] in object-local coordinates" },
-        "color": { "type": "string" }
+        "color": { "type": "string", "description": "palette name (black, grey, blue, green, orange, red, violet) or #rrggbb" },
+        "fill": { "enum": ["none", "semi", "solid"], "default": "none", "description": "rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it" }
       },
       "additionalProperties": false
     },
@@ -146,7 +147,8 @@
         "from": { "$ref": "#/definitions/Binding" },
         "to": { "$ref": "#/definitions/Binding" },
         "relation": { "type": "string", "description": "semantic edge type, e.g. hypothesis_about, calls, depends_on" },
-        "label": { "type": "string" }
+        "label": { "type": "string" },
+        "color": { "type": "string", "description": "palette name or #rrggbb, as ShapeProps.color" }
       },
       "additionalProperties": false
     },
@@ -319,7 +321,7 @@
       }
     },
     "object.get": {
-      "description": "Read one object. `as: graph` adds structural relations (encloses, overlaps, arrows in/out); `as: image` returns a PNG crop as base64.",
+      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow; `as: image` returns a PNG crop as base64 (a tile's content, or the canvas region under a drawn object including the tiles and ink inside it).",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -366,7 +368,7 @@
       "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" } } }
     },
     "object.delete": {
-      "description": "Delete an object (and remove it from any staged mentions).",
+      "description": "Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached.",
       "params": {
         "type": "object",
         "required": ["id"],

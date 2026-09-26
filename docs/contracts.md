@@ -72,6 +72,7 @@ Connection failures are always `unavailable`; clients never surface raw socket e
 | Path | Holds | Owner |
 | --- | --- | --- |
 | `~/Library/Application Support/Canvas/boards/<boardId>.json` | Stored boards (`CANVAS_HOME` relocates the whole directory) | App |
+| `~/Library/Application Support/Canvas/open-boards.json` | Roots of the boards open as tabs, in tab order; reopened behind the initial board at launch (quitting keeps it; closing a tab removes its root) | App |
 | `<board root>/.canvas/board.json` | `board.export` snapshot (default path), for committing with the repo | Written on request only |
 | `clients/python/canvas_sdk/builtin_compositions/`, `clients/ts/src/builtin_compositions/` | Shipped compositions, installed with each client (wheel, bundle, checkout) | Canvas |
 | `~/.canvas/compositions/` | The user's and agents' own compositions; searched first, so they shadow shipped ones | User/agents |

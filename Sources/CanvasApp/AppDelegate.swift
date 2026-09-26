@@ -66,6 +66,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         router.clearAttention = { [weak self] board, id in
             self?.controllers[board.id]?.canvas.clearAttention(id) ?? false
         }
+        router.openBoard = { [weak self, registry] root, select in
+            self?.open(root: root, select: select) ?? registry.open(root: root)
+        }
         router.readTerminal = { _, tile, lines in
             // A blocking subprocess read: keep it on GCD so it can't park Swift's cooperative
             // threads, which the socket servers' request tasks need.
@@ -102,7 +105,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("Canvas: cannot listen on \(AppPaths.cmuxSocket): \(error)")
         }
         hyper.install()
-        open(root: Self.initialRoot())
+        let saved = Self.savedOpenBoards()
+        let initial = open(root: Self.initialRoot())
+        // The other boards that were open as tabs come back behind the initial one.
+        for root in saved where root.standardizedFileURL != initial.root.standardizedFileURL && BoardStore.isDirectory(root.path) {
+            open(root: root, select: false)
+        }
         // Testing on a shared machine: CANVAS_NO_ACTIVATE=1 keeps the app from taking focus.
         if ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] != "1" {
             NSApp.activate(ignoringOtherApps: true)
@@ -130,20 +138,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        CodeNavigation.terminateServers()
+        // Quitting closes every window; those closes mustn't erase the tabs to reopen.
+        terminating = true
+        return CodeNavigation.terminateServers()
     }
+
+    private var terminating = false
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    func open(root: URL) {
+    /// Opens a directory's board as a tab of the frontmost board window (its own window when it's
+    /// the first). `select` brings its tab forward; the API's `board.open` leaves the user's
+    /// current tab showing unless asked.
+    @discardableResult
+    func open(root: URL, select: Bool = true) -> Board {
         let board = registry.open(root: root)
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
         controllers[board.id] = controller
-        if ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] == "1" {
-            controller.window?.orderBack(nil)
-        } else {
-            controller.showWindow(nil)
+        controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }
+        guard let window = controller.window else { return board }
+        defer { saveOpenBoards() }
+        let noActivate = ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] == "1"
+        if !isShown(window), let host = tabHost(excluding: window) {
+            let front = host.tabGroup?.selectedWindow ?? host
+            host.addTabbedWindow(window, ordered: .above)
+            if !select { window.tabGroup?.selectedWindow = front }
+        } else if !isShown(window) {
+            if noActivate { window.orderBack(nil) } else { controller.showWindow(nil) }
+            return board
         }
+        guard select else { return board }
+        window.tabGroup?.selectedWindow = window
+        if !noActivate { window.makeKeyAndOrderFront(nil) }
+        return board
+    }
+
+    /// A tab that isn't selected is ordered out, so "shown" means visible or in a tab group.
+    private func isShown(_ window: NSWindow) -> Bool {
+        window.isVisible || (window.tabGroup?.windows.count ?? 0) > 1
+    }
+
+    /// The board window new boards join as tabs: the key one, else any on screen.
+    private func tabHost(excluding window: NSWindow) -> NSWindow? {
+        let windows = controllers.values.compactMap(\.window).filter { $0 !== window && $0.isVisible }
+        return windows.first(where: \.isKeyWindow) ?? windows.first
+    }
+
+    /// Records the shown boards' roots in tab order (AppPaths.openBoards) for the next launch.
+    private func saveOpenBoards(closing: NSWindow? = nil) {
+        guard !terminating else { return }
+        let shown = controllers.values.filter { $0.window.map { $0 !== closing && isShown($0) } ?? false }
+        let order = shown.first?.window?.tabbedWindows ?? []
+        let roots = shown.sorted { lhs, rhs in
+            (order.firstIndex { $0 === lhs.window } ?? .max) < (order.firstIndex { $0 === rhs.window } ?? .max)
+        }.map(\.board.root.path)
+        guard let data = try? JSONEncoder().encode(roots) else { return }
+        try? data.write(to: AppPaths.openBoards, options: .atomic)
+    }
+
+    private static func savedOpenBoards() -> [URL] {
+        guard let data = try? Data(contentsOf: AppPaths.openBoards), let roots = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return roots.map { URL(fileURLWithPath: $0) }
     }
 
     /// CANVAS_ROOT, else the first non-flag argument, else the working directory (home when launched from Finder).
@@ -186,6 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func ungroupSelection(_ sender: Any?) { keyController?.ungroupSelection(sender) }
     @objc func bringToFront(_ sender: Any?) { keyController?.bringToFront(sender) }
     @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
+
+    /// The tab bar's + button: open another board as a tab.
+    @objc func newWindowForTab(_ sender: Any?) { openBoard(sender) }
 
     /// One canvas per directory: choosing a folder opens (or brings forward) its board. A sheet,
     /// not `runModal`: a modal run loop would stall every socket request until the user answers.

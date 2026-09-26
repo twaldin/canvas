@@ -3,7 +3,8 @@
 # Space while the original stays in use. Terminal tiles are dropped so the copy never attaches to
 # the original's zmx sessions.
 #
-#   scripts/perf-replica.sh start <board-id> [app]   copy .canvas-home/boards/<id>.json and launch
+#   scripts/perf-replica.sh start <board-id|file> [app]   copy .canvas-home/boards/<id>.json (or a board file) and launch
+#   PERF_HOME (default /tmp/canvas-perf-home) and CANVAS_DEV_DISPLAY keep parallel replicas apart.
 #   scripts/perf-replica.sh stop
 #   scripts/perf-replica.sh pid | window
 set -eu
@@ -16,10 +17,12 @@ window() { "$yabai" -m query --windows | python3 -c "import json,sys; print(next
 
 case "${1:-}" in
   start)
-    board="$2"; app="${3:-$repo/.build/Canvas.app}"
+    source="$2"; app="${3:-$repo/.build/Canvas.app}"
+    [ -f "$source" ] || source="$repo/.canvas-home/boards/$source.json"
+    board="$(basename "$source" .json)"
     [ -z "$(pid || true)" ] || { echo "replica already running" >&2; exit 1; }
     rm -rf "$home"; mkdir -p "$home/boards"
-    python3 - "$repo/.canvas-home/boards/$board.json" "$home/boards/$board.json" <<'EOF'
+    python3 - "$source" "$home/boards/$board.json" <<'EOF'
 import json, sys
 board = json.load(open(sys.argv[1]))
 objects = board["objects"] if isinstance(board["objects"], list) else list(board["objects"].values())
@@ -50,5 +53,5 @@ EOF
     ;;
   pid) pid ;;
   window) window ;;
-  *) sed -n '2,9p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,10p' "$0" >&2; exit 2 ;;
 esac

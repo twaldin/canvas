@@ -3,8 +3,10 @@
 //    cancelled prompt loses nothing)
 //  - reports lifecycle (working / blocked / idle) and session identity for resume
 //  - follow mode: forwards files the agent reads and edits to its follow tile
+//  - provides the shipped `canvas` skill (skills/canvas) to the agent, only inside Canvas
 // Load explicitly with `omp -e /path/to/canvas.ts`, or install into ~/.omp/agent/extensions.
-import { isAbsolute, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { CanvasClient } from "../../clients/ts/src/index";
 
@@ -18,6 +20,8 @@ type Details = Record<string, any>;
 export default function canvas(pi: ExtensionAPI): void {
   const tile = process.env.CANVAS_TILE_ID;
   if (process.env.CANVAS_ENV !== "1" || !tile || !process.env.CANVAS_SOCKET) return;
+
+  const guidance = canvasGuidance(tile);
 
   // Short timeout: a missing or wedged app must never stall the user's prompt.
   const client = new CanvasClient({ timeoutMs: 1500 });
@@ -103,9 +107,6 @@ export default function canvas(pi: ExtensionAPI): void {
 
   // Phase 2: attach the staged mentions as hidden, user-attributed context to that prompt.
   pi.on("before_agent_start", (event) => {
-    const guidance =
-      `You are running in a Canvas terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>. ` +
-      "To read or change the canvas, prefer the Python SDK in eval (`from canvas_sdk import canvas`); without a REPL use the `canvas` CLI (`canvas methods`).";
     const systemPrompt = [...event.systemPrompt, guidance];
     if (!staged || !event.prompt.includes(staged.prompt)) return { systemPrompt };
     staged.delivered = true;
@@ -165,4 +166,22 @@ export default function canvas(pi: ExtensionAPI): void {
     const range = typeof start === "number" && start > 0 ? { start, end: typeof end === "number" && end >= start ? end : start } : undefined;
     void quietly(client.api.follow.report({ tile: tile!, path: absolute, range, action }));
   }
+}
+
+/** The skill shipped with Canvas, next to this extension. */
+const SKILL_PATH = resolve(import.meta.dir, "../../skills/canvas/SKILL.md");
+
+/** System-prompt text for a Canvas tile. The shipped skill is announced the way omp lists
+ * skills (name + description) and read on demand from its absolute path: omp's skill discovery
+ * isn't extensible from an extension, and global skill config would leak outside Canvas. */
+function canvasGuidance(tile: string): string {
+  const description = /^description:\s*(.+)$/m.exec(readFileSync(SKILL_PATH, "utf8"))?.[1]?.trim() ?? "";
+  return [
+    `You are running in a Canvas terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>.`,
+    "Canvas provides this skill for the session (not reachable through skill://):",
+    "<skills>",
+    `- canvas: ${description}`,
+    "</skills>",
+    `Before reading or changing the canvas, or when the user refers to things on it, you MUST read ${SKILL_PATH} with the read tool. Its relative references (e.g. references/html-explainers.md) live in ${dirname(SKILL_PATH)}/.`,
+  ].join("\n");
 }

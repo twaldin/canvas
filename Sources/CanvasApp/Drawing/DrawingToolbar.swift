@@ -115,8 +115,10 @@ final class DrawingToolbar: NSVisualEffectView {
     @objc private func pickColor(_ sender: NSButton) {
         let name = swatches[sender.tag].name
         shapeLayer.color = name
-        for id in shapeLayer.canvas.selection where shapeLayer.items[id] != nil {
-            _ = try? shapeLayer.board.update(id, props: .object(["color": name.map(JSONValue.string) ?? .null]))
+        shapeLayer.board.transaction {
+            for id in shapeLayer.canvas.selection where shapeLayer.items[id] != nil {
+                _ = try? shapeLayer.board.update(id, props: .object(["color": name.map(JSONValue.string) ?? .null]))
+            }
         }
     }
 
@@ -129,8 +131,10 @@ final class DrawingToolbar: NSVisualEffectView {
         case .solid: next = .none
         }
         shapeLayer.fill = next
-        for id in shapeLayer.canvas.selection where [.rect, .ellipse].contains(shapeLayer.items[id]?.shape?.kind) {
-            _ = try? shapeLayer.board.update(id, props: .object(["fill": next == .none ? .null : .string(next.rawValue)]))
+        shapeLayer.board.transaction {
+            for id in shapeLayer.canvas.selection where [.rect, .ellipse].contains(shapeLayer.items[id]?.shape?.kind) {
+                _ = try? shapeLayer.board.update(id, props: .object(["fill": next == .none ? .null : .string(next.rawValue)]))
+            }
         }
     }
 }

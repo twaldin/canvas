@@ -11,6 +11,30 @@ Interfaces every slice builds against. The API wire format and object model live
 
 Both sockets are created with mode `0600`. The cmux subset lives on its own socket so it never shares method names with our API and can be removed in one step.
 
+### cmux browser subset
+
+Exactly what omp's cmux browser backend sends (`src/tools/browser/cmux/`), framed as cmux v2 JSON lines: requests `{"id","method","params"}`, replies `{"id","ok":true,"result"}` or `{"id","ok":false,"error":{"code","message"}}`. Surfaces are object ids: a terminal tile is the calling surface (`CMUX_SURFACE_ID`), a browser tile is a browser surface; workspaces are boards. Every browser result carries `surface_id`.
+
+Surface and workspace ids stay `obj_…`/`brd_…` on the wire, which omp 18.3 accepts; omp ≤18.1's owner inspection (`surface.list` via its surface-observation module) requires UUID ids and is unsupported.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `browser.open_split` | `url`, `surface_id` (caller), `workspace_id`, `focus` (ignored) | `surface_id`, `workspace_id`, `url`, `created_split`, `placement_strategy` — a browser tile beside the calling terminal |
+| `browser.navigate` / `back` / `forward` / `reload` | `url` (navigate) | `url` |
+| `browser.url.get` | — | `url`, `title` |
+| `browser.eval` | `script` (an expression, page world) | `value` |
+| `browser.snapshot` | `interactive`, `max_depth` | `snapshot` text, `refs` (`e1` → `{role,name}`), `page` (`title,url,ready_state`, plus `text,html` when not interactive) |
+| `browser.screenshot` | — | `png_base64` (one pixel per CSS pixel), `width`, `height` |
+| `browser.click` / `dblclick` / `hover` / `focus` / `check` / `uncheck` / `scroll_into_view` | `selector` (CSS or snapshot ref `@e3`) | — |
+| `browser.type` / `browser.fill` | `selector`, `text` | — |
+| `browser.press` | `key` (`Enter`, `Tab`, `Shift+Tab`, a character, …) | — |
+| `browser.scroll` | `dx`, `dy` | `scroll_x`, `scroll_y` |
+| `browser.wait` | one of `load_state` (`interactive`/`complete`), `url_contains`, `selector`; `timeout_ms` | `url` |
+| `surface.list` | `surface_id` or `workspace_id` | `workspace_id`, `window_id` (null), `surfaces` (`id`, `type`, `title`, `url`) |
+| `surface.close` | `surface_id` (browser only) | — |
+
+Error codes: `invalid_params`, `not_found`, `method_not_found`, `unauthorized`, `timeout`, `js_error`, `unavailable`. The plain-text line `auth <password>` answers `OK: …` or `ERROR: …`.
+
 ## Terminal tile environment
 
 Every terminal tile's process (inside zmx) gets:
@@ -25,10 +49,25 @@ Every terminal tile's process (inside zmx) gets:
 | `CMUX_SOCKET_PATH` | cmux subset socket path |
 | `CMUX_SURFACE_ID` | This tile's object id |
 | `CMUX_WORKSPACE_ID` | This board's id |
+| `CMUX_SOCKET_PASSWORD` | Only when the app was launched with it; the cmux socket then requires `auth <password>` |
 
 Integrations report only when `CANVAS_ENV=1` and the variables they need are present, so they are no-ops outside the app.
 
 zmx session names: `canvas-<tileId>`, labelled `canvas.board=<boardId> canvas.tile=<tileId>`. Names stay short because zmx sockets live under `$TMPDIR/zmx-<uid>` (a long `/var/folders/…` path for GUI apps) and a socket path is capped at 104 bytes. Tiles inherit the app's `TMPDIR`, so `zmx list` inside a tile shows canvas sessions.
+
+## On-disk locations
+
+| Path | Holds | Owner |
+| --- | --- | --- |
+| `~/Library/Application Support/Canvas/boards/<boardId>.json` | Stored boards (`CANVAS_HOME` relocates the whole directory) | App |
+| `<board root>/.canvas/board.json` | `board.export` snapshot (default path), for committing with the repo | Written on request only |
+| `clients/python/canvas_sdk/builtin_compositions/`, `clients/ts/src/builtin_compositions/` | Shipped compositions, installed with each client (wheel, bundle, checkout) | Canvas |
+| `~/.canvas/compositions/` | The user's and agents' own compositions; searched first, so they shadow shipped ones | User/agents |
+| `skills/canvas/` (repo, or the bundle's `Resources/`) | The shipped agent skill; the omp extension announces it only when `CANVAS_ENV=1` | Canvas |
+
+## Compositions
+
+A composition is a module in a compositions directory. Functions whose first parameter is named `canvas` receive the connected client (all API namespaces plus `compositions`); other exports pass through unchanged. Python: `canvas.compositions.<name>.<fn>(…)`, `available()`, `reload()`. TypeScript: `client.compositions.<name>.<fn>(…)` (same surface; a file added to an already-loaded directory needs a new process because Bun caches directory listings).
 
 ## Object model rules
 
@@ -61,14 +100,33 @@ Tiles never read or write the board store directly; they go through the board mo
 
 ## Drawing layer
 
-`.shape` and `.arrow` objects are drawn by `ShapeLayer` (`Sources/CanvasApp/Drawing/`), one view in document coordinates above every tile and below the Hyper outline. Geometry lives in `Sources/CanvasCore/Drawing*.swift`.
+`.shape` and `.arrow` objects are drawn by `ShapeLayer` (`Sources/CanvasApp/Drawing/`), one view in document coordinates above every tile and below the Hyper outline. Geometry lives in `Sources/CanvasCore/Drawing*.swift`. Selection and moves of drawn objects are the scene's (see Scene seams); the layer supplies rendering, hit tests, outlines, resize handles, tools and editors, arrow routing, and region images.
 
 - A shape's `frame` is exactly its drawn box (no title bar). Ink `points` are relative to the frame origin; the frame is the painted stroke bounds.
-- An arrow's route is derived, never stored: bound ends attach to the facing edge of the bound object's current outline (the tile including its title bar, a shape's frame, the curve of an ellipse), so arrows follow moves and resizes without writes. An arrow's `frame` records its route bounds when it was drawn. Free ends (`{"point": [x, y]}`) are canvas coordinates. Deleting a bound object turns that end into a free point where it last attached (part of the delete), so the arrow keeps its direction and its other end keeps following.
+- An arrow's route is derived, never stored: bound ends attach to the facing edge of the bound object's current outline (the tile including its title bar, a shape's frame, the curve of an ellipse), so arrows follow moves and resizes without writes. An arrow's `frame` records its route bounds when it was drawn. Free ends (`{"point": [x, y]}`) are canvas coordinates. Deleting a bound object turns that end into a free point where it last attached, in the delete's undo step, so the arrow keeps its direction and its other end keeps following.
 - The layer never takes keyboard focus (it stays with the prompt-target terminal); tool keys V/R/O/A/T/P/Esc arrive as key equivalents and only act when no terminal or text view has the keyboard. Inline text and arrow editors take focus while open and give it back on Enter/Esc/click-away, never over a responder that took focus meanwhile.
 - Only strokes, text, labels, and fills (`fill: semi|solid`) take the mouse; an unfilled shape's interior passes clicks to the tiles beneath.
-- `CanvasView` seams the layer sets: `shapeHitTest`, `shapeOutline`, `drawingOwnsPoint` (a drawing tool is active or the point is a resize handle), `moveProps` (an arrow's free ends move with it), `onSelectionDrag` (live move preview), `onSelectionChange`, and `installShapeLayer`.
 - `object.get --as image` on a drawn object renders the canvas region under it (tiles, terminals, and ink included).
+
+## Scene seams
+
+`CanvasView` (`Sources/CanvasApp/CanvasView.swift`) owns selection, moves, groups, attention markers, and the viewport. Drawn objects (shapes, arrows) have no view of their own; the drawing layer plugs in through:
+
+| Seam | Direction | Meaning |
+| --- | --- | --- |
+| `installShapeLayer(_:)` | drawing → scene | Adds the drawing layer above tiles, below attention markers and the overlay; restacking keeps it there. |
+| `shapeHitTest(docPoint) -> ObjectID?` | drawing → scene | Drawn object under a point (strokes, text, fills). Plain clicks there select it and drag the selection; Hyper-clicks mention it. |
+| `shapeOutline(id) -> NSRect?` | drawing → scene | Committed document rect, for rings and hover outlines. |
+| `drawingOwnsPoint(docPoint) -> Bool` | drawing → scene | True while a tool is active or over a shape handle; scene selection, marquee, and moves stand down. |
+| `moveProps(object, dx, dy) -> JSONValue?` | drawing → scene | Props merged into a drawn object's move update (e.g. free arrow endpoints). |
+| `onSelectionDrag(ids, offset)` | scene → drawing | Live drag offset in document points; `.zero` just before the move commits. |
+| `selection`, `onSelectionChange` | scene → all | Current selection (tiles, drawn objects, groups). |
+
+Groups (`type: group`, props `{members, name?}`, frame = union of member frames) are drawn by the scene as regions behind their members. `focus(tile:)` zooms a tile to 100%, centers, selects, and focuses it; `raiseAttention(_:message:)` backs `view.attention`.
+
+## Undo
+
+`Board.history` records every create, update, and delete from any actor; ⌘Z (`Board.undo()`) reverts the latest step even when an agent made it, and every undo or redo is a new revision, newer than any the object ever had, even across a delete and re-creation. Terminal bookkeeping props (`lifecycle`, `agent`, `title`) are never recorded and never rewound. Multi-object gestures wrap their updates in `Board.transaction { }` to form one step. Undoing a delete restores the object with the same id and `z`; staged mentions of it are not restored. When undo/redo removes a terminal and later brings it back, it returns with the bookkeeping it last had. History lives in memory only.
 
 ## Mention context format
 

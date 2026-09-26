@@ -194,18 +194,29 @@ final class LineClient: @unchecked Sendable {
         }
     }
 
-    /// Next response line, failing after `timeout` seconds.
-    func next(timeout: Double = 5) async throws -> JSONValue {
+    /// Next response line, failing after `timeout` seconds. Generous because every suite shares
+    /// the main actor, and on a loaded machine the suites' setup (git lookups per board) can hold
+    /// it for seconds; the timeout only detects hangs.
+    func next(timeout: Double = 30) async throws -> JSONValue {
+        try JSONDecoder().decode(JSONValue.self, from: try await nextLine(timeout: timeout))
+    }
+
+    /// Next response line as text, for protocols that answer some commands outside JSON.
+    func nextText(timeout: Double = 30) async throws -> String {
+        String(decoding: try await nextLine(timeout: timeout), as: UTF8.self)
+    }
+
+    private func nextLine(timeout: Double) async throws -> Data {
         try await Task.detached { try self.readLine(timeout: timeout) }.value
     }
 
-    private func readLine(timeout: Double) throws -> JSONValue {
+    private func readLine(timeout: Double) throws -> Data {
         let deadline = Date().addingTimeInterval(timeout)
         while true {
             if let newline = buffer.firstIndex(of: 0x0A) {
-                let line = buffer[buffer.startIndex..<newline]
+                let line = Data(buffer[buffer.startIndex..<newline])
                 buffer.removeSubrange(buffer.startIndex...newline)
-                return try JSONDecoder().decode(JSONValue.self, from: Data(line))
+                return line
             }
             var poller = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
             let remaining = Int32(max(0, deadline.timeIntervalSinceNow) * 1000)

@@ -238,4 +238,16 @@ struct ArrowBindingLifecycleTests {
         try board.stage(.object(arrow.id))
         #expect(board.drain().context.contains("(100000000000000000000, -100000000000000000000) → (0, 0)"))
     }
+
+    @Test func oneUndoRestoresTheDeletedObjectAndTheArrowBinding() throws {
+        let board = Board(id: "brd_t", root: root)
+        let a = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
+        let b = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 300, y: 0, w: 100, h: 100))
+        let arrow = board.create(type: .arrow, props: ArrowSpec(from: .object(a.id), to: .object(b.id)).props)
+        try board.delete(b.id)
+        #expect(ArrowSpec(try board.object(arrow.id).props)?.to.objectID == nil)
+        #expect(board.undo())
+        #expect(board.objects[b.id] != nil)
+        #expect(ArrowSpec(try board.object(arrow.id).props)?.to == .object(b.id))
+    }
 }

@@ -49,12 +49,10 @@ extension ShapeLayer {
         }
         switch tool {
         case .select:
-            guard let item = item(at: point) else { return }
-            if event.clickCount >= 2 {
-                beginEditing(item.object)
-            } else {
-                canvas.select(item.object.id, extend: event.modifierFlags.contains(.shift))
-            }
+            // Single clicks select and move through the scene; it passes double-clicks on drawn
+            // objects through to here for editing.
+            guard event.clickCount >= 2, let item = item(at: point) else { return }
+            beginEditing(item.object)
         case .rect, .ellipse:
             gesture = .box(tool: tool, start: point, current: point)
         case .arrow:
@@ -113,7 +111,7 @@ extension ShapeLayer {
             createInk(points)
         case .resize(let id, _, let frame):
             if frame.width >= 4, frame.height >= 4, board.objects[id] != nil {
-                _ = try? board.update(id, frame: Self.canvasFrame(frame))
+                board.transaction { _ = try? board.update(id, frame: Self.canvasFrame(frame)) }
             } else if let object = board.objects[id] {
                 refresh(object)
                 reroute(boundTo: id)

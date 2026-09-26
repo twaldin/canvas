@@ -9,6 +9,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let tray = TrayBar(frame: .zero)
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
+    private var drawing: ShapeLayer?
 
     init(board: Board, registry: BoardRegistry) {
         self.board = board
@@ -39,6 +40,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             tray.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
         ])
         window.contentView = container
+        drawing = ShapeLayer.install(on: canvas, toolbarIn: container)
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
@@ -52,6 +54,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     func apply(_ event: BoardEvent) {
         canvas.apply(event)
+        drawing?.apply(event)
         switch event {
         case .trayChanged, .objectDeleted: refreshTray()
         case .objectUpdated(let object) where object.id == canvas.promptTarget: refreshTray()
@@ -71,6 +74,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             if let terminal = current as? TerminalTile {
                 if canvas.promptTarget != terminal.objectID { canvas.promptTarget = terminal.objectID }
                 board.markSeen(terminal.objectID)
+                canvas.terminalFocused(terminal.objectID)
                 return
             }
             view = current.superview
@@ -97,29 +101,79 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     // MARK: Actions
 
     @objc func newTerminal(_ sender: Any?) {
-        let object = board.create(type: .terminal, props: .object(["cwd": .string(board.root.path), "command": .array([])]))
-        DispatchQueue.main.async { [weak self] in
-            (self?.canvas.tiles[object.id]?.content as? TerminalTile)?.focus()
-        }
+        canvas.createTerminal()
     }
 
+    /// A sheet, not `runModal`: a modal run loop would stall every socket request.
     @objc func openCodeTile(_ sender: Any?) {
+        guard let window else { return }
         let panel = NSOpenPanel()
         panel.directoryURL = board.root
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        board.create(type: .code, props: .object(["path": .string(board.relativePath(url.path)), "mode": .string("source")]))
+        panel.beginSheetModal(for: window) { [weak self, panel] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.board.create(type: .code, props: .object(["path": .string(self.board.relativePath(url.path)), "mode": .string("source")]))
+        }
     }
 
     @objc func zoomToActual(_ sender: Any?) {
-        canvas.animator().magnification = 1.0
+        canvas.zoom(to: 1)
     }
 
     @objc func zoomOut(_ sender: Any?) {
-        canvas.animator().magnification = max(canvas.minMagnification, canvas.magnification / 2)
+        canvas.zoom(to: canvas.magnification / 2)
     }
 
-    @objc func closeSelected(_ sender: Any?) {
-        for id in canvas.selection { canvas.close(id) }
+    @objc func zoomToFit(_ sender: Any?) {
+        canvas.zoomToFit()
+    }
+
+    @objc func toggleLassoSelection(_ sender: Any?) {
+        CanvasView.lassoSelection.toggle()
+        (sender as? NSMenuItem)?.state = CanvasView.lassoSelection ? .on : .off
+    }
+
+    @objc func exitGroup(_ sender: Any?) {
+        canvas.exitGroup()
+    }
+
+    /// ⌘Z undoes the latest board change (the user's or an agent's). A text field or editor with
+    /// its own pending edits undoes those first.
+    @objc func undoCanvas(_ sender: Any?) {
+        if let text = window?.firstResponder as? NSTextView, text.isEditable, let manager = text.undoManager, manager.canUndo {
+            return manager.undo()
+        }
+        board.undo()
+    }
+
+    @objc func redoCanvas(_ sender: Any?) {
+        if let text = window?.firstResponder as? NSTextView, text.isEditable, let manager = text.undoManager, manager.canRedo {
+            return manager.redo()
+        }
+        board.redo()
+    }
+
+    @objc func deleteSelection(_ sender: Any?) {
+        canvas.deleteSelection()
+    }
+
+    @objc func selectAllObjects(_ sender: Any?) {
+        canvas.selectAll()
+    }
+
+    @objc func groupSelection(_ sender: Any?) {
+        canvas.groupSelection()
+    }
+
+    @objc func ungroupSelection(_ sender: Any?) {
+        canvas.ungroupSelection()
+    }
+
+    @objc func bringToFront(_ sender: Any?) {
+        canvas.bringToFront()
+    }
+
+    @objc func sendToBack(_ sender: Any?) {
+        canvas.sendToBack()
     }
 }

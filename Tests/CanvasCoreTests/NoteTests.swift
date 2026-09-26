@@ -359,6 +359,10 @@ struct NoteSourceTests {
         try FileManager.default.createDirectory(at: root.appendingPathComponent("src"), withIntermediateDirectories: true)
     }
 
+    init(root: URL) {
+        self.root = root
+    }
+
     func write(_ path: String, _ lines: [String]) throws {
         try (lines.joined(separator: "\n") + "\n").write(to: root.appendingPathComponent(path), atomically: true, encoding: .utf8)
     }
@@ -446,6 +450,30 @@ struct NoteSourceTests {
         #expect(pinned.lines == ["one"])
     }
 
+    @Test func gitRunnerCancelsQueuedAndRunningRequests() async throws {
+        try await git("init", "-q")
+        let runner = GitRunner(limit: 1)
+        let root = root
+        // A git that runs for a while, holding the only slot.
+        let slow = ["-c", "alias.slow=!sleep 1", "slow"]
+        let holder = Task { try await runner.run(slow, in: root) }
+        try await Task.sleep(for: .milliseconds(100))
+        let queued = Task { try await runner.run(["rev-parse", "--git-dir"], in: root) }
+        try await Task.sleep(for: .milliseconds(50))
+        let clock = ContinuousClock()
+        let started = clock.now
+        queued.cancel()
+        await #expect(throws: CancellationError.self) { try await queued.value }
+        #expect(clock.now - started < .milliseconds(500), "a queued request leaves without waiting for the slot")
+
+        holder.cancel()
+        await #expect(throws: CancellationError.self) { try await holder.value }
+        // Both slots were given back exactly once: the runner still works, one at a time.
+        let data = try await runner.run(["rev-parse", "--git-dir"], in: root)
+        #expect(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == ".git")
+        await #expect(throws: GitError.timedOut) { try await runner.run(slow, in: root, timeout: 0.2) }
+    }
+
     @Test func cancelledRequestsGiveBackTheirGitPermits() async throws {
         try await git("init", "-q")
         try write("src/a.ts", ["one"])
@@ -489,5 +517,31 @@ struct NoteSourceTests {
         #expect(excerpt.range == LineRange(start: 2, end: 4))
         let missing = await NoteSource.excerpt(for: NoteFence(info: "ts symbol=nothingHere"), root: root, captured: nil)
         #expect(missing.isStale)
+    }
+}
+
+@MainActor
+struct PinnedMentionTests {
+    @Test func pinnedExcerptRowsMentionTheirCommit() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-pin-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let fixture = NoteSourceTests(root: root)
+        try await fixture.git("init", "-q")
+        try fixture.write("a.ts", ["then 1", "then 2"])
+        try await fixture.git("add", ".")
+        try await fixture.git("commit", "-q", "-m", "one")
+        let sha = try await fixture.git("rev-parse", "HEAD")
+        try fixture.write("a.ts", ["now 1", "now 2"])
+
+        let fence = NoteFence(info: "ts file=a.ts@\(sha)#L2")
+        let excerpt = await NoteSource.excerpt(for: fence, root: root, captured: nil)
+        #expect(excerpt.lines == ["then 2"])
+        let board = Board(id: "brd_test", root: root)
+        let note = board.create(type: .note, props: .object(["markdown": .string("```ts file=a.ts@\(sha)#L2\n```")]))
+        try board.stage(.code(object: note.id, path: excerpt.path, lines: LineRange(start: 2, end: 2), symbol: fence.symbol, commit: fence.commit))
+        let context = await board.drain().context
+        #expect(context.contains("at \(sha.prefix(7))"))
+        #expect(context.contains("then 2"))
+        #expect(!context.contains("now 2"), "a pinned mention never drains today's file")
     }
 }

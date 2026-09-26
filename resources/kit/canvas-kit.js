@@ -1,0 +1,315 @@
+// Canvas kit: preloaded into every HTML tile. Themes Tailwind to the app, renders Mermaid
+// diagrams, and defines the canvas web components. The page's only native access is the
+// `canvas` message channel; the app validates every message (Sources/CanvasCore/HtmlMessage.swift).
+(() => {
+  const handler = window.webkit?.messageHandlers?.canvas;
+  const post = (message) => handler ? handler.postMessage(message) : Promise.reject(new Error('no canvas channel'));
+
+  // Tailwind v4 theme: the app palette as utilities (bg-background, text-muted-foreground, …).
+  const theme = document.createElement('style');
+  theme.type = 'text/tailwindcss';
+  theme.textContent = `@theme inline {
+    --color-background: var(--canvas-background);
+    --color-foreground: var(--canvas-foreground);
+    --color-muted: var(--canvas-muted);
+    --color-muted-foreground: var(--canvas-muted-foreground);
+    --color-border: var(--canvas-border);
+    --color-card: var(--canvas-card);
+    --color-accent: var(--canvas-accent);
+    --color-accent-foreground: var(--canvas-accent-foreground);
+    --color-code: var(--canvas-code);
+    --color-warn: var(--canvas-warn);
+    --color-ok: var(--canvas-ok);
+    --font-sans: var(--canvas-font);
+    --font-mono: var(--canvas-mono);
+  }`;
+  document.head.append(theme);
+
+  // Rendering bookkeeping: the app refreshes the tile snapshot when the page settles, and
+  // restores the scroll position across re-renders once async content has laid out.
+  let pending = 0;
+  let restoreY = null;
+  let settleTimer = 0;
+  const settle = () => {
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      if (pending > 0) return;
+      if (restoreY !== null) { window.scrollTo(0, restoreY); restoreY = null; }
+      post({ type: 'view.rendered', scrollY: Math.max(0, Math.round(window.scrollY)) }).catch(() => {});
+    }, 200);
+  };
+  const track = async (work) => {
+    pending++;
+    try { return await work; } finally { pending--; settle(); }
+  };
+  addEventListener('scroll', settle, { passive: true });
+  addEventListener('resize', settle);
+
+  // Tile state (props.state), kept in sync by the app when it changes elsewhere.
+  let state = null;
+  const stateListeners = new Set();
+  const loadState = () => state ? Promise.resolve(state) : post({ type: 'state.get' }).then((reply) => (state = reply.value || {}));
+
+  const canvasKit = {
+    openCode(path, { line, lines, symbol } = {}) {
+      const message = { type: 'code.open', path };
+      if (lines || line) message.lines = String(lines || line);
+      if (symbol) message.symbol = symbol;
+      return post(message);
+    },
+    excerpt(path, { lines, symbol } = {}) {
+      const message = { type: 'code.excerpt', path };
+      if (lines) message.lines = String(lines);
+      if (symbol) message.symbol = symbol;
+      return post(message);
+    },
+    async getState(key) {
+      const all = await loadState();
+      return key === undefined ? all : all[key];
+    },
+    async setState(key, value) {
+      await post({ type: 'state.set', key, value: value === undefined ? null : value });
+      state = { ...(state || {}) };
+      if (value === undefined || value === null) delete state[key]; else state[key] = value;
+      stateListeners.forEach((fn) => fn(state));
+      settle();
+    },
+    onState(fn) { stateListeners.add(fn); return () => stateListeners.delete(fn); },
+    // Called by the app when props.state changed outside the page.
+    receiveState(next) {
+      state = next || {};
+      stateListeners.forEach((fn) => fn(state));
+      settle();
+    },
+    // Called by the app after a re-render with the previous scroll position.
+    restoreScroll(y) { restoreY = y; window.scrollTo(0, y); settle(); },
+    renderMermaid: () => renderMermaid(),
+  };
+  window.canvasKit = canvasKit;
+
+  // Elements defined before the parser reaches them connect before their children exist;
+  // components that read their children wait for the document to finish parsing.
+  const whenParsed = (fn) => {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn, { once: true });
+    else fn();
+  };
+
+  // ---- Syntax highlighting (lexical, per language family) ----
+
+  const keywordSets = {
+    swift: 'actor any as associatedtype async await break case catch class continue default defer deinit do else enum extension fallthrough false fileprivate final for func guard if import in init inout internal is let mutating nil nonisolated open operator override private protocol public repeat rethrows return self Self some static struct subscript super switch throw throws true try typealias var weak where while',
+    typescript: 'abstract as async await break case catch class const continue debugger declare default delete do else enum export extends false finally for from function get if implements import in instanceof interface keyof let new null of private protected public readonly return set static super switch this throw true try type typeof undefined var void while yield',
+    python: 'and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return self True try while with yield',
+    rust: 'as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while',
+    go: 'break case chan const continue default defer else fallthrough false for func go goto if import interface map nil package range return select struct switch true type var',
+    c: 'auto break case char class const continue default delete do double else enum extern false float for goto if inline int long namespace new nullptr private protected public return short signed sizeof static struct switch template this true typedef typename union unsigned using virtual void volatile while',
+    shell: 'case do done elif else esac export fi for function if in local return then until while',
+  };
+  keywordSets.javascript = keywordSets.typescript;
+  keywordSets.cpp = keywordSets.objc = keywordSets.java = keywordSets.kotlin = keywordSets.csharp = keywordSets.zig = keywordSets.c;
+  const keywords = Object.fromEntries(Object.entries(keywordSets).map(([k, v]) => [k, new Set(v.split(' '))]));
+  const hashComments = new Set(['python', 'shell', 'ruby', 'yaml', 'toml']);
+
+  const escapeHTML = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+  function highlight(line, language) {
+    const words = keywords[language];
+    const comment = hashComments.has(language) ? '#.*' : language === 'sql' || language === 'lua' ? '--.*' : '\\/\\/.*|\\/\\*.*?(?:\\*\\/|$)';
+    const token = new RegExp(`(${comment})|("(?:\\\\.|[^"\\\\])*"?|'(?:\\\\.|[^'\\\\])*'?|\`(?:\\\\.|[^\`\\\\])*\`?)|(\\b\\d[\\d_]*(?:\\.\\d+)?\\b)|([A-Za-z_$][\\w$]*)`, 'g');
+    let out = '';
+    let last = 0;
+    for (const m of line.matchAll(token)) {
+      out += escapeHTML(line.slice(last, m.index));
+      const text = escapeHTML(m[0]);
+      if (m[1]) out += `<span class="tok-c">${text}</span>`;
+      else if (m[2]) out += `<span class="tok-s">${text}</span>`;
+      else if (m[3]) out += `<span class="tok-n">${text}</span>`;
+      else if (words?.has(m[4])) out += `<span class="tok-k">${text}</span>`;
+      else if (words && /^[A-Z]/.test(m[4])) out += `<span class="tok-t">${text}</span>`;
+      else out += text;
+      last = m.index + m[0].length;
+    }
+    return out + escapeHTML(line.slice(last));
+  }
+
+  // ---- <canvas-code path="…" lines="10-40" symbol="Name"> ----
+
+  class CanvasCode extends HTMLElement {
+    static observedAttributes = ['path', 'lines', 'symbol'];
+
+    connectedCallback() {
+      if (!this.hasAttribute('title')) this.title = 'Open in a code tile';
+      if (!this.listening) {
+        this.listening = true;
+        this.addEventListener('click', (event) => {
+          if (event.target.closest('a, canvas-link')) return;
+          const path = this.getAttribute('path');
+          if (!path) return;
+          const resolved = this.excerpt && this.excerpt.start > 0 ? `${this.excerpt.start}-${this.excerpt.end}` : this.getAttribute('lines');
+          canvasKit.openCode(path, { lines: resolved, symbol: this.getAttribute('symbol') }).catch((error) => this.showError(error));
+        });
+      }
+      this.load();
+    }
+
+    attributeChangedCallback() { if (this.isConnected) this.load(); }
+
+    load() {
+      const path = this.getAttribute('path');
+      if (!path) {
+        this.request = (this.request || 0) + 1;
+        this.loadedKey = this.excerpt = null;
+        return this.showError(new Error('<canvas-code> needs a path'));
+      }
+      const lines = this.getAttribute('lines');
+      const symbol = this.getAttribute('symbol');
+      const key = `${path}|${lines}|${symbol}`;
+      if (key === this.loadedKey) return;
+      this.loadedKey = key;
+      // A new target: drop the old excerpt so clicks and a late reply can't mix the two.
+      const request = (this.request = (this.request || 0) + 1);
+      this.excerpt = null;
+      this.innerHTML = `<div class="ck-head"><span class="ck-path">${escapeHTML(path)}</span></div>`;
+      const current = () => request === this.request;
+      track(canvasKit.excerpt(path, { lines, symbol }).then((excerpt) => current() && this.render(excerpt), (error) => current() && this.showError(error)));
+    }
+
+    render(excerpt) {
+      this.excerpt = excerpt;
+      const range = excerpt.start > 0 ? (excerpt.start === excerpt.end ? `:${excerpt.start}` : `:${excerpt.start}-${excerpt.end}`) : '';
+      const head = `<div class="ck-head"><span class="ck-path">${escapeHTML(excerpt.path + range)}</span>`
+        + (excerpt.symbol ? `<span class="ck-symbol">${escapeHTML(excerpt.symbol)}</span>` : '')
+        + (excerpt.stale ? `<span class="ck-stale" title="${escapeHTML(excerpt.reason || '')}">stale</span>` : '')
+        + '</div>';
+      const rows = excerpt.lines.map((text, i) => `<div class="ck-line" data-line="${excerpt.start + i}"><span class="ck-ln">${excerpt.start + i}</span><span>${highlight(text, excerpt.language)}</span></div>`).join('');
+      const notes = (excerpt.stale && excerpt.reason ? `<div class="ck-note">${escapeHTML(excerpt.reason)}</div>` : '')
+        + (excerpt.truncated ? `<div class="ck-note">… truncated</div>` : '');
+      this.innerHTML = `${head}<div class="ck-body">${rows}${notes}</div>`;
+    }
+
+    showError(error) {
+      const path = escapeHTML(this.getAttribute('path') || '');
+      this.innerHTML = `<div class="ck-head"><span class="ck-path">${path}</span><span class="ck-error">error</span></div><div class="ck-note">${escapeHTML(error.message || String(error))}</div>`;
+    }
+  }
+
+  // ---- <canvas-link path="…" line="N"> ----
+
+  class CanvasLink extends HTMLElement {
+    connectedCallback() {
+      if (this.listening) return;
+      this.listening = true;
+      whenParsed(() => {
+        const path = this.getAttribute('path') || '';
+        const line = this.getAttribute('line') || this.getAttribute('lines');
+        if (!this.textContent.trim()) this.textContent = line ? `${path}:${line}` : path;
+      });
+      this.setAttribute('role', 'link');
+      this.tabIndex = 0;
+      const open = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const target = this.getAttribute('line') || this.getAttribute('lines');
+        canvasKit.openCode(this.getAttribute('path'), { lines: target, symbol: this.getAttribute('symbol') }).catch((error) => { this.title = error.message; });
+      };
+      this.addEventListener('click', open);
+      this.addEventListener('keydown', (event) => { if (event.key === 'Enter') open(event); });
+    }
+  }
+
+  // ---- <canvas-decisions key="…" question="…"><canvas-option value="…" label="…">detail</canvas-option> ----
+
+  class CanvasDecisions extends HTMLElement {
+    connectedCallback() {
+      if (this.built) return;
+      this.built = true;
+      whenParsed(() => this.build());
+    }
+
+    build() {
+      this.key = this.getAttribute('key') || this.id;
+      const options = [...this.querySelectorAll(':scope > canvas-option')];
+      const question = this.getAttribute('question');
+      const list = document.createElement('div');
+      list.className = 'ck-options';
+      list.setAttribute('role', 'radiogroup');
+      for (const option of options) {
+        const label = option.getAttribute('label') || option.getAttribute('value') || '';
+        const detail = option.innerHTML;
+        option.setAttribute('role', 'radio');
+        option.innerHTML = `<div class="ck-label"><span>${escapeHTML(label)}</span><span class="ck-mark">✓ chosen</span></div>` + (detail.trim() ? `<div class="ck-detail">${detail}</div>` : '');
+        option.addEventListener('click', () => this.choose(option.getAttribute('value')));
+        list.append(option);
+      }
+      this.replaceChildren();
+      if (question) {
+        const heading = document.createElement('div');
+        heading.className = 'ck-question';
+        heading.textContent = question;
+        this.append(heading);
+      }
+      this.append(list);
+      if (!this.key) return this.append(Object.assign(document.createElement('div'), { className: 'ck-note', textContent: '<canvas-decisions> needs a key' }));
+      canvasKit.onState((next) => this.show(next[this.key]));
+      track(canvasKit.getState(this.key).then((value) => this.show(value), () => {}));
+    }
+
+    show(value) {
+      for (const option of this.querySelectorAll('canvas-option')) {
+        option.setAttribute('aria-checked', String(value != null && option.getAttribute('value') === value));
+      }
+    }
+
+    choose(value) {
+      if (!this.key || value == null) return;
+      const current = this.querySelector('canvas-option[aria-checked="true"]')?.getAttribute('value');
+      canvasKit.setState(this.key, current === value ? null : value).catch(() => {});
+    }
+  }
+
+  customElements.define('canvas-code', CanvasCode);
+  customElements.define('canvas-link', CanvasLink);
+  customElements.define('canvas-decisions', CanvasDecisions);
+
+  // ---- Mermaid: loaded only when the page has diagrams (it is large) ----
+
+  let mermaidReady = null;
+  function mermaidBlocks() {
+    for (const code of document.querySelectorAll('pre > code.language-mermaid')) {
+      const div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = code.textContent;
+      code.parentElement.replaceWith(div);
+    }
+    for (const pre of document.querySelectorAll('pre:not(.mermaid)')) {
+      const text = pre.textContent.trim();
+      if (!text.startsWith('```mermaid')) continue;
+      const div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = text.replace(/^```mermaid[^\n]*\n?/, '').replace(/```$/, '');
+      pre.replaceWith(div);
+    }
+    return [...document.querySelectorAll('.mermaid:not([data-processed])')];
+  }
+
+  function renderMermaid() {
+    const nodes = mermaidBlocks();
+    if (!nodes.length) return Promise.resolve();
+    mermaidReady ||= new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = '/kit/vendor/mermaid.min.js';
+      script.onload = () => {
+        const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+        window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default', fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--canvas-font') });
+        resolve(window.mermaid);
+      };
+      script.onerror = () => reject(new Error('mermaid failed to load'));
+      document.head.append(script);
+    });
+    return track(mermaidReady.then((mermaid) => mermaid.run({ nodes })).catch((error) => console.error(error)));
+  }
+
+  const start = () => { renderMermaid(); settle(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+  else start();
+})();

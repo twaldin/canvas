@@ -14,7 +14,7 @@ cp "$bin/Canvas" "$app/Contents/MacOS/Canvas"
 for bundle in "$bin"/*.bundle; do
   [ -e "$bundle" ] && cp -R "$bundle" "$app/Contents/Resources/"
 done
-cp -R schema bin cli "$app/Contents/Resources/"
+cp -R schema bin cli skills THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"
 [ -d resources ] && cp -R resources "$app/Contents/Resources/resources"
 cp -R clients/ts/src "$app/Contents/Resources/clients/ts/src"
 cp -R clients/python "$app/Contents/Resources/clients/python"

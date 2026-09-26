@@ -61,6 +61,14 @@ export type CodeProps = {
   diffBase?: string;
   /** terminal tile this follow tile tracks */
   followOf?: Id;
+  /** follow tiles: what the agent last did at this location */
+  lastAction?: "read" | "edit" | "lsp" | "search";
+  /** follow tiles: recent locations, newest first, without repeats */
+  history?: ({
+    path: string;
+    range?: LineRange;
+    action: "read" | "edit" | "lsp" | "search";
+  })[];
   pinnedCommit?: string;
 };
 
@@ -70,9 +78,12 @@ export type NoteProps = {
 };
 
 export type HtmlProps = {
+  /** page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded */
   html: string;
   title?: string;
   allowNetwork?: string[];
+  /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
+  state?: Record<string, unknown>;
 };
 
 export type ShapeProps = {
@@ -80,7 +91,10 @@ export type ShapeProps = {
   text?: string;
   /** ink points [x, y, pressure?] in object-local coordinates */
   points?: number[][];
+  /** palette name (black, grey, blue, green, orange, red, violet) or #rrggbb */
   color?: string;
+  /** rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it */
+  fill?: "none" | "semi" | "solid";
 };
 
 export type Binding = {
@@ -97,6 +111,8 @@ export type ArrowProps = {
   /** semantic edge type, e.g. hypothesis_about, calls, depends_on */
   relation?: string;
   label?: string;
+  /** palette name or #rrggbb, as ShapeProps.color */
+  color?: string;
 };
 
 export type GroupProps = {
@@ -129,8 +145,11 @@ export type MentionTarget = {
   object: Id;
   path: string;
   lines: LineRange;
+  /** diff side of the lines; absent outside a diff */
   side?: "old" | "new";
   symbol?: string;
+  /** with side old or absent: the commit whose version of path holds the lines (deleted diff rows, pinned excerpts); with side new: the diff base. Absent: the working tree */
+  commit?: string;
 } | {
   kind: "dom";
   object: Id;
@@ -177,6 +196,20 @@ export type Agent = {
   lifecycle: Lifecycle;
 };
 
+export type BoardInfo = {
+  board: Id;
+  /** root directory the board was last opened at */
+  root: string;
+  /** the root directory no longer exists (e.g. a deleted worktree); the board is kept */
+  archived: boolean;
+  /** the board has a window in the app (only open boards accept `board` params) */
+  open: boolean;
+  /** ISO 8601 time the board was last saved; absent for a board never saved */
+  updatedAt?: string;
+  /** object count */
+  objects: number;
+};
+
 export type SystemPingParams = Record<string, unknown>;
 export type SystemPingResult = {
   version: number;
@@ -194,6 +227,22 @@ export type BoardGetResult = {
   revision: number;
   objects: CanvasObject[];
   changed?: Id[];
+};
+
+export type BoardListParams = Record<string, unknown>;
+export type BoardListResult = {
+  boards: BoardInfo[];
+};
+
+export type BoardExportParams = {
+  board?: Id;
+  /** absolute, or relative to the board root; default .canvas/board.json */
+  path?: string;
+};
+export type BoardExportResult = {
+  /** absolute path written */
+  path: string;
+  objects: number;
 };
 
 export type ObjectGetParams = {
@@ -321,6 +370,19 @@ export type AgentWaitResult = {
   agent: Agent;
 };
 
+export type AgentReadParams = {
+  /** agent name or tile id */
+  target: string;
+  /** tail length; larger values are capped at 2000 */
+  lines?: number;
+};
+export type AgentReadResult = {
+  agent: Agent;
+  text: string;
+  /** number of lines returned */
+  lines: number;
+};
+
 export type FollowReportParams = {
   tile: Id;
   /** absolute path or path relative to the board root */
@@ -360,15 +422,19 @@ export interface CanvasApi {
   board: {
     /** Board manifest: all objects (props summarized for heavy types) plus a change cursor. Objects created or changed since `since` are flagged. */
     get(params?: BoardGetParams): Promise<BoardGetResult>;
+    /** Every stored board, open or not, including archived boards whose root directory is gone. */
+    list(params?: BoardListParams): Promise<BoardListResult>;
+    /** Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller. */
+    export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
   object: {
-    /** Read one object. `as: graph` adds structural relations (encloses, overlaps, arrows in/out); `as: image` returns a PNG crop as base64. */
+    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow; `as: image` returns a PNG crop as base64 (a tile's content, or the canvas region under a drawn object including the tiles and ink inside it). */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
-    /** Delete an object (and remove it from any staged mentions). */
+    /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
   };
   tray: {
@@ -396,6 +462,8 @@ export interface CanvasApi {
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
     /** Wait until the target agent reaches one of the given states. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
+    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. */
+    read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {
     /** Report a file location an agent just read or edited; re-aims that terminal's follow tile. */
@@ -431,6 +499,8 @@ export function bindMethods(call: (method: string, params: object) => Promise<un
     },
     board: {
       get: (params?: BoardGetParams) => call("board.get", withEnv(params ?? {}, ["board"])) as Promise<BoardGetResult>,
+      list: (params?: BoardListParams) => call("board.list", withEnv(params ?? {}, [])) as Promise<BoardListResult>,
+      export: (params?: BoardExportParams) => call("board.export", withEnv(params ?? {}, ["board"])) as Promise<BoardExportResult>,
     },
     object: {
       get: (params: ObjectGetParams) => call("object.get", withEnv(params ?? {}, [])) as Promise<ObjectGetResult>,
@@ -452,6 +522,7 @@ export function bindMethods(call: (method: string, params: object) => Promise<un
       list: (params?: AgentListParams) => call("agent.list", withEnv(params ?? {}, [])) as Promise<AgentListResult>,
       prompt: (params: AgentPromptParams) => call("agent.prompt", withEnv(params ?? {}, [])) as Promise<AgentPromptResult>,
       wait: (params: AgentWaitParams) => call("agent.wait", withEnv(params ?? {}, [])) as Promise<AgentWaitResult>,
+      read: (params: AgentReadParams) => call("agent.read", withEnv(params ?? {}, [])) as Promise<AgentReadResult>,
     },
     follow: {
       report: (params: FollowReportParams) => call("follow.report", withEnv(params ?? {}, [])) as Promise<FollowReportResult>,
@@ -466,4 +537,4 @@ export function bindMethods(call: (method: string, params: object) => Promise<un
   };
 }
 
-export const METHODS = ["system.ping","board.get","object.get","object.create","object.update","object.delete","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","follow.report","view.attention","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","board.get","board.list","board.export","object.get","object.create","object.update","object.delete","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.snapshot","events.subscribe"] as const;

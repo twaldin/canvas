@@ -13,6 +13,9 @@ public final class SocketServer: @unchecked Sendable {
         fileprivate let requests: AsyncStream<JSONValue>.Continuation
         fileprivate let stream: AsyncStream<JSONValue>
         public fileprivate(set) var isOpen = true
+        /// Set by handlers that require a login line before requests (the cmux socket's `auth`).
+        /// Only the connection's handler touches it, and handlers run one request at a time.
+        public var authenticated = false
         private let writeLock = NSLock()
 
         init(fd: Int32) {
@@ -32,7 +35,18 @@ public final class SocketServer: @unchecked Sendable {
         /// Writes one JSON line. Safe from any thread; returns false once the peer is gone.
         @discardableResult
         public func send(_ value: JSONValue) -> Bool {
-            guard var data = try? JSONEncoder().encode(value) else { return false }
+            guard let data = try? JSONEncoder().encode(value) else { return false }
+            return write(data)
+        }
+
+        /// Writes one plain-text line (protocols that answer some commands outside JSON).
+        @discardableResult
+        public func send(line: String) -> Bool {
+            write(Data(line.utf8))
+        }
+
+        private func write(_ line: Data) -> Bool {
+            var data = line
             data.append(0x0A)
             writeLock.lock()
             defer { writeLock.unlock() }
@@ -62,9 +76,12 @@ public final class SocketServer: @unchecked Sendable {
     /// Reused for every read; only touched on `queue`.
     private var readBuffer = [UInt8](repeating: 0, count: 64 * 1024)
     private let handler: Handler
+    /// Deliver lines that aren't JSON to the handler as `.string(line)` instead of rejecting them.
+    private let acceptsTextLines: Bool
 
-    public init(path: String, handler: @escaping Handler) {
+    public init(path: String, acceptsTextLines: Bool = false, handler: @escaping Handler) {
         self.path = path
+        self.acceptsTextLines = acceptsTextLines
         self.handler = handler
     }
 
@@ -144,8 +161,11 @@ public final class SocketServer: @unchecked Sendable {
             do {
                 request = try JSONDecoder().decode(JSONValue.self, from: line)
             } catch {
-                connection.send(.object(["ok": .bool(false), "error": .object(["code": .string("invalid_params"), "message": .string("malformed JSON line")])]))
-                continue
+                guard acceptsTextLines, let text = String(data: line, encoding: .utf8) else {
+                    connection.send(.object(["ok": .bool(false), "error": .object(["code": .string("invalid_params"), "message": .string("malformed JSON line")])]))
+                    continue
+                }
+                request = .string(text.hasSuffix("\r") ? String(text.dropLast()) : text)
             }
             connection.requests.yield(request)
         }

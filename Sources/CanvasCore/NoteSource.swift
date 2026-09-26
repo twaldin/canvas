@@ -54,7 +54,7 @@ public enum NoteSource {
         let text: String
         do {
             text = try await read(path, commit: fence.commit, root: root)
-        } catch NoteGitError.invalidRevision(let commit) {
+        } catch NoteSourceError.invalidRevision(let commit) {
             return NoteExcerpt(path: path, range: nil, lines: captured ?? [], status: .stale("\"\(commit)\" is not a commit"))
         } catch {
             let place = fence.commit.map { "\(path) at \($0)" } ?? path
@@ -74,8 +74,8 @@ public enum NoteSource {
     /// relative to the board root rather than the repository root.
     static func read(_ path: String, commit: String?, root: URL) async throws -> String {
         let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
-        guard let commit else { return try await blocking { try String(contentsOf: url, encoding: .utf8) } }
-        let data = try await NoteGit.run(try showArguments(path, commit: commit, root: root), in: root)
+        guard let commit else { return try await offPool { Result { try String(contentsOf: url, encoding: .utf8) } }.get() }
+        let data = try await GitRunner.shared.run(try showArguments(path, commit: commit, root: root), in: root, maxOutput: maxOutput, timeout: timeout)
         guard let text = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         return text
     }
@@ -83,7 +83,7 @@ public enum NoteSource {
     /// `git show --end-of-options <commit>:./<path>`. The revision comes from markdown anyone can
     /// write, so it may not look like an option or carry its own `:path`.
     static func showArguments(_ path: String, commit: String, root: URL) throws -> [String] {
-        guard isRevision(commit) else { throw NoteGitError.invalidRevision(commit) }
+        guard isRevision(commit) else { throw NoteSourceError.invalidRevision(commit) }
         let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
         let rootPath = root.standardizedFileURL.path
         let absolute = url.standardizedFileURL.path
@@ -102,10 +102,10 @@ public enum NoteSource {
         guard let name = symbol.split(separator: ".").last.map(String.init), !name.isEmpty,
               name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else { return nil }
         let pattern = "(^|[^[:alnum:]_.$])(\(NoteAnchor.declarationKeywords)|const|let|var)[[:space:]]+([(][^)]*[)][[:space:]]*)?\(name.replacingOccurrences(of: "$", with: "\\$"))([^[:alnum:]_$]|$)"
-        guard let data = try? await NoteGit.run(["grep", "-l", "-I", "-E", "-e", pattern], in: root, allowedStatus: [0, 1]),
+        guard let data = try? await GitRunner.shared.run(["grep", "-l", "-I", "-E", "-e", pattern], in: root, allowedStatus: [0, 1], maxOutput: maxOutput, timeout: timeout),
               let output = String(data: data, encoding: .utf8) else { return nil }
         let candidates = output.split(separator: "\n").map(String.init)
-        return try? await blocking {
+        return await offPool {
             candidates.first { candidate in
                 guard let text = try? String(contentsOf: root.appendingPathComponent(candidate), encoding: .utf8) else { return false }
                 return NoteAnchor.symbolRange(symbol, in: lines(of: text)) != nil
@@ -113,13 +113,10 @@ public enum NoteSource {
         }
     }
 
-    /// Runs blocking file work on a GCD thread: a blocked cooperative-pool thread starves every
-    /// other task in the app, the socket servers' included.
-    static func blocking<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async { continuation.resume(with: Result(catching: work)) }
-        }
-    }
+    /// Git for a fence is bounded: a pinned file larger than this is not an excerpt, and a stuck
+    /// git can't hold one of the app's two git slots.
+    static let maxOutput = 32 << 20
+    static let timeout: TimeInterval = 20
 
     /// Lines without the empty string after a trailing newline.
     public static func lines(of text: String) -> [String] {
@@ -129,196 +126,7 @@ public enum NoteSource {
     }
 }
 
-public enum NoteGitError: Error, Equatable {
-    case failed(status: Int32, stderr: String)
-    case launch(String)
-    case timedOut
+public enum NoteSourceError: Error, Equatable {
+    /// A pinned fence's `commit=` doesn't look like a revision (e.g. it looks like an option).
     case invalidRevision(String)
-}
-
-/// Runs git for note fences, at most two processes at a time (docs/design.md, Performance).
-/// Cancelling the calling task drops a queued request or terminates the running process.
-enum NoteGit {
-    private static let limiter = Limiter(permits: 2)
-    static let timeout: TimeInterval = 20
-    /// Diagnostics past this are dropped; stdout past `maxOutput` fails the command.
-    static let maxDiagnostics = 4_096
-    static let maxOutput = 32 << 20
-
-    static func run(_ args: [String], in directory: URL, allowedStatus: Set<Int32> = [0]) async throws -> Data {
-        try await limiter.acquire()
-        do {
-            try Task.checkCancellation()
-            let data = try await launch(args, in: directory, allowedStatus: allowedStatus)
-            await limiter.release()
-            return data
-        } catch {
-            await limiter.release()
-            throw error
-        }
-    }
-
-    private static func launch(_ args: [String], in directory: URL, allowedStatus: Set<Int32>) async throws -> Data {
-        let handle = Handle()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                // Reading pipes to EOF blocks, so it runs on a GCD thread, not the cooperative pool.
-                DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(with: Result { try execute(args, in: directory, allowedStatus: allowedStatus, timeout: timeout, handle: handle) })
-                }
-            }
-        } onCancel: {
-            handle.cancel()
-        }
-    }
-
-    /// Runs git to completion on the calling thread. stdout and stderr drain concurrently, so a
-    /// chatty failure can't block git on a full stderr pipe while we wait for stdout.
-    static func execute(_ args: [String], in directory: URL, allowedStatus: Set<Int32>, timeout: TimeInterval, handle: Handle?) throws -> Data {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-c", "core.quotepath=off"] + args
-        process.currentDirectoryURL = directory
-        var environment = ProcessInfo.processInfo.environment
-        environment["GIT_PAGER"] = "cat"
-        environment["GIT_OPTIONAL_LOCKS"] = "0"
-        process.environment = environment
-        let out = Pipe()
-        let err = Pipe()
-        process.standardOutput = out
-        process.standardError = err
-        process.standardInput = FileHandle.nullDevice
-        if handle?.isCancelled == true { throw CancellationError() }
-        do {
-            try process.run()
-        } catch {
-            throw NoteGitError.launch("\(error)")
-        }
-        let watchdog = Handle()
-        if handle?.attach(process) == false { process.terminate() }
-        watchdog.attach(process)
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { watchdog.expire() }
-
-        let diagnostics = Diagnostics()
-        let stderrDone = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .utility).async {
-            let reader = err.fileHandleForReading
-            while case let chunk = reader.availableData, !chunk.isEmpty { diagnostics.append(chunk) }
-            stderrDone.signal()
-        }
-        var data = Data()
-        let reader = out.fileHandleForReading
-        var overflow = false
-        while case let chunk = reader.availableData, !chunk.isEmpty {
-            if overflow { continue }
-            if data.count + chunk.count > maxOutput {
-                overflow = true
-                process.terminate()
-                continue
-            }
-            data.append(chunk)
-        }
-        stderrDone.wait()
-        process.waitUntilExit()
-        watchdog.finish()
-        if handle?.isCancelled == true { throw CancellationError() }
-        if watchdog.expired { throw NoteGitError.timedOut }
-        if overflow { throw NoteGitError.failed(status: process.terminationStatus, stderr: "output larger than \(maxOutput) bytes") }
-        guard process.terminationReason == .exit, allowedStatus.contains(process.terminationStatus) else {
-            throw NoteGitError.failed(status: process.terminationStatus, stderr: diagnostics.text)
-        }
-        return data
-    }
-
-    /// The running process of one request, for cancellation and the timeout watchdog.
-    final class Handle: @unchecked Sendable {
-        private let lock = NSLock()
-        private var process: Process?
-        private var cancelled = false
-        private var finished = false
-        private(set) var expired = false
-
-        var isCancelled: Bool { lock.withLock { cancelled } }
-
-        /// false when the request was cancelled before the process started.
-        @discardableResult
-        func attach(_ process: Process) -> Bool {
-            lock.withLock {
-                self.process = process
-                return !cancelled
-            }
-        }
-
-        func cancel() {
-            lock.withLock {
-                cancelled = true
-                if !finished, let process, process.isRunning { process.terminate() }
-            }
-        }
-
-        func expire() {
-            lock.withLock {
-                guard !finished, let process, process.isRunning else { return }
-                expired = true
-                process.terminate()
-            }
-        }
-
-        func finish() {
-            lock.withLock { finished = true }
-        }
-    }
-
-    private final class Diagnostics: @unchecked Sendable {
-        private let lock = NSLock()
-        private var data = Data()
-
-        func append(_ chunk: Data) {
-            lock.withLock {
-                if data.count < NoteGit.maxDiagnostics { data.append(chunk.prefix(NoteGit.maxDiagnostics - data.count)) }
-            }
-        }
-
-        var text: String { lock.withLock { String(decoding: data, as: UTF8.self) } }
-    }
-
-    /// Permits for concurrent git processes; a waiter whose task is cancelled leaves the queue.
-    private actor Limiter {
-        private var available: Int
-        private var waiters: [(id: UInt64, continuation: CheckedContinuation<Void, Error>)] = []
-        private var nextID: UInt64 = 0
-
-        init(permits: Int) { available = permits }
-
-        func acquire() async throws {
-            try Task.checkCancellation()
-            if available > 0 {
-                available -= 1
-                return
-            }
-            let id = nextID
-            nextID += 1
-            try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                    if Task.isCancelled {
-                        continuation.resume(throwing: CancellationError())
-                    } else {
-                        waiters.append((id, continuation))
-                    }
-                }
-            } onCancel: {
-                Task { await self.cancel(id) }
-            }
-        }
-
-        private func cancel(_ id: UInt64) {
-            guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
-            waiters.remove(at: index).continuation.resume(throwing: CancellationError())
-        }
-
-        /// Hands the permit to the next waiter, or returns it to the pool.
-        func release() {
-            if waiters.isEmpty { available += 1 } else { waiters.removeFirst().continuation.resume() }
-        }
-    }
 }

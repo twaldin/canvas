@@ -468,7 +468,7 @@ final class NoteTile: NSView, TileContent {
             hoveredRow = nil
             return .object(object.id)
         }
-        let target = MentionTarget.code(object: object.id, path: row.path, lines: LineRange(start: row.line, end: row.line), side: nil, symbol: row.symbol)
+        let target = MentionTarget.code(object: object.id, path: row.path, lines: LineRange(start: row.line, end: row.line), side: nil, symbol: row.symbol, commit: row.commit)
         hoveredRow = (target, rect(of: fragment))
         return target
     }
@@ -484,12 +484,13 @@ final class NoteTile: NSView, TileContent {
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
-        guard case .code(_, let path, let lines, _, let symbol) = target else { return bounds }
+        guard case .code(_, let path, let lines, _, let symbol, let commit) = target else { return bounds }
         if let hoveredRow, hoveredRow.target == target { return hoveredRow.rect }
+        let wanted = NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)
         guard let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }
         var rect: NSRect?
         storage.enumerateAttribute(.noteCodeRow, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
-            guard let row = value as? NoteCodeRow, row.path == path, row.line == lines.start, row.symbol == symbol,
+            guard let row = value as? NoteCodeRow, row == wanted,
                   let location = content.location(content.documentRange.location, offsetBy: range.location),
                   let fragment = layout.textLayoutFragment(for: location) else { return }
             rect = self.rect(of: fragment)

@@ -61,6 +61,14 @@ export type CodeProps = {
   diffBase?: string;
   /** terminal tile this follow tile tracks */
   followOf?: Id;
+  /** follow tiles: what the agent last did at this location */
+  lastAction?: "read" | "edit" | "lsp" | "search";
+  /** follow tiles: recent locations, newest first, without repeats */
+  history?: ({
+    path: string;
+    range?: LineRange;
+    action: "read" | "edit" | "lsp" | "search";
+  })[];
   pinnedCommit?: string;
 };
 

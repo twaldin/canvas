@@ -87,6 +87,22 @@
         "mode": { "enum": ["diff", "source"], "default": "diff" },
         "diffBase": { "type": "string", "default": "merge-base", "description": "merge-base | head | <sha>" },
         "followOf": { "$ref": "#/definitions/Id", "description": "terminal tile this follow tile tracks" },
+        "lastAction": { "enum": ["read", "edit", "lsp", "search"], "description": "follow tiles: what the agent last did at this location" },
+        "history": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "follow tiles: recent locations, newest first, without repeats",
+          "items": {
+            "type": "object",
+            "required": ["path", "action"],
+            "properties": {
+              "path": { "type": "string" },
+              "range": { "$ref": "#/definitions/LineRange" },
+              "action": { "enum": ["read", "edit", "lsp", "search"] }
+            },
+            "additionalProperties": false
+          }
+        },
         "pinnedCommit": { "type": "string" }
       },
       "additionalProperties": false

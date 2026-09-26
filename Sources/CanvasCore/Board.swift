@@ -134,6 +134,7 @@ public final class Board {
     public func delete(_ id: ObjectID) throws {
         guard objects.removeValue(forKey: id) != nil else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
+        diffContexts.removeValue(forKey: id)
         revision += 1
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
@@ -278,15 +279,26 @@ public final class Board {
 
     // MARK: Follow mode
 
-    /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use.
+    /// Recent locations kept on a follow tile (`CodeProps.history`), newest first.
+    public static let followHistoryLimit = 8
+
+    /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use, and
+    /// record the location at the front of the tile's history.
     @discardableResult
     public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject {
         _ = try object(tile)
         let relative = relativePath(path)
-        var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action)]
-        props["range"] = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
+        let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
+        var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action), "range": rangeValue]
+        let existing = objects.values.first { $0.type == .code && $0.props["followOf"]?.string == tile }
+        var entry: [String: JSONValue] = ["path": .string(relative), "action": .string(action)]
+        if range != nil { entry["range"] = rangeValue }
+        var history = existing?.props["history"]?.array ?? []
+        history.removeAll { $0["path"] == entry["path"] && $0["range"] == entry["range"] }
+        history.insert(.object(entry), at: 0)
+        props["history"] = .array(Array(history.prefix(Self.followHistoryLimit)))
         let follow: CanvasObject
-        if let existing = objects.values.first(where: { $0.type == .code && $0.props["followOf"]?.string == tile }) {
+        if let existing {
             follow = try update(existing.id, props: .object(props), caller: tile)
         } else {
             props["mode"] = .string("diff")
@@ -295,6 +307,24 @@ public final class Board {
         }
         onEvent?(.followUpdated(tile: tile, follow: follow.id))
         return follow
+    }
+
+    /// What a code tile last diffed against, recorded by the tile when its diff loads. Mention
+    /// context names the base and excerpts old-side lines from it; runtime only, not persisted.
+    public struct DiffContext: Sendable {
+        public var base: String
+        public var old: SideText
+
+        public init(base: String, old: SideText) {
+            self.base = base
+            self.old = old
+        }
+    }
+
+    public private(set) var diffContexts: [ObjectID: DiffContext] = [:]
+
+    public func setDiffContext(_ context: DiffContext?, for object: ObjectID) {
+        diffContexts[object] = context
     }
 
     /// Paths are stored relative to the board root when they live under it.

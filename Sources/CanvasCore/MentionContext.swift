@@ -15,9 +15,10 @@ public enum MentionContext {
 
     public static func label(for target: MentionTarget, on board: Board) -> String {
         switch target {
-        case .code(_, let path, let lines, _, let symbol):
+        case .code(_, let path, let lines, let side, let symbol):
             let range = lines.start == lines.end ? "\(lines.start)" : "\(lines.start)-\(lines.end)"
-            return symbol.map { "\(path):\(range) \($0)" } ?? "\(path):\(range)"
+            let location = side == DiffSide.old.rawValue ? "\(path):\(range) (old)" : "\(path):\(range)"
+            return symbol.map { "\(location) \($0)" } ?? location
         case .dom(_, _, let selector, let text):
             return text.map { "\(selector) \"\(clip($0, 24))\"" } ?? selector
         case .terminal(_, let text):
@@ -36,9 +37,15 @@ public enum MentionContext {
         switch mention.target {
         case .code(let object, let path, let range, let side, let symbol):
             let symbolText = symbol.map { " (symbol \($0))" } ?? ""
-            let sideText = side == "old" ? " · old side of diff" : ""
-            lines.append("[\(index)] code \(path):\(range.start)-\(range.end)\(symbolText) · tile \(object)\(sideText)\(edited)")
-            lines.append(contentsOf: excerpt(board.absoluteURL(path), range))
+            let diff = board.diffContexts[object]
+            lines.append("[\(index)] code \(path):\(range.start)-\(range.end)\(symbolText) · tile \(object)\(diffBase(of: object, on: board, side: side))\(edited)")
+            if side == DiffSide.old.rawValue {
+                lines.append(contentsOf: diff.map { excerpt($0.old, range) } ?? ["    (old side not loaded; open the tile to read it)"])
+            } else if let text = try? String(contentsOf: board.absoluteURL(path), encoding: .utf8) {
+                lines.append(contentsOf: excerpt(SideText(text), range))
+            } else {
+                lines.append("    (file unreadable: \(board.absoluteURL(path).path))")
+            }
         case .dom(let object, let url, let selector, let text):
             let textPart = text.map { " \"\(clip($0, 80))\"" } ?? ""
             lines.append("[\(index)] dom \(url) · \(selector)\(textPart) · browser tile \(object)\(edited)")
@@ -107,20 +114,28 @@ public enum MentionContext {
         }
     }
 
+    /// ` · diff vs merge-base 1a2b3c4` for code tiles showing a diff, plus which side the lines
+    /// are on when it is the old one.
+    static func diffBase(of object: ObjectID, on board: Board, side: String?) -> String {
+        guard let tile = board.objects[object], tile.type == .code, (tile.props["mode"]?.string ?? DiffDisplay.Mode.diff.rawValue) == DiffDisplay.Mode.diff.rawValue else { return "" }
+        let name = DiffBase(prop: tile.props["diffBase"]?.string).name
+        let sha = board.diffContexts[object].map { " " + String($0.base.prefix(7)) } ?? ""
+        let oldSide = side == DiffSide.old.rawValue ? ", old side" : ""
+        return " · diff vs \(name)\(sha)\(oldSide)"
+    }
+
     /// The mentioned lines marked `>`, plus up to `contextLines` unmarked lines on each side while
     /// the whole excerpt fits in `maxExcerptLines`, so a one-line mention still reads in context.
-    static func excerpt(_ url: URL, _ range: LineRange) -> [String] {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return ["    (file unreadable: \(url.path))"] }
-        let all = text.split(separator: "\n", omittingEmptySubsequences: false)
+    static func excerpt(_ text: SideText, _ range: LineRange) -> [String] {
         let start = max(1, range.start)
-        let end = min(all.count, range.end)
+        let end = min(text.lineCount, range.end)
         guard start <= end else { return ["    (range \(range.start)-\(range.end) is outside the file)"] }
         let pad = min(contextLines, max(0, maxExcerptLines - (end - start + 1)) / 2)
         let from = max(1, start - pad)
-        let to = min(all.count, end + pad, from + maxExcerptLines - 1)
+        let to = min(text.lineCount, end + pad, from + maxExcerptLines - 1)
         var lines = (from...to).map { number in
             let marker = (start...end).contains(number) ? "  > " : "    "
-            return marker + String(number).padding(toLength: 5, withPad: " ", startingAt: 0) + all[number - 1]
+            return marker + String(number).padding(toLength: 5, withPad: " ", startingAt: 0) + text.line(number)
         }
         if range.end > to { lines.append("    …") }
         return lines

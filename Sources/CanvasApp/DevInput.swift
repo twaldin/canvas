@@ -46,19 +46,26 @@ enum DevInput {
     static func replay(_ fields: [String: String]) {
         guard fields["pid"] == String(getpid()) else { return }
         // `--repeat N --interval ms`: a burst like a trackpad's event stream. The log line reports
-        // how far the main thread fell behind the schedule (a direct measure of jank).
+        // how late the main thread ran the steps: the worst lateness is the longest stall a person
+        // would see as a dropped frame run.
         if let count = Int(fields["repeat"] ?? ""), count > 1 {
             var single = fields
             single["repeat"] = nil
             let interval = (Double(fields["interval"] ?? "") ?? 8) / 1000
             let start = Date()
+            @MainActor final class Lateness { var worst = 0.0, total = 0.0 }
+            let lateness = Lateness()
             for step in 0..<count {
                 DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(step)) {
                     MainActor.assumeIsolated {
+                        let late = max(0, Date().timeIntervalSince(start) - interval * Double(step)) * 1000
+                        lateness.worst = max(lateness.worst, late)
+                        lateness.total += late
                         replay(single)
                         if step == count - 1 {
-                            let elapsed = Date().timeIntervalSince(start) * 1000
-                            NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms)", count, fields["kind"] ?? "", elapsed, interval * 1000 * Double(count - 1))
+                            NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms), step lateness worst %.1f ms mean %.1f ms",
+                                  count, fields["kind"] ?? "", Date().timeIntervalSince(start) * 1000, interval * 1000 * Double(count - 1),
+                                  lateness.worst, lateness.total / Double(count))
                         }
                     }
                 }

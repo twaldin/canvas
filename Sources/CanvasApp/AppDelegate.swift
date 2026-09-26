@@ -24,7 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `terminate`.
         signal(SIGTERM, SIG_IGN)
         let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-        termination.setEventHandler {
+        // `@Sendable`: written inside this @MainActor method, the handler would otherwise be
+        // inferred main-actor isolated, and Swift's runtime check traps when it runs on the
+        // global queue (every `kill <pid>` crashed instead of quitting, losing unflushed boards).
+        termination.setEventHandler { @Sendable in
             let main = CFRunLoopGetMain()
             let modes = [CFRunLoopMode.commonModes.rawValue, RunLoop.Mode.modalPanel.rawValue as CFString, RunLoop.Mode.eventTracking.rawValue as CFString] as CFArray
             CFRunLoopPerformBlock(main, modes) {

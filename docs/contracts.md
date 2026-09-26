@@ -116,7 +116,7 @@ Groups (`type: group`, props `{members, name?}`, frame = union of member frames)
 
 ## Undo
 
-`Board.history` records every create, update, and delete from any actor; ⌘Z (`Board.undo()`) reverts the latest step even when an agent made it, and an undo is a new revision (`rev` keeps increasing). Terminal bookkeeping props (`lifecycle`, `agent`, `title`) are never recorded and never rewound. Multi-object gestures wrap their updates in `Board.transaction { }` to form one step. Undoing a delete restores the object with the same id and `z`; staged mentions of it are not restored. History lives in memory only.
+`Board.history` records every create, update, and delete from any actor; ⌘Z (`Board.undo()`) reverts the latest step even when an agent made it, and every undo or redo is a new revision, newer than any the object ever had, even across a delete and re-creation. Terminal bookkeeping props (`lifecycle`, `agent`, `title`) are never recorded and never rewound. Multi-object gestures wrap their updates in `Board.transaction { }` to form one step. Undoing a delete restores the object with the same id and `z`; staged mentions of it are not restored. When undo/redo removes a terminal and later brings it back, it returns with the bookkeeping it last had. History lives in memory only.
 
 ## Mention context format
 

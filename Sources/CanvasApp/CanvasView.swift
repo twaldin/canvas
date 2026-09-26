@@ -18,27 +18,37 @@ final class CanvasDocumentView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.underPageBackgroundColor.setFill()
         dirtyRect.fill()
-        // Dot grid: 2-point dots at least 16 points apart on screen, whatever the zoom. Drawn as one
-        // path: AppKit records view drawing into display lists, and a rect fill per dot at 10% zoom
-        // was ~100k retained entries.
+        // Dot grid: 2-point dots at least 16 points apart on screen, whatever the zoom, drawn as one
+        // tiled image. A rect fill per dot left ~100k display-list entries at 10% zoom, and one path
+        // of all dots made Core Animation union every rect on each frame of a pan.
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
         let scale = max(convert(NSSize(width: 1, height: 0), to: nil).width, 0.01)
         var spacing: CGFloat = 40
         while spacing * scale < 16 { spacing *= 2 }
-        let dot = 2 / scale
-        let path = CGMutablePath()
-        var x = (dirtyRect.minX / spacing).rounded(.down) * spacing
-        while x < dirtyRect.maxX {
-            var y = (dirtyRect.minY / spacing).rounded(.down) * spacing
-            while y < dirtyRect.maxY {
-                path.addRect(CGRect(x: x - dot / 2, y: y - dot / 2, width: dot, height: dot))
-                y += spacing
-            }
-            x += spacing
-        }
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        context.setFillColor(NSColor.tertiaryLabelColor.withAlphaComponent(0.35).cgColor)
-        context.addPath(path)
-        context.fillPath()
+        let backing = window?.backingScaleFactor ?? 2
+        let color = NSColor.tertiaryLabelColor.withAlphaComponent(0.35).cgColor
+        guard let tile = Self.dotTile(pixels: Int((spacing * scale * backing).rounded()), dot: 2 * backing, color: color) else { return }
+        context.saveGState()
+        context.clip(to: dirtyRect)
+        context.draw(tile, in: CGRect(x: -spacing / 2, y: -spacing / 2, width: spacing, height: spacing), byTiling: true)
+        context.restoreGState()
+    }
+
+    private static var dotTileCache: (key: String, image: CGImage)?
+
+    /// A transparent square tile with one dot in its center (the last one is reused while zoom and
+    /// appearance stay put).
+    private static func dotTile(pixels: Int, dot: CGFloat, color: CGColor) -> CGImage? {
+        let key = "\(pixels) \(dot) \(color.components ?? [])"
+        if let cached = dotTileCache, cached.key == key { return cached.image }
+        guard pixels > 0, let bitmap = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+                                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let center = CGFloat(pixels) / 2
+        bitmap.setFillColor(color)
+        bitmap.fill(CGRect(x: center - dot / 2, y: center - dot / 2, width: dot, height: dot))
+        guard let image = bitmap.makeImage() else { return nil }
+        dotTileCache = (key, image)
+        return image
     }
 
     override func mouseDown(with event: NSEvent) { canvas?.emptyMouseDown(event) }

@@ -45,6 +45,26 @@ enum DevInput {
 
     static func replay(_ fields: [String: String]) {
         guard fields["pid"] == String(getpid()) else { return }
+        // `--repeat N --interval ms`: a burst like a trackpad's event stream. The log line reports
+        // how far the main thread fell behind the schedule (a direct measure of jank).
+        if let count = Int(fields["repeat"] ?? ""), count > 1 {
+            var single = fields
+            single["repeat"] = nil
+            let interval = (Double(fields["interval"] ?? "") ?? 8) / 1000
+            let start = Date()
+            for step in 0..<count {
+                DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(step)) {
+                    MainActor.assumeIsolated {
+                        replay(single)
+                        if step == count - 1 {
+                            let elapsed = Date().timeIntervalSince(start) * 1000
+                            NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms)", count, fields["kind"] ?? "", elapsed, interval * 1000 * Double(count - 1))
+                        }
+                    }
+                }
+            }
+            return
+        }
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.windowController is CanvasWindowController }),
               let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])

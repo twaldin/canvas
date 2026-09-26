@@ -18,18 +18,27 @@ final class CanvasDocumentView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.underPageBackgroundColor.setFill()
         dirtyRect.fill()
-        // Dot grid every 40 points.
-        let spacing: CGFloat = 40
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.35).setFill()
+        // Dot grid: 2-point dots at least 16 points apart on screen, whatever the zoom. Drawn as one
+        // path: AppKit records view drawing into display lists, and a rect fill per dot at 10% zoom
+        // was ~100k retained entries.
+        let scale = max(convert(NSSize(width: 1, height: 0), to: nil).width, 0.01)
+        var spacing: CGFloat = 40
+        while spacing * scale < 16 { spacing *= 2 }
+        let dot = 2 / scale
+        let path = CGMutablePath()
         var x = (dirtyRect.minX / spacing).rounded(.down) * spacing
         while x < dirtyRect.maxX {
             var y = (dirtyRect.minY / spacing).rounded(.down) * spacing
             while y < dirtyRect.maxY {
-                NSRect(x: x - 1, y: y - 1, width: 2, height: 2).fill()
+                path.addRect(CGRect(x: x - dot / 2, y: y - dot / 2, width: dot, height: dot))
                 y += spacing
             }
             x += spacing
         }
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.setFillColor(NSColor.tertiaryLabelColor.withAlphaComponent(0.35).cgColor)
+        context.addPath(path)
+        context.fillPath()
     }
 
     override func mouseDown(with event: NSEvent) { canvas?.emptyMouseDown(event) }
@@ -936,6 +945,8 @@ final class CanvasView: NSScrollView {
             }
             if scale != appliedScale {
                 appliedScale = scale
+                // Grid spacing and dot size depend on the zoom.
+                document.needsDisplay = true
                 overlay.scale = scale
                 for group in groups.values { group.scale = scale }
                 for marker in markers.values { marker.scale = scale }

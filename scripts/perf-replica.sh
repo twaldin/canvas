@@ -19,7 +19,7 @@ case "${1:-}" in
   start)
     source="$2"; app="${3:-$repo/.build/Canvas.app}"
     [ -f "$source" ] || source="$repo/.canvas-home/boards/$source.json"
-    board="$(basename "$source" .json)"
+    board="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['id'])" "$source")"
     [ -z "$(pid || true)" ] || { echo "replica already running" >&2; exit 1; }
     rm -rf "$home"; mkdir -p "$home/boards"
     python3 - "$source" "$home/boards/$board.json" <<'EOF'

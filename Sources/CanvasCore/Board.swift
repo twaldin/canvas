@@ -320,10 +320,14 @@ public final class Board {
     public static let followHistoryLimit = 8
 
     /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use, and
-    /// record the location at the front of the tile's history.
+    /// record the location at the front of the tile's history. Files outside the board root and
+    /// the terminal's cwd (scratch files, the agent's own config) are ignored: returns nil.
     @discardableResult
-    public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject {
-        _ = try object(tile)
+    public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject? {
+        let terminal = try object(tile)
+        let absolute = absoluteURL(path).standardizedFileURL.path
+        let projects = [root.standardizedFileURL.path] + [terminal.props["cwd"]?.string].compactMap { $0 }.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        guard projects.contains(where: { $0 == "/" || absolute.hasPrefix($0 + "/") }) else { return nil }
         let relative = relativePath(path)
         let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
         var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action), "range": rangeValue]

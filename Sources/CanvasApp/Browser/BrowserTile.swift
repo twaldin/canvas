@@ -8,7 +8,8 @@ import WebKit
 ///
 /// The web view is created the first time the tile is live and detached (left with a snapshot)
 /// while it isn't. After `releaseDelay` detached it is released entirely and later rebuilt from
-/// `props.url`. The cmux subset (BrowserAutomation.swift) can wake it without making it live.
+/// `props.url`. The cmux subset (BrowserAutomation.swift) can wake it without making it live;
+/// while an agent drives the page it stays visible to WebKit (see `markDriven`).
 @MainActor
 final class BrowserTile: NSView, TileContent {
     static let chromeHeight: CGFloat = 32
@@ -17,6 +18,9 @@ final class BrowserTile: NSView, TileContent {
     static let releaseDelay: TimeInterval = 600
     /// Minimum spacing between background snapshot refreshes of a busy page.
     static let refreshInterval: TimeInterval = 1
+    /// How long a page counts as agent-driven after the last cmux command.
+    static let drivenIdle: TimeInterval = 60
+    private static let stageID = NSUserInterfaceItemIdentifier("canvas.browserStage")
 
     let objectID: ObjectID
     let board: Board
@@ -28,6 +32,8 @@ final class BrowserTile: NSView, TileContent {
     private var cachedImage: NSImage?
     private var isLive = true
     private var releaseTimer: Timer?
+    /// Set while an agent drives the page; fires `drivenIdle` after the last command.
+    private var drivenTimer: Timer?
     private var observations: [NSKeyValueObservation] = []
     private var refreshScheduled = false
     private var lastRefresh = Date.distantPast
@@ -184,6 +190,8 @@ final class BrowserTile: NSView, TileContent {
     private func release() {
         releaseTimer?.invalidate()
         releaseTimer = nil
+        drivenTimer?.invalidate()
+        drivenTimer = nil
         guard let webView else { return }
         observations = []
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
@@ -202,10 +210,67 @@ final class BrowserTile: NSView, TileContent {
         releaseTimer?.invalidate()
         releaseTimer = Timer.scheduledTimer(withTimeInterval: Self.releaseDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !self.isLive else { return }
+                guard let self, !self.isLive, self.drivenTimer == nil else { return }
                 self.release()
             }
         }
+    }
+
+    // MARK: Agent-driven pages
+
+    /// Keeps the page visible to WebKit while an agent drives it, so requestAnimationFrame, timers
+    /// and IntersectionObserver run as they would for a user: an offscreen tile's web view waits in
+    /// a clipped stage view inside the window (a detached or hidden-ancestor view is a hidden page),
+    /// and window occlusion detection is off (another Space or a covered window hides the page
+    /// too). `drivenIdle` after the last command the normal detach/release policy resumes.
+    func markDriven() {
+        let webView = ensureWebView()
+        drivenTimer?.invalidate()
+        drivenTimer = Timer.scheduledTimer(withTimeInterval: Self.drivenIdle, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endDriven() }
+        }
+        Self.setOcclusionDetection(false, on: webView)
+        if !isLive { stage(webView) }
+        if webView.superview == nil { scheduleRelease() }
+    }
+
+    private func endDriven() {
+        drivenTimer = nil
+        guard let webView else { return }
+        Self.setOcclusionDetection(true, on: webView)
+        if webView.superview === self {
+            // WebKit re-reads occlusion only on the next window change; re-parenting forces it.
+            webView.removeFromSuperview()
+            addSubview(webView, positioned: .below, relativeTo: cover)
+        } else {
+            webView.removeFromSuperview()
+            scheduleRelease()
+        }
+    }
+
+    /// Parks the web view in the window's stage: in the window and never hidden, clipped to nothing.
+    private func stage(_ webView: WKWebView) {
+        guard let content = window?.contentView else { return }
+        let stage = content.subviews.first { $0.identifier == Self.stageID } ?? {
+            let view = NSView(frame: .zero)
+            view.identifier = Self.stageID
+            view.clipsToBounds = true
+            content.addSubview(view)
+            return view
+        }()
+        guard webView.superview !== stage else { return }
+        releaseTimer?.invalidate()
+        releaseTimer = nil
+        webView.frame = pageFrame
+        stage.addSubview(webView)
+    }
+
+    /// WebKit SPI `-[WKWebView _setWindowOcclusionDetectionEnabled:]` (macOS 10.13+); skipped if absent.
+    private static func setOcclusionDetection(_ enabled: Bool, on webView: WKWebView) {
+        let selector = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+        guard webView.responds(to: selector) else { return }
+        typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+        unsafeBitCast(webView.method(for: selector), to: Setter.self)(webView, selector, enabled)
     }
 
     func load(_ address: String) {
@@ -369,8 +434,13 @@ final class BrowserTile: NSView, TileContent {
             attach()
         } else {
             setPageActivity(false)
-            webView?.removeFromSuperview()
-            if webView != nil { scheduleRelease() }
+            guard let webView else { return }
+            if drivenTimer != nil {
+                stage(webView)
+            } else {
+                webView.removeFromSuperview()
+                scheduleRelease()
+            }
         }
     }
 

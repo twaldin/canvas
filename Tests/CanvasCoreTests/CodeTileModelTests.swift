@@ -85,7 +85,7 @@ struct CodeBoardTests {
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/"), "command": .array([])]))
         try board.follow(tile: terminal.id, path: "a.ts", range: LineRange(start: 1, end: 2), action: "read")
         try board.follow(tile: terminal.id, path: "b.ts", range: nil, action: "edit")
-        let follow = try board.follow(tile: terminal.id, path: "a.ts", range: LineRange(start: 1, end: 2), action: "read")
+        let follow = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: LineRange(start: 1, end: 2), action: "read"))
         let history = follow.props["history"]?.array ?? []
         #expect(history.map { $0["path"]?.string } == ["a.ts", "b.ts"], "revisiting a location moves it to the front")
         #expect(history[0]["range"]?["start"]?.int == 1)

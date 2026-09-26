@@ -253,7 +253,7 @@ class FollowApi:
         self._call = call
 
     def report(self, *, tile: "Id", path: str, action: Literal["read", "edit", "lsp", "search"], range: "LineRange" | None = None) -> dict[str, Any]:
-        """Report a file location an agent just read or edited; re-aims that terminal's follow tile."""
+        """Report a file location an agent just read or edited; re-aims that terminal's follow tile. Files outside the board root and the terminal's cwd are ignored."""
         params = {"tile": tile, "path": path, "range": range, "action": action}
         return self._call("follow.report", _with_env(params, []))
 

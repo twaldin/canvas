@@ -466,7 +466,7 @@ export interface CanvasApi {
     read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {
-    /** Report a file location an agent just read or edited; re-aims that terminal's follow tile. */
+    /** Report a file location an agent just read or edited; re-aims that terminal's follow tile. Files outside the board root and the terminal's cwd are ignored. */
     report(params: FollowReportParams): Promise<FollowReportResult>;
   };
   view: {

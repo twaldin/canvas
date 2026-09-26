@@ -17,6 +17,8 @@ Exactly what omp's cmux browser backend sends (`src/tools/browser/cmux/`), frame
 
 Surface and workspace ids stay `obj_…`/`brd_…` on the wire, which omp 18.3 accepts; omp ≤18.1's owner inspection (`surface.list` via its surface-observation module) requires UUID ids and is unsupported.
 
+A page an agent is driving stays visible to WebKit for 60 s after its last command, even when its tile is offscreen or the window is on another Space or covered: `requestAnimationFrame`, timers and `IntersectionObserver` run as they would for a user. Then the tile's normal detach/release policy resumes.
+
 | Method | Params | Result |
 | --- | --- | --- |
 | `browser.open_split` | `url`, `surface_id` (caller), `workspace_id`, `focus` (ignored) | `surface_id`, `workspace_id`, `url`, `created_split`, `placement_strategy` — a browser tile beside the calling terminal |

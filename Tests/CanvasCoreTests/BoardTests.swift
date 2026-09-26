@@ -114,15 +114,22 @@ struct BoardTests {
         #expect(board.objects[terminal.id]?.props["lifecycle"]?["state"]?.string == "blocked")
     }
 
-    @Test func followReusesOneTilePerTerminal() throws {
+    @Test func followReusesOneTilePerTerminalAndIgnoresFilesOutsideTheProject() throws {
         let board = makeBoard()
-        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/"), "command": .array([])]))
-        let first = try board.follow(tile: terminal.id, path: root.appendingPathComponent("src/a.ts").path, range: LineRange(start: 1, end: 10), action: "read")
-        let second = try board.follow(tile: terminal.id, path: "src/b.ts", range: nil, action: "edit")
+        let worktree = FileManager.default.temporaryDirectory.appendingPathComponent("follow-cwd-\(UUID().uuidString)")
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(worktree.path), "command": .array([])]))
+        let first = try #require(try board.follow(tile: terminal.id, path: root.appendingPathComponent("src/a.ts").path, range: LineRange(start: 1, end: 10), action: "read"))
+        let second = try #require(try board.follow(tile: terminal.id, path: "src/b.ts", range: nil, action: "edit"))
         #expect(first.id == second.id)
         #expect(board.objects.values.filter { $0.type == .code }.count == 1)
         #expect(second.props["path"]?.string == "src/b.ts")
         #expect(first.props["path"]?.string == "src/a.ts", "absolute paths under the root are stored relative")
+
+        let inCwd = worktree.appendingPathComponent("lib/c.ts").path
+        #expect(try board.follow(tile: terminal.id, path: inCwd, range: nil, action: "read")?.id == first.id, "the terminal's cwd counts as the project")
+        #expect(try board.follow(tile: terminal.id, path: "/tmp/shot.png", range: nil, action: "read") == nil)
+        #expect(try board.follow(tile: terminal.id, path: root.path + "-sibling/a.ts", range: nil, action: "read") == nil, "a name prefix is not containment")
+        #expect(board.objects[first.id]?.props["path"]?.string == inCwd, "ignored reads leave the follow tile where it was")
     }
 
     @Test func codeMentionContextIncludesTheRealExcerpt() async throws {

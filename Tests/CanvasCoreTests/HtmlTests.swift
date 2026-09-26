@@ -353,7 +353,7 @@ struct HtmlChannelTests {
 
     @Test func followTilesAreNeverReaimed() async throws {
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
-        let follow = try board.follow(tile: terminal.id, path: "src/Store.swift", range: nil, action: "read")
+        let follow = try #require(try board.follow(tile: terminal.id, path: "src/Store.swift", range: nil, action: "read"))
         let opened = try await HtmlChannel.handle(.openCode(path: "src/Store.swift", lines: LineRange(start: 1, end: 1), symbol: nil), tile: html.id, board: board)
         #expect(opened["created"] == .bool(true) && opened["tile"]?.string != follow.id)
     }

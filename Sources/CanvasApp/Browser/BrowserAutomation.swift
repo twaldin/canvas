@@ -7,7 +7,7 @@ import WebKit
 extension BrowserTile {
     func perform(_ command: CmuxBrowserCommand) async throws -> JSONValue {
         let webView = ensureWebView()
-        if webView.superview == nil { scheduleRelease() }
+        markDriven()
         defer { scheduleSnapshotRefresh() }
         switch command {
         case .navigate(let url):

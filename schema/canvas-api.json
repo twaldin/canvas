@@ -542,7 +542,7 @@
       }
     },
     "follow.report": {
-      "description": "Report a file location an agent just read or edited; re-aims that terminal's follow tile.",
+      "description": "Report a file location an agent just read or edited; re-aims that terminal's follow tile. Files outside the board root and the terminal's cwd are ignored.",
       "params": {
         "type": "object",
         "required": ["tile", "path", "action"],

@@ -19,7 +19,9 @@ Tim's Mac runs many agents at once and he is using it while you test. The app mu
 ```sh
 scripts/dev.sh start [root]      # build, bundle, launch on the testing Space without activating
 scripts/dev.sh cli board.get     # the canvas CLI against this instance (sets CANVAS_SOCKET)
-scripts/dev.sh snapshot out.png  # what the window shows right now
+scripts/dev.sh shot out.png      # real pixels: what the screen shows (verification)
+scripts/dev.sh snapshot out.png  # view.snapshot: what agents see (not verification)
+scripts/dev.sh move 8            # put the window on Space 8 for Tim to watch; `move` alone returns it
 scripts/dev.sh input click 400 300 --mods hyper
 scripts/dev.sh restart           # rebuild + relaunch; terminal sessions keep running
 scripts/dev.sh stop              # quit and kill this instance's terminal sessions
@@ -29,14 +31,16 @@ What it sets up:
 
 - `CANVAS_HOME=<checkout>/.canvas-home` holds this instance's socket, boards, pid, and `app.log`, so it never touches the installed app's boards or another agent's instance.
 - `CANVAS_NO_ACTIVATE=1`: the app refuses to activate (`CanvasApplication`), so it can't steal focus or switch Spaces.
-- A yabai rule sends every `Canvas` window to Space 8 (`CANVAS_DEV_SPACE`), floating and maximized. Space 8 is reserved for Canvas testing; coordinate with other agents before using another.
+- A yabai rule sends every `Canvas` window to the testing Space, floating and maximized: the first Space of the `CanvasTest` virtual screen (a BetterDisplay headless monitor placed diagonally below-right of the built-in display, touching it only at the corner), else Space 8, or `CANVAS_DEV_SPACE`. Recreate the screen if it's gone: `betterdisplaycli create --type=VirtualScreen --virtualScreenName=CanvasTest --useResolutionList=on --resolutionList=1512x982 --virtualScreenHiDPI=on`, then `betterdisplaycli set --name=CanvasTest --connected=on --placement=1512x982`.
 - `CANVAS_DEV_INPUT=1` enables input replay (below).
 
 ### Seeing the window
 
-A window on a Space nobody is viewing stops redrawing, so `screencapture` returns stale pixels. Use `view.snapshot` (`scripts/dev.sh snapshot`), which renders the window in-process. Terminal tiles are drawn from their session text because Ghostty renders through Metal.
+Verify what the screen shows with `scripts/dev.sh shot`: a WindowServer capture of the window, the same pixels a person sees. Only a displayed Space is composited, and a window anywhere else keeps a stale frame, so `shot` refuses unless the window is on a displayed Space. The testing Space on the virtual screen is always displayed, so shots work while Tim is elsewhere.
 
-Snapshots are at the display's backing scale (2× on this Mac): divide pixel coordinates by 2 to get window-content points for input replay.
+`view.snapshot` (`scripts/dev.sh snapshot`) is the agents' view, not verification: it redraws the window in-process and substitutes stand-ins for content drawn outside AppKit (code tiles render their text themselves, terminals are drawn from zmx session text, web views show cached images). It hides compositor and layer bugs by construction: during the astra-skyblock run, code tiles that were blank or smeared on screen looked perfect in `view.snapshot`.
+
+Shots are at the display's backing scale (2× on both displays): divide pixel coordinates by 2 for window-content points (subtract the 28 pt title bar; `shot` includes the window frame, `snapshot` doesn't).
 
 ### Input replay
 

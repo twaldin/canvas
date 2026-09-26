@@ -6,15 +6,29 @@
 #   scripts/dev.sh restart [root]   rebuild and relaunch, keeping terminal sessions (zmx) alive
 #   scripts/dev.sh stop             quit and kill this instance's zmx sessions
 #   scripts/dev.sh cli <args…>      run the canvas CLI against this instance
-#   scripts/dev.sh snapshot [file]  write view.snapshot to a PNG (default .canvas-home/snapshot.png)
+#   scripts/dev.sh shot [file]      real pixels: WindowServer capture of the window (default .canvas-home/shot.png)
+#   scripts/dev.sh snapshot [file]  view.snapshot (in-process render, the agent-facing view) to a PNG
+#   scripts/dev.sh move [space]     move the window to a Space (default: the testing Space) and maximize it
 #   scripts/dev.sh input <args…>    replay input (scripts/dev-input.swift) into this instance
 #   scripts/dev.sh sessions         list this instance's zmx sessions
 set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="$repo/.canvas-home"
 app="$repo/.build/Canvas.app"
-space="${CANVAS_DEV_SPACE:-8}"
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
+# The testing Space: CANVAS_DEV_SPACE, else the first Space of the "CanvasTest" BetterDisplay virtual
+# screen (a headless monitor, so the window renders while nobody looks at it), else Space 8.
+test_space() {
+  if [ -n "${CANVAS_DEV_SPACE:-}" ]; then echo "$CANVAS_DEV_SPACE"; return; fi
+  id="$(betterdisplaycli get --name=CanvasTest --identifiers 2>/dev/null | sed -n 's/.*"displayID" : "\([0-9]*\)".*/\1/p' | head -n 1)"
+  space="$([ -n "$id" ] && "$yabai" -m query --displays 2>/dev/null | python3 -c "import json,sys; print(next((d['spaces'][0] for d in json.load(sys.stdin) if d['id']==$id), ''))" 2>/dev/null)"
+  echo "${space:-8}"
+}
+
+window_id() {
+  pid="$(running_pid)" || { echo "no running dev instance" >&2; exit 1; }
+  "$yabai" -m query --windows | python3 -c "import json,sys; print(next((w['id'] for w in json.load(sys.stdin) if w['pid']==$pid), ''))"
+}
 export CANVAS_SOCKET="$home/canvas.sock"
 # zmx keys its socket directory off TMPDIR; match the GUI app's.
 zmx_env() { TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)" "$@"; }
@@ -59,8 +73,9 @@ launch() {
   "$repo/scripts/bundle.sh" >/dev/null
   mkdir -p "$home"
   rm -f "$CANVAS_SOCKET"
-  if [ -x "$yabai" ] && ! "$yabai" -m rule --list 2>/dev/null | grep -q '"label":"canvas-dev"'; then
-    "$yabai" -m rule --add label=canvas-dev app="^Canvas$" space="$space" manage=off grid=1:1:0:0:1:1 >/dev/null
+  if [ -x "$yabai" ]; then
+    "$yabai" -m rule --remove canvas-dev >/dev/null 2>&1 || true
+    "$yabai" -m rule --add label=canvas-dev app="^Canvas$" space="$(test_space)" manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
   open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
     --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_ROOT="$root" "$app"
@@ -79,6 +94,21 @@ case "${1:-}" in
     for name in $(sessions); do zmx_env zmx kill "$name" --force >/dev/null 2>&1 || true; done
     ;;
   cli) shift; exec bun "$repo/cli/canvas.ts" "$@" ;;
+  shot)
+    out="${2:-$home/shot.png}"
+    wid="$(window_id)"
+    [ -n "$wid" ] || { echo "no Canvas window" >&2; exit 1; }
+    # Only a displayed Space is composited; anything else would be a stale frame.
+    visible="$("$yabai" -m query --windows --window "$wid" | python3 -c "import json,sys; print(json.load(sys.stdin)['is-visible'])")"
+    [ "$visible" = "True" ] || { echo "window $wid is not on a displayed Space; its pixels would be stale (scripts/dev.sh move)" >&2; exit 1; }
+    screencapture -x -o -l "$wid" "$out" && echo "$out"
+    ;;
+  move)
+    wid="$(window_id)"
+    [ -n "$wid" ] || { echo "no Canvas window" >&2; exit 1; }
+    "$yabai" -m window "$wid" --space "${2:-$(test_space)}"
+    "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
+    ;;
   snapshot)
     out="${2:-$home/snapshot.png}"
     bun "$repo/cli/canvas.ts" view.snapshot --out "$out" >/dev/null && echo "$out"
@@ -89,5 +119,5 @@ case "${1:-}" in
     exec "$repo/.build/dev-input" "$pid" "$@"
     ;;
   sessions) sessions ;;
-  *) sed -n '2,12p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,13p' "$0" >&2; exit 2 ;;
 esac

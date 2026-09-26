@@ -194,9 +194,7 @@ final class LineClient: @unchecked Sendable {
         }
     }
 
-    /// Next response line, failing after `timeout` seconds. Generous because every suite shares
-    /// the main actor, and on a loaded machine the suites' setup (git lookups per board) can hold
-    /// it for seconds; the timeout only detects hangs.
+    /// Next response line, failing after `timeout` seconds (the timeout only detects hangs).
     func next(timeout: Double = 30) async throws -> JSONValue {
         try JSONDecoder().decode(JSONValue.self, from: try await nextLine(timeout: timeout))
     }
@@ -206,8 +204,15 @@ final class LineClient: @unchecked Sendable {
         String(decoding: try await nextLine(timeout: timeout), as: UTF8.self)
     }
 
+    /// The blocking read runs on a GCD thread, never on Swift's cooperative pool: suites run in
+    /// parallel, and a pool full of threads parked in poll() starves the server tasks that would
+    /// answer them.
     private func nextLine(timeout: Double) async throws -> Data {
-        try await Task.detached { try self.readLine(timeout: timeout) }.value
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(with: Result { try self.readLine(timeout: timeout) })
+            }
+        }
     }
 
     private func readLine(timeout: Double) throws -> Data {

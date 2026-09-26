@@ -47,6 +47,8 @@ public struct BoardSnapshot: Codable, Sendable {
     public var root: String
     public var revision: Int
     public var objects: [CanvasObject]
+    /// Staged mentions survive quit and rebuild; optional so older board files still load.
+    public var tray: [Mention]?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -85,10 +87,11 @@ public final class Board {
             objects[object.id] = object
             changedAt[object.id] = snapshot.revision
         }
+        tray = (snapshot.tray ?? []).filter { $0.target.objectIDs.allSatisfy { objects[$0] != nil } }
     }
 
     public var snapshot: BoardSnapshot {
-        BoardSnapshot(id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z })
+        BoardSnapshot(id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -136,7 +139,7 @@ public final class Board {
         tray.removeAll { $0.target.objectIDs.contains(id) }
         onChange?()
         onEvent?(.objectDeleted(id))
-        if tray.count != before { onEvent?(.trayChanged(tray)) }
+        if tray.count != before { trayChanged() }
     }
 
     private func commit(_ object: CanvasObject) {
@@ -184,14 +187,14 @@ public final class Board {
         if let existing = tray.first(where: { $0.target == target }) { return existing }
         let mention = Mention(id: IDs.make("men"), target: target, label: MentionContext.label(for: target, on: self), stagedAt: Date())
         tray.append(mention)
-        onEvent?(.trayChanged(tray))
+        trayChanged()
         return mention
     }
 
     public func unstage(_ id: MentionID) throws {
         guard tray.contains(where: { $0.id == id }) else { throw BoardError.notFound("mention \(id)") }
         tray.removeAll { $0.id == id }
-        onEvent?(.trayChanged(tray))
+        trayChanged()
     }
 
     /// Resolve every staged mention at its current revision and return the prompt context.
@@ -207,7 +210,7 @@ public final class Board {
     public func commit(_ ids: [MentionID]) {
         let before = tray.count
         tray.removeAll { ids.contains($0.id) }
-        if tray.count != before { onEvent?(.trayChanged(tray)) }
+        if tray.count != before { trayChanged() }
     }
 
     private func markMentionsEdited(for id: ObjectID) {
@@ -216,7 +219,12 @@ public final class Board {
             tray[index].edited = true
             changed = true
         }
-        if changed { onEvent?(.trayChanged(tray)) }
+        if changed { trayChanged() }
+    }
+
+    private func trayChanged() {
+        onChange?()
+        onEvent?(.trayChanged(tray))
     }
 
     // MARK: Agents

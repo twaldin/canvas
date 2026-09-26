@@ -13,6 +13,12 @@ enum AppPaths {
     static let cmuxSocket = support.appendingPathComponent("cmux.sock").path
     static let boards = support.appendingPathComponent("boards", isDirectory: true)
 
+    /// A bundled asset from the repo's `resources/` directory (copied into the app bundle by
+    /// scripts/bundle.sh), e.g. `asset("kit/mermaid.min.js")`.
+    static func asset(_ relativePath: String) -> URL? {
+        resources?.appendingPathComponent("resources").appendingPathComponent(relativePath)
+    }
+
     /// Directory holding `schema/`, `bin/canvas`, and `clients/python` — the repo when run via
     /// `swift run`, or the bundle's Resources once packaged. CANVAS_RESOURCES overrides.
     static let resources: URL? = {

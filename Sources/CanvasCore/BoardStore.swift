@@ -52,8 +52,10 @@ public final class BoardStore {
     public func load(root: URL) -> Board {
         let id = Self.boardID(for: root)
         let board: Board
-        if let data = try? Data(contentsOf: url(for: id)), let snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) {
-            board = Board(snapshot: BoardSnapshot(id: snapshot.id, root: root.path, revision: snapshot.revision, objects: snapshot.objects))
+        if let data = try? Data(contentsOf: url(for: id)), var snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) {
+            // The root may have moved (renamed checkout); the board follows its identity.
+            snapshot.root = root.path
+            board = Board(snapshot: snapshot)
         } else {
             board = Board(id: id, root: root)
         }

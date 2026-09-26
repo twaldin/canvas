@@ -33,6 +33,19 @@ struct BoardTests {
         #expect(board.drain().context == "")
     }
 
+    @Test func stagedMentionsSurviveSaveAndReload() throws {
+        let store = BoardStore(directory: root.appendingPathComponent("boards"))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let board = store.load(root: root)
+        let note = board.create(type: .note, props: .object(["markdown": .string("keep me staged")]))
+        let mention = try board.stage(.object(note.id))
+        store.save(board)
+
+        let reloaded = store.load(root: root)
+        #expect(reloaded.tray.map(\.id) == [mention.id])
+        #expect(reloaded.drain().context.contains("keep me staged"))
+    }
+
     @Test func deletingAnObjectRemovesItsMentions() throws {
         let board = makeBoard()
         let a = board.create(type: .shape, props: .object(["kind": .string("rect")]))

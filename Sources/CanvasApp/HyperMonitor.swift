@@ -13,6 +13,8 @@ final class HyperMonitor {
     private var monitor: Any?
     private let canvasFor: (NSWindow?) -> CanvasView?
     private var marquee: (canvas: CanvasView, start: NSPoint)?
+    /// Where Hyper is being held, so an async hover answer from a tile can redraw the outline.
+    private var hoverContext: (canvas: CanvasView, point: NSPoint)?
 
     init(canvasFor: @escaping (NSWindow?) -> CanvasView?) {
         self.canvasFor = canvasFor
@@ -21,6 +23,12 @@ final class HyperMonitor {
     func install() {
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .flagsChanged, .mouseMoved]) { [weak self] event in
             self?.handle(event) ?? event
+        }
+        NotificationCenter.default.addObserver(forName: .tileMentionHoverChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let context = self.hoverContext else { return }
+                self.hover(context.canvas, at: context.point, active: true)
+            }
         }
     }
 
@@ -37,9 +45,12 @@ final class HyperMonitor {
             return event
         case .leftMouseDown where hyper:
             if let (tile, point) = canvas.tile(atWindowPoint: event.locationInWindow) {
-                let target = tile.content.mentionTarget(at: point) ?? .object(tile.objectID)
-                _ = try? canvas.board.stage(target)
-                restoreFocus(canvas)
+                let content = tile.content
+                let fallback = MentionTarget.object(tile.objectID)
+                Task { @MainActor [weak self] in
+                    Self.toggle(await content.resolveMention(at: point) ?? fallback, on: canvas.board)
+                    self?.restoreFocus(canvas)
+                }
             } else {
                 marquee = (canvas, canvas.document.convert(event.locationInWindow, from: nil))
             }
@@ -65,12 +76,28 @@ final class HyperMonitor {
         }
     }
 
+    /// Hyper-click stages a target, or unstages it when it is already in the tray.
+    static func toggle(_ target: MentionTarget, on board: Board) {
+        if let staged = board.tray.first(where: { $0.target == target }) {
+            try? board.unstage(staged.id)
+        } else {
+            _ = try? board.stage(target)
+        }
+    }
+
     private func updateHover(_ canvas: CanvasView, event: NSEvent, active: Bool) {
-        guard active, marquee == nil, let window = event.window else {
+        guard let window = event.window else { return }
+        let point = event.type == .mouseMoved ? event.locationInWindow : DevInput.pointer ?? window.mouseLocationOutsideOfEventStream
+        hover(canvas, at: point, active: active)
+    }
+
+    private func hover(_ canvas: CanvasView, at point: NSPoint, active: Bool) {
+        guard active, marquee == nil else {
+            hoverContext = nil
             if marquee == nil { canvas.showOutline(nil, in: nil) }
             return
         }
-        let point = event.type == .mouseMoved ? event.locationInWindow : DevInput.pointer ?? window.mouseLocationOutsideOfEventStream
+        hoverContext = (canvas, point)
         guard let (tile, local) = canvas.tile(atWindowPoint: point) else { return canvas.showOutline(nil, in: nil) }
         let target = tile.content.mentionTarget(at: local) ?? .object(tile.objectID)
         canvas.showOutline(tile.content.outline(for: target) ?? tile.content.bounds, in: tile)

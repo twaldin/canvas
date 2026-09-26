@@ -212,6 +212,16 @@ class ConnectionTest(unittest.TestCase):
         client.view.render(target="obj_1", out="shots/a.png")
         self.assertEqual(app.requests[0][1]["out"], os.path.join(os.getcwd(), "shots/a.png"))
 
+    def test_a_camel_case_keyword_names_the_snake_case_parameter_and_sends_nothing(self) -> None:
+        app = self.serve()
+        client = self.client()
+        with self.assertRaisesRegex(TypeError, r"'timeoutMs'; the Python SDK spells it 'timeout_ms'"):
+            client.view.render(target="obj_1", timeoutMs=8000)
+        with self.assertRaisesRegex(TypeError, r"'colGap'; the Python SDK spells it 'col_gap'"):
+            client.layout.grid(cells=[], colGap=10)
+        client.view.render(target="obj_1", timeout_ms=8000)
+        self.assertEqual([(method, params["timeoutMs"]) for method, params in app.requests], [("view.render", 8000)])
+
 
 if __name__ == "__main__":
     unittest.main()

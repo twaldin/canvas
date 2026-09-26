@@ -21,6 +21,12 @@ public final class UndoHistory {
     public let limit: Int
     private var depth = 0
     private var open: [Change] = []
+    /// Where in `open` each object's update sits, so another update of it in the same step (a
+    /// group re-fit once per member change, an arrow freed at both ends) amends it instead of
+    /// adding a change. Only changes at or after `mergeFloor` amend, so `discard(from:)` of a
+    /// later mark never has to reach back before it.
+    private var openUpdates: [ObjectID: Int] = [:]
+    private var mergeFloor = 0
     /// Set while an undo or redo applies its changes, which must not record themselves.
     var replaying = false
 
@@ -30,7 +36,17 @@ public final class UndoHistory {
 
     func record(_ change: Change) {
         guard !replaying else { return }
-        if case .updated(let before, let after) = change, Self.content(before) == Self.content(after) { return }
+        switch change {
+        case .updated(let before, let after):
+            if Self.content(before) == Self.content(after) { return }
+            if let index = openUpdates[after.id], index >= mergeFloor, case .updated(let first, _) = open[index] {
+                open[index] = .updated(before: first, after: after)
+                return
+            }
+            openUpdates[after.id] = open.count
+        case .created(let object), .deleted(let object):
+            openUpdates.removeValue(forKey: object.id)
+        }
         open.append(change)
         if depth == 0 { close() }
     }
@@ -39,13 +55,17 @@ public final class UndoHistory {
         depth += 1
     }
 
-    /// Changes recorded so far in the open step.
-    var openCount: Int { open.count }
+    /// Marks the open step's current end for a later `discard(from:)`.
+    func mark() -> Int {
+        mergeFloor = open.count
+        return open.count
+    }
 
     /// Drops the open step's changes after the first `mark` and returns them, oldest first.
     func discard(from mark: Int) -> [Change] {
         let dropped = Array(open[mark...])
         open.removeSubrange(mark...)
+        openUpdates = openUpdates.filter { $0.value < mark }
         return dropped
     }
 
@@ -55,6 +75,8 @@ public final class UndoHistory {
     }
 
     private func close() {
+        openUpdates = [:]
+        mergeFloor = 0
         guard !open.isEmpty else { return }
         undoSteps.append(open)
         open = []

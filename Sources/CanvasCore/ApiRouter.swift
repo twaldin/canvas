@@ -496,13 +496,35 @@ public final class ApiRouter {
             guard let ids = p["ids"]?.array?.compactMap(\.string), !ids.isEmpty else { throw Failure("invalid_params", "ids must be a non-empty array of object ids") }
             let board = try board(forObject: ids[0])
             for id in ids where board.objects[id] == nil { throw BoardError.notFound("object \(id) on this board") }
-            let origin = try p["origin"].map { value -> CGPoint in
-                guard let x = value["x"]?.number, let y = value["y"]?.number else { throw Failure("invalid_params", "origin needs x and y") }
-                return CGPoint(x: x, y: y)
-            }
             let frames = try board.stack(ids, direction: try option(p, "direction", Layout.Direction.self) ?? .row, gap: p["gap"]?.number ?? Layout.defaultGap,
-                                         wrapAt: p["wrapAt"]?.number, align: try option(p, "align", Layout.Align.self) ?? .start, origin: origin, caller: caller(p, on: board))
+                                         wrapAt: p["wrapAt"]?.number, align: try option(p, "align", Layout.Align.self) ?? .start, origin: try point(p, "origin"), caller: caller(p, on: board))
             return .object(["frames": try JSONValue.encode(frames)])
+
+        case "layout.translate":
+            guard let ids = p["ids"]?.array?.compactMap(\.string), !ids.isEmpty else { throw Failure("invalid_params", "ids must be a non-empty array of object ids") }
+            guard let dx = p["dx"]?.number, let dy = p["dy"]?.number else { throw Failure("invalid_params", "dx and dy are required numbers") }
+            let board = try board(forObject: ids[0])
+            for id in ids where board.objects[id] == nil { throw BoardError.notFound("object \(id) on this board") }
+            return .object(["frames": try JSONValue.encode(try board.translate(ids, dx: dx, dy: dy, caller: caller(p, on: board)))])
+
+        case "layout.grid":
+            guard let raw = p["cells"]?.array, !raw.isEmpty else { throw Failure("invalid_params", "cells must be a non-empty array of {id, row, col}") }
+            let cells = try raw.map { cell -> (id: ObjectID, row: Int, col: Int) in
+                guard let id = cell["id"]?.string, let row = cell["row"]?.int, let col = cell["col"]?.int else {
+                    throw Failure("invalid_params", "each cell needs id, row, and col (integers)")
+                }
+                return (id, row, col)
+            }
+            let board = try board(forObject: cells[0].id)
+            for cell in cells where board.objects[cell.id] == nil { throw BoardError.notFound("object \(cell.id) on this board") }
+            let placed = try board.grid(cells, colGap: p["colGap"]?.number ?? Layout.defaultGap, rowGap: p["rowGap"]?.number ?? Layout.defaultGap,
+                                        colAlign: try option(p, "colAlign", Layout.Align.self) ?? .start, rowAlign: try option(p, "rowAlign", Layout.Align.self) ?? .start,
+                                        origin: try point(p, "origin"), caller: caller(p, on: board))
+            return .object([
+                "frames": try JSONValue.encode(placed.frames),
+                "columns": .array(placed.grid.columns.map { .object(["col": .number(Double($0.index)), "x": .number($0.start), "w": .number($0.length)]) }),
+                "rows": .array(placed.grid.rows.map { .object(["row": .number(Double($0.index)), "y": .number($0.start), "h": .number($0.length)]) }),
+            ])
 
         case "tray.list":
             return .object(["mentions": try JSONValue.encode(try board(p).tray)])
@@ -593,6 +615,14 @@ public final class ApiRouter {
 
     // MARK: Layout
 
+    /// An optional `{x, y}` parameter.
+    func point(_ p: JSONValue, _ key: String) throws -> CGPoint? {
+        try p[key].map { value -> CGPoint in
+            guard let x = value["x"]?.number, let y = value["y"]?.number else { throw Failure("invalid_params", "\(key) needs x and y") }
+            return CGPoint(x: x, y: y)
+        }
+    }
+
     /// An optional enum parameter; an unknown value is invalid rather than ignored.
     func option<T: RawRepresentable & CaseIterable>(_ p: JSONValue, _ key: String, _ type: T.Type) throws -> T? where T.RawValue == String {
         guard let raw = p[key]?.string else { return nil }
@@ -666,7 +696,7 @@ public final class ApiRouter {
         return Int(text.dropFirst())
     }
 
-    static let batchMethods: Set<String> = ["object.create", "object.update", "object.delete", "layout.place", "layout.stack"]
+    static let batchMethods: Set<String> = ["object.create", "object.update", "object.delete", "layout.place", "layout.stack", "layout.translate", "layout.grid"]
 
     /// `object.batch`: every op applies or none does, as one board revision and one undo step.
     /// Sizes are measured before anything changes, so nothing else interleaves with the writes.
@@ -700,7 +730,9 @@ public final class ApiRouter {
                 let method = op["method"]?.string ?? ""
                 do {
                     let params = prepared(method, try resolve(op["params"] ?? .object([:]), results: results, index: index))
-                    for id in [params["id"], params["near"]].compactMap({ $0?.string }) + (params["ids"]?.array?.compactMap(\.string) ?? []) where board.objects[id] == nil {
+                    let named = [params["id"], params["near"]].compactMap({ $0?.string }) + (params["ids"]?.array?.compactMap(\.string) ?? [])
+                        + (params["cells"]?.array?.compactMap { $0["id"]?.string } ?? [])
+                    for id in named where board.objects[id] == nil {
                         throw BoardError.notFound("object \(id) on board \(board.id)")
                     }
                     results.append(try dispatch(method, try fitted(method, params, size: sizes[index])))

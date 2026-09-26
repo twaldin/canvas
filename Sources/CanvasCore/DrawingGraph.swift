@@ -31,15 +31,22 @@ extension Board {
 
     /// Before `id` is deleted, every arrow bound to it gets a free end where it last attached, so
     /// the arrow keeps its drawn direction (also after a reload) and its other end keeps routing.
-    func detachArrows(from id: ObjectID) {
-        let computed = arrowRoute == nil ? routes() : [:]
+    /// The rewrite is a cascade of the delete, credited to whoever deleted.
+    func detachArrows(from id: ObjectID, actor: ActivityActor, caller: ObjectID?) {
+        // Without the app's drawn routes, route from frames, once, and only when an arrow needs it.
+        var computed: [ObjectID: [CGPoint]]?
         for arrow in objects.values.sorted(by: { $0.id < $1.id }) where arrow.type == .arrow && arrow.id != id {
             guard var spec = ArrowSpec(arrow.props), spec.from.objectID == id || spec.to.objectID == id else { continue }
-            let drawn = arrowRoute?(arrow.id) ?? computed[arrow.id].map { (start: $0[0], end: $0[$0.count - 1]) }
+            var drawn = arrowRoute?(arrow.id)
+            if drawn == nil {
+                if computed == nil { computed = routes() }
+                drawn = computed?[arrow.id].map { (start: $0[0], end: $0[$0.count - 1]) }
+            }
             guard let route = drawn else { continue }
             if spec.from.objectID == id { spec.from = .point(route.start) }
             if spec.to.objectID == id { spec.to = .point(route.end) }
-            _ = try? update(arrow.id, props: .object(["from": spec.from.json, "to": spec.to.json]))
+            _ = try? write(arrow.id, rev: nil, frame: nil, z: nil, props: .object(["from": spec.from.json, "to": spec.to.json]),
+                           caller: caller, actor: actor, cause: "bound object \(id) deleted", refitting: [])
         }
     }
 

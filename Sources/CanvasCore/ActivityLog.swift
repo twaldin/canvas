@@ -55,6 +55,9 @@ public struct ActivityEntry: Equatable, Sendable {
     public var summary: String
     public var viewport: Viewport?
     public var selection: [ObjectID]?
+    /// Set on cascades (a group re-fit to its members, an arrow end freed when what it pointed
+    /// at was deleted): why this changed, credited to `actor`, whose change caused it.
+    public var cause: String? = nil
 
     public var json: JSONValue {
         var fields: [String: JSONValue] = [
@@ -65,6 +68,7 @@ public struct ActivityEntry: Equatable, Sendable {
         if let type { fields["type"] = .string(type.rawValue) }
         if let viewport { fields["viewport"] = viewport.json }
         if let selection { fields["selection"] = .array(selection.map(JSONValue.string)) }
+        if let cause { fields["cause"] = .string(cause) }
         return .object(fields)
     }
 }
@@ -126,9 +130,36 @@ public final class ActivityLog {
         ring.count < capacity ? ring : Array(ring[head...] + ring[..<head])
     }
 
-    public func record(_ kind: ActivityEntry.Kind, actor: ActivityActor, rev: Int, id: ObjectID? = nil, type: ObjectType? = nil, summary: String) {
+    public func record(_ kind: ActivityEntry.Kind, actor: ActivityActor, rev: Int, id: ObjectID? = nil, type: ObjectType? = nil, summary: String, cause: String? = nil) {
         settle()
-        append(ActivityEntry(seq: 0, rev: rev, at: clock(), actor: actor, kind: kind, id: id, type: type, summary: summary))
+        append(ActivityEntry(seq: 0, rev: rev, at: clock(), actor: actor, kind: kind, id: id, type: type, summary: summary, cause: cause))
+    }
+
+    /// Rewrites a logged entry's summary (a cascade that changed the same object again within
+    /// its revision). False when the entry has left the ring.
+    @discardableResult
+    public func amend(seq: Int, summary: String) -> Bool {
+        guard let index = ringIndex(seq) else { return false }
+        ring[index].summary = summary
+        return true
+    }
+
+    /// Drops a logged entry (a cascade whose changes within its revision cancelled out).
+    public func remove(seq: Int) {
+        guard ringIndex(seq) != nil else { return }
+        ring = entries.filter { $0.seq != seq }
+        head = 0
+    }
+
+    /// Seqs are consecutive in the ring except where `remove` left gaps, so search back from the newest.
+    private func ringIndex(_ seq: Int) -> Int? {
+        guard !ring.isEmpty else { return nil }
+        for offset in 0..<ring.count {
+            let index = (head + ring.count - 1 - offset) % ring.count
+            if ring[index].seq == seq { return index }
+            if ring[index].seq < seq { return nil }
+        }
+        return nil
     }
 
     /// The view moved (pan, zoom, window resize); logged once it has been still for `settleInterval`.

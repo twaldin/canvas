@@ -5,6 +5,10 @@ import CanvasCore
 
 private typealias G = DrawingGeometry
 
+private func moved(_ frame: Frame, _ dx: Double, _ dy: Double) -> Frame {
+    Frame(x: frame.x + dx, y: frame.y + dy, w: frame.w, h: frame.h)
+}
+
 // Literal params keep the request bodies below readable.
 extension JSONValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral, ExpressibleByArrayLiteral {
     public init(stringLiteral value: String) { self = .string(value) }
@@ -186,6 +190,52 @@ final class LayoutApiTests {
             .object(["method": "object.delete", "params": .object(["id": "$1"])]),
         ])]))
         #expect(forward["error"]?["code"] == .string("invalid_params"))
+    }
+
+    /// Build offscreen, then lay out: a batch creates tiles in two lanes and grids them by `$n`,
+    /// so each column lines up across both lanes at its widest cell.
+    @Test func gridInsideABatchAlignsColumnsAcrossGroups() async throws {
+        func note(_ w: Int, _ h: Int) -> JSONValue {
+            .object(["method": "object.create", "params": .object(["type": "note", "props": .object(["markdown": "n"]), "frame": .object(["x": 20000, "y": 0, "w": .number(Double(w)), "h": .number(Double(h))])])])
+        }
+        func cell(_ ref: String, _ row: Int, _ col: Int) -> JSONValue { .object(["id": .string(ref), "row": .number(Double(row)), "col": .number(Double(col))]) }
+        let before = board.revision
+        let reply = try await result("object.batch", .object(["ops": .array([
+            note(300, 100), note(200, 150), note(250, 80), note(400, 120),
+            .object(["method": "object.create", "params": .object(["type": "group", "props": .object(["members": ["$0", "$1"]])])]),
+            .object(["method": "object.create", "params": .object(["type": "group", "props": .object(["members": ["$2", "$3"]])])]),
+            .object(["method": "layout.grid", "params": .object(["cells": .array([cell("$0", 0, 0), cell("$1", 0, 1), cell("$2", 1, 0), cell("$3", 1, 1)]),
+                                                                  "colGap": 50, "rowGap": 120, "origin": .object(["x": 0, "y": 0])])]),
+        ])]))
+        let results = try #require(reply["results"]?.array)
+        let ids = try (0..<6).map { try #require(results[$0]["object"]?["id"]?.string) }
+        let frames = try ids.map { try board.object($0).frame }
+        // Column 0 is 300 wide (row 0's note), column 1 starts 50 past it; rows are 150 and 120 tall.
+        #expect(frames[0...3].map(\.x) == [0, 350, 0, 350])
+        #expect(frames[0...3].map(\.y) == [0, 0, 270, 270])
+        #expect(results[6]["columns"] == .array([.object(["col": 0, "x": 0, "w": 300]), .object(["col": 1, "x": 350, "w": 400])]))
+        #expect(results[6]["rows"] == .array([.object(["row": 0, "y": 0, "h": 150]), .object(["row": 1, "y": 270, "h": 120])]))
+        // The lanes were re-fit to their members' new places before the batch returned.
+        let top = GroupSpec.titleHeight, pad = GroupSpec.defaultPadding
+        #expect(frames[4] == Frame(x: -pad, y: -pad - top, w: 550 + 2 * pad, h: 150 + 2 * pad + top))
+        #expect(results[6]["frames"]?[ids[3]] == .object(["x": 350, "y": 270, "w": 400, "h": 120]))
+        #expect(board.revision == before + 1)
+
+        board.undo()
+        #expect(board.objects.isEmpty, "the whole build is one step")
+    }
+
+    @Test func translateInABatchMovesGroupsAndArrowEnds() async throws {
+        let a = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        let lane = board.create(type: .group, props: .object(["members": .array([.string(a.id)])]))
+        let free = board.create(type: .arrow, props: .object(["from": .object(["object": .string(a.id)]), "to": .object(["point": [500, 50]])]))
+        let reply = try await result("object.batch", .object(["ops": .array([
+            .object(["method": "layout.translate", "params": .object(["ids": .array([.string(lane.id), .string(a.id), .string(free.id)]), "dx": -12000, "dy": 30])]),
+        ])]))
+        #expect(try board.object(a.id).frame == Frame(x: -12000, y: 30, w: 200, h: 100), "listed beside its group, it still moves once")
+        #expect(reply["results"]?.array?.first?["frames"]?[lane.id] == (try JSONValue.encode(moved(lane.frame, -12000, 30))))
+        let spec = try #require(ArrowSpec(try board.object(free.id).props))
+        #expect(spec.to == .point(CGPoint(x: -11500, y: 80)) && spec.from == .object(a.id))
     }
 
     // MARK: Check
@@ -423,6 +473,59 @@ struct LayoutBoardTests {
         // An arrow shifted right of its travel (negative offset) labels that outer side.
         let other = G.labelRect(along: path, size: size, side: -1, obstacles: [])
         #expect(other.minY >= 100)
+    }
+
+    // MARK: Translate and grid
+
+    @Test func gridColumnsAndRowsTakeTheirLargestCell() {
+        let cells = [
+            Layout.GridCell(row: 0, col: 0, size: CGSize(width: 100, height: 40)),
+            Layout.GridCell(row: 0, col: 2, size: CGSize(width: 60, height: 90)),
+            Layout.GridCell(row: 3, col: 0, size: CGSize(width: 180, height: 20)),
+            Layout.GridCell(row: 3, col: 2, size: CGSize(width: 20, height: 30)),
+        ]
+        let grid = Layout.grid(cells, origin: CGPoint(x: 10, y: 5), colGap: 10, rowGap: 20)
+        // Unused column 1 and rows 1–2 take no space.
+        #expect(grid.columns == [Layout.Track(index: 0, start: 10, length: 180), Layout.Track(index: 2, start: 200, length: 60)])
+        #expect(grid.rows == [Layout.Track(index: 0, start: 5, length: 90), Layout.Track(index: 3, start: 115, length: 30)])
+        #expect(grid.origins == [CGPoint(x: 10, y: 5), CGPoint(x: 200, y: 5), CGPoint(x: 10, y: 115), CGPoint(x: 200, y: 115)])
+        let centered = Layout.grid(cells, origin: .zero, colGap: 10, rowGap: 20, colAlign: .center, rowAlign: .end)
+        #expect(centered.origins[0] == CGPoint(x: 40, y: 50))
+        #expect(centered.origins[3] == CGPoint(x: 210, y: 110))
+    }
+
+    @Test func gridOfLaneMembersIsOneStepAndRejectsAGroupBesideItsMember() throws {
+        let a = note(0, 0, 300, 100), b = note(1000, 0, 100, 100), c = note(0, 500, 150, 100), d = note(900, 500, 250, 100)
+        let top = board.create(type: .group, props: .object(["members": .array([.string(a.id), .string(b.id)])]))
+        let bottom = board.create(type: .group, props: .object(["members": .array([.string(c.id), .string(d.id)])]))
+        let steps = board.history.undoSteps.count
+        let placed = try board.grid([(a.id, 0, 0), (b.id, 0, 1), (c.id, 1, 0), (d.id, 1, 1)], colGap: 40, rowGap: 200)
+        #expect(placed.frames[b.id]?.x == 340 && placed.frames[d.id]?.x == 340, "column 1 starts past column 0's widest cell")
+        #expect(try board.object(bottom.id).frame.y == 300 - GroupSpec.defaultPadding - GroupSpec.titleHeight, "row 1 starts at 100 + rowGap; its lane follows")
+        #expect(board.history.undoSteps.count == steps + 1)
+        board.undo()
+        #expect(try board.object(d.id).frame == d.frame && (try board.object(top.id).frame) == top.frame)
+
+        #expect(throws: BoardError.self) { try board.grid([(top.id, 0, 0), (a.id, 0, 1)]) }
+        #expect(try board.object(a.id).frame == a.frame, "a rejected grid moves nothing")
+    }
+
+    @Test func translateMovesEverythingOnceInOneStep() throws {
+        let a = note(0, 0), b = note(300, 0), c = note(0, 400)
+        let inner = board.create(type: .group, props: .object(["members": .array([.string(a.id)])]))
+        let outer = board.create(type: .group, props: .object(["members": .array([.string(inner.id), .string(b.id)])]))
+        let bound = board.create(type: .arrow, props: .object(["from": .object(["object": .string(b.id)]), "to": .object(["object": .string(c.id)])]))
+        let before = board.revision
+        let frames = try board.translate([outer.id, b.id], dx: 100, dy: -50)
+        #expect(try board.object(a.id).frame.rect.origin == CGPoint(x: 100, y: -50))
+        #expect(try board.object(b.id).frame.rect.origin == CGPoint(x: 400, y: -50))
+        #expect(frames[outer.id] == moved(outer.frame, 100, -50))
+        #expect(try board.object(inner.id).frame == moved(inner.frame, 100, -50))
+        #expect(try board.object(c.id).frame == c.frame)
+        #expect(try board.object(bound.id).props == bound.props, "a bound arrow follows by routing, not by rewriting")
+        #expect(board.revision == before + 1)
+        board.undo()
+        #expect(try board.object(outer.id).frame == outer.frame && (try board.object(a.id).frame) == a.frame)
     }
 
     // MARK: Line-bound arrows

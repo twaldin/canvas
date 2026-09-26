@@ -70,6 +70,8 @@ final class ShapeLayer: NSView {
     private var arrowsBound: [ObjectID: Set<ObjectID>] = [:]
     /// Arrows routed around tiles: any tile move may change their way.
     private var avoiding: Set<ObjectID> = []
+    /// A re-route of `avoiding` is due; it runs once per burst of changes (see `rerouteAvoiding`).
+    private var avoidingStale = false
     /// Selection-drag preview from the scene: these drawn objects are painted offset.
     private var dragPreview: (ids: Set<ObjectID>, offset: NSSize) = ([], .zero)
 
@@ -235,8 +237,25 @@ final class ShapeLayer: NSView {
         invalidate(item)
     }
 
+    /// `avoid` routes are a grid search around every tile, and any tile change may change them,
+    /// so they re-route once per burst of changes (a batch, a multi-tile move), after it: on
+    /// the next main-queue turn, or before the layer draws or renders, whichever comes first.
+    /// Until then they keep the route the user sees.
     private func rerouteAvoiding() {
+        guard !avoiding.isEmpty, !avoidingStale else { return }
+        avoidingStale = true
+        DispatchQueue.main.async { [weak self] in self?.settleAvoiding() }
+    }
+
+    private func settleAvoiding() {
+        guard avoidingStale else { return }
+        avoidingStale = false
         for id in avoiding { reroute(arrow: id) }
+    }
+
+    override func viewWillDraw() {
+        settleAvoiding()
+        super.viewWillDraw()
     }
 
     /// Arrows bound to both of `spec`'s objects, in either direction.
@@ -371,6 +390,7 @@ final class ShapeLayer: NSView {
     /// coordinates; the context maps them) in paint order, without handles, gestures, or drag
     /// previews, and returns what it drew.
     func renderItems(in context: CGContext, docRect: NSRect, excluding excluded: Set<ObjectType>) -> [(object: CanvasObject, bounds: NSRect)] {
+        settleAvoiding()
         context.saveGState()
         defer { context.restoreGState() }
         context.setLineCap(.round)

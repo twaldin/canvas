@@ -30,6 +30,7 @@ final class CodeTile: NSView, TileContent {
     private var watcherSuspended = false
     private var reloadWork: DispatchWorkItem?
     private var snapshotCover: NSImageView?
+    private var navigation: CodeNavigation?
 
     /// Built off the main thread and handed over once.
     private struct Shown: @unchecked Sendable {
@@ -71,6 +72,7 @@ final class CodeTile: NSView, TileContent {
         NotificationCenter.default.addObserver(self, selector: #selector(baseChanged), name: .gitDiffBaseChanged, object: nil)
         refreshHeader()
         resizeSubviews(withOldSize: .zero)
+        navigation = CodeNavigation(host: self, board: board, tile: object.id, accessories: header, reservedWidth: CodeHeaderBar.reservedTrailing)
         load()
     }
 
@@ -474,7 +476,7 @@ extension CodeTile {
 
 // MARK: Code navigation (CodeNavigationHost)
 
-extension CodeTile {
+extension CodeTile: CodeNavigationHost {
     /// Board-relative path of the new side.
     var navigationPath: String { path }
 

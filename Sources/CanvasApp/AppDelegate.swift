@@ -124,6 +124,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         cmuxServer?.stop()
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        CodeNavigation.terminateServers()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func open(root: URL) {

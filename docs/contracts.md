@@ -98,6 +98,22 @@ Arrows, shapes, and groups have no tile; the canvas draws them.
 
 Tiles never read or write the board store directly; they go through the board model on the main actor, which persists and broadcasts events.
 
+### Code navigation
+
+Code views get language features by conforming to `CodeNavigationHost` (`Sources/CanvasApp/CodeNavigation.swift`) and attaching a `CodeNavigation(host:board:tile:accessories:reservedWidth:)`:
+
+```swift
+@MainActor
+protocol CodeNavigationHost: AnyObject {
+    var navigationPath: String { get }                           // board-relative path (new side of a diff)
+    var navigationTextView: NSTextView { get }
+    func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)?  // point in navigationTextView; 1-based line, 0-based UTF-16 column; nil on deleted rows/gutters
+    func reveal(line: Int)                                       // scroll a 1-based line into view
+}
+```
+
+The controller adds a tracking area to the text view, handles ⌘/⌥⌘-click and right-click on it through an app-level event monitor (Hyper stays with `HyperMonitor`), extends the view's own `menu(for:)` rather than replacing it, and places an Outline button in the host's header (`accessories:`), inside the trailing `reservedWidth` points the host keeps free (`CodeHeaderBar.reservedTrailing`). Going to a definition in the same file re-aims the tile with `object.update` of `props.range` (`{start, end}`, 1-based), so hosts must follow range updates.
+
 ## Drawing layer
 
 `.shape` and `.arrow` objects are drawn by `ShapeLayer` (`Sources/CanvasApp/Drawing/`), one view in document coordinates above every tile and below the Hyper outline. Geometry lives in `Sources/CanvasCore/Drawing*.swift`. Selection and moves of drawn objects are the scene's (see Scene seams); the layer supplies rendering, hit tests, outlines, resize handles, tools and editors, arrow routing, and region images.

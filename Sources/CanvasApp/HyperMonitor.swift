@@ -22,7 +22,10 @@ final class HyperMonitor {
 
     func install() {
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .flagsChanged, .mouseMoved]) { [weak self] event in
-            self?.handle(event) ?? event
+            // Not `self?.handle(event) ?? event`: a nil from handle (consumed) would flatten
+            // into the fallback and the Hyper-click would reach the view beneath anyway.
+            guard let self else { return event }
+            return self.handle(event)
         }
         NotificationCenter.default.addObserver(forName: .tileMentionHoverChanged, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {

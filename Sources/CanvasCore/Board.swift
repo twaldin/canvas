@@ -342,12 +342,22 @@ public final class Board {
         if let existing {
             follow = try update(existing.id, props: .object(props), caller: tile)
         } else {
-            props["mode"] = .string("diff")
             props["diffBase"] = .string("merge-base")
             follow = create(type: .code, props: .object(props.filter { $0.value != .null }), caller: tile)
         }
         onEvent?(.followUpdated(tile: tile, follow: follow.id))
         return follow
+    }
+
+    /// Keep what a follow tile shows (`path`/`range`, which a user holding the tile may keep
+    /// behind its props) as a permanent code tile beside it, with the same diff base.
+    @discardableResult
+    public func pin(_ follow: ObjectID, path: String, range: LineRange?) throws -> CanvasObject {
+        let tile = try object(follow)
+        var props: [String: JSONValue] = ["path": .string(path), "diffBase": tile.props["diffBase"] ?? .string("merge-base")]
+        if let range { props["range"] = .object(["start": .number(Double(range.start)), "end": .number(Double(range.end))]) }
+        if let caption = tile.props["caption"] { props["caption"] = caption }
+        return create(type: .code, props: .object(props), frame: place(width: tile.frame.w, height: tile.frame.h, near: follow))
     }
 
     /// Paths are stored relative to the board root when they live under it.

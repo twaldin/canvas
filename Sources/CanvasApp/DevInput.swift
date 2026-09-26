@@ -108,7 +108,10 @@ enum DevInput {
             let screen = window.convertPoint(toScreen: point("x", "y"))
             cg.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
             cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
-            if let event = NSEvent(cgEvent: cg) { window.sendEvent(event) }
+            // NSWindow routes a windowless scroll by its screen location, which misses windows on
+            // a secondary display: deliver it to the view under the point, as routing would.
+            guard let event = NSEvent(cgEvent: cg), let frame = content.superview else { return }
+            (content.hitTest(frame.convert(point("x", "y"), from: nil)) ?? content).scrollWheel(with: event)
         default:
             NSLog("DevInput: unknown kind \(fields["kind"] ?? "nil")")
         }

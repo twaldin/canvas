@@ -35,6 +35,31 @@ extension Notification.Name {
     static let tileMentionHoverChanged = Notification.Name("canvas.tileMentionHoverChanged")
 }
 
+/// An offscreen render of a tile's body (AgentSurface's `view.render` contract): independent of
+/// liveness, window, Space, and viewport.
+struct TileRenderRequest {
+    /// Body in points: the object's frame without the 26 pt title bar.
+    var size: CGSize
+    /// Pixels per point of the bitmap.
+    var scale: CGFloat
+    /// The whole content (all rows, full width) instead of the frame's window.
+    var full: Bool
+    /// Resolve dynamic colors in this appearance.
+    var appearance: NSAppearance
+}
+
+struct TileRender {
+    enum State: String { case rendered, placeholder, failed }
+    /// Size in points, top-left at the body's top-left: `request.size`, or at least the content
+    /// size when `full`.
+    var image: NSImage?
+    /// Intrinsic content extent in points at the request's width (overflow = content − size).
+    var contentSize: CGSize
+    /// Never `.rendered` with a blank image.
+    var state: State
+    var reason: String?
+}
+
 extension TileContent {
     func resolveMention(at point: NSPoint) async -> MentionTarget? {
         mentionTarget(at: point)

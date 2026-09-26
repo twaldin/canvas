@@ -2,7 +2,7 @@
 //  - drains the selection tray into the prompt you submit (hidden context, two-phase so a
 //    cancelled prompt loses nothing)
 //  - reports lifecycle (working / blocked / idle) and session identity for resume
-//  - follow mode: forwards files the agent reads and edits to its follow tile
+//  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
 //  - provides the shipped `canvas` skill (skills/canvas) to the agent, only inside Canvas
 // Load explicitly with `omp -e /path/to/canvas.ts`, or install into ~/.omp/agent/extensions.
 import { readFileSync } from "node:fs";
@@ -170,9 +170,12 @@ export default function canvas(pi: ExtensionAPI): void {
         if (typeof file.path === "string" && !file.isError) follow(file.path, file.firstChangedLine, file.firstChangedLine, "edit");
       }
     }
+    // New files and overwrites: the tile jumps to what changed and flashes it.
+    const written = call?.args?.path;
+    if (name === "write" && typeof written === "string" && !written.startsWith("xd://")) follow(written, undefined, undefined, "write");
   });
 
-  function follow(path: string, start: unknown, end: unknown, action: "read" | "edit" | "lsp"): void {
+  function follow(path: string, start: unknown, end: unknown, action: "read" | "edit" | "write" | "lsp"): void {
     // Subagents' reads (background scouts) would drag the tile's follow view around.
     if (!reporting) return;
     const absolute = isAbsolute(path) ? path : resolve(process.cwd(), path.replace(/:[\d+\-,]+$/, ""));

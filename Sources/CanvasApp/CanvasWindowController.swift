@@ -112,7 +112,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         panel.canChooseDirectories = false
         panel.beginSheetModal(for: window) { [weak self, panel] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            self.board.create(type: .code, props: .object(["path": .string(self.board.relativePath(url.path)), "mode": .string("source")]))
+            self.board.create(type: .code, props: .object(["path": .string(self.board.relativePath(url.path))]))
         }
     }
 

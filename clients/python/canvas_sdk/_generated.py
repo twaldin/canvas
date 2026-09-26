@@ -44,10 +44,10 @@ class CodeProps(TypedDict):
     path: Required[str]
     range: NotRequired["LineRange"]
     symbol: NotRequired[str]
-    mode: NotRequired[Literal["diff", "source"]]
+    caption: NotRequired[str]
     diffBase: NotRequired[str]
     followOf: NotRequired["Id"]
-    lastAction: NotRequired[Literal["read", "edit", "lsp", "search"]]
+    lastAction: NotRequired[Literal["read", "edit", "write", "lsp", "search"]]
     history: NotRequired[list[dict[str, Any]]]
     pinnedCommit: NotRequired[str]
 
@@ -252,8 +252,8 @@ class FollowApi:
     def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
         self._call = call
 
-    def report(self, *, tile: "Id", path: str, action: Literal["read", "edit", "lsp", "search"], range: "LineRange" | None = None) -> dict[str, Any]:
-        """Report a file location an agent just read or edited; re-aims that terminal's follow tile. Files outside the board root and the terminal's cwd are ignored."""
+    def report(self, *, tile: "Id", path: str, action: Literal["read", "edit", "write", "lsp", "search"], range: "LineRange" | None = None) -> dict[str, Any]:
+        """Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile (unless the user is working in it, which holds re-aims for ~10 s). Files outside the board root and the terminal's cwd are ignored."""
         params = {"tile": tile, "path": path, "range": range, "action": action}
         return self._call("follow.report", _with_env(params, []))
 

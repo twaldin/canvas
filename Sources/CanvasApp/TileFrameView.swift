@@ -6,7 +6,7 @@ import CanvasCore
 /// drawn by the canvas overlay.
 @MainActor
 final class TileFrameView: NSView {
-    static let titleHeight: CGFloat = 26
+    static let titleHeight = CodeMetrics.titleHeight
 
     let objectID: ObjectID
     let content: any TileContent

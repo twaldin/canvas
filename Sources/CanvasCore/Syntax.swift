@@ -34,7 +34,7 @@ public enum SyntaxLanguage: String, Sendable, CaseIterable {
     }
 }
 
-public enum SyntaxStyle: String, Sendable {
+public enum SyntaxStyle: String, Sendable, CaseIterable {
     case keyword, string, comment, number, type, function, property, variable, builtin, tag, punctuation
 }
 

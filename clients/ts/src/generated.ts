@@ -54,20 +54,22 @@ export type BrowserProps = {
 export type CodeProps = {
   /** path relative to the board root */
   path: string;
+  /** lines to scroll to and tint; the tile always shows the whole file */
   range?: LineRange;
   symbol?: string;
-  mode?: "diff" | "source";
-  /** merge-base | head | <sha> */
+  /** one-line subtitle under the tile's header (plain text, `inline code` allowed); truncated, never wraps */
+  caption?: string;
+  /** gutter signs show changes against this: merge-base | head | <sha> */
   diffBase?: string;
   /** terminal tile this follow tile tracks */
   followOf?: Id;
   /** follow tiles: what the agent last did at this location */
-  lastAction?: "read" | "edit" | "lsp" | "search";
+  lastAction?: "read" | "edit" | "write" | "lsp" | "search";
   /** follow tiles: recent locations, newest first, without repeats */
   history?: ({
     path: string;
     range?: LineRange;
-    action: "read" | "edit" | "lsp" | "search";
+    action: "read" | "edit" | "write" | "lsp" | "search";
   })[];
   pinnedCommit?: string;
 };
@@ -388,7 +390,7 @@ export type FollowReportParams = {
   /** absolute path or path relative to the board root */
   path: string;
   range?: LineRange;
-  action: "read" | "edit" | "lsp" | "search";
+  action: "read" | "edit" | "write" | "lsp" | "search";
 };
 export type FollowReportResult = Record<string, unknown>;
 
@@ -466,7 +468,7 @@ export interface CanvasApi {
     read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {
-    /** Report a file location an agent just read or edited; re-aims that terminal's follow tile. Files outside the board root and the terminal's cwd are ignored. */
+    /** Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile (unless the user is working in it, which holds re-aims for ~10 s). Files outside the board root and the terminal's cwd are ignored. */
     report(params: FollowReportParams): Promise<FollowReportResult>;
   };
   view: {

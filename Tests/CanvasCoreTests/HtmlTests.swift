@@ -338,7 +338,7 @@ struct HtmlChannelTests {
         let id = try #require(first["tile"]?.string)
         let code = try board.object(id)
         #expect(code.frame.x >= html.frame.maxX, "opens to the right of the HTML tile")
-        #expect(code.props["range"] == .object(["start": .number(8), "end": .number(12)]))
+        #expect(code.props == .object(["path": .string("src/Store.swift"), "range": .object(["start": .number(8), "end": .number(12)]), "symbol": .string("Store.add")]))
         #expect(code.createdBy == .user)
 
         let second = try await HtmlChannel.handle(.openCode(path: "./src/Store.swift", lines: LineRange(start: 15, end: 15), symbol: nil), tile: html.id, board: board)

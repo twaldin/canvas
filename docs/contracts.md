@@ -148,11 +148,29 @@ Read more with the canvas SDK or CLI: canvas get <id> --as graph|image
 
 Rules: numbered in staging order; each entry is one location line plus an optional short excerpt (at most 12 lines: mentioned lines marked `>`, with up to 3 unmarked lines of surrounding context while it fits); edited-since-staging entries are marked `(edited)`; the block is omitted entirely when the tray is empty.
 
+## Note fences
+
+A note's `markdown` is plain markdown; the code fence info string selects how the tile renders a fence (parsed by `NoteFence` in CanvasCore):
+
+| Info string | Renders |
+| --- | --- |
+| `ts file=src/app.ts#L10-40` (`#L10`, `#L10-L40`; no range = whole file) | Live excerpt of the file with line numbers |
+| `ts symbol=restoreSnapshot` / `swift file=Sources/Board.swift symbol=Board.update` | Live excerpt of the declaration (best-effort, language-agnostic; `Outer.inner` searches inside `Outer`; without `file=`, the first tracked file that declares it) |
+| `… file=src/app.ts@1a2b3c4#L10-40` | Excerpt pinned to a commit (`git show`) |
+| any anchored form plus `propose` | The fence body as a diff against the resolved range |
+| anything else | Free-written (authored) code; `path:line` references in it open code tiles |
+
+Anchor resolution, in order: a symbol that resolves wins; otherwise the line range is re-found by its first line (`anchor="first line text"`, or the text the tile captured when it first resolved the range), preferring the candidate whose following lines match best and the written position on ties, else by the fence body (a proposal's own lines vote for where they sit). A range that moved renders with "moved from L…"; one that can't be found renders a **stale** badge over the last text it showed.
+
+The tile writes anchors back: when a line-range fence without `anchor=`, `symbol=`, or a pinned commit first resolves, it appends ` anchor="<first line>"` to the fence's info string in one `object.update`, so anchors survive restarts and agents see them. It skips first lines that can't be written (blank, or a backtick inside a backtick fence) and falls back to the in-memory capture. `commit=` must name a revision (`abc1234`, `HEAD~2`, `v1.0`); anything shaped like an option makes the fence stale.
+
+Hyper-click on an excerpt or proposal row mentions `code` (object = the note, the row's real path and line, and `commit` for a pinned fence; an added proposal row mentions the line it would be inserted before, or the file's last line when appended at the end of the file); anywhere else mentions the note.
+
 Code mentions carry the commit their lines are read against (`MentionTarget.code.commit`, schema `MentionTarget`): with `side: old` or no side, the commit whose version of `path` holds the lines (deleted diff rows, pinned excerpts); with `side: new`, the base the working-tree lines were diffed against; absent, the working tree. The context line names it from the mention alone, never from what the tile shows at drain time: `· diff vs merge-base 1a2b3c4` (the kind word comes from the tile's `diffBase`), `· diff vs merge-base 1a2b3c4, old side` for deleted rows with the excerpt read by `git cat-file blob <commit>:<path>`, and `· at 1a2b3c4` for a pinned excerpt without a side. `tray.drain` is therefore asynchronous.
 
 ## Git
 
-All git in the app runs through `GitRunner.shared` (CanvasCore), which caps concurrent git processes at two, can cap stdout (`maxOutput`), and sets `GIT_OPTIONAL_LOCKS=0` so reads never contend with agents for the index lock. Git, file reads, and parsing run on GCD (`offPool`), never blocking a Swift concurrency thread. Code tiles diff through `GitDiffEngine.shared`: live tiles `retain(containing:)` their repository and `release` it when they go offscreen or away; held repositories keep resolved bases and an FSEvents stream that posts `Notification.Name.gitDiffBaseChanged` (object: the repository's top-level path) when a commit, checkout, rebase, or fetch moves a base.
+All git in the app runs through `GitRunner.shared` (CanvasCore), which caps concurrent git processes at two, can cap stdout (`maxOutput`) and run time (`timeout`), stops git when the calling task is cancelled (a request still waiting for a slot just leaves the queue), and sets `GIT_OPTIONAL_LOCKS=0` so reads never contend with agents for the index lock. Git, file reads, and parsing run on GCD (`offPool`), never blocking a Swift concurrency thread. Code tiles diff through `GitDiffEngine.shared`: live tiles `retain(containing:)` their repository and `release` it when they go offscreen or away; held repositories keep resolved bases and an FSEvents stream that posts `Notification.Name.gitDiffBaseChanged` (object: the repository's top-level path) when a commit, checkout, rebase, or fetch moves a base.
 
 ## HTML tiles
 

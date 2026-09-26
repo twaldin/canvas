@@ -16,6 +16,8 @@ let package = Package(
     dependencies: [
         // Pinned: binary, headers and wrapper must move together (docs/design.md).
         .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260922"),
+        // Note tiles: CommonMark + GFM (tables, strikethrough, task lists) AST. Apache-2.0.
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.9.0"),
         // Syntax trees for code tiles. Grammar versions are the newest whose manifests depend on
         // ChimeHQ/SwiftTreeSitter, so the graph holds a single SwiftTreeSitter.
         .package(url: "https://github.com/ChimeHQ/SwiftTreeSitter", exact: "0.25.0"),
@@ -32,6 +34,7 @@ let package = Package(
         .target(
             name: "CanvasCore",
             dependencies: [
+                .product(name: "Markdown", package: "swift-markdown"),
                 .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
                 .product(name: "TreeSitterSwift", package: "tree-sitter-swift"),
                 .product(name: "TreeSitterTypeScript", package: "tree-sitter-typescript"),
@@ -48,11 +51,12 @@ let package = Package(
             dependencies: [
                 "CanvasCore",
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                .product(name: "Markdown", package: "swift-markdown"),
             ]
         ),
         .executableTarget(
             name: "CanvasCoreTests",
-            dependencies: ["CanvasCore"],
+            dependencies: ["CanvasCore", .product(name: "Markdown", package: "swift-markdown")],
             path: "Tests/CanvasCoreTests",
             swiftSettings: [.unsafeFlags(["-F", cltFrameworks])],
             linkerSettings: [.unsafeFlags(["-F", cltFrameworks, "-framework", "Testing", "-Xlinker", "-rpath", "-Xlinker", cltFrameworks, "-Xlinker", "-rpath", "-Xlinker", cltLibs])]

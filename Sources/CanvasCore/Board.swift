@@ -188,7 +188,7 @@ public final class Board {
         case .terminal: (820, 520)
         case .browser: (1000, 700)
         case .code: (640, 420)
-        case .note: (320, 200)
+        case .note: (280, 240)
         case .html: (640, 480)
         case .shape: (160, 100)
         case .arrow, .group: (0, 0)

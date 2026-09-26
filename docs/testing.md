@@ -51,13 +51,14 @@ Real mouse input can't reach an unviewed Space, and posting system events needs 
 scripts/dev.sh input click <x> <y> [--mods hyper|cmd|shift|opt|ctrl[+…]] [--clicks 2]
 scripts/dev.sh input drag <x> <y> <toX> <toY> [--mods …]
 scripts/dev.sh input flags <x> <y> --mods hyper     # hold Hyper over x,y (hover outline); omit --mods to release
+scripts/dev.sh input move <x> <y>                   # pointer move over tracking areas (code navigation hover)
 scripts/dev.sh input text "hello"                   # insert into the first responder
 scripts/dev.sh input command insertNewline:
 scripts/dev.sh input shortcut z --mods cmd
 scripts/dev.sh input scroll <x> <y> <dx> <dy>
 ```
 
-Coordinates are window-content points from the top-left. Prefer Hyper clicks and API calls: a plain click on a window of an inactive app is how macOS decides to activate it, and `CANVAS_NO_ACTIVATE` is the only thing standing between that and Tim's screen.
+Coordinates are window-content points from the top-left: `shot` pixels / 2 (a Retina capture), minus the 28-point title bar. Prefer Hyper clicks and API calls: a plain click on a window of an inactive app is how macOS decides to activate it, and `CANVAS_NO_ACTIVATE` is the only thing standing between that and Tim's screen.
 
 `text`, `command`, and `shortcut` go to an open sheet (e.g. the ⌘G group-name prompt) when the window has one, so `input text "Auth"` then `input shortcut $'\r'` confirms it. Esc/Delete on the canvas: `input command cancelOperation:` / `input command deleteBackward:` (the canvas has keyboard focus unless a terminal does).
 

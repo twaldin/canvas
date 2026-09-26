@@ -55,7 +55,7 @@ Every terminal tile's process (inside zmx) gets:
 
 Integrations report only when `CANVAS_ENV=1` and the variables they need are present, so they are no-ops outside the app.
 
-zmx session names: `canvas-<tileId>`, labelled `canvas.board=<boardId> canvas.tile=<tileId> canvas.home=<support dir, spaces as %20>`. `canvas.home` names the instance that created the session: board copies in another home (replicas, dev instances) carry the same ids, so `scripts/dev.sh stop` kills only sessions labelled with its own home. Names stay short because zmx sockets live under `$TMPDIR/zmx-<uid>` (a long `/var/folders/…` path for GUI apps) and a socket path is capped at 104 bytes. Tiles inherit the app's `TMPDIR`, so `zmx list` inside a tile shows canvas sessions.
+zmx session names: `canvas-<tileId>`, labelled `canvas.board=<boardId> canvas.tile=<tileId> canvas.home=<support dir path, every byte outside [A-Za-z0-9._-] as _>` (zmx label values allow only those characters). `canvas.home` names the instance that created the session: board copies in another home (replicas, dev instances) carry the same ids, so `scripts/dev.sh stop` kills only sessions labelled with its own home. Names stay short because zmx sockets live under `$TMPDIR/zmx-<uid>` (a long `/var/folders/…` path for GUI apps) and a socket path is capped at 104 bytes. Tiles inherit the app's `TMPDIR`, so `zmx list` inside a tile shows canvas sessions.
 
 ## Client connection
 

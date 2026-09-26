@@ -59,7 +59,8 @@ quit() {
 # Sessions this instance created (their `canvas.home` label). Matching board ids instead killed
 # the live instance's agents from a dev home holding copies of its boards.
 sessions() {
-  zmx_env zmx list 2>/dev/null | awk -F'\t' -v label="canvas.home=$home" '
+  label="canvas.home=$(printf %s "$home" | LC_ALL=C tr -c 'A-Za-z0-9._-' '_')"
+  zmx_env zmx list 2>/dev/null | awk -F'\t' -v label="$label" '
     { for (i = 1; i <= NF; i++) if ($i == label) { sub(/^ *name=/, "", $1); print $1 } }'
 }
 

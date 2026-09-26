@@ -76,10 +76,16 @@ final class TerminalTile: NSView, TileContent {
             .flatMap { ["-u", $0] }
         // `canvas.home` names the owning instance: board copies in another home (replicas, dev
         // instances) carry the same board and tile ids, so ids alone can't tell whose session it is.
-        let home = AppPaths.support.path.replacingOccurrences(of: "%", with: "%25").replacingOccurrences(of: " ", with: "%20")
-        let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(home)"
+        let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(homeLabel)"
         return quote(["/usr/bin/env"] + strip + [zmx, "attach", "--labels", labels, session] + start)
     }
+
+    /// The support directory as a zmx label value, which allows only `[A-Za-z0-9._-]`: every other
+    /// UTF-8 byte becomes `_` (what `tr -c` does in scripts/dev.sh).
+    static let homeLabel: String = {
+        let legal = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-".utf8)
+        return String(decoding: AppPaths.support.path.utf8.map { legal.contains($0) ? $0 : UInt8(ascii: "_") }, as: UTF8.self)
+    }()
 
     /// What a new session runs before dropping to a login shell: after a reboot, resume the
     /// recorded omp session; otherwise the tile's initial `command`.

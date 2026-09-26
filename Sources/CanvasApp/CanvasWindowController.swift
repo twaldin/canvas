@@ -81,15 +81,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         registry.frontmost = board.id
     }
 
-    /// The window content as the user sees it. Metal-backed terminals are missing from
-    /// `cacheDisplay`, so each visible terminal is swapped for its text snapshot while rendering.
+    /// The window content as the user sees it. Content drawn outside AppKit (Ghostty's Metal,
+    /// WebKit) is missing from `cacheDisplay`, so visible tiles swap in images of it while rendering.
     func snapshotPNG() -> (png: Data, width: Int, height: Int)? {
         guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         let visible = canvas.documentVisibleRect
-        let terminals = canvas.tiles.values.filter { $0.isLive && $0.frame.intersects(visible) }.compactMap { $0.content as? TerminalTile }
-        terminals.forEach { $0.showSnapshot(true) }
+        let live = canvas.tiles.values.filter { $0.isLive && $0.frame.intersects(visible) }.map(\.content)
+        live.forEach { $0.showSnapshot(true) }
         view.cacheDisplay(in: view.bounds, to: rep)
-        terminals.forEach { $0.showSnapshot(false) }
+        live.forEach { $0.showSnapshot(false) }
         guard let png = rep.representation(using: .png, properties: [:]) else { return nil }
         return (png, rep.pixelsWide, rep.pixelsHigh)
     }

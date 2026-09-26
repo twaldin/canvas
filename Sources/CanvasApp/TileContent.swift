@@ -9,6 +9,9 @@ protocol TileContent: NSView {
     func setLive(_ live: Bool)
     /// Cheap image for zoomed-out cards; nil draws a title card.
     func snapshot() -> NSImage?
+    /// While `view.snapshot` renders the window with `cacheDisplay`, cover content that renders
+    /// outside AppKit's drawing (Metal, WebKit) with an image of it; `false` restores the live view.
+    func showSnapshot(_ show: Bool)
     /// What a Hyper-click at `point` (in this view's coordinates) would mention. Called on every
     /// hover move, so it must be cheap; tiles whose content answers asynchronously (web views)
     /// return their latest cached answer and post `.tileMentionHoverChanged` when it changes.
@@ -32,6 +35,8 @@ extension TileContent {
     func resolveMention(at point: NSPoint) async -> MentionTarget? {
         mentionTarget(at: point)
     }
+
+    func showSnapshot(_ show: Bool) {}
 
     func snapshot() -> NSImage? {
         guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return nil }

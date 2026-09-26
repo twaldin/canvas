@@ -106,8 +106,8 @@ flowchart TB
   - **CLI**: for agents without a REPL.
   - **TS client**: used by the omp extension and usable from JS eval.
 - MCP later, as another wrapper over the same schema.
-- A shared `compositions/` folder, auto-imported by both SDKs, holds reusable helpers agents write and improve.
-- The shipped default skill: persistent REPL → Python SDK; otherwise → CLI; touch user objects only when the user is collaborating.
+- A shared `~/.canvas/compositions/` folder, auto-imported by both SDKs, holds reusable helpers agents write and improve; each SDK also ships its own built-in compositions, which user ones shadow by name.
+- The shipped default skill (`skills/canvas`): persistent REPL → Python SDK; otherwise → CLI; touch user objects only when the user is collaborating. omp's skill discovery can't be extended by an extension, so the omp extension announces the skill (name, description, absolute path) in the system prompt only when `CANVAS_ENV=1`; nothing is added to the user's global omp config.
 
 ### Persistence
 
@@ -151,3 +151,4 @@ Question cards (`canvas_ask`), MCP server, `canvas lsp-proxy`, multi-agent overv
 - zmx: bracketed paste passes through (a pasted prompt plus Enter arrives as one submit). Sockets live under `$TMPDIR/zmx-<uid>`; GUI apps get a long `/var/folders/…` TMPDIR, which caps session names at 46 bytes, hence `canvas-<tileId>` with board/tile labels. Kitty image restore on reattach is unsupported.
 - libghostty-spm builds and links with Command Line Tools only. Ghostty renders through Metal, which `cacheDisplay` can't capture; terminal snapshots are drawn from the zmx session text.
 - A window on an unviewed space (or fully covered) stops redrawing, so window-server captures go stale. `view.snapshot` renders the window in-process instead, which also lets agents see the canvas as the user does.
+- TextKit 2 text views draw their text into per-fragment layers, which `cacheDisplay` (and so `view.snapshot`) never captures, and on an unviewed Space the fragment views aren't even created until `textViewportLayoutController.layoutViewport()` runs. Code tiles draw their visible fragments into an image for `showSnapshot`/`snapshot()` (`CodeTextView.renderVisible`).

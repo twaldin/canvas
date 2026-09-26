@@ -86,6 +86,45 @@ public final class BoardStore {
         for board in boards where pendingSaves[board.id] != nil { save(board) }
     }
 
+    /// A board as stored on disk, whether or not it is open.
+    public struct Stored: Equatable, Sendable {
+        public var id: BoardID
+        public var root: String
+        /// The root directory is gone (deleted worktree, removed checkout); the board is kept.
+        public var archived: Bool
+        public var updatedAt: Date?
+        public var objectCount: Int
+    }
+
+    /// Every board file in the store, sorted by id. Unreadable files are skipped.
+    public func list() -> [Stored] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        return files.filter { $0.pathExtension == "json" }.compactMap { file -> Stored? in
+            guard let data = try? Data(contentsOf: file), let snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) else { return nil }
+            let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            return Stored(id: snapshot.id, root: snapshot.root, archived: !Self.isDirectory(snapshot.root), updatedAt: modified, objectCount: snapshot.objects.count)
+        }.sorted { $0.id < $1.id }
+    }
+
+    public static func isDirectory(_ path: String) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    /// Writes a human-readable snapshot (for committing to the repo). The selection tray is
+    /// personal, transient staging state, so it is left out.
+    public static func export(_ board: Board, to url: URL) throws {
+        var snapshot = board.snapshot
+        snapshot.tray = nil
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        var data = try encoder.encode(snapshot)
+        data.append(0x0A)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+    }
+
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

@@ -1,0 +1,82 @@
+# HTML explainers
+
+An HTML tile is the richest thing you can put next to your terminal: a plan, a walkthrough, a comparison the user can decide on. Build one when prose in the terminal would make the user scroll, cross-reference files by hand, or hold a structure in their head.
+
+## The tile
+
+```python
+canvas.object.create(type="html", props={"title": "Restore path", "html": html})
+```
+
+- `html` is a body fragment or a full document. Update it with `object.update` (the tile re-renders in place); keep the same tile rather than creating a new one per revision.
+- Sandboxed: no network (list hosts in `allowNetwork: ["localhost:3000", "*.example.com"]` when you truly need them), no native access, no approvals or credentials inside the tile, ever.
+- Preloaded, nothing to include:
+  - **Tailwind v4**, themed to the app. Use the semantic colors so the tile matches light and dark mode: `bg-background text-foreground`, `bg-card`, `bg-muted text-muted-foreground`, `border-border`, `bg-accent text-accent-foreground`, `bg-code`, `text-warn`, `text-ok`, `font-sans`, `font-mono`. Avoid hard-coded hex colors.
+  - **Mermaid**: `<pre class="mermaid">flowchart LR …</pre>` renders as a diagram.
+  - **Canvas components** (below).
+- Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`.
+
+## Components
+
+| Component | Use |
+| --- | --- |
+| `<canvas-code path="src/x.ts" lines="10-40"></canvas-code>` | Live excerpt from the real file. `symbol="Board.update"` anchors to a symbol instead (survives edits; wins over `lines`). Shows a stale badge when the anchor is lost. Click opens a code tile. `path` is board-relative. |
+| `<canvas-link path="src/x.ts" line="42">the retry loop</canvas-link>` | Inline file:line link (also `lines="10-20"`, `symbol=`). Empty text renders `path:line`. |
+| `<canvas-decisions key="storage" question="Where should boards live?">` + `<canvas-option value="sqlite" label="SQLite">why / cost</canvas-option>`… | A choice the user makes in place. The pick is stored in the tile's `props.state.storage`; read it with `object.get`. Clicking again clears it. |
+| `<canvas-compare>` + `<canvas-pane label="Before">…</canvas-pane>`… | Equal-width labeled columns, any count. |
+
+Grounding rule: every claim about code points at code. Use `<canvas-code>` for the lines that prove it and `<canvas-link>` for passing references. Never paste code you could anchor; pasted code goes stale silently, anchored code shows it.
+
+## Style
+
+- **Lead with the answer.** The first screen states the conclusion or the decision needed, in one or two sentences. Detail follows.
+- **One idea per section**, each with a short heading that is a claim ("Restore reads the snapshot twice"), not a topic ("Restore").
+- **Show, then tell.** Put the excerpt or diagram first and a two-line caption under it, not paragraphs around it.
+- **Progressive disclosure.** Use `<details><summary>` for depth the user may not need: edge cases, logs, full traces.
+- **Restraint.** A tile is ~640 px wide at 100%: single column by default, `canvas-compare` only for genuine side-by-side. Neutral surfaces (`bg-card`, `border-border`), accent color only for the one thing that matters, `text-warn`/`text-ok` only for status. Generous spacing (`p-6 space-y-6`), `text-sm` body, `font-mono` for identifiers.
+- **Title the tile** (`title` prop) with what it is for: "Plan: tray persistence", "Why restore races".
+
+## Playbooks
+
+### Plan
+
+For work the user should approve before you start.
+
+1. Goal and non-goals, two lines each.
+2. Steps as an ordered list; each step names the files it touches with `<canvas-link>` and what changes.
+3. Risky spots as `<canvas-code>` excerpts of the code you will change, with one-line "what changes here" captions.
+4. Open questions as `<canvas-decisions>` blocks, one per question, so the user answers in place. Read the answers with `object.get` before you start, and wait for the user's go.
+
+### Code walkthrough
+
+For "how does X work".
+
+1. One sentence: the path in plain words.
+2. A Mermaid `sequenceDiagram` or `flowchart` of the path, 5–9 nodes, node labels are function names.
+3. One section per hop: heading = what happens, `<canvas-code symbol=…>` of that function, caption = the one line to notice.
+4. A "gotchas" `<details>` for surprising behavior, each with a `<canvas-link>`.
+
+### Comparison
+
+For options, before/after, or two implementations.
+
+1. The verdict first ("B, because …") or the question if the user must choose.
+2. `<canvas-compare>` with one pane per option: same structure in every pane (summary, cost, risk, code).
+3. A small table of criteria × options when there are more than two criteria.
+4. If the user chooses: end with `<canvas-decisions>` whose options match the panes.
+
+### Decision record
+
+For choices that should be remembered: context (two lines), the `<canvas-decisions>` block, consequences per option. After the user decides, update the tile to state the decision at the top and keep it as the record (or write it into a note).
+
+### Architecture map
+
+For "how do these parts fit". A Mermaid `flowchart` of components (subgraphs for processes or packages), edges labeled with the protocol or call. Under it, one row per component: name, one-line responsibility, `<canvas-link>` to its entry point. When the user should manipulate the structure themselves, draw it with canvas shapes and arrows instead, so they can move boxes and mention them.
+
+### Review / findings
+
+For review results or an investigation. Findings sorted by severity; each is a card (`bg-card border border-border rounded-lg p-4`) with a claim heading, `<canvas-code>` of the offending lines, why it matters, and the suggested fix. Put a one-line summary count at the top ("2 bugs, 1 risk, 3 nits").
+
+## Check your tile
+
+After creating or updating an explainer, look at it: `canvas view.snapshot --out /tmp/c.png` (or `canvas get <id> --as image --out /tmp/t.png`) and read the image. Fix overflow, unreadable contrast, or broken diagrams before telling the user it's there. Then point at it with `view.attention` rather than moving their viewport.

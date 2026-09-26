@@ -90,24 +90,24 @@ final class LoginShellTests {
         return url.path
     }
 
-    @Test func aChildHoldingTheOutputOpenDoesNotStallTheLookup() throws {
+    @Test func aChildHoldingTheOutputOpenDoesNotStallTheLookup() async throws {
         let login = LoginShell(shell: try shell("sleep 30 &\necho /bin/ls"), timeout: .seconds(10))
         let start = ContinuousClock.now
-        #expect(login.resolve("ls") == URL(fileURLWithPath: "/bin/ls"))
+        #expect(await offPool { login.resolve("ls") } == URL(fileURLWithPath: "/bin/ls"))
         #expect(start.duration(to: .now) < .seconds(3))
     }
 
-    @Test func aHangingShellIsKilledAtTheDeadline() throws {
+    @Test func aHangingShellIsKilledAtTheDeadline() async throws {
         let login = LoginShell(shell: try shell("sleep 30"), timeout: .seconds(1))
         let start = ContinuousClock.now
-        #expect(login.resolve("ls") == nil)
+        #expect(await offPool { login.resolve("ls") } == nil)
         #expect(start.duration(to: .now) < .seconds(3))
     }
 }
 
-/// Temp projects driven through the real language servers installed on this machine.
-@MainActor
-final class LanguageServiceTests {
+/// Temp projects driven through the real language servers installed on this machine. Not on the
+/// main actor: other suites keep it busy, and timing checks (idle shutdown) must not wait on it.
+final class LanguageServiceTests: Sendable {
     let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("cv-lsp-\(UUID().uuidString.prefix(8))")
 
     init() throws {
@@ -178,18 +178,15 @@ final class LanguageServiceTests {
         """)
         // Canvas turns sourcekit-lsp's background indexing off; the index comes from the user's
         // own build, as it would for a repo someone works in.
-        // Off the main actor: other suites' tests share it while the build runs.
-        let packagePath = dir.path
-        let buildStatus = try await Task.detached {
-            let build = Process()
-            build.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
-            build.arguments = ["build", "-j", "2", "--package-path", packagePath]
-            build.standardOutput = FileHandle.nullDevice
-            build.standardError = FileHandle.nullDevice
-            try build.run()
-            build.waitUntilExit()
-            return build.terminationStatus
-        }.value
+        let build = Process()
+        build.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+        build.arguments = ["build", "-j", "2", "--package-path", dir.path]
+        build.standardOutput = FileHandle.nullDevice
+        build.standardError = FileHandle.nullDevice
+        let buildStatus = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
+            build.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+            do { try build.run() } catch { continuation.resume(throwing: error) }
+        }
         #expect(buildStatus == 0)
 
         let service = LanguageService()
@@ -399,7 +396,10 @@ final class LanguageServiceTests {
 
     // MARK: pyright
 
-    nonisolated static let hasPyright = LoginShell.shared.resolve("pyright-langserver") != nil
+    /// Evaluated per test through GCD (the login-shell lookup blocks); cached by LoginShell.
+    nonisolated static let hasPyright: ConditionTrait = .enabled("pyright-langserver is installed") {
+        await offPool { LoginShell.shared.resolve("pyright-langserver") != nil }
+    }
 
     func pythonProject() throws -> (shapes: URL, use: URL) {
         try write("py/pyproject.toml", "[project]\nname = \"shapes\"\n")
@@ -408,7 +408,7 @@ final class LanguageServiceTests {
         return (shapes, use)
     }
 
-    @Test(.enabled(if: hasPyright)) func pythonHoverDefinitionReferencesAndSymbols() async throws {
+    @Test(hasPyright) func pythonHoverDefinitionReferencesAndSymbols() async throws {
         let (_, use) = try pythonProject()
         let service = LanguageService()
         let shape = LSPPosition(line: 3, character: 9)
@@ -419,7 +419,7 @@ final class LanguageServiceTests {
         await service.stopAll()
     }
 
-    @Test(.enabled(if: hasPyright)) func openDocumentsFollowDiskAndCloseWhenReleased() async throws {
+    @Test(hasPyright) func openDocumentsFollowDiskAndCloseWhenReleased() async throws {
         let (shapes, use) = try pythonProject()
         let service = LanguageService()
         let shape = LSPPosition(line: 3, character: 9)
@@ -438,7 +438,7 @@ final class LanguageServiceTests {
         await service.stopAll()
     }
 
-    @Test(.enabled(if: hasPyright)) func startingAServerBeyondTheCapStopsTheLeastRecentlyUsed() async throws {
+    @Test(hasPyright) func startingAServerBeyondTheCapStopsTheLeastRecentlyUsed() async throws {
         let swift = try looseSwiftFile()
         let (_, use) = try pythonProject()
         let service = LanguageService(maxRunning: 1)

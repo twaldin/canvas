@@ -70,7 +70,9 @@ final class CodeNavigation: NSObject {
     private var menuContext: (position: (line: Int, character: Int)?, anchor: NSPoint)?
     private var actionTask: Task<Void, Never>?
 
-    init(host: CodeNavigationHost, board: Board, tile: ObjectID) {
+    /// `accessories` is the host's header: the Outline button goes at its top right, inside the
+    /// trailing `reservedWidth` points the host keeps free.
+    init(host: CodeNavigationHost, board: Board, tile: ObjectID, accessories: NSView, reservedWidth: CGFloat) {
         self.host = host
         self.board = board
         self.tile = tile
@@ -85,7 +87,7 @@ final class CodeNavigation: NSObject {
         if let storage = textView.textStorage {
             NotificationCenter.default.addObserver(self, selector: #selector(textEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: storage)
         }
-        installOutlineButton(textView)
+        installOutlineButton(in: accessories, reservedWidth: reservedWidth)
         Self.controllers.add(self)
         Self.installMonitor()
     }
@@ -284,16 +286,16 @@ final class CodeNavigation: NSObject {
 
     // MARK: Outline
 
-    private func installOutlineButton(_ textView: NSTextView) {
-        guard let scroll = textView.enclosingScrollView, let container = scroll.superview else { return }
+    private func installOutlineButton(in container: NSView, reservedWidth: CGFloat) {
         let button = OutlineButton(image: NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "Outline") ?? NSImage(), target: self, action: #selector(outlineClicked(_:)))
         button.toolTip = "Outline"
         button.onDetach = { [weak self] in self?.dismissAll() }
         let size: CGFloat = 20
-        let top = container.isFlipped ? 4 : container.bounds.height - size - 4
-        button.frame = NSRect(x: container.bounds.width - size - 18, y: top, width: size, height: size)
+        let top = container.isFlipped ? 3 : container.bounds.height - size - 3
+        let inset = min(8, max(0, (reservedWidth - size) / 2))
+        button.frame = NSRect(x: container.bounds.width - size - inset, y: top, width: size, height: size)
         button.autoresizingMask = container.isFlipped ? [.minXMargin, .maxYMargin] : [.minXMargin, .minYMargin]
-        container.addSubview(button, positioned: .above, relativeTo: scroll)
+        container.addSubview(button)
     }
 
     @objc private func outlineClicked(_ sender: NSButton) {

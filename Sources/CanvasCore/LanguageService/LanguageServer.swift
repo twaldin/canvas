@@ -89,8 +89,8 @@ public actor LanguageServer {
         inFlight += 1
         defer { inFlight -= 1 }
         let connection = try await connected()
-        refreshOpenDocuments(on: connection)
-        let uri = try open(file, on: connection)
+        await refreshOpenDocuments(on: connection)
+        let uri = try await open(file, on: connection)
         defer { release(file, on: connection) }
         return try await connection.request(method, params(uri), timeout: Self.requestTimeout)
     }
@@ -107,18 +107,23 @@ public actor LanguageServer {
         if let connection, documents[file]?.users == 0 { close(file, on: connection) }
     }
 
-    private func open(_ file: URL, on connection: LSPConnection) throws -> String {
+    /// Opens `file` for one request (or counts another user of an open document). Disk reads
+    /// run on GCD; the actor may interleave other requests meanwhile, so state is re-checked after.
+    private func open(_ file: URL, on connection: LSPConnection) async throws -> String {
         let uri = file.absoluteString
-        if documents[file] != nil {
-            documents[file]?.users += 1
-            return uri
+        if documents[file] == nil {
+            guard let (stamp, text) = await offPool({ FileStamp.read(file) }) else { throw LSPError.unreadable(file.path) }
+            guard connection === self.connection else { throw LSPError.serverExited("\(config.command) restarted") }
+            if documents[file] == nil {
+                connection.notify("textDocument/didOpen", .object([
+                    "textDocument": .object(["uri": .string(uri), "languageId": .string(config.languageID(for: file) ?? config.language),
+                                             "version": .number(1), "text": .string(text)]),
+                ]))
+                documents[file] = Document(version: 1, stamp: stamp, hash: text.hashValue, users: 1)
+                return uri
+            }
         }
-        guard let stamp = FileStamp(file), let text = try? String(contentsOf: file, encoding: .utf8) else { throw LSPError.unreadable(file.path) }
-        connection.notify("textDocument/didOpen", .object([
-            "textDocument": .object(["uri": .string(uri), "languageId": .string(config.languageID(for: file) ?? config.language),
-                                     "version": .number(1), "text": .string(text)]),
-        ]))
-        documents[file] = Document(version: 1, stamp: stamp, hash: text.hashValue, users: 1)
+        documents[file]?.users += 1
         return uri
     }
 
@@ -134,24 +139,40 @@ public actor LanguageServer {
     }
 
     /// Sends the new text of every open document whose file changed on disk (a stat per open
-    /// document; files are read only when their stamp moved), and closes deleted ones.
-    private func refreshOpenDocuments(on connection: LSPConnection) {
-        for (file, document) in documents {
-            guard let stamp = FileStamp(file), let text = try? String(contentsOf: file, encoding: .utf8) else {
-                if document.users == 0 { close(file, on: connection) }
-                continue
+    /// document on GCD; files are read only when their stamp moved), and closes deleted ones.
+    private func refreshOpenDocuments(on connection: LSPConnection) async {
+        let known = documents.mapValues(\.stamp)
+        guard !known.isEmpty else { return }
+        let current = await offPool { () -> [URL: FileStamp.Read] in
+            var result: [URL: FileStamp.Read] = [:]
+            for (file, stamp) in known {
+                guard let now = FileStamp(file) else {
+                    result[file] = .gone
+                    continue
+                }
+                guard now != stamp else { continue }
+                result[file] = FileStamp.read(file).map { .changed($0.stamp, $0.text) } ?? .gone
             }
-            guard stamp != document.stamp else { continue }
-            documents[file]?.stamp = stamp
-            let hash = text.hashValue
-            guard hash != document.hash else { continue }
-            let version = document.version + 1
-            connection.notify("textDocument/didChange", .object([
-                "textDocument": .object(["uri": .string(file.absoluteString), "version": .number(Double(version))]),
-                "contentChanges": .array([.object(["text": .string(text)])]),
-            ]))
-            documents[file]?.version = version
-            documents[file]?.hash = hash
+            return result
+        }
+        guard connection === self.connection else { return }
+        for (file, read) in current {
+            guard let document = documents[file] else { continue }
+            switch read {
+            case .gone:
+                if document.users == 0 { close(file, on: connection) }
+            case .changed(let stamp, let text):
+                documents[file]?.stamp = stamp
+                let hash = text.hashValue
+                guard hash != document.hash else { continue }
+                let version = document.version + 1
+                connection.notify("textDocument/didChange", .object([
+                    "textDocument": .object(["uri": .string(file.absoluteString), "version": .number(Double(version))]),
+                    "contentChanges": .array([.object(["text": .string(text)])]),
+                ]))
+                documents[file]?.version = version
+                documents[file]?.hash = hash
+            }
         }
     }
 
@@ -264,7 +285,12 @@ public actor LanguageServer {
 }
 
 /// Identity and version of a file on disk: rename-over (new inode), size, or mtime changes.
-struct FileStamp: Equatable {
+struct FileStamp: Equatable, @unchecked Sendable {
+    enum Read: Sendable {
+        case gone
+        case changed(FileStamp, String)
+    }
+
     let inode: UInt64
     let size: Int64
     let modified: timespec
@@ -275,6 +301,12 @@ struct FileStamp: Equatable {
         inode = info.st_ino
         size = info.st_size
         modified = info.st_mtimespec
+    }
+
+    /// Stamp and UTF-8 text, or nil when unreadable. Blocking: call through `offPool`.
+    static func read(_ file: URL) -> (stamp: FileStamp, text: String)? {
+        guard let stamp = FileStamp(file), let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        return (stamp, text)
     }
 
     static func == (lhs: FileStamp, rhs: FileStamp) -> Bool {

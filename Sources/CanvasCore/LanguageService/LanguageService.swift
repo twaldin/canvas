@@ -36,22 +36,22 @@ public actor LanguageService {
     // results use LSP's zero-based lines and UTF-16 columns.
 
     public func hover(file: URL, boardRoot: URL, at position: LSPPosition) async throws -> LSPHover? {
-        let (server, file) = try server(for: file, boardRoot: boardRoot)
+        let (server, file) = try await server(for: file, boardRoot: boardRoot)
         return try await server.hover(file, at: position)
     }
 
     public func definition(file: URL, boardRoot: URL, at position: LSPPosition) async throws -> [LSPLocation] {
-        let (server, file) = try server(for: file, boardRoot: boardRoot)
+        let (server, file) = try await server(for: file, boardRoot: boardRoot)
         return try await server.definition(file, at: position)
     }
 
     public func references(file: URL, boardRoot: URL, at position: LSPPosition, includeDeclaration: Bool = true) async throws -> [LSPLocation] {
-        let (server, file) = try server(for: file, boardRoot: boardRoot)
+        let (server, file) = try await server(for: file, boardRoot: boardRoot)
         return try await server.references(file, at: position, includeDeclaration: includeDeclaration)
     }
 
     public func documentSymbols(file: URL, boardRoot: URL) async throws -> [LSPSymbol] {
-        let (server, file) = try server(for: file, boardRoot: boardRoot)
+        let (server, file) = try await server(for: file, boardRoot: boardRoot)
         return try await server.documentSymbols(file)
     }
 
@@ -80,17 +80,20 @@ public actor LanguageService {
         await existingServer(for: file, boardRoot: boardRoot)?.unpin(file)
     }
 
-    /// The source line of each location (trimmed), reading every file once, for reference lists.
-    public func lineTexts(_ locations: [LSPLocation]) -> [String] {
-        var lines: [URL: [Substring]] = [:]
-        return locations.map { location in
-            if lines[location.url] == nil {
-                let text = (try? String(contentsOf: location.url, encoding: .utf8)) ?? ""
-                lines[location.url] = text.split(separator: "\n", omittingEmptySubsequences: false)
+    /// The source line of each location (trimmed), reading every file once (on GCD), for
+    /// reference lists.
+    public nonisolated func lineTexts(_ locations: [LSPLocation]) async -> [String] {
+        await offPool {
+            var lines: [URL: [Substring]] = [:]
+            return locations.map { location in
+                if lines[location.url] == nil {
+                    let text = (try? String(contentsOf: location.url, encoding: .utf8)) ?? ""
+                    lines[location.url] = text.split(separator: "\n", omittingEmptySubsequences: false)
+                }
+                let fileLines = lines[location.url] ?? []
+                let index = location.range.start.line
+                return fileLines.indices.contains(index) ? fileLines[index].trimmingCharacters(in: .whitespaces) : ""
             }
-            let fileLines = lines[location.url] ?? []
-            let index = location.range.start.line
-            return fileLines.indices.contains(index) ? fileLines[index].trimmingCharacters(in: .whitespaces) : ""
         }
     }
 
@@ -106,7 +109,7 @@ public actor LanguageService {
         return Key(language: config.language, root: config.projectRoot(for: file, within: boardRoot.resolvingSymlinksInPath()))
     }
 
-    private func server(for file: URL, boardRoot: URL) throws -> (LanguageServer, URL) {
+    private func server(for file: URL, boardRoot: URL) async throws -> (LanguageServer, URL) {
         guard let (config, file) = config(for: file), let key = key(for: file, boardRoot: boardRoot) else {
             throw LSPError.unsupportedLanguage(file.pathExtension.isEmpty ? file.lastPathComponent : ".\(file.pathExtension) files")
         }
@@ -114,14 +117,23 @@ public actor LanguageService {
         if let existing = servers[key] {
             server = existing
         } else {
-            guard let executable = shell.resolve(config.command) else {
+            // The login shell is a blocking subprocess (once per binary, then cached).
+            let shell = shell
+            let command = config.command
+            let (found, environment) = await offPool { (shell.resolve(command), shell.environment) }
+            guard let executable = found else {
                 throw LSPError.unavailable("\(config.command) is not installed (not found on the login shell's PATH)")
+            }
+            // Another request may have created the server while the shell ran.
+            if let existing = servers[key] {
+                touch(key)
+                return (existing, file)
             }
             if servers.count >= maxRunning, let oldest = lastUse.min(by: { $0.value < $1.value })?.key {
                 retire(oldest)
             }
             let pinned = Set(retained.keys.filter { self.key(for: $0, boardRoot: boardRoot) == key })
-            server = LanguageServer(config: config, root: key.root, executable: executable, environment: shell.environment, live: live, pinned: pinned)
+            server = LanguageServer(config: config, root: key.root, executable: executable, environment: environment, live: live, pinned: pinned)
             servers[key] = server
         }
         touch(key)

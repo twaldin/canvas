@@ -67,12 +67,20 @@ public final class Board {
     private var seenSinceWorking: Set<ObjectID> = []
     /// Highest accepted lifecycle seq per "tile|source".
     private var lifecycleSeq: [String: Int] = [:]
+    /// Highest `rev` ever issued per object, kept across deletes so an object brought back by
+    /// undo/redo never reuses a revision a stale writer might still hold.
+    private var revHighWater: [ObjectID: Int] = [:]
 
     public var onEvent: ((BoardEvent) -> Void)?
+    /// Content changes by anyone, for ⌘Z; see UndoHistory.
+    public let history = UndoHistory()
     /// Called after any persisted change; BoardStore debounces saves.
     public var onChange: (() -> Void)?
     /// Viewport center in canvas coordinates, for user-created objects without a frame.
     public var viewportCenter: () -> (x: Double, y: Double) = { (0, 0) }
+    /// An arrow's route as currently drawn (canvas coordinates), so deleting what it points at
+    /// keeps its end exactly where the user saw it. Without it, routes come from object frames.
+    public var arrowRoute: ((ObjectID) -> (start: CGPoint, end: CGPoint)?)?
 
     public init(id: BoardID, root: URL) {
         self.id = id
@@ -112,29 +120,39 @@ public final class Board {
         let z = (objects.values.map(\.z).max() ?? 0) + 1
         let object = CanvasObject(id: IDs.make("obj"), type: type, frame: placed, z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(), props: props)
         commit(object)
+        history.record(.created(object))
         onEvent?(.objectCreated(object))
         return object
     }
 
     @discardableResult
-    public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, props: JSONValue? = nil, caller: ObjectID? = nil) throws -> CanvasObject {
-        var object = try object(id)
-        if let rev, rev != object.rev { throw BoardError.conflict("object \(id) is at rev \(object.rev), not \(rev)") }
+    public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil) throws -> CanvasObject {
+        let before = try object(id)
+        if let rev, rev != before.rev { throw BoardError.conflict("object \(id) is at rev \(before.rev), not \(rev)") }
+        var object = before
         if let frame { object.frame = frame }
+        if let z { object.z = z }
         if let props { object.props = object.props.merging(props) }
         object.rev += 1
         object.updatedAt = Date()
         object.updatedBy = Actor(caller: caller)
         commit(object)
+        history.record(.updated(before: before, after: object))
         markMentionsEdited(for: id)
         onEvent?(.objectUpdated(object))
         return object
     }
 
     public func delete(_ id: ObjectID) throws {
-        guard objects.removeValue(forKey: id) != nil else { throw BoardError.notFound("object \(id)") }
+        guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
+        // Arrows bound to it detach within the same undo step, so one ⌘Z restores both.
+        history.begin()
+        defer { history.end() }
+        detachArrows(from: id)
+        guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         revision += 1
+        history.record(.deleted(removed))
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         onChange?()
@@ -142,10 +160,26 @@ public final class Board {
         if tray.count != before { trayChanged() }
     }
 
+    /// Undo/redo: puts an object state back verbatim (same id and z), announced as a normal change.
+    /// The object gets a revision newer than any it has ever had.
+    func restore(_ object: CanvasObject) {
+        var object = object
+        let existed = objects[object.id] != nil
+        object.rev = max(revHighWater[object.id] ?? 0, objects[object.id]?.rev ?? 0, object.rev) + 1
+        commit(object)
+        if existed {
+            markMentionsEdited(for: object.id)
+            onEvent?(.objectUpdated(object))
+        } else {
+            onEvent?(.objectCreated(object))
+        }
+    }
+
     private func commit(_ object: CanvasObject) {
         revision += 1
         objects[object.id] = object
         changedAt[object.id] = revision
+        revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
         onChange?()
     }
 
@@ -199,8 +233,12 @@ public final class Board {
 
     /// Resolve every staged mention at its current revision and return the prompt context.
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids.
-    public func drain(peek: Bool = false) -> (mentions: [MentionContext.Resolved], context: String) {
-        let resolved = tray.enumerated().map { MentionContext.resolve($0.element, index: $0.offset + 1, on: self) }
+    /// Old-side and pinned code excerpts are read from git, hence async.
+    public func drain(peek: Bool = false) async -> (mentions: [MentionContext.Resolved], context: String) {
+        var resolved: [MentionContext.Resolved] = []
+        for (index, mention) in tray.enumerated() {
+            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self))
+        }
         let context = MentionContext.render(resolved, board: self)
         if !peek { commit(resolved.map(\.id)) }
         return (resolved, context)
@@ -278,15 +316,26 @@ public final class Board {
 
     // MARK: Follow mode
 
-    /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use.
+    /// Recent locations kept on a follow tile (`CodeProps.history`), newest first.
+    public static let followHistoryLimit = 8
+
+    /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use, and
+    /// record the location at the front of the tile's history.
     @discardableResult
     public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject {
         _ = try object(tile)
         let relative = relativePath(path)
-        var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action)]
-        props["range"] = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
+        let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
+        var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action), "range": rangeValue]
+        let existing = objects.values.first { $0.type == .code && $0.props["followOf"]?.string == tile }
+        var entry: [String: JSONValue] = ["path": .string(relative), "action": .string(action)]
+        if range != nil { entry["range"] = rangeValue }
+        var history = existing?.props["history"]?.array ?? []
+        history.removeAll { $0["path"] == entry["path"] && $0["range"] == entry["range"] }
+        history.insert(.object(entry), at: 0)
+        props["history"] = .array(Array(history.prefix(Self.followHistoryLimit)))
         let follow: CanvasObject
-        if let existing = objects.values.first(where: { $0.type == .code && $0.props["followOf"]?.string == tile }) {
+        if let existing {
             follow = try update(existing.id, props: .object(props), caller: tile)
         } else {
             props["mode"] = .string("diff")

@@ -87,6 +87,22 @@
         "mode": { "enum": ["diff", "source"], "default": "diff" },
         "diffBase": { "type": "string", "default": "merge-base", "description": "merge-base | head | <sha>" },
         "followOf": { "$ref": "#/definitions/Id", "description": "terminal tile this follow tile tracks" },
+        "lastAction": { "enum": ["read", "edit", "lsp", "search"], "description": "follow tiles: what the agent last did at this location" },
+        "history": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "follow tiles: recent locations, newest first, without repeats",
+          "items": {
+            "type": "object",
+            "required": ["path", "action"],
+            "properties": {
+              "path": { "type": "string" },
+              "range": { "$ref": "#/definitions/LineRange" },
+              "action": { "enum": ["read", "edit", "lsp", "search"] }
+            },
+            "additionalProperties": false
+          }
+        },
         "pinnedCommit": { "type": "string" }
       },
       "additionalProperties": false
@@ -101,9 +117,10 @@
       "type": "object",
       "required": ["html"],
       "properties": {
-        "html": { "type": "string" },
+        "html": { "type": "string", "description": "page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded" },
         "title": { "type": "string" },
-        "allowNetwork": { "type": "array", "items": { "type": "string" }, "default": [] }
+        "allowNetwork": { "type": "array", "items": { "type": "string", "description": "host, host:port, or *.host; http/https/ws to anything else is blocked" }, "default": [] },
+        "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" }
       },
       "additionalProperties": false
     },
@@ -114,7 +131,8 @@
         "kind": { "enum": ["rect", "ellipse", "text", "ink"] },
         "text": { "type": "string" },
         "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 }, "description": "ink points [x, y, pressure?] in object-local coordinates" },
-        "color": { "type": "string" }
+        "color": { "type": "string", "description": "palette name (black, grey, blue, green, orange, red, violet) or #rrggbb" },
+        "fill": { "enum": ["none", "semi", "solid"], "default": "none", "description": "rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it" }
       },
       "additionalProperties": false
     },
@@ -145,7 +163,8 @@
         "from": { "$ref": "#/definitions/Binding" },
         "to": { "$ref": "#/definitions/Binding" },
         "relation": { "type": "string", "description": "semantic edge type, e.g. hypothesis_about, calls, depends_on" },
-        "label": { "type": "string" }
+        "label": { "type": "string" },
+        "color": { "type": "string", "description": "palette name or #rrggbb, as ShapeProps.color" }
       },
       "additionalProperties": false
     },
@@ -185,8 +204,9 @@
             "object": { "$ref": "#/definitions/Id" },
             "path": { "type": "string" },
             "lines": { "$ref": "#/definitions/LineRange" },
-            "side": { "enum": ["old", "new"], "default": "new" },
-            "symbol": { "type": "string" }
+            "side": { "enum": ["old", "new"], "description": "diff side of the lines; absent outside a diff" },
+            "symbol": { "type": "string" },
+            "commit": { "type": "string", "description": "with side old or absent: the commit whose version of path holds the lines (deleted diff rows, pinned excerpts); with side new: the diff base. Absent: the working tree" }
           },
           "additionalProperties": false
         },
@@ -256,6 +276,19 @@
         "lifecycle": { "$ref": "#/definitions/Lifecycle" }
       },
       "additionalProperties": false
+    },
+    "BoardInfo": {
+      "type": "object",
+      "required": ["board", "root", "archived", "open", "objects"],
+      "properties": {
+        "board": { "$ref": "#/definitions/Id" },
+        "root": { "type": "string", "description": "root directory the board was last opened at" },
+        "archived": { "type": "boolean", "description": "the root directory no longer exists (e.g. a deleted worktree); the board is kept" },
+        "open": { "type": "boolean", "description": "the board has a window in the app (only open boards accept `board` params)" },
+        "updatedAt": { "type": "string", "description": "ISO 8601 time the board was last saved; absent for a board never saved" },
+        "objects": { "type": "integer", "description": "object count" }
+      },
+      "additionalProperties": false
     }
   },
   "methods": {
@@ -283,8 +316,29 @@
         }
       }
     },
+    "board.list": {
+      "description": "Every stored board, open or not, including archived boards whose root directory is gone.",
+      "params": { "type": "object", "properties": {}, "additionalProperties": false },
+      "result": { "type": "object", "required": ["boards"], "properties": { "boards": { "type": "array", "items": { "$ref": "#/definitions/BoardInfo" } } } }
+    },
+    "board.export": {
+      "description": "Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "path": { "type": "string", "description": "absolute, or relative to the board root; default .canvas/board.json" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["path", "objects"],
+        "properties": { "path": { "type": "string", "description": "absolute path written" }, "objects": { "type": "integer" } }
+      }
+    },
     "object.get": {
-      "description": "Read one object. `as: graph` adds structural relations (encloses, overlaps, arrows in/out); `as: image` returns a PNG crop as base64.",
+      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow; `as: image` returns a PNG crop as base64 (a tile's content, or the canvas region under a drawn object including the tiles and ink inside it).",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -331,7 +385,7 @@
       "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" } } }
     },
     "object.delete": {
-      "description": "Delete an object (and remove it from any staged mentions).",
+      "description": "Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached.",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -460,6 +514,27 @@
         "additionalProperties": false
       },
       "result": { "type": "object", "required": ["agent"], "properties": { "agent": { "$ref": "#/definitions/Agent" } } }
+    },
+    "agent.read": {
+      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed.",
+      "params": {
+        "type": "object",
+        "required": ["target"],
+        "properties": {
+          "target": { "type": "string", "description": "agent name or tile id" },
+          "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "tail length; larger values are capped at 2000" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "required": ["agent", "text", "lines"],
+        "properties": {
+          "agent": { "$ref": "#/definitions/Agent" },
+          "text": { "type": "string" },
+          "lines": { "type": "integer", "description": "number of lines returned" }
+        }
+      }
     },
     "follow.report": {
       "description": "Report a file location an agent just read or edited; re-aims that terminal's follow tile.",

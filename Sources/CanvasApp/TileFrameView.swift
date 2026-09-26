@@ -1,8 +1,9 @@
 import AppKit
 import CanvasCore
 
-/// Shared chrome around every tile: title bar (drag to move), lifecycle badge, close button,
-/// resize grip, selection ring, and the zoomed-out card.
+/// Shared chrome around every tile: title bar (drag moves the selection), lifecycle badge, close
+/// button, resize grip, and the zoomed-out card (tinted by agent lifecycle). Selection rings are
+/// drawn by the canvas overlay.
 @MainActor
 final class TileFrameView: NSView {
     static let titleHeight: CGFloat = 26
@@ -15,15 +16,26 @@ final class TileFrameView: NSView {
     private let closeButton = NSButton()
     private let card = NSImageView()
     private var cardTitle = NSTextField(labelWithString: "")
+    private let cardTint = CardTint()
     private(set) var isLive = true
-    var isSelected = false { didSet { needsDisplay = true; updateRing() } }
+    /// Stacking order among tiles (the object's `z`).
+    private(set) var z: Double = 0
+    private var lifecycleState: String?
 
-    /// Called with the new canvas-space frame when a drag or resize ends.
+    /// Called with the new canvas-space frame when a resize ends.
     var onFrameCommit: ((NSRect) -> Void)?
+    /// Live resize, so the canvas can keep rings and groups around the tile.
+    var onResizing: (() -> Void)?
     var onClose: (() -> Void)?
-    var onSelect: ((_ extend: Bool) -> Void)?
+    /// Title-bar drags move the whole selection; the canvas runs the gesture.
+    var onMoveBegan: ((NSEvent) -> Void)?
+    var onMoveDragged: ((NSEvent) -> Void)?
+    var onMoveEnded: ((NSEvent) -> Void)?
+    var onTitleDoubleClick: (() -> Void)?
+    var onMenu: (() -> NSMenu?)?
 
-    private var dragStart: (mouse: NSPoint, frame: NSRect, resizing: Bool)?
+    private var resizeStart: (mouse: NSPoint, frame: NSRect)?
+    private var moving = false
 
     init(object: CanvasObject, content: any TileContent, frame: NSRect) {
         objectID = object.id
@@ -59,6 +71,8 @@ final class TileFrameView: NSView {
         cardTitle.isHidden = true
         addSubview(card)
         addSubview(cardTitle)
+        cardTint.isHidden = true
+        addSubview(cardTint)
         update(object)
         layoutParts()
     }
@@ -66,6 +80,7 @@ final class TileFrameView: NSView {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     override var isFlipped: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         layoutParts()
@@ -81,14 +96,17 @@ final class TileFrameView: NSView {
         content.frame = body
         card.frame = body
         cardTitle.frame = body.insetBy(dx: 12, dy: body.height / 3)
+        cardTint.frame = bounds
     }
 
     func update(_ object: CanvasObject) {
         titleLabel.stringValue = titleLabel.stringValue.isEmpty || object.type != .terminal ? Self.title(for: object) : titleLabel.stringValue
-        let state = object.props["lifecycle"]?["state"]?.string
-        badge.layer?.backgroundColor = Self.badgeColor(state).cgColor
+        z = object.z
+        lifecycleState = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
+        badge.layer?.backgroundColor = Self.badgeColor(lifecycleState).cgColor
         badge.isHidden = object.type != .terminal
         cardTitle.stringValue = titleLabel.stringValue
+        updateTint()
         content.update(object)
     }
 
@@ -135,11 +153,14 @@ final class TileFrameView: NSView {
         content.isHidden = !live
         content.setLive(live)
         isLive = live
+        updateTint()
     }
 
-    private func updateRing() {
-        layer?.borderWidth = isSelected ? 2 : 1
-        layer?.borderColor = (isSelected ? NSColor.controlAccentColor : NSColor.separatorColor).cgColor
+    /// Zoomed-out cards carry the agent's lifecycle color so a board of agents reads at a glance.
+    private func updateTint() {
+        let color = Self.badgeColor(lifecycleState)
+        cardTint.color = color
+        cardTint.isHidden = isLive || color == .clear
     }
 
     @objc private func closeClicked() {
@@ -153,34 +174,62 @@ final class TileFrameView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
         if resizeGrip.contains(local) { return self }
+        // A zoomed-out card is one handle: click selects, drag moves, double-click focuses.
+        if !isLive, bounds.contains(local) { return self }
         return super.hitTest(point)
     }
 
     override func mouseDown(with event: NSEvent) {
-        onSelect?(event.modifierFlags.contains(.shift))
-        let local = convert(event.locationInWindow, from: nil)
-        dragStart = (event.locationInWindow, frame, resizeGrip.contains(local))
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let start = dragStart, let superview else { return }
-        let scale = superview.convert(NSSize(width: 1, height: 1), from: nil).width
-        let dx = (event.locationInWindow.x - start.mouse.x) * scale
-        let dy = (event.locationInWindow.y - start.mouse.y) * scale
-        if start.resizing {
-            setFrameSize(NSSize(width: max(160, start.frame.width + dx), height: max(80, start.frame.height - dy)))
+        if resizeGrip.contains(convert(event.locationInWindow, from: nil)) {
+            resizeStart = (event.locationInWindow, frame)
+        } else if event.clickCount == 2 {
+            onTitleDoubleClick?()
         } else {
-            setFrameOrigin(NSPoint(x: start.frame.minX + dx, y: start.frame.minY - dy))
+            moving = true
+            onMoveBegan?(event)
         }
     }
 
-    override func mouseUp(with event: NSEvent) {
-        if let start = dragStart, start.frame != frame { onFrameCommit?(frame) }
-        dragStart = nil
+    override func mouseDragged(with event: NSEvent) {
+        if moving { return onMoveDragged?(event) ?? () }
+        guard let start = resizeStart, let superview else { return }
+        let scale = superview.convert(NSSize(width: 1, height: 1), from: nil).width
+        let dx = (event.locationInWindow.x - start.mouse.x) * scale
+        let dy = (event.locationInWindow.y - start.mouse.y) * scale
+        setFrameSize(NSSize(width: max(160, start.frame.width + dx), height: max(80, start.frame.height - dy)))
+        onResizing?()
     }
+
+    override func mouseUp(with event: NSEvent) {
+        if moving {
+            moving = false
+            onMoveEnded?(event)
+        } else if let start = resizeStart, start.frame != frame {
+            onFrameCommit?(frame)
+        }
+        resizeStart = nil
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? { onMenu?() }
 
     override func resetCursorRects() {
         addCursorRect(resizeGrip, cursor: .crosshair)
         addCursorRect(titleBar.frame, cursor: .openHand)
+    }
+}
+
+/// Lifecycle wash over a zoomed-out card, drawn (not a layer color) so snapshots include it.
+private final class CardTint: NSView {
+    var color: NSColor = .clear { didSet { if color != oldValue { needsDisplay = true } } }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        color.withAlphaComponent(0.3).setFill()
+        bounds.fill()
+        let border = NSBezierPath(rect: bounds.insetBy(dx: 8, dy: 8))
+        border.lineWidth = 16
+        color.setStroke()
+        border.stroke()
     }
 }

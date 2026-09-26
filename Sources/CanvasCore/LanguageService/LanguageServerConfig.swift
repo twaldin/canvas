@@ -1,7 +1,7 @@
 import Foundation
 
 /// How to run one language's server and which files and project roots belong to it.
-public struct LanguageServerConfig: Sendable, Hashable {
+public struct LanguageServerConfig: Sendable, Equatable {
     /// Registry key, e.g. "swift".
     public var language: String
     /// Binary name looked up on the login PATH, or an absolute path.
@@ -11,18 +11,28 @@ public struct LanguageServerConfig: Sendable, Hashable {
     public var languageIDs: [String: String]
     /// Files that mark a project root; the nearest one above a file (within the board root) wins.
     public var rootMarkers: [String]
+    public var initializationOptions: JSONValue?
+    /// Shown with an empty definition/references answer: why the server may not know yet.
+    public var emptyResultHint: String?
 
-    public init(language: String, command: String, arguments: [String] = [], languageIDs: [String: String], rootMarkers: [String]) {
+    public init(language: String, command: String, arguments: [String] = [], languageIDs: [String: String], rootMarkers: [String],
+                initializationOptions: JSONValue? = nil, emptyResultHint: String? = nil) {
         self.language = language
         self.command = command
         self.arguments = arguments
         self.languageIDs = languageIDs
         self.rootMarkers = rootMarkers
+        self.initializationOptions = initializationOptions
+        self.emptyResultHint = emptyResultHint
     }
 
     public static let defaults: [LanguageServerConfig] = [
+        // Background indexing would run `swift build` into the user's repo whenever a code tile
+        // opens a Swift file; on a shared machine the index comes from the user's own builds.
         LanguageServerConfig(language: "swift", command: "sourcekit-lsp", languageIDs: ["swift": "swift"],
-                             rootMarkers: ["Package.swift", "compile_commands.json", "buildServer.json"]),
+                             rootMarkers: ["Package.swift", "compile_commands.json", "buildServer.json"],
+                             initializationOptions: .object(["backgroundIndexing": .bool(false)]),
+                             emptyResultHint: "Canvas doesn't index Swift projects itself; sourcekit-lsp answers from the index your own builds write (swift build)."),
         LanguageServerConfig(language: "python", command: "pyright-langserver", arguments: ["--stdio"], languageIDs: ["py": "python", "pyi": "python"],
                              rootMarkers: ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
         LanguageServerConfig(language: "typescript", command: "typescript-language-server", arguments: ["--stdio"],
@@ -58,11 +68,16 @@ public struct LanguageServerConfig: Sendable, Hashable {
 public final class LoginShell: @unchecked Sendable {
     public static let shared = LoginShell()
 
+    private let shell: String
+    private let timeout: Duration
     private let lock = NSLock()
     private var resolved: [String: URL?] = [:]
     private var cachedPath: String?
 
-    public init() {}
+    public init(shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", timeout: Duration = .seconds(10)) {
+        self.shell = shell
+        self.timeout = timeout
+    }
 
     /// Absolute path of `command` on the login PATH, or nil when it isn't installed.
     public func resolve(_ command: String) -> URL? {
@@ -70,7 +85,7 @@ public final class LoginShell: @unchecked Sendable {
             return FileManager.default.isExecutableFile(atPath: command) ? URL(fileURLWithPath: command) : nil
         }
         if let cached = lock.withLock({ resolved[command] }) { return cached }
-        let found = Self.run("command -v \(Self.quote(command))")
+        let found = run("command -v \(Self.quote(command))")
             .split(whereSeparator: \.isNewline).last
             .map(String.init)
             .flatMap { $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0) ? URL(fileURLWithPath: $0) : nil }
@@ -83,7 +98,7 @@ public final class LoginShell: @unchecked Sendable {
         var environment = ProcessInfo.processInfo.environment
         let path = lock.withLock { cachedPath } ?? {
             // A marker separates the value from anything rc files print.
-            let output = Self.run("printf '\\n__CANVAS_PATH__%s' \"$PATH\"")
+            let output = run("printf '\\n__CANVAS_PATH__%s' \"$PATH\"")
             let value = output.contains("__CANVAS_PATH__") ? output.components(separatedBy: "__CANVAS_PATH__").last ?? "" : ""
             let path = value.isEmpty ? (environment["PATH"] ?? "/usr/bin:/bin") : value
             lock.withLock { cachedPath = path }
@@ -97,22 +112,80 @@ public final class LoginShell: @unchecked Sendable {
         "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Runs a login shell with a deadline so a hanging rc file can't stall the language service.
-    private static func run(_ script: String) -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
-        process.arguments = ["-lc", script]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do { try process.run() } catch { return "" }
-        let pid = process.processIdentifier
-        let deadline = DispatchWorkItem { kill(pid, SIGKILL) }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: deadline)
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        deadline.cancel()
-        return String(decoding: data, as: UTF8.self)
+    /// Runs `$SHELL -lc script` in its own process group and reads its output until EOF or the
+    /// deadline. At the deadline the whole group is killed and the read abandoned: rc files can
+    /// start children that outlive the shell and keep the output pipe open.
+    private func run(_ script: String) -> String {
+        var fds: [Int32] = [-1, -1]
+        guard pipe(&fds) == 0 else { return "" }
+        let (readEnd, writeEnd) = (fds[0], fds[1])
+        defer { close(readEnd) }
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_adddup2(&actions, writeEnd, 1)
+        posix_spawn_file_actions_addopen(&actions, 2, "/dev/null", O_WRONLY, 0)
+        posix_spawn_file_actions_addclose(&actions, readEnd)
+        posix_spawn_file_actions_addclose(&actions, writeEnd)
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP))
+        posix_spawnattr_setpgroup(&attributes, 0)
+        let words: [String] = [shell, "-lc", script]
+        let argv: [UnsafeMutablePointer<CChar>?] = words.map { strdup($0) } + [nil]
+        defer { argv.forEach { free($0) } }
+        var pid: pid_t = 0
+        let spawned = posix_spawn(&pid, shell, &actions, &attributes, argv, environ)
+        close(writeEnd)
+        guard spawned == 0 else { return "" }
+
+        var output = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let deadline = ContinuousClock.now + timeout
+        var reaped = false
+        var eof = false
+        var status: Int32 = 0
+        reading: while true {
+            let remaining = ContinuousClock.now.duration(to: deadline)
+            guard remaining > .zero else { break }
+            // Short slices: once the shell has exited, what it printed is complete even if a
+            // child it started still holds the pipe open.
+            var poller = pollfd(fd: readEnd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&poller, 1, Int32(min(100, max(1, remaining.seconds * 1000))))
+            if ready < 0 {
+                if errno == EINTR { continue }
+                break
+            }
+            if ready == 0 {
+                if !reaped, waitpid(pid, &status, WNOHANG) == pid { reaped = true }
+                if reaped {
+                    // Drain what's already buffered, then stop.
+                    while poll(&poller, 1, 0) > 0 {
+                        let count = read(readEnd, &buffer, buffer.count)
+                        guard count > 0 else {
+                            eof = true
+                            break reading
+                        }
+                        output.append(contentsOf: buffer[0..<count])
+                    }
+                    break
+                }
+                continue
+            }
+            let count = read(readEnd, &buffer, buffer.count)
+            if count < 0, errno == EINTR { continue }
+            if count <= 0 {
+                eof = true
+                break
+            }
+            output.append(contentsOf: buffer[0..<count])
+        }
+        // Anything in the group still holding the pipe (a hung shell, or a child an rc file
+        // left behind) is ended with it.
+        if !eof { kill(-pid, SIGKILL) }
+        if !reaped { while waitpid(pid, &status, 0) < 0, errno == EINTR {} }
+        return String(decoding: output, as: UTF8.self)
     }
 }

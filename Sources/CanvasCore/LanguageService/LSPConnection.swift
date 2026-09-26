@@ -4,8 +4,11 @@ import Foundation
 /// One language-server process speaking JSON-RPC 2.0 over stdio. Thread-safe: requests may come
 /// from any task; responses arrive on the pipe's reader thread and resume the waiting request.
 final class LSPConnection: @unchecked Sendable {
-    /// Called once with a human-readable reason (status and the last stderr line).
-    typealias Exit = @Sendable (_ reason: String) -> Void
+    /// Called once with the connection and a human-readable reason (status, last stderr line).
+    typealias Exit = @Sendable (_ connection: LSPConnection, _ reason: String) -> Void
+
+    /// Queued-but-unwritten bytes beyond which a server that stopped reading counts as hung.
+    static let maxQueuedBytes = 64 << 20
 
     let process = Process()
     private let input = Pipe()
@@ -25,7 +28,11 @@ final class LSPConnection: @unchecked Sendable {
     private var stderrTail = Data()
     /// Only touched on the stdout reader thread.
     private var framer = LSPFramer()
-    private let writeLock = NSLock()
+    /// Writes go through a stream channel so callers (including cancellation on the main actor
+    /// and app quit) never block on a full pipe. Only set in `start`.
+    private var writer: DispatchIO?
+    private let writeQueue = DispatchQueue(label: "canvas.lsp.write")
+    private var queuedBytes = 0
 
     init(executable: URL, arguments: [String], environment: [String: String], directory: URL,
          onExit: @escaping Exit) {
@@ -42,8 +49,6 @@ final class LSPConnection: @unchecked Sendable {
     var pid: Int32 { process.processIdentifier }
 
     func start() throws {
-        // A write to a server that just died must fail with EPIPE, not kill the app.
-        _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         output.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
             guard let self else { return }
@@ -69,6 +74,15 @@ final class LSPConnection: @unchecked Sendable {
             self?.didExit(process.terminationStatus)
         }
         try process.run()
+        // The channel owns a duplicate of the pipe's write end; closing the original leaves the
+        // channel as the only writer, so the server sees EOF once it closes.
+        let fd = dup(input.fileHandleForWriting.fileDescriptor)
+        try? input.fileHandleForWriting.close()
+        guard fd >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        // A write to a server that just died must fail with EPIPE, not kill the app.
+        _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+        let channel = DispatchIO(type: .stream, fileDescriptor: fd, queue: writeQueue) { _ in close(fd) }
+        lock.withLock { writer = channel }
     }
 
     // MARK: Sending
@@ -87,12 +101,12 @@ final class LSPConnection: @unchecked Sendable {
                     return nil
                 }
                 if let refusal { return continuation.resume(throwing: refusal) }
-                send(.object(["jsonrpc": .string("2.0"), "id": .number(Double(id)), "method": .string(method), "params": params]))
                 if let timeout {
                     DispatchQueue.global().asyncAfter(deadline: .now() + timeout.seconds) { [weak self] in
                         self?.abandon(id, with: LSPError.timedOut(method))
                     }
                 }
+                send(.object(["jsonrpc": .string("2.0"), "id": .number(Double(id)), "method": .string(method), "params": params]))
             }
         } onCancel: {
             abandon(id, with: CancellationError())
@@ -112,22 +126,20 @@ final class LSPConnection: @unchecked Sendable {
         notify("$/cancelRequest", .object(["id": .number(Double(id))]))
     }
 
+    /// Queues a message; never blocks. EPIPE and friends surface through the exit handler.
     private func send(_ message: JSONValue) {
         guard let body = try? JSONEncoder().encode(message) else { return }
         let data = LSPFramer.frame(body)
-        let fd = input.fileHandleForWriting.fileDescriptor
-        writeLock.withLock {
-            data.withUnsafeBytes { raw in
-                var offset = 0
-                while offset < raw.count {
-                    let written = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
-                    if written < 0 {
-                        if errno == EINTR { continue }
-                        return // EPIPE: the exit handler fails whatever is pending.
-                    }
-                    offset += written
-                }
-            }
+        let (channel, backlog) = lock.withLock {
+            queuedBytes += data.count
+            return (exited ? nil : writer, queuedBytes)
+        }
+        guard let channel else { return }
+        guard backlog <= Self.maxQueuedBytes else { return kill() }
+        let bytes = data.withUnsafeBytes { DispatchData(bytes: $0) }
+        channel.write(offset: 0, data: bytes, queue: writeQueue) { [weak self] done, _, _ in
+            guard done, let self else { return }
+            self.lock.withLock { self.queuedBytes -= data.count }
         }
     }
 
@@ -207,6 +219,15 @@ final class LSPConnection: @unchecked Sendable {
         Darwin.kill(process.processIdentifier, SIGKILL)
     }
 
+    /// SIGTERM, then SIGKILL once `grace` has passed; returns when the process has been reaped
+    /// (or a second after SIGKILL, which can't be ignored).
+    func terminate(grace: Duration) async {
+        terminate()
+        if await waitForExit(timeout: grace) { return }
+        kill()
+        _ = await waitForExit(timeout: .seconds(1))
+    }
+
     /// True once the process has exited; false if `timeout` passed first.
     func waitForExit(timeout: Duration) async -> Bool {
         await withCheckedContinuation { continuation in
@@ -233,11 +254,12 @@ final class LSPConnection: @unchecked Sendable {
             let taken = (Array(pending.values), Array(exitWaiters.values), exitReason)
             pending.removeAll()
             exitWaiters.removeAll()
+            writer?.close(flags: .stop)
             return taken
         }
         for request in requests { request.resume(throwing: LSPError.serverExited(reason)) }
         for waiter in waiters { waiter.resume(returning: true) }
-        onExit(reason)
+        onExit(self, reason)
     }
 }
 

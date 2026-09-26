@@ -24,11 +24,17 @@ protocol CodeNavigationHost: AnyObject {
 @MainActor
 final class CodeNavigation: NSObject {
     /// Shared by every code view in the app (one server per language and project root).
-    static let languages = LanguageService()
+    nonisolated static let languages = LanguageService()
 
-    /// App quit: end every language server without waiting.
-    static func shutdown() {
-        languages.terminateAll()
+    /// App quit waits for the language servers to be gone (SIGKILL after 2 s), so none outlives
+    /// the app. Returns `.terminateLater` while they're ending and replies when they have.
+    static func terminateServers() -> NSApplication.TerminateReply {
+        guard languages.liveProcessCount > 0 else { return .terminateNow }
+        Task.detached {
+            await languages.terminateAll(grace: .seconds(2))
+            await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+        return .terminateLater
     }
 
     private static let hoverDelay: TimeInterval = 0.5
@@ -49,6 +55,12 @@ final class CodeNavigation: NSObject {
     /// What the visible hover describes, so moving within it keeps it open.
     private var hoverShown: (position: LSPPosition, range: LSPRange?)?
     private var hoverPanel: NavigationPanel?
+    /// Bumped whenever hover work is cancelled, so a late answer can't show a stale hover.
+    private var hoverGeneration = 0
+    /// The list or message panel this view opened.
+    private weak var panel: NavigationPanel?
+    private var observingTileFrame = false
+    private var lease: DocumentLease?
     /// Where a context menu was opened, for its actions.
     private var menuContext: (position: (line: Int, character: Int)?, anchor: NSPoint)?
     private var actionTask: Task<Void, Never>?
@@ -61,8 +73,12 @@ final class CodeNavigation: NSObject {
         self.textView = textView
         super.init()
         textView.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        // Scrolling or new content (a re-aim, a reload) moves what the panels point at.
         if let clip = textView.enclosingScrollView?.contentView {
-            NotificationCenter.default.addObserver(self, selector: #selector(textScrolled), name: NSView.boundsDidChangeNotification, object: clip)
+            NotificationCenter.default.addObserver(self, selector: #selector(contentMoved), name: NSView.boundsDidChangeNotification, object: clip)
+        }
+        if let storage = textView.textStorage {
+            NotificationCenter.default.addObserver(self, selector: #selector(textEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: storage)
         }
         installOutlineButton(textView)
         Self.controllers.add(self)
@@ -99,9 +115,24 @@ final class CodeNavigation: NSObject {
 
     @objc func mouseEntered(with event: NSEvent) {}
 
-    @objc private func textScrolled() {
+    @objc private func contentMoved() {
+        dismissAll()
+    }
+
+    @objc private func textEdited(_ note: Notification) {
+        // Attribute-only passes (highlighting) leave the text, and so the panels, valid.
+        guard (note.object as? NSTextStorage)?.editedMask.contains(.editedCharacters) == true else { return }
+        dismissAll()
+    }
+
+    /// The tile moved, was resized, hidden, re-aimed, or removed: nothing shown or pending is
+    /// about what's on screen anymore.
+    @objc private func dismissAll() {
         cancelPendingHover()
         dismissHover()
+        actionTask?.cancel()
+        actionTask = nil
+        panel?.dismiss()
     }
 
     private func cancelPendingHover() {
@@ -109,6 +140,7 @@ final class CodeNavigation: NSObject {
         hoverScheduled = false
         hoverTask?.cancel()
         hoverTask = nil
+        hoverGeneration += 1
     }
 
     @objc private func hoverDue() {
@@ -121,9 +153,11 @@ final class CodeNavigation: NSObject {
         guard let pointer, let textView, let file, let position = position(atWindowPoint: pointer) else { return }
         let anchor = textView.convert(pointer, from: nil)
         let root = board.root
+        lease(file)
+        let generation = hoverGeneration
         hoverTask = Task { [weak self] in
             let hover = try? await Self.languages.hover(file: file, boardRoot: root, at: position)
-            guard let self, let hover, !Task.isCancelled else { return }
+            guard let self, let hover, !Task.isCancelled, self.hoverGeneration == generation else { return }
             self.showHover(hover, at: position, anchor: anchor)
         }
     }
@@ -137,6 +171,7 @@ final class CodeNavigation: NSObject {
             self.dismissHover()
         }
         panel.show(below: anchor, lineHeight: lineHeight, in: textView)
+        observeTileFrame(textView)
         hoverPanel = panel
         hoverShown = (position, hover.range)
     }
@@ -171,7 +206,6 @@ final class CodeNavigation: NSObject {
     }
 
     private func goToDefinition(at position: (line: Int, character: Int), anchor: NSPoint, newTile: Bool) {
-        dismissHover()
         run(anchor: anchor) { [weak self] file, root in
             let locations = try await Self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
             guard let self else { return }
@@ -191,7 +225,6 @@ final class CodeNavigation: NSObject {
     }
 
     private func findReferences(at position: (line: Int, character: Int), anchor: NSPoint) {
-        dismissHover()
         showMessage("Finding references…", anchor: anchor)
         run(anchor: anchor) { [weak self] file, root in
             let locations = try await Self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
@@ -216,16 +249,18 @@ final class CodeNavigation: NSObject {
     /// answers from fallback settings and an empty index until then) says so, instead of
     /// claiming there is nothing.
     private func showEmpty(_ text: String, file: URL, root: URL, anchor: NSPoint) async {
-        let busy = await Self.languages.existingServer(for: file, boardRoot: root)?.activity ?? []
-        showMessage(busy.isEmpty ? text : "\(text) yet — \(busy.joined(separator: ", ")) in progress", anchor: anchor)
+        let server = await Self.languages.existingServer(for: file, boardRoot: root)
+        let busy = await server?.activity ?? []
+        if !busy.isEmpty { return showMessage("\(text) yet — \(busy.joined(separator: ", ")) in progress", anchor: anchor) }
+        showMessage([text, server?.config.emptyResultHint].compactMap { $0 }.joined(separator: ". "), anchor: anchor)
     }
 
     /// Same file: re-aim this tile. Another file (or `newTile`): a code tile beside this one.
     private func open(_ location: LSPLocation, newTile: Bool) {
         guard let host else { return }
         let path = boardPath(location.url)
-        let start = location.range.start.line + 1
-        let range = JSONValue.object(["start": .number(Double(start)), "end": .number(Double(max(start, location.range.end.line + 1)))])
+        let lines = location.range.lines
+        let range = JSONValue.object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
         if !newTile, path == boardPath(board.absoluteURL(host.navigationPath)) {
             _ = try? board.update(tile, props: .object(["range": range]))
         } else {
@@ -248,6 +283,7 @@ final class CodeNavigation: NSObject {
         guard let scroll = textView.enclosingScrollView, let container = scroll.superview else { return }
         let button = OutlineButton(image: NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "Outline") ?? NSImage(), target: self, action: #selector(outlineClicked(_:)))
         button.toolTip = "Outline"
+        button.onDetach = { [weak self] in self?.dismissAll() }
         let size: CGFloat = 20
         let top = container.isFlipped ? 4 : container.bounds.height - size - 4
         button.frame = NSRect(x: container.bounds.width - size - 18, y: top, width: size, height: size)
@@ -262,7 +298,6 @@ final class CodeNavigation: NSObject {
     }
 
     func showOutline(anchor: NSPoint) {
-        dismissHover()
         run(anchor: anchor) { [weak self] file, root in
             let symbols = LSPSymbol.flatten(try await Self.languages.documentSymbols(file: file, boardRoot: root))
             guard let self else { return }
@@ -323,11 +358,14 @@ final class CodeNavigation: NSObject {
 
     // MARK: Plumbing
 
-    /// Runs one explicit action (superseding the previous) and shows its failure where it was
-    /// asked for: an uninstalled or crashed server is reported, not swallowed.
+    /// Runs one explicit action (superseding the previous one and any hover) and shows its
+    /// failure where it was asked for: an uninstalled or crashed server is reported, not swallowed.
     private func run(anchor: NSPoint, _ action: @escaping @MainActor (URL, URL) async throws -> Void) {
+        cancelPendingHover()
+        dismissHover()
         guard let file else { return }
         let root = board.root
+        lease(file)
         actionTask?.cancel()
         actionTask = Task { [weak self] in
             do {
@@ -347,6 +385,24 @@ final class CodeNavigation: NSObject {
     private func present(_ panel: NavigationPanel, anchor: NSPoint) {
         guard let textView else { return }
         panel.show(below: anchor, lineHeight: lineHeight, in: textView)
+        observeTileFrame(textView)
+        self.panel = panel
+    }
+
+    /// Panels sit in the canvas document, not the tile, so a moved or resized tile would leave
+    /// them behind: dismiss them when the tile's frame changes.
+    private func observeTileFrame(_ textView: NSTextView) {
+        guard !observingTileFrame,
+              let tileView = sequence(first: textView as NSView, next: \.superview).first(where: { $0.superview is CanvasDocumentView }) else { return }
+        observingTileFrame = true
+        NotificationCenter.default.addObserver(self, selector: #selector(dismissAll), name: NSView.frameDidChangeNotification, object: tileView)
+    }
+
+    /// Keeps the shown file open in its language server (re-synced before each request) while
+    /// this view shows it.
+    private func lease(_ file: URL) {
+        guard lease?.file != file else { return }
+        lease = DocumentLease(file: file, root: board.root)
     }
 
     /// One app-level monitor for every code view: ⌘/⌥⌘-click and right-click on a host's text
@@ -386,6 +442,10 @@ final class CodeNavigation: NSObject {
 /// The outline button over a code view: works on the first click into a background window and
 /// never takes keyboard focus.
 private final class OutlineButton: NSButton {
+    /// The button lives inside the tile, so it learns when the tile leaves the window (deleted)
+    /// or is hidden (zoomed out, offscreen).
+    var onDetach: (() -> Void)?
+
     convenience init(image: NSImage, target: AnyObject, action: Selector) {
         self.init(frame: .zero)
         self.image = image
@@ -398,4 +458,46 @@ private final class OutlineButton: NSButton {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { onDetach?() }
+    }
+
+    override func viewDidHide() {
+        super.viewDidHide()
+        onDetach?()
+    }
+}
+
+/// A code view's claim on its file in the language service. Retains and releases go through one
+/// ordered stream (a release must never overtake its retain), and dropping the lease — a new
+/// file, or the view going away — releases it.
+private final class DocumentLease: Sendable {
+    let file: URL
+    let root: URL
+
+    private static let changes: AsyncStream<(retain: Bool, file: URL, root: URL)>.Continuation = {
+        let (stream, continuation) = AsyncStream.makeStream(of: (retain: Bool, file: URL, root: URL).self)
+        Task {
+            for await change in stream {
+                if change.retain {
+                    await CodeNavigation.languages.retain(file: change.file, boardRoot: change.root)
+                } else {
+                    await CodeNavigation.languages.release(file: change.file, boardRoot: change.root)
+                }
+            }
+        }
+        return continuation
+    }()
+
+    init(file: URL, root: URL) {
+        self.file = file
+        self.root = root
+        Self.changes.yield((true, file, root))
+    }
+
+    deinit {
+        Self.changes.yield((false, file, root))
+    }
 }

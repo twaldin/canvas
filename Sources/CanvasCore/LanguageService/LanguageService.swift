@@ -19,6 +19,8 @@ public actor LanguageService {
     private var lastUse: [Key: Int] = [:]
     private var uses = 0
     private var idleTimers: [Key: (token: Int, task: Task<Void, Never>)] = [:]
+    /// Files code views show, with how many views retain each (see `retain`).
+    private var retained: [URL: Int] = [:]
 
     public init(configs: [LanguageServerConfig] = LanguageServerConfig.defaults, idleTimeout: Duration = .seconds(300),
                 maxRunning: Int = 4, shell: LoginShell = .shared) {
@@ -55,8 +57,27 @@ public actor LanguageService {
 
     /// The server that would answer for `file`, if one exists (running, crashed, or starting).
     public func existingServer(for file: URL, boardRoot: URL) -> LanguageServer? {
-        guard let (config, file) = config(for: file) else { return nil }
-        return servers[Key(language: config.language, root: config.projectRoot(for: file, within: boardRoot.resolvingSymlinksInPath()))]
+        key(for: file, boardRoot: boardRoot).flatMap { servers[$0] }
+    }
+
+    /// A code view shows `file`: keep it open in its server between requests (re-synced from
+    /// disk before each one) until every view that retained it releases it.
+    public func retain(file: URL, boardRoot: URL) async {
+        let file = file.resolvingSymlinksInPath()
+        retained[file, default: 0] += 1
+        guard retained[file] == 1, let server = existingServer(for: file, boardRoot: boardRoot) else { return }
+        await server.pin(file)
+    }
+
+    public func release(file: URL, boardRoot: URL) async {
+        let file = file.resolvingSymlinksInPath()
+        guard let count = retained[file] else { return }
+        guard count <= 1 else {
+            retained[file] = count - 1
+            return
+        }
+        retained[file] = nil
+        await existingServer(for: file, boardRoot: boardRoot)?.unpin(file)
     }
 
     /// The source line of each location (trimmed), reading every file once, for reference lists.
@@ -80,11 +101,15 @@ public actor LanguageService {
         return configs.first { $0.languageID(for: file) != nil }.map { ($0, file) }
     }
 
+    private func key(for file: URL, boardRoot: URL) -> Key? {
+        guard let (config, file) = config(for: file) else { return nil }
+        return Key(language: config.language, root: config.projectRoot(for: file, within: boardRoot.resolvingSymlinksInPath()))
+    }
+
     private func server(for file: URL, boardRoot: URL) throws -> (LanguageServer, URL) {
-        guard let (config, file) = config(for: file) else {
+        guard let (config, file) = config(for: file), let key = key(for: file, boardRoot: boardRoot) else {
             throw LSPError.unsupportedLanguage(file.pathExtension.isEmpty ? file.lastPathComponent : ".\(file.pathExtension) files")
         }
-        let key = Key(language: config.language, root: config.projectRoot(for: file, within: boardRoot.resolvingSymlinksInPath()))
         let server: LanguageServer
         if let existing = servers[key] {
             server = existing
@@ -95,7 +120,8 @@ public actor LanguageService {
             if servers.count >= maxRunning, let oldest = lastUse.min(by: { $0.value < $1.value })?.key {
                 retire(oldest)
             }
-            server = LanguageServer(config: config, root: key.root, executable: executable, environment: shell.environment, live: live)
+            let pinned = Set(retained.keys.filter { self.key(for: $0, boardRoot: boardRoot) == key })
+            server = LanguageServer(config: config, root: key.root, executable: executable, environment: shell.environment, live: live, pinned: pinned)
             servers[key] = server
         }
         touch(key)
@@ -146,8 +172,13 @@ public actor LanguageService {
         }
     }
 
-    /// App quit: no time to await actors; tell every server to exit and signal it.
-    public nonisolated func terminateAll() {
-        live.terminateAll()
+    /// Server processes spawned and not yet reaped.
+    public nonisolated var liveProcessCount: Int { live.count }
+
+    /// App quit: tells every server process to exit, SIGTERMs it, and SIGKILLs any still alive
+    /// after `grace`; returns once they're reaped. Needs no actor, so it can't queue behind a
+    /// busy registry.
+    public nonisolated func terminateAll(grace: Duration = .seconds(2)) async {
+        await live.terminateAll(grace: grace)
     }
 }

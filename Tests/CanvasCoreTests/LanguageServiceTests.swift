@@ -50,6 +50,61 @@ struct HoverMarkdownTests {
     }
 }
 
+struct LSPRangeTests {
+    let identifier = LSPRange(start: LSPPosition(line: 2, character: 4), end: LSPPosition(line: 2, character: 9))
+
+    @Test func theEndIsExclusive() {
+        #expect(identifier.contains(LSPPosition(line: 2, character: 4)))
+        #expect(identifier.contains(LSPPosition(line: 2, character: 8)))
+        #expect(!identifier.contains(LSPPosition(line: 2, character: 9)))
+        #expect(!identifier.contains(LSPPosition(line: 2, character: 3)))
+    }
+
+    @Test func boardLinesAreOneBasedInclusiveAndDropAnEndAtColumnZero() {
+        #expect(identifier.lines == LineRange(start: 3, end: 3))
+        let wholeLines = LSPRange(start: LSPPosition(line: 4, character: 0), end: LSPPosition(line: 7, character: 0))
+        #expect(wholeLines.lines == LineRange(start: 5, end: 7))
+        let intoLastLine = LSPRange(start: LSPPosition(line: 4, character: 2), end: LSPPosition(line: 7, character: 1))
+        #expect(intoLastLine.lines == LineRange(start: 5, end: 8))
+        let empty = LSPRange(start: LSPPosition(line: 4, character: 0), end: LSPPosition(line: 4, character: 0))
+        #expect(empty.lines == LineRange(start: 5, end: 5))
+    }
+}
+
+/// Shells with misbehaving startup files, written as scripts that stand in for `$SHELL`.
+final class LoginShellTests {
+    let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("cv-shell-\(UUID().uuidString.prefix(8))")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    func shell(_ body: String) throws -> String {
+        let url = dir.appendingPathComponent("shell-\(UUID().uuidString.prefix(4))")
+        try "#!/bin/sh\n\(body)\n".write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url.path
+    }
+
+    @Test func aChildHoldingTheOutputOpenDoesNotStallTheLookup() throws {
+        let login = LoginShell(shell: try shell("sleep 30 &\necho /bin/ls"), timeout: .seconds(10))
+        let start = ContinuousClock.now
+        #expect(login.resolve("ls") == URL(fileURLWithPath: "/bin/ls"))
+        #expect(start.duration(to: .now) < .seconds(3))
+    }
+
+    @Test func aHangingShellIsKilledAtTheDeadline() throws {
+        let login = LoginShell(shell: try shell("sleep 30"), timeout: .seconds(1))
+        let start = ContinuousClock.now
+        #expect(login.resolve("ls") == nil)
+        #expect(start.duration(to: .now) < .seconds(3))
+    }
+}
+
 /// Temp projects driven through the real language servers installed on this machine.
 @MainActor
 final class LanguageServiceTests {
@@ -121,6 +176,22 @@ final class LanguageServiceTests {
             models.map { $0.area() }.reduce(0, +)
         }
         """)
+        // Canvas turns sourcekit-lsp's background indexing off; the index comes from the user's
+        // own build, as it would for a repo someone works in.
+        // Off the main actor: other suites' tests share it while the build runs.
+        let packagePath = dir.path
+        let buildStatus = try await Task.detached {
+            let build = Process()
+            build.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+            build.arguments = ["build", "-j", "2", "--package-path", packagePath]
+            build.standardOutput = FileHandle.nullDevice
+            build.standardError = FileHandle.nullDevice
+            try build.run()
+            build.waitUntilExit()
+            return build.terminationStatus
+        }.value
+        #expect(buildStatus == 0)
+
         let service = LanguageService()
         let area = LSPPosition(line: 2, character: 14)
 
@@ -137,7 +208,7 @@ final class LanguageServiceTests {
         let definition = try await service.definition(file: use, boardRoot: dir, at: area)
         #expect(lines(definition) == ["Model.swift:4"])
 
-        // References come from sourcekit-lsp's background index, which builds the package first.
+        // The index store from that build is read as sourcekit-lsp starts up.
         var references: [LSPLocation] = []
         _ = try await eventually(180) {
             references = try await service.references(file: use, boardRoot: dir, at: area)
@@ -153,6 +224,8 @@ final class LanguageServiceTests {
         try write("Sources/Lib/Use.swift", "func buildModel() -> Model { Model(width: 1, height: 1) }\n")
         #expect(try await service.documentSymbols(file: use, boardRoot: dir).map(\.name) == ["buildModel()"])
         await service.stopAll()
+        // Opening the package never made sourcekit-lsp build it (background indexing is off).
+        #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent(".build/index-build").path))
     }
 
     /// A loose Swift file (no package) gets sourcekit-lsp's fallback settings: cheap, no indexing.
@@ -162,7 +235,7 @@ final class LanguageServiceTests {
 
     @Test func idleServerIsShutDown() async throws {
         let file = try looseSwiftFile()
-        let service = LanguageService(idleTimeout: .seconds(1))
+        let service = LanguageService(idleTimeout: .seconds(3))
         #expect(try await service.documentSymbols(file: file, boardRoot: dir).map(\.name) == ["Circle", "unit()"])
         let pid = try #require(await pid(service, file))
         #expect(Self.isAlive(pid))
@@ -214,6 +287,116 @@ final class LanguageServiceTests {
         }
     }
 
+    // MARK: Lifecycle with stand-in servers
+
+    /// A server that never answers initialize (and never reads its input).
+    func silentServer(_ language: String, ignoringSIGTERM: Bool = false) -> LanguageServerConfig {
+        let script = ignoringSIGTERM ? "trap '' TERM; exec /usr/bin/tail -f /dev/null" : "exec /usr/bin/tail -f /dev/null"
+        return LanguageServerConfig(language: language, command: "/bin/sh", arguments: ["-c", script], languageIDs: [language: language], rootMarkers: [])
+    }
+
+    func startingPid(_ service: LanguageService, _ file: URL) async -> Int32? {
+        var pid: Int32?
+        _ = await eventually(10) {
+            pid = await service.existingServer(for: file, boardRoot: dir)?.pid
+            return pid != nil
+        }
+        return pid
+    }
+
+    @Test func stoppingAServerThatIsStillStartingKillsIt() async throws {
+        let file = try write("a.hang", "x\n")
+        let service = LanguageService(configs: [silentServer("hang")])
+        let request = Task { try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
+        let pid = try #require(await startingPid(service, file))
+        await service.stopAll()
+        #expect(!Self.isAlive(pid))
+        await #expect(throws: LSPError.self) { try await request.value }
+        #expect(await service.existingServer(for: file, boardRoot: dir) == nil)
+        #expect(service.liveProcessCount == 0)
+    }
+
+    @Test func evictingAServerThatIsStillStartingKillsItAndKeepsItOut() async throws {
+        let first = try write("a.one", "x\n")
+        let second = try write("b.two", "x\n")
+        let service = LanguageService(configs: [silentServer("one"), silentServer("two")], maxRunning: 1)
+        let firstRequest = Task { try await service.hover(file: first, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
+        let firstPid = try #require(await startingPid(service, first))
+        let secondRequest = Task { try await service.hover(file: second, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
+        _ = try #require(await startingPid(service, second))
+        #expect(await eventually(10) { !Self.isAlive(firstPid) })
+        await #expect(throws: LSPError.self) { try await firstRequest.value }
+        #expect(await service.existingServer(for: first, boardRoot: dir) == nil)
+        await service.stopAll()
+        await #expect(throws: LSPError.self) { try await secondRequest.value }
+        #expect(service.liveProcessCount == 0)
+    }
+
+    @Test func quitKillsAServerThatIgnoresSIGTERM() async throws {
+        let file = try write("a.hang", "x\n")
+        let service = LanguageService(configs: [silentServer("hang", ignoringSIGTERM: true)])
+        let request = Task { try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
+        let pid = try #require(await startingPid(service, file))
+        let start = ContinuousClock.now
+        await service.terminateAll(grace: .milliseconds(500))
+        #expect(start.duration(to: .now) < .seconds(3))
+        #expect(!Self.isAlive(pid))
+        #expect(service.liveProcessCount == 0)
+        await #expect(throws: LSPError.self) { try await request.value }
+    }
+
+    @Test func aServerThatDiesDuringInitializeLeavesNothingBehind() async throws {
+        let file = try write("a.dead", "x\n")
+        let config = LanguageServerConfig(language: "dead", command: "/usr/bin/false", languageIDs: ["dead": "dead"], rootMarkers: [])
+        let service = LanguageService(configs: [config])
+        await #expect(throws: LSPError.self) { try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
+        #expect(service.liveProcessCount == 0)
+        if case .crashed? = await service.existingServer(for: file, boardRoot: dir)?.status {} else {
+            Issue.record("a failed start is reported as crashed")
+        }
+    }
+
+    /// Answers initialize, then never reads its input again.
+    func deafServer() throws -> LanguageServerConfig {
+        let script = try write("deaf.py", """
+        import sys, json
+        stdin = sys.stdin.buffer
+        length = 0
+        while True:
+            line = stdin.readline().strip()
+            if not line:
+                break
+            if line.lower().startswith(b"content-length:"):
+                length = int(line.split(b":")[1])
+        request = json.loads(stdin.read(length))
+        body = json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": {"capabilities": {}}}).encode()
+        sys.stdout.buffer.write(b"Content-Length: %d\\r\\n\\r\\n" % len(body) + body)
+        sys.stdout.buffer.flush()
+        import time
+        time.sleep(600)
+        """)
+        return LanguageServerConfig(language: "deaf", command: "/usr/bin/python3", arguments: [script.path], languageIDs: ["deaf": "deaf"], rootMarkers: [])
+    }
+
+    @Test func aServerThatStopsReadingCannotBlockCancellation() async throws {
+        // Far more than a pipe buffer: the didOpen can't be written while the server isn't reading.
+        let file = try write("big.deaf", String(repeating: "let value = 1\n", count: 400_000))
+        let service = LanguageService(configs: [try deafServer()])
+        let request = Task { try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
+        _ = try #require(await startingPid(service, file))
+        #expect(await eventually(10) {
+            if case .running? = await service.existingServer(for: file, boardRoot: dir)?.status { return true }
+            return false
+        })
+        let start = ContinuousClock.now
+        request.cancel()
+        await #expect(throws: CancellationError.self) { try await request.value }
+        #expect(start.duration(to: .now) < .seconds(2))
+        // The registry isn't stuck behind the pending write either.
+        await service.stopAll()
+        #expect(service.liveProcessCount == 0)
+    }
+
     // MARK: pyright
 
     nonisolated static let hasPyright = LoginShell.shared.resolve("pyright-langserver") != nil
@@ -233,6 +416,25 @@ final class LanguageServiceTests {
         #expect(lines(try await service.definition(file: use, boardRoot: dir, at: shape)) == ["shapes.py:0"])
         #expect(lines(try await service.references(file: use, boardRoot: dir, at: shape)) == ["shapes.py:0", "use.py:0", "use.py:2", "use.py:3"])
         #expect(try await service.documentSymbols(file: use, boardRoot: dir).map(\.name) == ["total"])
+        await service.stopAll()
+    }
+
+    @Test(.enabled(if: hasPyright)) func openDocumentsFollowDiskAndCloseWhenReleased() async throws {
+        let (shapes, use) = try pythonProject()
+        let service = LanguageService()
+        let shape = LSPPosition(line: 3, character: 9)
+        await service.retain(file: shapes, boardRoot: dir)
+        #expect(try await service.documentSymbols(file: shapes, boardRoot: dir).map(\.name) == ["Shape"])
+        let server = try #require(await service.existingServer(for: shapes, boardRoot: dir))
+        // Only the retained file stays open; the request's own document closes after it.
+        #expect(await server.openDocumentCount == 1)
+
+        // shapes.py changes on disk while a request is about another file.
+        try write("py/shapes.py", "\n\n\nclass Shape:\n    def area(self) -> int:\n        return 1\n")
+        #expect(lines(try await service.definition(file: use, boardRoot: dir, at: shape)) == ["shapes.py:3"])
+
+        await service.release(file: shapes, boardRoot: dir)
+        #expect(await server.openDocumentCount == 0)
         await service.stopAll()
     }
 

@@ -27,8 +27,17 @@ public struct LSPRange: Sendable, Hashable {
         self.end = end
     }
 
+    /// Half-open, as LSP ranges are: the end position is just past the last character.
     public func contains(_ position: LSPPosition) -> Bool {
-        (start.line, start.character) <= (position.line, position.character) && (position.line, position.character) <= (end.line, end.character)
+        (start.line, start.character) <= (position.line, position.character) && (position.line, position.character) < (end.line, end.character)
+    }
+
+    /// The 1-based inclusive lines the range covers, as board `range` props store them. A
+    /// multi-line range ending at column 0 stops on the line before.
+    public var lines: LineRange {
+        let first = start.line + 1
+        let last = end.character == 0 && end.line > start.line ? end.line : end.line + 1
+        return LineRange(start: first, end: max(first, last))
     }
 
     init?(_ json: JSONValue?) {

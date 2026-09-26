@@ -154,13 +154,15 @@ final class LineClient: @unchecked Sendable {
         }
     }
 
-    /// Next response line, failing after `timeout` seconds.
-    func next(timeout: Double = 5) async throws -> JSONValue {
+    /// Next response line, failing after `timeout` seconds. Generous because every suite shares
+    /// the main actor, and on a loaded machine the suites' setup (git lookups per board) can hold
+    /// it for seconds; the timeout only detects hangs.
+    func next(timeout: Double = 30) async throws -> JSONValue {
         try JSONDecoder().decode(JSONValue.self, from: try await nextLine(timeout: timeout))
     }
 
     /// Next response line as text, for protocols that answer some commands outside JSON.
-    func nextText(timeout: Double = 5) async throws -> String {
+    func nextText(timeout: Double = 30) async throws -> String {
         String(decoding: try await nextLine(timeout: timeout), as: UTF8.self)
     }
 

@@ -63,7 +63,9 @@ struct DrawnItem {
                 let width = max(20, frame.width - 16)
                 let size = attributed.boundingRect(with: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
                 label = attributed
-                labelRect = NSRect(x: frame.midX - width / 2, y: frame.midY - size.height / 2, width: width, height: ceil(size.height))
+                // Tight around the text: the label hits, the rest of the interior stays see-through.
+                let tight = min(width, ceil(size.width) + 8)
+                labelRect = NSRect(x: frame.midX - tight / 2, y: frame.midY - size.height / 2, width: tight, height: ceil(size.height))
             }
         case .text:
             label = DrawingStyle.text(spec.text ?? "", size: DrawingStyle.textSize, color: DrawingStyle.color(spec.color))

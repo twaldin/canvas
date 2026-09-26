@@ -102,16 +102,22 @@ extension Board {
     @discardableResult
     public func undo() -> Bool {
         guard let step = history.popUndo() else { return false }
+        var replayed: [UndoHistory.Change] = []
         replay {
             for change in step.reversed() {
                 switch change {
-                case .created(let object): try? delete(object.id)
-                case .updated(let before, _): put(before)
-                case .deleted(let object): put(object)
+                case .created(let object):
+                    replayed.append(.created(removeLive(object)))
+                case .updated(let before, _):
+                    put(before)
+                    replayed.append(change)
+                case .deleted(let object):
+                    put(object)
+                    replayed.append(change)
                 }
             }
         }
-        history.pushRedo(step)
+        history.pushRedo(replayed.reversed())
         return true
     }
 
@@ -119,17 +125,32 @@ extension Board {
     @discardableResult
     public func redo() -> Bool {
         guard let step = history.popRedo() else { return false }
+        var replayed: [UndoHistory.Change] = []
         replay {
             for change in step {
                 switch change {
-                case .created(let object): put(object)
-                case .updated(_, let after): put(after)
-                case .deleted(let object): try? delete(object.id)
+                case .created(let object):
+                    put(object)
+                    replayed.append(change)
+                case .updated(_, let after):
+                    put(after)
+                    replayed.append(change)
+                case .deleted(let object):
+                    replayed.append(.deleted(removeLive(object)))
                 }
             }
         }
-        history.pushUndo(step)
+        history.pushUndo(replayed)
         return true
+    }
+
+    /// Deletes an object for undo/redo and returns what to bring back later: the live object,
+    /// whose content matches the recorded snapshot (later steps were already reverted) and whose
+    /// bookkeeping (agent session, lifecycle, title) is the latest the integrations reported.
+    private func removeLive(_ recorded: CanvasObject) -> CanvasObject {
+        guard let live = objects[recorded.id] else { return recorded }
+        try? delete(recorded.id)
+        return live
     }
 
     private func replay(_ body: () -> Void) {
@@ -141,14 +162,7 @@ extension Board {
     /// Brings an object back to `target`'s content: in place when it exists, else re-created
     /// with the same id and z (undo of a delete).
     private func put(_ target: CanvasObject) {
-        var object: CanvasObject
-        if let current = objects[target.id] {
-            object = UndoHistory.restoring(target, onto: current)
-            object.rev = current.rev + 1
-        } else {
-            object = target
-            object.rev = target.rev + 1
-        }
+        var object = objects[target.id].map { UndoHistory.restoring(target, onto: $0) } ?? target
         object.updatedAt = Date()
         object.updatedBy = .user
         restore(object)

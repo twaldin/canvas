@@ -11,6 +11,30 @@ Interfaces every slice builds against. The API wire format and object model live
 
 Both sockets are created with mode `0600`. The cmux subset lives on its own socket so it never shares method names with our API and can be removed in one step.
 
+### cmux browser subset
+
+Exactly what omp's cmux browser backend sends (`src/tools/browser/cmux/`), framed as cmux v2 JSON lines: requests `{"id","method","params"}`, replies `{"id","ok":true,"result"}` or `{"id","ok":false,"error":{"code","message"}}`. Surfaces are object ids: a terminal tile is the calling surface (`CMUX_SURFACE_ID`), a browser tile is a browser surface; workspaces are boards. Every browser result carries `surface_id`.
+
+Surface and workspace ids stay `obj_…`/`brd_…` on the wire, which omp 18.3 accepts; omp ≤18.1's owner inspection (`surface.list` via its surface-observation module) requires UUID ids and is unsupported.
+
+| Method | Params | Result |
+| --- | --- | --- |
+| `browser.open_split` | `url`, `surface_id` (caller), `workspace_id`, `focus` (ignored) | `surface_id`, `workspace_id`, `url`, `created_split`, `placement_strategy` — a browser tile beside the calling terminal |
+| `browser.navigate` / `back` / `forward` / `reload` | `url` (navigate) | `url` |
+| `browser.url.get` | — | `url`, `title` |
+| `browser.eval` | `script` (an expression, page world) | `value` |
+| `browser.snapshot` | `interactive`, `max_depth` | `snapshot` text, `refs` (`e1` → `{role,name}`), `page` (`title,url,ready_state`, plus `text,html` when not interactive) |
+| `browser.screenshot` | — | `png_base64` (one pixel per CSS pixel), `width`, `height` |
+| `browser.click` / `dblclick` / `hover` / `focus` / `check` / `uncheck` / `scroll_into_view` | `selector` (CSS or snapshot ref `@e3`) | — |
+| `browser.type` / `browser.fill` | `selector`, `text` | — |
+| `browser.press` | `key` (`Enter`, `Tab`, `Shift+Tab`, a character, …) | — |
+| `browser.scroll` | `dx`, `dy` | `scroll_x`, `scroll_y` |
+| `browser.wait` | one of `load_state` (`interactive`/`complete`), `url_contains`, `selector`; `timeout_ms` | `url` |
+| `surface.list` | `surface_id` or `workspace_id` | `workspace_id`, `window_id` (null), `surfaces` (`id`, `type`, `title`, `url`) |
+| `surface.close` | `surface_id` (browser only) | — |
+
+Error codes: `invalid_params`, `not_found`, `method_not_found`, `unauthorized`, `timeout`, `js_error`, `unavailable`. The plain-text line `auth <password>` answers `OK: …` or `ERROR: …`.
+
 ## Terminal tile environment
 
 Every terminal tile's process (inside zmx) gets:
@@ -25,10 +49,25 @@ Every terminal tile's process (inside zmx) gets:
 | `CMUX_SOCKET_PATH` | cmux subset socket path |
 | `CMUX_SURFACE_ID` | This tile's object id |
 | `CMUX_WORKSPACE_ID` | This board's id |
+| `CMUX_SOCKET_PASSWORD` | Only when the app was launched with it; the cmux socket then requires `auth <password>` |
 
 Integrations report only when `CANVAS_ENV=1` and the variables they need are present, so they are no-ops outside the app.
 
 zmx session names: `canvas-<tileId>`, labelled `canvas.board=<boardId> canvas.tile=<tileId>`. Names stay short because zmx sockets live under `$TMPDIR/zmx-<uid>` (a long `/var/folders/…` path for GUI apps) and a socket path is capped at 104 bytes. Tiles inherit the app's `TMPDIR`, so `zmx list` inside a tile shows canvas sessions.
+
+## On-disk locations
+
+| Path | Holds | Owner |
+| --- | --- | --- |
+| `~/Library/Application Support/Canvas/boards/<boardId>.json` | Stored boards (`CANVAS_HOME` relocates the whole directory) | App |
+| `<board root>/.canvas/board.json` | `board.export` snapshot (default path), for committing with the repo | Written on request only |
+| `clients/python/canvas_sdk/builtin_compositions/`, `clients/ts/src/builtin_compositions/` | Shipped compositions, installed with each client (wheel, bundle, checkout) | Canvas |
+| `~/.canvas/compositions/` | The user's and agents' own compositions; searched first, so they shadow shipped ones | User/agents |
+| `skills/canvas/` (repo, or the bundle's `Resources/`) | The shipped agent skill; the omp extension announces it only when `CANVAS_ENV=1` | Canvas |
+
+## Compositions
+
+A composition is a module in a compositions directory. Functions whose first parameter is named `canvas` receive the connected client (all API namespaces plus `compositions`); other exports pass through unchanged. Python: `canvas.compositions.<name>.<fn>(…)`, `available()`, `reload()`. TypeScript: `client.compositions.<name>.<fn>(…)` (same surface; a file added to an already-loaded directory needs a new process because Bun caches directory listings).
 
 ## Object model rules
 

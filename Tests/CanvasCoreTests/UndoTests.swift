@@ -139,6 +139,52 @@ struct UndoTests {
         #expect(try board.object(back.id).z < board.object(front.id).z)
     }
 
+    @Test func recreatedObjectsNeverReuseARevision() throws {
+        let board = makeBoard()
+        let note = board.create(type: .note, props: .object(["markdown": .string("v1")]))
+        try board.update(note.id, props: .object(["markdown": .string("v2")]))
+        board.undo()
+        var highest = try board.object(note.id).rev
+        #expect(highest == 3)
+
+        // Undo the create, then redo it, several times: each incarnation is newer than the last.
+        for _ in 0..<3 {
+            board.undo()
+            #expect(board.objects[note.id] == nil)
+            board.redo()
+            let rev = try board.object(note.id).rev
+            #expect(rev > highest)
+            highest = rev
+        }
+        #expect(throws: BoardError.self, "a writer still holding rev 2 must conflict") {
+            try board.update(note.id, rev: 2, props: .object(["markdown": .string("stale")]))
+        }
+    }
+
+    @Test func undoingATerminalsCreationKeepsItsLatestBookkeepingForRedo() throws {
+        let board = makeBoard()
+        let agent = terminal(on: board)
+        try board.reportSession(tile: agent.id, kind: "omp", sessionId: "s-42", sessionPath: "/tmp/s-42.jsonl")
+        try board.reportLifecycle(tile: agent.id, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        try board.update(agent.id, props: .object(["title": .string("omp: refactor")]), caller: agent.id)
+
+        board.undo()
+        #expect(board.objects[agent.id] == nil)
+        board.redo()
+        let back = try board.object(agent.id)
+        #expect(back.props["agent"]?["sessionId"]?.string == "s-42", "resume metadata survives undo/redo")
+        #expect(back.props["lifecycle"]?["state"]?.string == "working")
+        #expect(back.props["title"]?.string == "omp: refactor")
+
+        // Same for redoing a delete after the restored terminal reports again.
+        try board.delete(agent.id)
+        board.undo()
+        try board.reportSession(tile: agent.id, kind: "omp", sessionId: "s-43", sessionPath: nil)
+        board.redo()
+        board.undo()
+        #expect(try board.object(agent.id).props["agent"]?["sessionId"]?.string == "s-43")
+    }
+
     @Test func historyIsBounded() throws {
         let board = makeBoard()
         let note = board.create(type: .note, props: .object(["n": .number(0)]))

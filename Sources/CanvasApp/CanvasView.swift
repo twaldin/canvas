@@ -76,9 +76,11 @@ final class CanvasView: NSScrollView {
     private(set) var selection: Set<ObjectID> = []
     /// The group being worked in: zoomed to, everything else dimmed.
     private(set) var enteredGroup: ObjectID?
-    private var shapeLayer: NSView?
+    /// Read by drawing-layer extensions (e.g. hiding handles while rendering an object image).
+    private(set) var shapeLayer: NSView?
 
     private var livenessScheduled = false
+    private var geometryDirty = false
     private var magnifying = false
     private var appliedScale: CGFloat = 0
     private var move: MoveGesture?
@@ -217,17 +219,13 @@ final class CanvasView: NSScrollView {
         case .objectCreated(let object):
             add(object)
             restack()
-            objectsMoved()
+            scheduleGeometry()
         case .objectUpdated(let object):
             if object.type == .group {
                 groups[object.id]?.update(object)
             } else if let tile = tiles[object.id] {
                 let rect = Self.docRect(object.frame)
-                if tile.frame != rect {
-                    tile.frame = rect
-                    // Moved (e.g. by an agent) into or out of view: re-run culling.
-                    scheduleLiveness()
-                }
+                if tile.frame != rect { tile.frame = rect }
                 let restacks = tile.z != object.z
                 tile.update(object)
                 if restacks { restack() }
@@ -235,7 +233,7 @@ final class CanvasView: NSScrollView {
             } else {
                 add(object)
             }
-            objectsMoved()
+            scheduleGeometry()
         case .objectDeleted(let id):
             tiles.removeValue(forKey: id)?.removeFromSuperview()
             groups.removeValue(forKey: id)?.removeFromSuperview()
@@ -243,7 +241,7 @@ final class CanvasView: NSScrollView {
             clearAttention(id)
             seenLocally.remove(id)
             if selection.contains(id) { setSelection(selection.subtracting([id])) }
-            objectsMoved()
+            scheduleGeometry()
         default: break
         }
     }
@@ -313,6 +311,14 @@ final class CanvasView: NSScrollView {
         shapeLayer = view
         document.addSubview(view, positioned: .below, relativeTo: overlay)
         restack()
+    }
+
+    /// Board changes re-lay out what's drawn around objects on the next turn, after every other
+    /// consumer of the event (the drawing layer's outlines) has caught up, then re-run culling,
+    /// edge chevrons, and seen eligibility, since an object may have moved into or out of view.
+    private func scheduleGeometry() {
+        geometryDirty = true
+        scheduleLiveness()
     }
 
     /// Geometry changed (moves, resizes, deletes, drags): everything drawn around objects follows.
@@ -385,7 +391,8 @@ final class CanvasView: NSScrollView {
     private func selectableRects() -> [(id: ObjectID, rect: NSRect)] {
         board.objects.values.compactMap { object in
             guard object.type != .group else { return nil }
-            return (object.id, tiles[object.id]?.frame ?? Self.drawnRect(object.frame))
+            // Drawn objects: rendered bounds (an arrow reroutes with its tiles without a frame write).
+            return (object.id, tiles[object.id]?.frame ?? shapeOutline?(object.id) ?? Self.drawnRect(object.frame))
         }
     }
 
@@ -539,7 +546,6 @@ final class CanvasView: NSScrollView {
                 if let bounds = memberBounds(group.members) { _ = try? board.update(group.objectID, frame: bounds) }
             }
         }
-        objectsMoved()
     }
 
     // MARK: Groups
@@ -633,19 +639,27 @@ final class CanvasView: NSScrollView {
         delete(Array(selection))
     }
 
-    /// Deletes objects as one undo step. Closing a terminal ends its zmx session, so ask first.
+    /// Deletes objects as one undo step. Closing a terminal ends its zmx session, so ask first,
+    /// in a sheet: an app-modal alert would stall every socket request until answered.
     func delete(_ ids: [ObjectID]) {
         guard !ids.isEmpty else { return }
-        let terminals = ids.compactMap { tiles[$0]?.content as? TerminalTile }
-        if !terminals.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = terminals.count == 1 ? "Close this terminal?" : "Close \(terminals.count) terminals?"
-            alert.informativeText = "Their zmx sessions (and anything running in them) will be ended."
-            alert.addButton(withTitle: "Close")
-            alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-            terminals.forEach { $0.killSession() }
+        let terminals = ids.filter { tiles[$0]?.content is TerminalTile }
+        guard !terminals.isEmpty else { return remove(ids) }
+        guard let window else { return }
+        let alert = NSAlert()
+        alert.messageText = terminals.count == 1 ? "Close this terminal?" : "Close \(terminals.count) terminals?"
+        alert.informativeText = "Their zmx sessions (and anything running in them) will be ended."
+        alert.addButton(withTitle: "Close")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            // The board may have changed while the sheet was up.
+            for id in terminals { (self.tiles[id]?.content as? TerminalTile)?.killSession() }
+            self.remove(ids.filter { self.board.objects[$0] != nil })
         }
+    }
+
+    private func remove(_ ids: [ObjectID]) {
         board.transaction {
             for id in ids.sorted() { try? board.delete(id) }
         }
@@ -803,7 +817,10 @@ final class CanvasView: NSScrollView {
         } else {
             let marker = AttentionMarker(objectID: id, message: message)
             marker.scale = magnification
-            marker.onClick = { [weak self] in self?.select(id, extend: false) }
+            marker.onClick = { [weak self] in
+                self?.clearAttention(id)
+                self?.select(id, extend: false)
+            }
             document.addSubview(marker, positioned: .below, relativeTo: overlay)
             markers[id] = marker
         }
@@ -905,6 +922,10 @@ final class CanvasView: NSScrollView {
     }
 
     private func updateScene() {
+        if geometryDirty {
+            geometryDirty = false
+            objectsMoved()
+        }
         // Mid-pinch, LOD flips and chrome rescaling wait for the gesture to end.
         if !magnifying {
             let scale = magnification

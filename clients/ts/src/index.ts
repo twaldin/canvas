@@ -1,8 +1,10 @@
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { type Compositions, createCompositions } from "./compositions";
 import { bindMethods, type CanvasApi } from "./generated";
 
+export * from "./compositions";
 export * from "./generated";
 
 export const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Canvas/canvas.sock");
@@ -33,6 +35,8 @@ export type CanvasClientOptions = {
   socketPath?: string;
   /** Per-call timeout. Omit for none (agent.wait can legitimately block for minutes). */
   timeoutMs?: number;
+  /** Where `compositions` looks; default `~/.canvas/compositions`, then the shipped `builtin_compositions/`. */
+  compositionsDirs?: string[];
 };
 
 /** Split a newline-delimited JSON stream into messages, keeping any partial trailing line. */
@@ -53,6 +57,8 @@ export class CanvasClient {
   readonly socketPath: string;
   readonly api: CanvasApi;
   readonly #timeoutMs: number | undefined;
+  readonly #compositionsDirs: string[] | undefined;
+  #compositions: Compositions | undefined;
   #socket: Promise<Socket> | undefined;
   #buffer = "";
   #nextId = 0;
@@ -61,7 +67,14 @@ export class CanvasClient {
   constructor(options: CanvasClientOptions = {}) {
     this.socketPath = options.socketPath ?? process.env.CANVAS_SOCKET ?? DEFAULT_SOCKET;
     this.#timeoutMs = options.timeoutMs;
+    this.#compositionsDirs = options.compositionsDirs;
     this.api = bindMethods((method, params) => this.call(method, params));
+  }
+
+  /** Reusable helpers, loaded on first access: `client.compositions.grid.arrange(ids)`. */
+  get compositions(): Compositions {
+    this.#compositions ??= createCompositions(this.api, this.#compositionsDirs);
+    return this.#compositions;
   }
 
   async call(method: string, params: object): Promise<unknown> {

@@ -15,15 +15,16 @@ final class TerminalTile: NSView, TileContent {
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
-        sessionName = "canvas-\(object.id)"
+        sessionName = Self.sessionName(object.id)
         terminal = TerminalView(frame: NSRect(x: 0, y: 0, width: object.frame.w, height: object.frame.h))
         super.init(frame: terminal.frame)
         terminal.autoresizingMask = [.width, .height]
+        let environment = Self.environment(tile: object.id, board: board)
         terminal.configuration = TerminalSurfaceOptions(
             backend: .exec,
             workingDirectory: object.props["cwd"]?.string ?? board.root.path,
-            envVars: Self.environment(tile: object.id, board: board),
-            command: Self.command(session: sessionName, object: object, board: board)
+            envVars: environment,
+            command: Self.command(session: sessionName, object: object, board: board, keep: Set(environment.keys))
         )
         terminal.controller = TerminalController.shared
         handler.tile = self
@@ -46,7 +47,12 @@ final class TerminalTile: NSView, TileContent {
             "CANVAS_TILE_ID": tile,
             "CANVAS_BOARD_ID": board.id,
             "CANVAS_BOARD_ROOT": board.root.path,
+            // omp's browser tool drives browser tiles through the cmux subset (docs/contracts.md).
+            "CMUX_SOCKET_PATH": AppPaths.cmuxSocket,
+            "CMUX_SURFACE_ID": tile,
+            "CMUX_WORKSPACE_ID": board.id,
         ]
+        if let password = AppPaths.cmuxPassword { env["CMUX_SOCKET_PASSWORD"] = password }
         if let resources = AppPaths.resources {
             let inherited = ProcessInfo.processInfo.environment
             env["PATH"] = resources.appendingPathComponent("bin").path + ":" + (inherited["PATH"] ?? "/usr/bin:/bin")
@@ -58,12 +64,14 @@ final class TerminalTile: NSView, TileContent {
 
     /// Shell-quoted command string (Ghostty takes a string, not argv). zmx ignores the trailing
     /// command when the session already exists, so it only runs for a new session.
-    static func command(session: String, object: CanvasObject, board: Board) -> String {
+    /// `keep`: the tile's own variables. `env -u` runs after Ghostty applied them, so an inherited
+    /// variable of the same name (a dev instance launched with CANVAS_SOCKET set) must not unset them.
+    static func command(session: String, object: CanvasObject, board: Board, keep: Set<String>) -> String {
         let shell = AppPaths.userShell
         let start = initialCommand(object).map { [shell, "-l", "-c", "\($0); exec \(quote([shell])) -l"] } ?? [shell, "-l"]
         guard let zmx = AppPaths.zmx else { return quote(start) }
         let strip = ProcessInfo.processInfo.environment.keys
-            .filter { key in strippedPrefixes.contains { key.hasPrefix($0) } }
+            .filter { key in !keep.contains(key) && strippedPrefixes.contains { key.hasPrefix($0) } }
             .sorted()
             .flatMap { ["-u", $0] }
         let labels = "canvas.board=\(board.id) canvas.tile=\(object.id)"
@@ -91,6 +99,32 @@ final class TerminalTile: NSView, TileContent {
         process.executableURL = URL(fileURLWithPath: zmx)
         process.arguments = ["kill", sessionName]
         try? process.run()
+    }
+
+    /// zmx session names stay short: socket paths under the GUI app's TMPDIR are capped (docs/contracts.md).
+    nonisolated static func sessionName(_ tile: ObjectID) -> String { "canvas-\(tile)" }
+
+    /// The last `limit` lines of the session's text; nil when zmx is missing or the session
+    /// doesn't exist. Streams zmx's output through a bounded tail (never the whole scrollback)
+    /// and blocks until zmx exits, so call it off the main actor when it isn't for drawing.
+    nonisolated static func history(session: String, lines limit: Int) -> (text: String, lines: Int)? {
+        guard let zmx = AppPaths.zmx else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: zmx)
+        process.arguments = ["history", session]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        // Drain while zmx writes: it blocks once the pipe buffer fills, so waiting first would deadlock.
+        var tail = TerminalTail(limit: limit)
+        let reader = output.fileHandleForReading
+        while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
+            tail.append(chunk)
+        }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return tail.finish()
     }
 
     // MARK: Input
@@ -124,22 +158,12 @@ final class TerminalTile: NSView, TileContent {
     /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so snapshots (LOD cards,
     /// `view.snapshot`, `object.get --as image`) render the tail of the zmx session's text instead.
     func snapshot() -> NSImage? {
-        guard let zmx = AppPaths.zmx, bounds.width > 0, bounds.height > 0 else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = ["history", sessionName]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
         let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         let lineHeight = ceil(font.ascender - font.descender + font.leading) + 2
         let rows = max(1, Int((bounds.height - 12) / lineHeight))
-        var lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false)
-        while lines.last?.allSatisfy(\.isWhitespace) == true { lines.removeLast() }
-        let visible = lines.suffix(rows)
+        guard let tail = Self.history(session: sessionName, lines: rows) else { return nil }
+        let visible = tail.text.split(separator: "\n", omittingEmptySubsequences: false)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(white: 0.85, alpha: 1)]
         return NSImage(size: bounds.size, flipped: true) { rect in
             NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.13, alpha: 1).setFill()

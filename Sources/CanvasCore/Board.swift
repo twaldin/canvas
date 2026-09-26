@@ -67,6 +67,9 @@ public final class Board {
     private var seenSinceWorking: Set<ObjectID> = []
     /// Highest accepted lifecycle seq per "tile|source".
     private var lifecycleSeq: [String: Int] = [:]
+    /// Highest `rev` ever issued per object, kept across deletes so an object brought back by
+    /// undo/redo never reuses a revision a stale writer might still hold.
+    private var revHighWater: [ObjectID: Int] = [:]
 
     public var onEvent: ((BoardEvent) -> Void)?
     /// Content changes by anyone, for ⌘Z; see UndoHistory.
@@ -150,8 +153,11 @@ public final class Board {
     }
 
     /// Undo/redo: puts an object state back verbatim (same id and z), announced as a normal change.
+    /// The object gets a revision newer than any it has ever had.
     func restore(_ object: CanvasObject) {
+        var object = object
         let existed = objects[object.id] != nil
+        object.rev = max(revHighWater[object.id] ?? 0, objects[object.id]?.rev ?? 0, object.rev) + 1
         commit(object)
         if existed {
             markMentionsEdited(for: object.id)
@@ -165,6 +171,7 @@ public final class Board {
         revision += 1
         objects[object.id] = object
         changedAt[object.id] = revision
+        revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
         onChange?()
     }
 

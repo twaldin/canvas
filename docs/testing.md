@@ -5,6 +5,7 @@
 ```sh
 swift run -j 4 CanvasCoreTests        # swift-testing suites for CanvasCore
 bun scripts/gen-clients.ts --check    # generated TS/Python clients match schema/canvas-api.json
+(cd clients/python && python3 -m unittest)   # Python SDK: compositions loading, shipped compositions
 ```
 
 `CanvasCoreTests` is an executable target, not a test target: with only the Command Line Tools installed, `swift test` doesn't discover swift-testing suites, so `main.swift` calls the swift-testing entry point. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.
@@ -60,6 +61,9 @@ Coordinates are window-content points from the top-left. Prefer Hyper clicks and
 - Terminal text: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) zmx history canvas-<tileId> | tail -n 40` (zmx keys its socket directory off `TMPDIR`; the GUI app's differs from a herdr pane's).
 - Create an omp tile: `scripts/dev.sh cli object.create --type terminal --json '{"props":{"cwd":"<repo>","command":["omp"]}}'`.
 - Prompt it and wait: `scripts/dev.sh cli agent.prompt --target <tileId> --text "…"`, then `scripts/dev.sh cli agent.wait --target <tileId> --timeoutMs 300000`.
+- Recent terminal text through the API: `scripts/dev.sh cli agent.read --target <tileId> --lines 40`.
+- Reboot resume: quit the app (`kill $(cat .canvas-home/pid)`), `zmx kill canvas-<tileId> --force`, `scripts/dev.sh start`. A tile whose session is gone reruns `props.command`, or resumes its recorded omp session with `omp --resume=<sessionId>` (the original flags, e.g. `-e <checkout extension>`, are not replayed, so the resumed omp loads the globally installed extension).
+- macOS notifications (agent done/blocked while the app is in the background) are never requested or posted with `CANVAS_NO_ACTIVATE=1`; `app.log` records "notification suppressed" instead.
 - The omp extension is installed globally as a symlink to the main checkout (`~/.omp/agent/extensions/canvas.ts`). To test a modified extension from another checkout, launch omp with `["omp", "--no-extensions", "-e", "<checkout>/extensions/omp/canvas.ts"]`.
 
 ### Hygiene

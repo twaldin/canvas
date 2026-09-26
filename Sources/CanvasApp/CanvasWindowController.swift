@@ -101,12 +101,16 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.createTerminal()
     }
 
+    /// A sheet, not `runModal`: a modal run loop would stall every socket request.
     @objc func openCodeTile(_ sender: Any?) {
+        guard let window else { return }
         let panel = NSOpenPanel()
         panel.directoryURL = board.root
         panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        board.create(type: .code, props: .object(["path": .string(board.relativePath(url.path)), "mode": .string("source")]))
+        panel.beginSheetModal(for: window) { [weak self, panel] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            self.board.create(type: .code, props: .object(["path": .string(self.board.relativePath(url.path)), "mode": .string("source")]))
+        }
     }
 
     @objc func zoomToActual(_ sender: Any?) {

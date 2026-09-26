@@ -10,7 +10,9 @@ final class CanvasDocumentView: NSView {
 
     weak var canvas: CanvasView?
 
-    override var isFlipped: Bool { true }
+    // nonisolated: AppKit asks on every coordinate transform, and the @objc thunk of a main-actor
+    // override otherwise pays a runtime executor check each time.
+    nonisolated override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     /// Canvas gestures work on the first click into an inactive window, like any canvas app.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

@@ -87,7 +87,7 @@ final class CodeTile: NSView, TileContent {
         }
     }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         let height = header.height

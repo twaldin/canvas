@@ -76,7 +76,7 @@ final class BrowserTile: NSView, TileContent {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     private var pageFrame: NSRect {
         NSRect(x: 0, y: Self.chromeHeight, width: bounds.width, height: max(0, bounds.height - Self.chromeHeight))
@@ -598,7 +598,7 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         let side: CGFloat = 24

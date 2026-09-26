@@ -234,7 +234,7 @@ final class ArrowLabelEditor: NSView, ShapeEditing, NSTextFieldDelegate, NSCombo
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     func begin() {
         session.begin(self, in: shapeLayer, focus: labelField)

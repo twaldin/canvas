@@ -39,7 +39,7 @@ final class CodeHeaderBar: NSView {
     private var current: Location?
     private var captionText: String?
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)

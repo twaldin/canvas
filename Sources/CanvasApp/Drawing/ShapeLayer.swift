@@ -129,7 +129,7 @@ final class ShapeLayer: NSView {
         rerouteAvoiding()
     }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
     /// Drawing never takes the keyboard: it stays with the prompt-target terminal. Only the
     /// inline editors take focus, and they hand it back when they close.
     override var acceptsFirstResponder: Bool { false }

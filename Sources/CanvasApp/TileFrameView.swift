@@ -79,7 +79,7 @@ final class TileFrameView: NSView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {

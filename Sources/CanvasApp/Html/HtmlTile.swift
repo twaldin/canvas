@@ -37,7 +37,7 @@ final class HtmlTile: NSView, TileContent {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     var objectID: ObjectID { object.id }
     var html: String { object.props["html"]?.string ?? "" }

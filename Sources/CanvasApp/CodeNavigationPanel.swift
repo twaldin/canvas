@@ -44,7 +44,7 @@ final class NavigationPanel: NSView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         let shape = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 7, yRadius: 7)
@@ -148,7 +148,7 @@ final class NavigationPanel: NSView {
 }
 
 private final class FlippedView: NSView {
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 }
 
 /// One clickable list row. Accepts the first click so a row works even when the window isn't

@@ -99,9 +99,10 @@ final class TerminalTile: NSView, TileContent {
     /// zmx session names stay short: socket paths under the GUI app's TMPDIR are capped (docs/contracts.md).
     nonisolated static func sessionName(_ tile: ObjectID) -> String { "canvas-\(tile)" }
 
-    /// The session's scrollback as plain text; nil when zmx is missing or the session doesn't exist.
-    /// Blocks until zmx exits.
-    nonisolated static func history(session: String) -> String? {
+    /// The last `limit` lines of the session's text; nil when zmx is missing or the session
+    /// doesn't exist. Streams zmx's output through a bounded tail (never the whole scrollback)
+    /// and blocks until zmx exits, so call it off the main actor when it isn't for drawing.
+    nonisolated static func history(session: String, lines limit: Int) -> (text: String, lines: Int)? {
         guard let zmx = AppPaths.zmx else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: zmx)
@@ -110,10 +111,15 @@ final class TerminalTile: NSView, TileContent {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
+        // Drain while zmx writes: it blocks once the pipe buffer fills, so waiting first would deadlock.
+        var tail = TerminalTail(limit: limit)
+        let reader = output.fileHandleForReading
+        while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
+            tail.append(chunk)
+        }
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        return tail.finish()
     }
 
     // MARK: Input
@@ -147,13 +153,12 @@ final class TerminalTile: NSView, TileContent {
     /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so snapshots (LOD cards,
     /// `view.snapshot`, `object.get --as image`) render the tail of the zmx session's text instead.
     func snapshot() -> NSImage? {
-        guard bounds.width > 0, bounds.height > 0, let text = Self.history(session: sessionName) else { return nil }
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
         let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         let lineHeight = ceil(font.ascender - font.descender + font.leading) + 2
         let rows = max(1, Int((bounds.height - 12) / lineHeight))
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        while lines.last?.allSatisfy(\.isWhitespace) == true { lines.removeLast() }
-        let visible = lines.suffix(rows)
+        guard let tail = Self.history(session: sessionName, lines: rows) else { return nil }
+        let visible = tail.text.split(separator: "\n", omittingEmptySubsequences: false)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(white: 0.85, alpha: 1)]
         return NSImage(size: bounds.size, flipped: true) { rect in
             NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.13, alpha: 1).setFill()

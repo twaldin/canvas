@@ -78,9 +78,9 @@ public final class ApiRouter {
     public var submitToTerminal: ((Board, ObjectID, String) -> Bool)?
     /// PNG of the board's window as currently shown.
     public var snapshotBoard: ((Board) -> (png: Data, width: Int, height: Int)?)?
-    /// Full scrollback text of a terminal tile's session, read off the main actor; nil when the
-    /// session doesn't exist.
-    public var readTerminal: ((Board, ObjectID) async -> String?)?
+    /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`), read and
+    /// trimmed off the main actor; nil when the session doesn't exist.
+    public var readTerminal: ((Board, ObjectID, _ lines: Int) async -> (text: String, lines: Int)?)?
     public static let schemaVersion = 1
     static let readLinesDefault = 100
     static let readLinesMax = 2000
@@ -232,20 +232,14 @@ public final class ApiRouter {
         let requested = p["lines"]?.int ?? Self.readLinesDefault
         guard requested >= 1 else { throw Failure("invalid_params", "lines must be at least 1") }
         guard let readTerminal else { throw Failure("unsupported", "reading terminals needs the app UI") }
-        guard let text = await readTerminal(board, terminal.id) else {
+        guard let tail = await readTerminal(board, terminal.id, min(requested, Self.readLinesMax)) else {
             throw Failure("unavailable", "terminal \(terminal.id) has no running session")
         }
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { (line: Substring) -> Substring in
-            guard let last = line.lastIndex(where: { !$0.isWhitespace }) else { return line[line.startIndex..<line.startIndex] }
-            return line[...last]
-        }
-        while lines.last?.isEmpty == true { lines.removeLast() }
-        let tail = lines.suffix(min(requested, Self.readLinesMax))
         let current = board.objects[terminal.id] ?? terminal
         return .object([
             "agent": agentEntry(current, on: board),
-            "text": .string(tail.joined(separator: "\n")),
-            "lines": .number(Double(tail.count)),
+            "text": .string(tail.text),
+            "lines": .number(Double(tail.lines)),
         ])
     }
 
@@ -265,11 +259,20 @@ public final class ApiRouter {
             return .object(result)
 
         case "board.list":
-            // Open boards may have unsaved changes; flush so counts and times are current.
-            registry.store.flush(Array(registry.boards.values))
+            // Open boards are the truth for root and contents: a moved worktree's new root and any
+            // unsaved edits aren't on disk yet. The save time stays the disk's.
             var stored = registry.store.list()
-            for board in registry.boards.values where !stored.contains(where: { $0.id == board.id }) {
-                stored.append(.init(id: board.id, root: board.root.path, archived: !BoardStore.isDirectory(board.root.path), updatedAt: nil, objectCount: board.objects.count))
+            for board in registry.boards.values {
+                let index: Int
+                if let found = stored.firstIndex(where: { $0.id == board.id }) {
+                    index = found
+                } else {
+                    stored.append(.init(id: board.id, root: "", archived: false, updatedAt: nil, objectCount: 0))
+                    index = stored.count - 1
+                }
+                stored[index].root = board.root.path
+                stored[index].archived = !BoardStore.isDirectory(board.root.path)
+                stored[index].objectCount = board.objects.count
             }
             let boards = stored.map { entry -> JSONValue in
                 var info: [String: JSONValue] = [

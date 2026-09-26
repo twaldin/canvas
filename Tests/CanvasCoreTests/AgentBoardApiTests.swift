@@ -12,6 +12,8 @@ final class AgentBoardApiTests {
     let board: Board
     /// Session text per terminal tile; tiles without an entry have no session.
     var sessions: [ObjectID: String] = [:]
+    /// Line caps the router asked the app to read.
+    var readLimits: [Int] = []
 
     init() throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
@@ -23,7 +25,13 @@ final class AgentBoardApiTests {
             await router.handle(request, connection: connection)
         }
         try server.start()
-        router.readTerminal = { [unowned self] _, tile in sessions[tile] }
+        router.readTerminal = { [unowned self] _, tile, lines in
+            readLimits.append(lines)
+            guard let text = sessions[tile] else { return nil }
+            var tail = TerminalTail(limit: lines)
+            tail.append(Data(text.utf8))
+            return tail.finish()
+        }
     }
 
     deinit {
@@ -71,6 +79,7 @@ final class AgentBoardApiTests {
         let tile = terminal()
         sessions[tile] = (1...5000).map(String.init).joined(separator: "\n")
         let reply = try await call("agent.read", #"{"target":"\#(tile)","lines":100000}"#)
+        #expect(readLimits == [2000], "the app never reads more than the cap")
         #expect(reply["result"]?["lines"] == .number(2000))
         #expect(reply["result"]?["text"]?.string?.hasPrefix("3001\n") == true)
     }
@@ -113,6 +122,43 @@ final class AgentBoardApiTests {
         #expect(byID[board.id]?["objects"] == .number(1), "unsaved changes of open boards are counted")
         #expect(byID[fresh.id]?["updatedAt"] == nil, "a board never saved has no save time")
         #expect(byID[fresh.id]?["archived"] == .bool(false))
+    }
+
+    @Test func listReportsAnOpenBoardAtItsCurrentRootAfterItsWorktreeMoved() async throws {
+        let repo = dir.appendingPathComponent("repo")
+        let before = dir.appendingPathComponent("wt-before")
+        let after = dir.appendingPathComponent("wt-after")
+        try git("init", "-q", "-b", "main", repo.path)
+        try git("-C", repo.path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+        try git("-C", repo.path, "worktree", "add", "-q", "-b", "feature", before.path)
+        let original = registry.open(root: before)
+        original.create(type: .note, props: .object(["markdown": .string("n")]))
+        registry.store.flush([original])
+        registry.close(original.id)
+        let savedAt = try #require(registry.store.list().first { $0.id == original.id }?.updatedAt)
+
+        try git("-C", repo.path, "worktree", "move", before.path, after.path)
+        let moved = registry.open(root: after)
+        #expect(moved.id == original.id, "a board follows its branch, not its path")
+
+        let boards = try #require(try await call("board.list")["result"]?["boards"]?.array)
+        let entry = try #require(boards.first { $0["board"] == .string(moved.id) })
+        #expect(entry["root"] == .string(after.path))
+        #expect(entry["archived"] == .bool(false))
+        #expect(entry["open"] == .bool(true))
+        #expect(entry["objects"] == .number(1))
+        #expect(entry["updatedAt"] == .string(savedAt.formatted(.iso8601)), "the save time is the disk's")
+    }
+
+    func git(_ arguments: String...) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { throw CocoaError(.executableLoad, userInfo: [NSLocalizedDescriptionKey: "git \(arguments.joined(separator: " ")) failed"]) }
     }
 
     // MARK: board.export

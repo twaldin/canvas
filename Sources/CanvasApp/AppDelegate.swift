@@ -38,8 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return terminal.paste(text, submit: true)
         }
         router.snapshotBoard = { [weak self] board in self?.controllers[board.id]?.snapshotPNG() }
-        router.readTerminal = { _, tile in
-            await Task.detached { TerminalTile.history(session: TerminalTile.sessionName(tile)) }.value
+        router.readTerminal = { _, tile, lines in
+            await Task.detached { TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines) }.value
         }
         router.objectImage = { [weak self] board, id in
             guard let image = self?.controllers[board.id]?.canvas.tiles[id]?.content.snapshot(),

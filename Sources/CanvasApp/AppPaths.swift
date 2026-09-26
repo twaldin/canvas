@@ -11,6 +11,9 @@ enum AppPaths {
     }()
     static let apiSocket = support.appendingPathComponent("canvas.sock").path
     static let cmuxSocket = support.appendingPathComponent("cmux.sock").path
+    /// Launching the app with CMUX_SOCKET_PASSWORD makes the cmux socket require it; terminal
+    /// tiles get it in their environment. Without it the socket relies on its 0600 mode.
+    static let cmuxPassword: String? = ProcessInfo.processInfo.environment["CMUX_SOCKET_PASSWORD"].flatMap { $0.isEmpty ? nil : $0 }
     static let boards = support.appendingPathComponent("boards", isDirectory: true)
 
     /// A bundled asset from the repo's `resources/` directory (copied into the app bundle by

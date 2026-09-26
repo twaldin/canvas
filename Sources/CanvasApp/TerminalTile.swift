@@ -47,7 +47,12 @@ final class TerminalTile: NSView, TileContent {
             "CANVAS_TILE_ID": tile,
             "CANVAS_BOARD_ID": board.id,
             "CANVAS_BOARD_ROOT": board.root.path,
+            // omp's browser tool drives browser tiles through the cmux subset (docs/contracts.md).
+            "CMUX_SOCKET_PATH": AppPaths.cmuxSocket,
+            "CMUX_SURFACE_ID": tile,
+            "CMUX_WORKSPACE_ID": board.id,
         ]
+        if let password = AppPaths.cmuxPassword { env["CMUX_SOCKET_PASSWORD"] = password }
         if let resources = AppPaths.resources {
             let inherited = ProcessInfo.processInfo.environment
             env["PATH"] = resources.appendingPathComponent("bin").path + ":" + (inherited["PATH"] ?? "/usr/bin:/bin")

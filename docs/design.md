@@ -90,6 +90,12 @@ flowchart TB
 ### Language service
 
 - The app owns its language servers: one per (language, root), lazy start, idle shutdown, shared by all tiles. Tree-sitter parses are cached per file (path + content hash).
+  - Root: the nearest project marker above the file (Package.swift, pyproject.toml, tsconfig.json/package.json, go.mod, Cargo.toml, …), never above the board root. Servers: sourcekit-lsp, pyright-langserver, typescript-language-server, gopls, rust-analyzer; a missing binary is reported as unavailable.
+  - Binaries and PATH come from the login shell (`$SHELL -lc`), resolved once: GUI apps get launchd's minimal PATH, and script servers (pyright) need node on it.
+  - Idle shutdown after 5 minutes without requests; at most 4 servers at once (least recently used stops first); all terminated on app quit. A crashed server surfaces its exit reason and restarts on the next request.
+  - Documents are synced from disk before each request (didOpen, then full didChange when the text changed), so no file watching is needed.
+  - Code views implement `CodeNavigationHost`; `CodeNavigation` adds hover (500 ms, cancelled on move), ⌘-click definition (same file re-aims the tile, other files open a tile beside it, ⌥⌘ always opens one), Find References and Outline. Their popovers live in the canvas document, so they pan/zoom with the tile, never take focus, and appear in `view.snapshot`.
+  - sourcekit-lsp answers from fallback settings until SwiftPM has loaded the package and from an empty index until background indexing (a `swift build` into `.build/index-build`) finishes; empty answers during that time say so.
 - omp keeps its own servers for now. Later: `canvas lsp-proxy <server>` configured as omp's server command, so each root runs one server.
 
 ### API and clients

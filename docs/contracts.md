@@ -59,6 +59,22 @@ Arrows, shapes, and groups have no tile; the canvas draws them.
 
 Tiles never read or write the board store directly; they go through the board model on the main actor, which persists and broadcasts events.
 
+### Code navigation
+
+Code views get language features by conforming to `CodeNavigationHost` (`Sources/CanvasApp/CodeNavigation.swift`) and attaching a `CodeNavigation(host:board:tile:)`:
+
+```swift
+@MainActor
+protocol CodeNavigationHost: AnyObject {
+    var navigationPath: String { get }                           // board-relative path (new side of a diff)
+    var navigationTextView: NSTextView { get }
+    func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)?  // point in navigationTextView; 1-based line, 0-based UTF-16 column; nil on deleted rows/gutters
+    func reveal(line: Int)                                       // scroll a 1-based line into view
+}
+```
+
+The controller adds a tracking area to the text view, handles ⌘/⌥⌘-click and right-click on it through an app-level event monitor (Hyper stays with `HyperMonitor`), extends the view's own `menu(for:)` rather than replacing it, and places an Outline button at the top right of the scroll view's superview. Going to a definition in the same file re-aims the tile with `object.update` of `props.range` (`{start, end}`, 1-based), so hosts must follow range updates.
+
 ## Mention context format
 
 `tray.drain` returns a `context` string that the omp extension injects as hidden context with the submitted prompt. Shape:

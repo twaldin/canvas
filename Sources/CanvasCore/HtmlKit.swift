@@ -1,0 +1,92 @@
+import Foundation
+
+/// Filesystem and network boundaries for HTML tiles: which board files a page may read, which
+/// kit files the `canvas-kit:` scheme serves, and which hosts the content rule list lets through.
+public enum HtmlKit {
+    public static let scheme = "canvas-kit"
+    /// Every tile's page is `canvas-kit://html/<tileId>`; the kit is served beside it under `/kit/`,
+    /// so kit URLs are same-origin with the page.
+    public static let host = "html"
+    public static let kitPrefix = "/kit/"
+
+    public static func pageURL(tile: ObjectID) -> URL {
+        URL(string: "\(scheme)://\(host)/\(tile)")!
+    }
+
+    /// The board file a page asks for. Paths are board-relative and must stay inside the root even
+    /// after symlinks resolve; absolute paths, `~`, and `..` components are rejected outright.
+    public static func boardFile(_ path: String, root: URL) throws -> (relative: String, url: URL) {
+        guard !path.isEmpty, !path.contains("\0"), !path.hasPrefix("/"), !path.hasPrefix("~") else { throw HtmlError.outsideRoot(path) }
+        let components = path.split(separator: "/", omittingEmptySubsequences: true).filter { $0 != "." }
+        guard !components.isEmpty, !components.contains("..") else { throw HtmlError.outsideRoot(path) }
+        let relative = components.joined(separator: "/")
+        let rootPath = root.standardizedFileURL.resolvingSymlinksInPath().path
+        let url = root.appendingPathComponent(relative).standardizedFileURL.resolvingSymlinksInPath()
+        guard url.path.hasPrefix(rootPath + "/") else { throw HtmlError.outsideRoot(path) }
+        return (relative, url)
+    }
+
+    /// The kit file for a `canvas-kit:` request path (`/kit/…`, already percent-decoded by URL),
+    /// or nil when it isn't a regular file inside `kitRoot`.
+    public static func kitFile(requestPath: String, kitRoot: URL) -> URL? {
+        guard requestPath.hasPrefix(kitPrefix) else { return nil }
+        let components = requestPath.dropFirst(kitPrefix.count).split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty, !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." || $0.contains("\0") }) else { return nil }
+        let rootPath = kitRoot.standardizedFileURL.resolvingSymlinksInPath().path
+        let url = kitRoot.appendingPathComponent(components.joined(separator: "/")).standardizedFileURL.resolvingSymlinksInPath()
+        var isDirectory: ObjCBool = false
+        guard url.path.hasPrefix(rootPath + "/"), FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { return nil }
+        return url
+    }
+
+    public static func mimeType(_ url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "js", "mjs": "text/javascript"
+        case "css": "text/css"
+        case "html": "text/html"
+        case "json": "application/json"
+        case "svg": "image/svg+xml"
+        case "png": "image/png"
+        case "woff2": "font/woff2"
+        default: "application/octet-stream"
+        }
+    }
+
+    // MARK: Network
+
+    /// Normalizes one `props.allowNetwork` entry: `host`, `host:port`, or `*.host` (the host and
+    /// its subdomains). Anything else (schemes, paths, wildcards elsewhere) is not an allowlist
+    /// entry and is ignored, so a malformed entry never opens more than it names.
+    public static func allowedHost(_ entry: String) -> String? {
+        let lower = entry.lowercased()
+        var host = lower.hasPrefix("*.") ? String(lower.dropFirst(2)) : lower
+        if let colon = host.lastIndex(of: ":") {
+            let port = host[host.index(after: colon)...]
+            guard (1...5).contains(port.count), port.allSatisfy(\.isASCII), port.allSatisfy(\.isNumber), let value = Int(port), (1...65535).contains(value) else { return nil }
+            host = String(host[..<colon])
+        }
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...253).contains(host.count), labels.allSatisfy({ label in
+            (1...63).contains(label.count) && label.first != "-" && label.last != "-"
+                && label.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-") }
+        }) else { return nil }
+        return lower
+    }
+
+    /// WKContentRuleList JSON: block every http(s)/ws(s)/file load, then let allowlisted hosts
+    /// through. WebKit's rule regexes have no alternation, hence one exception rule per host.
+    public static func networkRules(allow entries: [String]) -> String {
+        var rules: [[String: Any]] = ["^https?:", "^wss?:", "^file:"].map {
+            ["trigger": ["url-filter": $0], "action": ["type": "block"]]
+        }
+        for entry in Set(entries.compactMap(allowedHost)).sorted() {
+            let wildcard = entry.hasPrefix("*.")
+            let name = wildcard ? String(entry.dropFirst(2)) : entry
+            let hasPort = name.contains(":")
+            let pattern = "^[a-z]+://" + (wildcard ? "([^/:]+\\.)?" : "") + name.replacingOccurrences(of: ".", with: "\\.") + (hasPort ? "/" : "[:/]")
+            rules.append(["trigger": ["url-filter": pattern], "action": ["type": "ignore-previous-rules"]])
+        }
+        let data = try! JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
+    }
+}

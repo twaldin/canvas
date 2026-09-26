@@ -16,12 +16,13 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="$repo/.canvas-home"
 app="$repo/.build/Canvas.app"
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
-# The testing Space: CANVAS_DEV_SPACE, else the first Space of the "CanvasTest" BetterDisplay virtual
-# screen (a headless monitor, so the window renders while nobody looks at it), else Space 8.
+# The testing Space: CANVAS_DEV_SPACE, else the first Space of the BetterDisplay virtual screen
+# named CANVAS_DEV_DISPLAY (default "CanvasTest"; a headless monitor, so the window renders while
+# nobody looks at it), else Space 8. Parallel agents each get their own screen (CanvasTest2, …).
 # CANVAS_DEV_SPACE=8 puts the window where Tim watches.
 test_space() {
   if [ -n "${CANVAS_DEV_SPACE:-}" ]; then echo "$CANVAS_DEV_SPACE"; return; fi
-  id="$(betterdisplaycli get --name=CanvasTest --identifiers 2>/dev/null | sed -n 's/.*"displayID" : "\([0-9]*\)".*/\1/p' | head -n 1)"
+  id="$(betterdisplaycli get --name="${CANVAS_DEV_DISPLAY:-CanvasTest}" --identifiers 2>/dev/null | sed -n 's/.*"displayID" : "\([0-9]*\)".*/\1/p' | head -n 1)"
   space="$([ -n "$id" ] && "$yabai" -m query --displays 2>/dev/null | python3 -c "import json,sys; print(next((d['spaces'][0] for d in json.load(sys.stdin) if d['id']==$id), ''))" 2>/dev/null)"
   echo "${space:-8}"
 }

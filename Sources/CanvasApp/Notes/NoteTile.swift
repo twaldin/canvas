@@ -224,6 +224,10 @@ final class NoteTile: NSView, TileContent {
         return self
     }
 
+    /// The canvas often sits behind the app the user is typing in (the prompt goes to a
+    /// terminal, dictation pastes there); a click on a note link should act, not just focus.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if event.clickCount >= 2 {

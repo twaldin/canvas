@@ -79,6 +79,12 @@ Read more with the canvas SDK or CLI: canvas get <id> --as graph|image
 
 Rules: numbered in staging order; each entry is one location line plus an optional short excerpt (at most 12 lines: mentioned lines marked `>`, with up to 3 unmarked lines of surrounding context while it fits); edited-since-staging entries are marked `(edited)`; the block is omitted entirely when the tray is empty.
 
+Code entries from a code tile in diff mode name the base the lines were read against (`· diff vs merge-base 1a2b3c4`, or `HEAD`/`commit`); lines on the deleted side add `, old side` and their excerpt comes from the base version of the file. A mention's `side` is `old` or `new` in diff mode and absent in source mode.
+
+## Git
+
+All git in the app runs through `GitRunner.shared` (CanvasCore), which caps concurrent git processes at two and sets `GIT_OPTIONAL_LOCKS=0` so reads never contend with agents for the index lock. Code tiles diff through `GitDiffEngine.shared`; it posts `Notification.Name.gitDiffBaseChanged` (object: the repository's top-level path) when a commit, checkout, rebase, or fetch moves a resolved base.
+
 ## Lifecycle authority
 
 - The omp extension is authoritative for omp tiles (`source: "canvas-omp"`).

@@ -68,7 +68,9 @@ final class CodeTextView: NSTextView {
     /// The visible text drawn in-process. TextKit 2 renders fragments into layers that
     /// `cacheDisplay` never captures, so `view.snapshot` and zoomed-out cards use this instead.
     func renderVisible() -> NSImage? {
-        let rect = visibleRect
+        // The clip view's rect, not visibleRect: a tile half outside the window still covers
+        // its whole scroll view with the image.
+        let rect = enclosingScrollView?.documentVisibleRect ?? visibleRect
         guard rect.width > 0, rect.height > 0, let rep = bitmapImageRepForCachingDisplay(in: rect),
               let bitmap = NSGraphicsContext(bitmapImageRep: rep), let layout = textLayoutManager,
               let content = layout.textContentManager else { return nil }

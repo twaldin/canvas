@@ -288,7 +288,7 @@ extension CodeTile {
     /// Scroll to the hunk after (or before) the one nearest the top of the view.
     private func jumpToHunk(forward: Bool) {
         guard let display = rendered?.display, let diff, !diff.hunks.isEmpty else { return }
-        let visibleTop = text.row(at: NSPoint(x: 0, y: scroll.contentView.bounds.minY + text.textContainerOrigin.y + 1)) ?? 0
+        let visibleTop = text.row(at: NSPoint(x: 0, y: scroll.contentView.bounds.minY + 1)) ?? 0
         // The view parks a jump target three rows below the top; measure from there.
         let anchor = visibleTop + 3
         let headers = diff.hunks.indices.compactMap { display.headerRow(ofHunk: $0) }

@@ -83,7 +83,7 @@ public enum MentionContext {
         return out.joined(separator: "\n")
     }
 
-    /// One-line description with spatial relations: what a shape encloses and its arrows.
+    /// One-line description with spatial relations: what a shape encloses, what it's drawn on, and its arrows.
     static func describe(_ object: CanvasObject, on board: Board) -> String {
         let author = object.createdBy == .user ? "drawn by user" : "by agent"
         var parts = ["\(object.type.rawValue) \(object.id)"]
@@ -96,6 +96,14 @@ public enum MentionContext {
             for (_, spec) in board.arrows(enclosedBy: object) {
                 let relation = spec.relation.map { " (\($0))" } ?? ""
                 parts.append("· inner arrow \(endName(spec.from)) → \(endName(spec.to))\(relation)")
+            }
+            // A box drawn on top of something (a tile region, a bigger box) points at part of it:
+            // name the topmost object underneath that contains it, and where, in its local units.
+            let region = object.frame.rect
+            if let host = board.objects.values.filter({ $0.type != .arrow && $0.type != .group && $0.z < object.z && $0.frame.rect.contains(region) }).max(by: { $0.z < $1.z }) {
+                let local = region.offsetBy(dx: -host.frame.rect.minX, dy: -host.frame.rect.minY)
+                parts.append(String(format: "· over %@ %@ at (%.0f, %.0f) %.0f×%.0f", host.type.rawValue, host.id,
+                                    Double(local.minX), Double(local.minY), Double(local.width), Double(local.height)))
             }
         }
         for arrow in board.objects.values where arrow.type == .arrow {

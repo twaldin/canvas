@@ -154,7 +154,7 @@ struct BoardTests {
         #expect(capped.contains("    …"))
     }
 
-    @Test func drawnShapeMentionDescribesWhatItEncloses() async throws {
+    @Test func drawnShapeMentionDescribesWhatItEnclosesAndWhatItIsDrawnOn() async throws {
         let board = makeBoard()
         let inner = board.create(type: .note, props: .object(["markdown": .string("inside")]), frame: Frame(x: 20, y: 20, w: 50, h: 50))
         let box = board.create(type: .shape, props: .object(["kind": .string("rect"), "text": .string("auth path?")]), frame: Frame(x: 0, y: 0, w: 200, h: 200))
@@ -162,5 +162,17 @@ struct BoardTests {
         let context = await board.drain().context
         #expect(context.contains("drawn by user"))
         #expect(context.contains("encloses \(inner.id)"))
+        #expect(!context.contains("· over"), "nothing lies under the box")
+
+        let page = board.create(type: .browser, props: .object(["url": .string("http://localhost/")]), frame: Frame(x: 1000, y: 0, w: 600, h: 400))
+        let upper = board.create(type: .browser, props: .object(["url": .string("http://localhost/b")]), frame: Frame(x: 1000, y: 0, w: 600, h: 400))
+        let circle = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 1240, y: 200, w: 125, h: 120))
+        let straddling = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 1500, y: 300, w: 200, h: 50))
+        try board.stage(.object(circle.id))
+        try board.stage(.object(straddling.id))
+        let over = await board.drain().context
+        #expect(over.contains("\(circle.id) \"ellipse\" (drawn by user) · over browser \(upper.id) at (240, 200) 125×120"), "the topmost containing tile, in its local units")
+        #expect(!over.contains(page.id))
+        #expect(!over.contains("\(straddling.id) \"rect\" (drawn by user) · over"), "a box that only partly covers a tile isn't drawn on it")
     }
 }

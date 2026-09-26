@@ -160,11 +160,12 @@ Groups (`type: group`, props `{members, name?}`, frame = union of member frames)
     …
 [2] dom http://localhost:3000/login · button#submit "Sign in" · browser tile obj_…
 [3] shape rect obj_… "auth path?" (drawn by user) · encloses obj_…, obj_… · arrow → obj_… (hypothesis_about)
+[4] shape ellipse obj_… (drawn by user) · over browser obj_… at (240, 200) 125×120
 Read more with the canvas SDK or CLI: canvas get <id> --as graph|image
 </canvas-mentions>
 ```
 
-Rules: numbered in staging order; each entry is one location line plus an optional short excerpt (at most 12 lines: mentioned lines marked `>`, with up to 3 unmarked lines of surrounding context while it fits); edited-since-staging entries are marked `(edited)`; the block is omitted entirely when the tray is empty.
+Rules: numbered in staging order; each entry is one location line plus an optional short excerpt (at most 12 lines: mentioned lines marked `>`, with up to 3 unmarked lines of surrounding context while it fits); edited-since-staging entries are marked `(edited)`; the block is omitted entirely when the tray is empty. A shape drawn on top of something names the topmost object under it that contains it (`over <type> <id>`) and where, in that object's local board units (a browser tile's page starts below its 32 pt address bar).
 
 ## Note fences
 

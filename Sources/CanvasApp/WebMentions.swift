@@ -69,8 +69,21 @@ enum WebMentions {
         const text = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || el.value || '').trim().replace(/\s+/g, ' ').slice(0, 120);
         return { selector: selectorFor(el), text, x: r.left, y: r.top, w: r.width, h: r.height };
       }
+      // Overlays that ignore the pointer (HUDs, badges, labels) are still what the user sees and
+      // points at: hit-test once more with pointer-events forced on, and take that element when it
+      // carries text. Textless ones (scrims, vignettes) stay transparent to mentions.
+      let reach;
+      function hit(x, y) {
+        const normal = document.elementFromPoint(x, y);
+        if (!reach) { reach = new CSSStyleSheet(); reach.replaceSync('*, *::before, *::after { pointer-events: auto !important; }'); }
+        const sheets = document.adoptedStyleSheets;
+        let over;
+        document.adoptedStyleSheets = [...sheets, reach];
+        try { over = document.elementFromPoint(x, y); } finally { document.adoptedStyleSheets = sheets; }
+        return over && over !== normal && !over.contains(normal) && (over.innerText || '').trim() ? over : normal;
+      }
       window.__canvasMentions = {
-        at(x, y) { const el = document.elementFromPoint(x, y); return el ? describe(el) : null; },
+        at(x, y) { const el = hit(x, y); return el ? describe(el) : null; },
         find(sel) { try { const el = document.querySelector(sel); return el ? describe(el) : null; } catch { return null; } },
       };
     })();

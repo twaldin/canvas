@@ -38,10 +38,11 @@ When the user Hyper-clicks things on the canvas and then prompts you, the prompt
   > 41   export async function restore(id: string) {
 [2] dom http://localhost:3000/login · button#submit "Sign in" · browser tile obj_B
 [3] shape rect obj_C "auth path?" (drawn by user) · encloses obj_A · arrow → obj_D (hypothesis_about)
+[4] shape ellipse obj_E (drawn by user) · over browser obj_B at (240, 200) 125×120
 </canvas-mentions>
 ```
 
-"this", "these", "here", "that box" in the prompt refer to these entries, in order. Excerpts are short; read the real file or `canvas get <id>` for more. A drawn shape means nothing by itself: read what it encloses and connects (`canvas get <id> --as graph`) or look at it (`--as image`). An `(edited)` marker means the object changed after the user staged it.
+"this", "these", "here", "that box" in the prompt refer to these entries, in order. Excerpts are short; read the real file or `canvas get <id>` for more. A drawn shape means nothing by itself: read what it encloses and connects (`canvas get <id> --as graph`) or look at it (`--as image`). A shape `over` a tile marks a region of it, in the tile's local units: look at that part with `canvas get <tile> --as image`. An `(edited)` marker means the object changed after the user staged it.
 
 To see the canvas as the user does: `canvas view.snapshot --out /tmp/canvas.png`, then read the PNG.
 

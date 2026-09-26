@@ -32,7 +32,12 @@ final class CodeNavigation: NSObject {
         guard languages.liveProcessCount > 0 else { return .terminateNow }
         Task.detached {
             await languages.terminateAll(grace: .seconds(2))
-            await MainActor.run { NSApp.reply(toApplicationShouldTerminate: true) }
+            // While termination is deferred the main run loop runs only in the modal-panel mode,
+            // which doesn't service the main queue (so not MainActor jobs either).
+            RunLoop.main.perform(inModes: [.modalPanel, .default]) {
+                MainActor.assumeIsolated { NSApp.reply(toApplicationShouldTerminate: true) }
+            }
+            CFRunLoopWakeUp(CFRunLoopGetMain())
         }
         return .terminateLater
     }

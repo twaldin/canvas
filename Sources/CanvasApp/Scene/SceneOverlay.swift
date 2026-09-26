@@ -27,7 +27,7 @@ final class SceneOverlay: NSView {
     /// Current magnification, so strokes keep a constant on-screen width when zoomed out.
     var scale: CGFloat = 1 { didSet { if scale != oldValue, !rings.isEmpty || outline != nil { needsDisplay = true } } }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     private var stroke: CGFloat { 1 / max(scale, 0.05) }

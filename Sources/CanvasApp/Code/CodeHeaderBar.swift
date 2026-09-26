@@ -34,7 +34,7 @@ final class CodeHeaderBar: NSView {
     private var history: [Location] = []
     private var current: Location?
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)

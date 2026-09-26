@@ -31,7 +31,7 @@ final class GroupView: NSView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func update(_ object: CanvasObject) {
@@ -56,12 +56,23 @@ final class GroupView: NSView {
     private var displayTitle: String { spec.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Group" }
 
     /// The title's hit and draw area in view coordinates: the band, grown upward when zoomed out.
+    /// Hit testing asks on every scroll event and cursor rects on every pan frame, so the text
+    /// width is measured once per title and zoom.
     var titleRect: NSRect {
         let height = CGFloat(GroupSpec.titleHeight) * titleFactor
-        let text = (displayTitle as NSString).size(withAttributes: [.font: titleFont])
-        let width = min(bounds.width, text.width + 28 * titleFactor)
+        let key = TitleKey(title: displayTitle, factor: titleFactor)
+        if titleWidth?.key != key {
+            titleWidth = (key, (displayTitle as NSString).size(withAttributes: [.font: titleFont]).width)
+        }
+        let width = min(bounds.width, (titleWidth?.width ?? 0) + 28 * titleFactor)
         return NSRect(x: 0, y: 0, width: width, height: height)
     }
+
+    private struct TitleKey: Equatable {
+        let title: String
+        let factor: CGFloat
+    }
+    private var titleWidth: (key: TitleKey, width: CGFloat)?
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden, let superview else { return nil }

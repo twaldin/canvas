@@ -31,7 +31,7 @@ final class AttentionMarker: NSView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     private var factor: CGFloat { min(1 / max(scale, 0.01), 4) }
 
@@ -90,7 +90,7 @@ final class AttentionEdgeView: NSView {
     var onReveal: ((ObjectID) -> Void)?
     private var chevrons: [EdgeChevron] = []
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
@@ -136,7 +136,7 @@ private final class EdgeChevron: NSView {
     private static let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white]
     private var text: NSString { ((message?.isEmpty == false ? message! : "Attention") as NSString) }
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
 
     override var fittingSize: NSSize {
         let width = min(text.size(withAttributes: Self.attributes).width, 240)

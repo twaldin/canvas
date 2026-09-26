@@ -44,7 +44,10 @@ final class HyperMonitor {
             updateHover(canvas, event: event, active: hyper)
             return event
         case .leftMouseDown where hyper:
-            if let (tile, point) = canvas.tile(atWindowPoint: event.locationInWindow) {
+            if let shape = canvas.shape(atWindowPoint: event.locationInWindow) {
+                Self.toggle(.object(shape), on: canvas.board)
+                restoreFocus(canvas)
+            } else if let (tile, point) = canvas.tile(atWindowPoint: event.locationInWindow) {
                 let content = tile.content
                 let fallback = MentionTarget.object(tile.objectID)
                 Task { @MainActor [weak self] in
@@ -98,6 +101,9 @@ final class HyperMonitor {
             return
         }
         hoverContext = (canvas, point)
+        if let shape = canvas.shape(atWindowPoint: point) {
+            return canvas.showOutline(docRect: canvas.shapeOutline?(shape))
+        }
         guard let (tile, local) = canvas.tile(atWindowPoint: point) else { return canvas.showOutline(nil, in: nil) }
         let target = tile.content.mentionTarget(at: local) ?? .object(tile.objectID)
         canvas.showOutline(tile.content.outline(for: target) ?? tile.content.bounds, in: tile)

@@ -215,7 +215,27 @@ final class CanvasView: NSScrollView {
         overlay.outline = overlay.convert(rect, from: tile.content)
     }
 
+    func showOutline(docRect: NSRect?) {
+        overlay.outline = docRect.map { overlay.convert($0, from: document) }
+    }
+
+    /// Tiles and drawn objects wholly inside a document rect.
     func objects(inDocRect rect: NSRect) -> [ObjectID] {
-        tiles.filter { rect.contains($0.value.frame) }.map(\.key).sorted()
+        board.objects.values.filter { object in
+            let frame = tiles[object.id]?.frame ?? NSRect(x: object.frame.x + CanvasDocumentView.origin.x, y: object.frame.y + CanvasDocumentView.origin.y, width: object.frame.w, height: object.frame.h)
+            return object.type != .group && rect.contains(frame)
+        }.map(\.id).sorted()
+    }
+
+    // MARK: Drawn objects (installed by the drawing layer)
+
+    /// The shape or arrow drawn at a document point. Only strokes, text, and fills hit, so an
+    /// empty shape interior never blocks the tiles beneath; drawn objects sit above tiles.
+    var shapeHitTest: ((NSPoint) -> ObjectID?)?
+    /// Document-space outline of a drawn object, for hover highlights.
+    var shapeOutline: ((ObjectID) -> NSRect?)?
+
+    func shape(atWindowPoint point: NSPoint) -> ObjectID? {
+        shapeHitTest?(document.convert(point, from: nil))
     }
 }

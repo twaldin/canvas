@@ -30,6 +30,13 @@ quit() {
   kill "$pid"
   i=0
   while kill -0 "$pid" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  # A wedged instance must not outlive its pid file: restart would start a second one on the
+  # same sockets and boards.
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "Canvas $pid did not quit; killing it" >&2
+    kill -9 "$pid"
+    while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+  fi
   rm -f "$home/pid"
 }
 

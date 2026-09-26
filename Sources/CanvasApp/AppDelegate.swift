@@ -17,9 +17,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = Self.makeMenu()
         // `kill <pid>` (scripts, logout) quits through the normal path so boards are flushed.
+        // The signal is received off the main queue and handed to the main run loop in every
+        // mode, because an app-modal session (NSAlert.runModal, NSOpenPanel) doesn't drain the
+        // main queue; sheets and modal sessions are ended first since either one holds up
+        // `terminate`.
         signal(SIGTERM, SIG_IGN)
-        let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        termination.setEventHandler { NSApp.terminate(nil) }
+        let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+        termination.setEventHandler {
+            let main = CFRunLoopGetMain()
+            let modes = [CFRunLoopMode.commonModes.rawValue, RunLoop.Mode.modalPanel.rawValue as CFString, RunLoop.Mode.eventTracking.rawValue as CFString] as CFArray
+            CFRunLoopPerformBlock(main, modes) {
+                MainActor.assumeIsolated { AppDelegate.terminateNow() }
+            }
+            CFRunLoopWakeUp(main)
+        }
         termination.resume()
         terminationSignal = termination
         DevInput.install()
@@ -67,6 +78,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Testing on a shared machine: CANVAS_NO_ACTIVATE=1 keeps the app from taking focus.
         if ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] != "1" {
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// Quit even while a sheet or app-modal dialog is up: cancel them, then terminate once the
+    /// modal loop has unwound.
+    private static func terminateNow() {
+        for window in NSApp.windows {
+            while let sheet = window.attachedSheet { window.endSheet(sheet, returnCode: .cancel) }
+        }
+        if NSApp.modalWindow != nil {
+            NSApp.abortModal()
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        } else {
+            NSApp.terminate(nil)
         }
     }
 

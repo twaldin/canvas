@@ -66,7 +66,7 @@ public enum CmuxBrowserCommand: Equatable, Sendable {
         case "eval": return .eval(script: try string(params, "script"))
         case "snapshot":
             return .snapshot(interactive: try optional(params, "interactive", \.bool) ?? false,
-                             maxDepth: try optional(params, "max_depth", \.number).map { max(1, Int($0)) })
+                             maxDepth: try bounded(params, "max_depth", 1...maxSnapshotDepth))
         case "screenshot": return .screenshot
         case "type": return .type(selector: try string(params, "selector"), text: try string(params, "text", allowEmpty: true))
         case "fill": return .fill(selector: try string(params, "selector"), text: try string(params, "text", allowEmpty: true))
@@ -91,9 +91,19 @@ public enum CmuxBrowserCommand: Equatable, Sendable {
         guard conditions.count == 1 else {
             throw CmuxError.invalidParams("browser.wait takes exactly one of load_state, url_contains, selector")
         }
-        let timeout = try optional(params, "timeout_ms", \.number).map { Int($0) } ?? defaultWaitMs
-        guard timeout >= 0 else { throw CmuxError.invalidParams("timeout_ms must not be negative") }
-        return .wait(conditions[0], timeoutMs: min(timeout, maxWaitMs))
+        let timeout = try bounded(params, "timeout_ms", 0...maxWaitMs) ?? defaultWaitMs
+        return .wait(conditions[0], timeoutMs: timeout)
+    }
+
+    /// Deepest outline a snapshot walks; deeper requests get this.
+    static let maxSnapshotDepth = 1_000
+
+    /// A whole number clamped into `range`. Non-finite or negative values are invalid; checking
+    /// before converting keeps `Int(_:)` from trapping on values like 1e100.
+    static func bounded(_ params: JSONValue, _ key: String, _ range: ClosedRange<Int>) throws -> Int? {
+        guard let value = try optional(params, key, \.number) else { return nil }
+        guard value.isFinite, value >= 0 else { throw CmuxError.invalidParams("\(key) must be a non-negative number") }
+        return Int(min(max(value.rounded(), Double(range.lowerBound)), Double(range.upperBound)))
     }
 
     private static func url(_ params: JSONValue) throws -> String {

@@ -75,7 +75,12 @@ extension BrowserTile {
         case .urlContains(let fragment):
             return webView.url?.absoluteString.contains(fragment) == true
         case .loadState(let state):
-            guard pendingNavigations.isEmpty, !webView.isLoading else { return false }
+            // `interactive` only needs the destination document to have replaced the old one
+            // (DOMContentLoaded); `complete` also waits for WebKit to finish every subresource.
+            switch state {
+            case .interactive: guard uncommittedNavigations.isEmpty else { return false }
+            case .complete: guard pendingNavigations.isEmpty, !webView.isLoading else { return false }
+            }
             // A document torn down mid-check is simply not ready yet.
             let ready = (try? await call("return document.readyState", [:], in: webView))?.string
             return state == .complete ? ready == "complete" : ready == "interactive" || ready == "complete"

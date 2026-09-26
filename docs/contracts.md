@@ -15,6 +15,8 @@ Both sockets are created with mode `0600`. The cmux subset lives on its own sock
 
 Exactly what omp's cmux browser backend sends (`src/tools/browser/cmux/`), framed as cmux v2 JSON lines: requests `{"id","method","params"}`, replies `{"id","ok":true,"result"}` or `{"id","ok":false,"error":{"code","message"}}`. Surfaces are object ids: a terminal tile is the calling surface (`CMUX_SURFACE_ID`), a browser tile is a browser surface; workspaces are boards. Every browser result carries `surface_id`.
 
+Surface and workspace ids stay `obj_…`/`brd_…` on the wire, which omp 18.3 accepts; omp ≤18.1's owner inspection (`surface.list` via its surface-observation module) requires UUID ids and is unsupported.
+
 | Method | Params | Result |
 | --- | --- | --- |
 | `browser.open_split` | `url`, `surface_id` (caller), `workspace_id`, `focus` (ignored) | `surface_id`, `workspace_id`, `url`, `created_split`, `placement_strategy` — a browser tile beside the calling terminal |

@@ -34,6 +34,9 @@ final class BrowserTile: NSView, TileContent {
 
     /// Navigations this tile started that haven't finished or failed (for load-state waits).
     var pendingNavigations: [WKNavigation] = []
+    /// Navigations (ours or the page's) whose new document hasn't replaced the current one yet;
+    /// until then the current document's ready state says nothing about the destination.
+    var uncommittedNavigations: [WKNavigation] = []
     /// Automation waits parked until the page changes (navigation, DOM activity) or time runs out.
     private var changeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
@@ -167,7 +170,14 @@ final class BrowserTile: NSView, TileContent {
             view.frame = pageFrame
             addSubview(view, positioned: .below, relativeTo: cover)
         }
+        setPageActivity(true)
         scheduleSnapshotRefresh()
+    }
+
+    /// Page-activity reporting (DOM observer, timers, messages) runs only while on screen.
+    private func setPageActivity(_ on: Bool) {
+        guard let webView else { return }
+        Task { _ = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.setActivity(on)", arguments: ["on": on], in: nil, contentWorld: BrowserScripts.world) }
     }
 
     /// Drops the web view (its page, history, and web content process share) but keeps the image.
@@ -183,6 +193,7 @@ final class BrowserTile: NSView, TileContent {
         webView.removeFromSuperview()
         self.webView = nil
         pendingNavigations = []
+        uncommittedNavigations = []
         hover = nil
         signalChange()
     }
@@ -207,7 +218,9 @@ final class BrowserTile: NSView, TileContent {
     }
 
     func track(_ navigation: WKNavigation?) {
-        if let navigation { pendingNavigations.append(navigation) }
+        guard let navigation else { return }
+        pendingNavigations.append(navigation)
+        uncommittedNavigations.append(navigation)
     }
 
     private func submitAddress(_ text: String) {
@@ -256,6 +269,8 @@ final class BrowserTile: NSView, TileContent {
 
     fileprivate func pageMessage(_ kind: String) {
         signalChange()
+        // Each new document starts with activity reporting off.
+        if kind == "ready", webView?.superview === self { setPageActivity(true) }
         if kind != "ready" { scheduleSnapshotRefresh() }
     }
 
@@ -353,6 +368,7 @@ final class BrowserTile: NSView, TileContent {
         if live {
             attach()
         } else {
+            setPageActivity(false)
             webView?.removeFromSuperview()
             if webView != nil { scheduleRelease() }
         }
@@ -407,7 +423,13 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         decisionHandler(.allow)
     }
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if !uncommittedNavigations.contains(where: { $0 === navigation }) { uncommittedNavigations.append(navigation) }
+        signalChange()
+    }
+
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        uncommittedNavigations.removeAll { $0 === navigation }
         signalChange()
     }
 
@@ -428,6 +450,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         pendingNavigations = []
+        uncommittedNavigations = []
         track(webView.reload())
         signalChange()
     }
@@ -439,6 +462,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 
     private func finished(_ navigation: WKNavigation?) {
         pendingNavigations.removeAll { $0 === navigation }
+        uncommittedNavigations.removeAll { $0 === navigation }
         signalChange()
     }
 }

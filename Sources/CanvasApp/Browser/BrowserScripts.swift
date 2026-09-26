@@ -73,13 +73,18 @@ enum BrowserScripts {
         return clean(el.innerText);
       }
 
-      function isVisible(el) {
-        if (el.getAttribute('aria-hidden') === 'true') return false;
-        const style = getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden') return false;
+      // Nothing under these renders, so the walk skips the whole subtree.
+      const hidesSubtree = (el, style) => el.getAttribute('aria-hidden') === 'true' || style.display === 'none';
+
+      // Whether the element itself has a visible box. Layoutless `display: contents` wrappers and
+      // `visibility: hidden` elements don't, though their children still may.
+      function rendersBox(el, style) {
+        if (style.display === 'contents' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
         const rect = el.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
       }
+
+      const isVisible = (el) => { const style = getComputedStyle(el); return !hidesSubtree(el, style) && rendersBox(el, style); };
 
       const isInteractive = (el, role) => interactiveRoles.has(role) || el.isContentEditable
         || (el.hasAttribute('onclick') && !['BODY', 'HTML'].includes(el.tagName))
@@ -111,18 +116,17 @@ enum BrowserScripts {
           lines.push(`${'  '.repeat(depth)}- ${describe(el, role)} [ref=${ref}]`);
         };
         const walk = (el, depth) => {
+          if (!interactive && depth >= (maxDepth ?? Infinity)) return;
           for (const child of el.children) {
-            if (!isVisible(child) && child.tagName !== 'OPTION') continue;
+            const style = getComputedStyle(child);
+            if (hidesSubtree(child, style)) continue;
             const role = roleOf(child);
             const actionable = isInteractive(child, role);
-            let shown = false;
-            if (interactive ? actionable : (actionable || (role && !['generic', 'none', 'presentation', 'label', 'legend'].includes(role)))) {
-              if (!interactive && depth >= (maxDepth ?? Infinity)) continue;
-              add(child, role, interactive ? 0 : depth);
-              shown = true;
-            }
+            const listed = interactive ? actionable : (actionable || (role && !['generic', 'none', 'presentation', 'label', 'legend'].includes(role)));
+            const shown = listed && rendersBox(child, style);
+            if (shown) add(child, role, interactive ? 0 : depth);
             if (child.shadowRoot) walk(child.shadowRoot, shown ? depth + 1 : depth);
-            if (!['SELECT', 'BUTTON', 'A'].includes(child.tagName) || !shown) walk(child, shown ? depth + 1 : depth);
+            if (!shown || !['SELECT', 'BUTTON', 'A'].includes(child.tagName)) walk(child, shown ? depth + 1 : depth);
           }
         };
         if (document.body) walk(document.body, 0);
@@ -149,7 +153,8 @@ enum BrowserScripts {
         mouse(el, 'pointerdown', { detail }); mouse(el, 'mousedown', { detail });
         if (focusable(el)) el.focus({ preventScroll: true });
         mouse(el, 'pointerup', { detail }); mouse(el, 'mouseup', { detail });
-        el.click();
+        // SVG and MathML elements have no click(); dispatch the event itself.
+        if (typeof el.click === 'function') el.click(); else mouse(el, 'click', { detail });
       }
 
       // Sets a form control's value the way user input does, so framework listeners see it.
@@ -160,57 +165,211 @@ enum BrowserScripts {
         if (setter) setter.call(el, value); else el.value = value;
       }
 
+      const textTypes = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'number']);
+      const isTextField = (el) => el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && textTypes.has(el.type));
+      const editingHost = (el) => { while (el.parentElement?.isContentEditable) el = el.parentElement; return el; };
+
+      // [anchor, focus] of a text field's selection. Types without a selection API (email,
+      // number) behave as if the caret sat at the end.
+      function selectionOf(el) {
+        try {
+          if (el.selectionStart !== null) {
+            return el.selectionDirection === 'backward' ? [el.selectionEnd, el.selectionStart] : [el.selectionStart, el.selectionEnd];
+          }
+        } catch {}
+        return [el.value.length, el.value.length];
+      }
+
+      function setSelection(el, anchor, focus) {
+        try { el.setSelectionRange(Math.min(anchor, focus), Math.max(anchor, focus), focus < anchor ? 'backward' : 'forward'); } catch {}
+      }
+
+      // Replaces `from`..`to` of a text field the way typing or deleting does.
+      function replaceRange(el, from, to, text, inputType) {
+        const init = { bubbles: true, inputType, data: text || null };
+        if (!el.dispatchEvent(new InputEvent('beforeinput', { ...init, cancelable: true }))) return;
+        setValue(el, el.value.slice(0, from) + text + el.value.slice(to));
+        setSelection(el, from + text.length, from + text.length);
+        el.dispatchEvent(new InputEvent('input', init));
+      }
+
       function insertText(el, text) {
         if (el.isContentEditable) {
           document.execCommand('insertText', false, text);
           return;
         }
-        if (!('value' in el)) fail('invalid_params', `${el.tagName.toLowerCase()} does not take text`);
-        let start = el.value.length, end = start;
-        try { start = el.selectionStart ?? start; end = el.selectionEnd ?? end; } catch {}
-        setValue(el, el.value.slice(0, start) + text + el.value.slice(end));
-        try { el.setSelectionRange(start + text.length, start + text.length); } catch {}
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+        if (!('value' in el) || typeof el.value !== 'string') fail('invalid_params', `${el.tagName.toLowerCase()} does not take text`);
+        const [anchor, focus] = selectionOf(el);
+        replaceRange(el, Math.min(anchor, focus), Math.max(anchor, focus), text, 'insertText');
       }
 
       function key(el, type, init) {
         return el.dispatchEvent(new KeyboardEvent(type, { bubbles: true, cancelable: true, composed: true, ...init }));
       }
 
-      const keyNames = { Return: 'Enter', Esc: 'Escape', Space: ' ', Del: 'Delete', Up: 'ArrowUp', Down: 'ArrowDown', Left: 'ArrowLeft', Right: 'ArrowRight' };
+      // MARK: keyboard defaults (synthetic key events carry none, so the editing ones are done here)
+
+      const lineStart = (value, i) => (i === 0 ? 0 : value.lastIndexOf('\n', i - 1) + 1);
+      const lineEnd = (value, i) => { const end = value.indexOf('\n', i); return end < 0 ? value.length : end; };
+      const wordBefore = (value, i) => { while (i > 0 && /\s/.test(value[i - 1])) i--; while (i > 0 && !/\s/.test(value[i - 1])) i--; return i; };
+      const wordAfter = (value, i) => { while (i < value.length && /\s/.test(value[i])) i++; while (i < value.length && !/\s/.test(value[i])) i++; return i; };
+
+      // Where a caret key puts the focus end of a text field's selection (macOS conventions).
+      function caretTarget(el, name, mods, focus) {
+        const value = el.value;
+        const multiline = el instanceof HTMLTextAreaElement;
+        const start = multiline ? lineStart(value, focus) : 0;
+        const end = multiline ? lineEnd(value, focus) : value.length;
+        switch (name) {
+          case 'ArrowLeft': return mods.meta ? start : mods.alt ? wordBefore(value, focus) : Math.max(0, focus - 1);
+          case 'ArrowRight': return mods.meta ? end : mods.alt ? wordAfter(value, focus) : Math.min(value.length, focus + 1);
+          case 'Home': return start;
+          case 'End': return end;
+          case 'PageUp': return 0;
+          case 'PageDown': return value.length;
+          case 'ArrowUp': {
+            if (mods.meta || start === 0) return 0;
+            const previous = lineStart(value, start - 1);
+            return Math.min(previous + focus - start, start - 1);
+          }
+          case 'ArrowDown': {
+            if (mods.meta || end === value.length) return value.length;
+            return Math.min(end + 1 + focus - start, lineEnd(value, end + 1));
+          }
+        }
+      }
+
+      function moveCaret(el, name, mods) {
+        if (el.isContentEditable) {
+          const backward = ['ArrowLeft', 'ArrowUp', 'Home', 'PageUp'].includes(name);
+          const vertical = ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown'].includes(name);
+          const granularity = mods.alt ? 'word'
+            : mods.meta ? (vertical ? 'documentboundary' : 'lineboundary')
+            : name === 'Home' || name === 'End' ? 'lineboundary'
+            : name.startsWith('Page') ? 'documentboundary'
+            : vertical ? 'line' : 'character';
+          getSelection().modify(mods.shift ? 'extend' : 'move', backward ? 'backward' : 'forward', granularity);
+          return;
+        }
+        const [anchor, focus] = selectionOf(el);
+        if (!mods.shift && !mods.alt && !mods.meta && anchor !== focus && (name === 'ArrowLeft' || name === 'ArrowRight')) {
+          const edge = name === 'ArrowLeft' ? Math.min(anchor, focus) : Math.max(anchor, focus);
+          return setSelection(el, edge, edge);
+        }
+        const to = caretTarget(el, name, mods, focus);
+        setSelection(el, mods.shift ? anchor : to, to);
+      }
+
+      function deleteText(el, name, mods) {
+        const backward = name === 'Backspace';
+        if (el.isContentEditable) {
+          const selection = getSelection();
+          if (selection.isCollapsed && (mods.alt || mods.meta)) {
+            selection.modify('extend', backward ? 'backward' : 'forward', mods.alt ? 'word' : 'lineboundary');
+          }
+          document.execCommand(backward ? 'delete' : 'forwardDelete');
+          return;
+        }
+        const value = el.value;
+        const [anchor, focus] = selectionOf(el);
+        let from = Math.min(anchor, focus), to = Math.max(anchor, focus);
+        if (from === to) {
+          const multiline = el instanceof HTMLTextAreaElement;
+          if (backward) from = mods.meta ? (multiline ? lineStart(value, from) : 0) : mods.alt ? wordBefore(value, from) : Math.max(0, from - 1);
+          else to = mods.meta ? (multiline ? lineEnd(value, to) : value.length) : mods.alt ? wordAfter(value, to) : Math.min(value.length, to + 1);
+        }
+        if (from !== to) replaceRange(el, from, to, '', backward ? 'deleteContentBackward' : 'deleteContentForward');
+      }
+
+      function selectAll(el) {
+        if (isTextField(el)) return el.select();
+        getSelection().selectAllChildren(el.isContentEditable ? editingHost(el) : document.body);
+      }
+
+      function scrollPage(name, mods) {
+        const line = 40, page = innerHeight * 0.875;
+        switch (name) {
+          case 'ArrowUp': return mods.meta ? scrollTo(scrollX, 0) : scrollBy(0, -line);
+          case 'ArrowDown': return mods.meta ? scrollTo(scrollX, document.documentElement.scrollHeight) : scrollBy(0, line);
+          case 'ArrowLeft': return scrollBy(-line, 0);
+          case 'ArrowRight': return scrollBy(line, 0);
+          case 'PageUp': return scrollBy(0, -page);
+          case 'PageDown': return scrollBy(0, page);
+          case ' ': return scrollBy(0, mods.shift ? -page : page);
+          case 'Home': return scrollTo(scrollX, 0);
+          case 'End': return scrollTo(scrollX, document.documentElement.scrollHeight);
+        }
+      }
+
       const tabbable = () => [...document.querySelectorAll('a[href], button, input, select, textarea, [tabindex], [contenteditable=""], [contenteditable="true"]')]
         .filter((el) => !el.disabled && el.tabIndex >= 0 && isVisible(el));
 
-      function press(combo) {
-        const parts = combo.split('+');
-        const name = keyNames[parts.at(-1)] ?? parts.at(-1);
-        const mods = new Set(parts.slice(0, -1).map((m) => m.toLowerCase()));
-        const init = { key: name, code: name.length === 1 ? (/\d/.test(name) ? `Digit${name}` : `Key${name.toUpperCase()}`) : name,
-          ctrlKey: mods.has('control') || mods.has('ctrl'), shiftKey: mods.has('shift'), altKey: mods.has('alt') || mods.has('option'),
-          metaKey: mods.has('meta') || mods.has('command') || mods.has('cmd') };
-        const target = document.activeElement || document.body;
-        const proceed = key(target, 'keydown', init);
-        if (proceed && !init.ctrlKey && !init.metaKey && !init.altKey) {
-          if (name === 'Enter') {
-            if (target instanceof HTMLTextAreaElement || target.isContentEditable) insertText(target, '\n');
-            else if (target.form && target instanceof HTMLInputElement) target.form.requestSubmit();
-            else if (target instanceof HTMLButtonElement || target instanceof HTMLAnchorElement) target.click();
-          } else if (name === 'Tab') {
+      // Enter in a form field submits the way the browser's implicit submission does: through
+      // the default button when there is one, so its click handlers run.
+      function submitImplicitly(input) {
+        const submitter = input.form.querySelector('button:not([type]), button[type="submit"], input[type="submit"], input[type="image"]');
+        if (submitter) { if (!submitter.disabled) submitter.click(); return; }
+        input.form.requestSubmit();
+      }
+
+      function defaultAction(target, name, mods, shortcut) {
+        const editable = isTextField(target) || target.isContentEditable;
+        const keys = { shift: mods.shift, alt: mods.alt, meta: shortcut };
+        if (shortcut && name.toLowerCase() === 'a') return selectAll(target);
+        if (caretKeys.has(name)) return editable ? moveCaret(target, name, keys) : scrollPage(name, keys);
+        if (name === 'Backspace' || name === 'Delete') return editable ? deleteText(target, name, keys) : undefined;
+        // Other shortcuts belong to the page: its key handlers are the whole effect.
+        if (shortcut || mods.alt) return;
+        switch (name) {
+          case 'Enter':
+            if (target instanceof HTMLTextAreaElement || target.isContentEditable) return insertText(target, '\n');
+            if (target instanceof HTMLInputElement && target.form) return submitImplicitly(target);
+            if (target instanceof HTMLButtonElement || target instanceof HTMLAnchorElement) return target.click();
+            return;
+          case 'Tab': {
             const order = tabbable();
+            if (!order.length) return;
             const index = order.indexOf(target);
-            const next = order[(index + (init.shiftKey ? -1 : 1) + order.length) % order.length];
-            next?.focus();
-          } else if (name === ' ' && (target instanceof HTMLButtonElement || (target instanceof HTMLInputElement && ['checkbox', 'radio', 'button', 'submit'].includes(target.type)))) {
-            target.click();
-          } else if (name === 'Backspace' && 'value' in target && typeof target.value === 'string') {
-            const start = target.selectionStart ?? target.value.length, end = target.selectionEnd ?? start;
-            const from = start === end ? Math.max(0, start - 1) : start;
-            setValue(target, target.value.slice(0, from) + target.value.slice(end));
-            fire(target, 'input');
-          } else if (name.length === 1 && (('value' in target && typeof target.value === 'string') || target.isContentEditable)) {
-            insertText(target, name);
+            const step = mods.shift ? -1 : 1;
+            order[index < 0 ? (step > 0 ? 0 : order.length - 1) : (index + step + order.length) % order.length].focus();
+            return;
           }
+          case ' ':
+            if (target instanceof HTMLButtonElement || (target instanceof HTMLInputElement && ['checkbox', 'radio', 'button', 'submit', 'reset'].includes(target.type))) return target.click();
+            return editable ? insertText(target, ' ') : scrollPage(' ', keys);
         }
+        if (name.length === 1 && editable) insertText(target, name);
+      }
+
+      const keyNames = { Return: 'Enter', Esc: 'Escape', Space: ' ', Del: 'Delete', Up: 'ArrowUp', Down: 'ArrowDown', Left: 'ArrowLeft', Right: 'ArrowRight' };
+      const modifierNames = { control: 'ctrl', ctrl: 'ctrl', shift: 'shift', alt: 'alt', option: 'alt', meta: 'meta', command: 'meta', cmd: 'meta', controlormeta: 'meta' };
+      const caretKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+      const namedKeys = new Set([...caretKeys, 'Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'Insert', 'ContextMenu',
+        'Shift', 'Control', 'Alt', 'Meta', ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`)]);
+      // Shortcuts whose default is the clipboard or undo history, which synthetic events can't reach.
+      const clipboardLetters = new Set(['c', 'x', 'v', 'z', 'y']);
+
+      // `Enter`, `Shift+Tab`, `Meta+a`, `Alt+ArrowLeft`, `x`, …: page key handlers see the events,
+      // and the editing/focus/scroll default is applied unless one of them prevents it.
+      function press(combo) {
+        const parts = combo === '+' || combo.endsWith('++') ? [...combo.slice(0, -1).split('+').filter(Boolean), '+'] : combo.split('+');
+        const name = keyNames[parts.at(-1)] ?? parts.at(-1);
+        const mods = { ctrl: false, shift: false, alt: false, meta: false };
+        for (const part of parts.slice(0, -1)) {
+          const modifier = modifierNames[part.toLowerCase()];
+          if (!modifier) fail('invalid_params', `unknown modifier ${part} in ${combo}`);
+          mods[modifier] = true;
+        }
+        if (name.length !== 1 && !namedKeys.has(name)) fail('invalid_params', `unsupported key ${name}`);
+        // Control and Meta both mean the platform shortcut key (Playwright's ControlOrMeta).
+        const shortcut = mods.ctrl || mods.meta;
+        if (shortcut && clipboardLetters.has(name.toLowerCase())) {
+          fail('invalid_params', `${combo} needs the clipboard or undo history, which this browser surface can't drive; use fill or type`);
+        }
+        const init = { key: name, code: name.length === 1 ? (/\d/.test(name) ? `Digit${name}` : /[a-z]/i.test(name) ? `Key${name.toUpperCase()}` : '') : name,
+          ctrlKey: mods.ctrl, shiftKey: mods.shift, altKey: mods.alt, metaKey: mods.meta };
+        const target = document.activeElement || document.body;
+        if (key(target, 'keydown', init)) defaultAction(target, name, mods, shortcut);
         key(target, 'keyup', init);
         return {};
       }
@@ -268,18 +427,32 @@ enum BrowserScripts {
         });
       }
 
-      // Page activity, coalesced, so the tile can refresh its snapshot and wake waiters.
-      let pending = null;
+      // Page activity, coalesced, so a visible tile can refresh its snapshot. The tile turns this
+      // on only while it is on screen, so detached pages run no observer, timers, or messages.
+      let observer = null, pending = null;
       const changed = () => { if (!pending) pending = setTimeout(() => { pending = null; post('changed'); }, 300); };
-      const start = () => {
-        new MutationObserver(changed).observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-        for (const type of ['input', 'change', 'scroll', 'resize']) addEventListener(type, changed, { capture: true, passive: true });
-      };
-      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { post('ready'); start(); }, { once: true });
-      else { post('ready'); start(); }
+      const activityEvents = ['input', 'change', 'scroll', 'resize'];
+      function setActivity(on) {
+        if (on && !observer) {
+          observer = new MutationObserver(changed);
+          observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+          for (const type of activityEvents) addEventListener(type, changed, { capture: true, passive: true });
+        } else if (!on && observer) {
+          observer.disconnect();
+          observer = null;
+          for (const type of activityEvents) removeEventListener(type, changed, { capture: true });
+          clearTimeout(pending);
+          pending = null;
+        }
+        return {};
+      }
+
+      // Load milestones wake automation waits whether or not the tile is visible.
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => post('ready'), { once: true });
+      else post('ready');
       if (document.readyState !== 'complete') addEventListener('load', () => post('load'), { once: true });
 
-      window.__canvasCmux = { snapshot, act, press, exists, waitFor,
+      window.__canvasCmux = { snapshot, act, press, exists, waitFor, setActivity,
         scroll(dx, dy) { scrollBy(dx, dy); return { scroll_x: scrollX, scroll_y: scrollY }; },
         readyState: () => document.readyState };
     })();

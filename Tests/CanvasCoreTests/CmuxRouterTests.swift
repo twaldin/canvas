@@ -105,6 +105,8 @@ final class CmuxRouterTests {
             (#"{"id":"g","method":"browser.navigate","params":{"surface_id":"\#(page.id)","url":"not a url"}}"#, "invalid_params"),
             (#"{"id":"h","method":"browser.scroll","params":{"surface_id":"\#(page.id)","dy":"down"}}"#, "invalid_params"),
             (#"{"id":"i","method":"surface.close","params":{"surface_id":"\#(shell.id)"}}"#, "invalid_params"),
+            (#"{"id":"j","method":"browser.wait","params":{"surface_id":"obj_missing","selector":"a","timeout_ms":-1}}"#, "invalid_params"),
+            (#"{"id":"k","method":"browser.snapshot","params":{"surface_id":"\#(page.id)","max_depth":-3}}"#, "invalid_params"),
         ]
         for (request, code) in cases {
             client.send(request)
@@ -116,6 +118,16 @@ final class CmuxRouterTests {
         }
         #expect(performed.isEmpty, "invalid requests never reach a page")
         #expect(board.objects[shell.id] != nil, "the cmux socket never closes terminals")
+    }
+
+    @Test func hugeNumbersAreClampedNotFatal() async throws {
+        let page = browser()
+        let client = try connect()
+        client.send(#"{"id":"w","method":"browser.wait","params":{"surface_id":"\#(page.id)","load_state":"complete","timeout_ms":1e100}}"#)
+        #expect(try await client.next()["ok"] == .bool(true))
+        client.send(#"{"id":"s","method":"browser.snapshot","params":{"surface_id":"\#(page.id)","max_depth":1e300}}"#)
+        #expect(try await client.next()["ok"] == .bool(true))
+        #expect(performed.map(\.1) == [.wait(.loadState(.complete), timeoutMs: 600_000), .snapshot(interactive: false, maxDepth: 1_000)])
     }
 
     @Test func closedSurfacesLeaveTheBoardAndTheList() async throws {

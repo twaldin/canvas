@@ -73,9 +73,12 @@ launch() {
   "$repo/scripts/bundle.sh" >/dev/null
   mkdir -p "$home"
   rm -f "$CANVAS_SOCKET"
+  # yabai can't place a new window on another display's Space (it lands on the Space being
+  # viewed), so the rule parks it on Space 8, an unviewed Space on the built-in display, and the
+  # window moves to the testing Space once it exists.
   if [ -x "$yabai" ]; then
     "$yabai" -m rule --remove canvas-dev >/dev/null 2>&1 || true
-    "$yabai" -m rule --add label=canvas-dev app="^Canvas$" space="$(test_space)" manage=off grid=1:1:0:0:1:1 >/dev/null
+    "$yabai" -m rule --add label=canvas-dev app="^Canvas$" space=8 manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
   open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
     --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_ROOT="$root" "$app"
@@ -83,7 +86,14 @@ launch() {
   while [ ! -S "$CANVAS_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
   [ -S "$CANVAS_SOCKET" ] || { echo "Canvas did not open its socket; see $home/app.log" >&2; exit 1; }
   pgrep -n -f "$app/Contents/MacOS/Canvas" > "$home/pid"
-  echo "Canvas pid $(cat "$home/pid"), CANVAS_SOCKET=$CANVAS_SOCKET"
+  target="$(test_space)"
+  if [ -x "$yabai" ] && [ "$target" != 8 ]; then
+    i=0
+    while [ -z "$(window_id)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+    wid="$(window_id)"
+    [ -n "$wid" ] && "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
+  fi
+  echo "Canvas pid $(cat "$home/pid") on Space $target, CANVAS_SOCKET=$CANVAS_SOCKET"
 }
 
 case "${1:-}" in

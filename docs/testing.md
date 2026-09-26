@@ -31,7 +31,7 @@ What it sets up:
 
 - `CANVAS_HOME=<checkout>/.canvas-home` holds this instance's socket, boards, pid, and `app.log`, so it never touches the installed app's boards or another agent's instance.
 - `CANVAS_NO_ACTIVATE=1`: the app refuses to activate (`CanvasApplication`), so it can't steal focus or switch Spaces.
-- A yabai rule sends every `Canvas` window to the testing Space, floating and maximized: the first Space of the `CanvasTest` virtual screen (a BetterDisplay headless monitor placed diagonally below-right of the built-in display, touching it only at the corner), else Space 8, or `CANVAS_DEV_SPACE`. Recreate the screen if it's gone: `betterdisplaycli create --type=VirtualScreen --virtualScreenName=CanvasTest --useResolutionList=on --resolutionList=1512x982 --virtualScreenHiDPI=on`, then `betterdisplaycli set --name=CanvasTest --connected=on --placement=1512x982`.
+- A yabai rule parks every new `Canvas` window on Space 8 (floating, maximized), and `dev.sh` then moves it to the testing Space: the first Space of the `CanvasTest` virtual screen (a BetterDisplay headless monitor placed diagonally below-right of the built-in display, touching it only at the corner), or `CANVAS_DEV_SPACE`. A yabai rule can't place a window on another display's Space: the window lands on whatever Space Tim is viewing, so never point the rule at the virtual screen. Recreate the screen if it's gone: `betterdisplaycli create --type=VirtualScreen --virtualScreenName=CanvasTest --useResolutionList=on --resolutionList=1512x982 --virtualScreenHiDPI=on`, then `betterdisplaycli set --name=CanvasTest --connected=on --placement=1512x982`.
 - `CANVAS_DEV_INPUT=1` enables input replay (below).
 
 ### Seeing the window

@@ -25,7 +25,8 @@ public enum ObjectMeasure {
     static let shapeLabelPadding = CGSize(width: 16, height: 12)
 
     /// `width` wraps notes and text (a note defaults to a new note's width; text defaults to
-    /// one unwrapped line per paragraph); code ignores it.
+    /// one unwrapped line per paragraph); for code it is the widest the frame may get (default
+    /// `CodeMetrics.defaultFitWidth`), past which long lines wrap.
     public static func size(type: ObjectType, props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
         switch type {
         case .code:
@@ -38,7 +39,8 @@ public enum ObjectMeasure {
                 throw Failure.unavailable("cannot resolve \(path)")
             }
             let caption = props["caption"]?.string.map { !$0.isEmpty } ?? false
-            return code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil)
+            return code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil,
+                        maxWidth: width.map { CGFloat($0) } ?? CodeMetrics.defaultFitWidth)
         case .note:
             let markdown = props["markdown"]?.string ?? ""
             let document = NoteMarkdown.parse(markdown)
@@ -55,11 +57,17 @@ public enum ObjectMeasure {
         }
     }
 
-    /// A code tile showing exactly `lines` of a file with `fileLineCount` lines.
-    public static func code(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool) -> CGSize {
+    /// A code tile showing exactly `lines` of a file with `fileLineCount` lines: as wide as the
+    /// longest line, or `maxWidth` (at least `CodeMetrics.minWidth`) with the longer lines
+    /// wrapped, and as tall as the rows that makes.
+    public static func code(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool, maxWidth: CGFloat) -> CGSize {
         let longest = lines.map { CodeMetrics.columns($0) }.max() ?? 0
-        var size = CodeMetrics.size(lines: lines.count, longestLine: longest, caption: caption)
-        size.width += CodeMetrics.gutterWidth(lineCount: fileLineCount) - CodeMetrics.gutterWidth(lineCount: 1)
+        let natural = CodeMetrics.size(lines: lines.count, longestLine: longest, caption: caption).width
+            + CodeMetrics.gutterWidth(lineCount: fileLineCount) - CodeMetrics.gutterWidth(lineCount: 1)
+        let width = min(natural, max(CodeMetrics.minWidth, maxWidth.rounded(.down)))
+        let columns = CodeMetrics.textColumns(width: width, lineCount: fileLineCount)
+        let rows = longest <= columns ? lines.count : lines.reduce(0) { $0 + 1 + CodeMetrics.wrap($1.utf16, columns: columns).breaks.count }
+        var size = CGSize(width: width, height: CodeMetrics.size(lines: rows, longestLine: 0, caption: caption).height)
         if follow { size.height += CodeMetrics.historyHeight }
         return size
     }

@@ -93,6 +93,19 @@ final class CodeTile: NSView, TileContent {
         let height = header.height
         header.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
         rowsView.frame = NSRect(x: 0, y: height, width: bounds.width, height: max(0, bounds.height - height))
+        rewrap()
+    }
+
+    /// Rows wrap at the tile's width: when a resize changes the columns, rewrap and keep the
+    /// line at the top where it was. Selections are logical, so they survive.
+    private func rewrap() {
+        guard let document, showsCurrent, let rows = rowsView.painter?.rows,
+              rows.columns != CodeMetrics.textColumns(width: rowsView.bounds.width, lineCount: document.gutterLineCount) else { return }
+        let top = rows.segment(CodePainter.row(atY: rowsView.bounds.minY + CodeMetrics.verticalPadding))
+        refreshPainter(keepSelection: true)
+        guard let top, let rewrapped = rowsView.painter?.rows else { return }
+        let row = min(rewrapped.rows(ofEntry: top.entry).lowerBound + top.part, rewrapped.rows(ofEntry: top.entry).upperBound - 1)
+        rowsView.scroll(toY: CodePainter.rowTop(row) - CodeMetrics.verticalPadding)
     }
 
     // MARK: Props
@@ -281,7 +294,7 @@ final class CodeTile: NSView, TileContent {
             rowsView.painter = nil
             return
         }
-        var painter = CodePainter(document: document, rows: CodeRows(lineCount: document.text.lineCount, signs: document.signs, peeked: peeked))
+        var painter = CodePainter(document: document, rows: document.rows(peeked: peeked, width: rowsView.bounds.width))
         painter.rangeLines = displayed.range.flatMap(document.lines(for:))
         painter.flash = flash.map { ($0.lines, flashStrength($0.start)) }
         painter.selection = keepSelection ? rowsView.painter?.selection : nil
@@ -297,7 +310,7 @@ extension CodeTile {
         guard showsCurrent, let rows = rowsView.painter?.rows else { return }
         guard let range = displayed.range else { return scroll(toRow: 0) }
         let first = rows.index(ofLine: range.start)
-        scroll(toRow: first, count: rows.index(ofLine: range.end) - first + 1)
+        scroll(toRow: first, count: rows.rows(ofLine: range.end).upperBound - first)
     }
 
     /// Scroll `row` near the top with up to three rows of context above it, fewer when the tile
@@ -306,7 +319,7 @@ extension CodeTile {
     private func scroll(toRow row: Int, count: Int = 1) {
         let visible = Int(((rowsView.bounds.height - CodeMetrics.verticalPadding) / CodeMetrics.rowHeight).rounded(.down))
         let context = max(0, min(3, visible - count))
-        rowsView.scroll(to: CGPoint(x: 0, y: CodePainter.rowTop(max(0, row - context)) - CodeMetrics.verticalPadding))
+        rowsView.scroll(toY: CodePainter.rowTop(max(0, row - context)) - CodeMetrics.verticalPadding)
     }
 
     private func startFlash(_ lines: [Range<Int>]) {
@@ -496,9 +509,9 @@ extension CodeTile {
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
         guard let document, showsCurrent, let painter = rowsView.painter, rowsView.superview === self, rowsView.frame.contains(point) else { return nil }
         let local = rowsView.convert(point, from: self)
-        let row = CodePainter.row(atY: local.y)
-        if let selected = rowsView.selectedRows, selected.contains(row) {
-            return target(rows: selected, painter: painter, document: document)
+        let segment = painter.rows.segment(CodePainter.row(atY: local.y))
+        if let selected = rowsView.selectedEntries, let segment, selected.contains(segment.entry) {
+            return target(entries: selected, painter: painter, document: document)
         }
         if rowsView.isInGutter(local), let sign = painter.sign(atY: local.y), !painter.rows.peekedSigns.contains(sign) {
             let change = document.signs[sign]
@@ -507,16 +520,18 @@ extension CodeTile {
             }
             return code(LineRange(start: change.lines.lowerBound, end: change.lines.upperBound - 1), side: document.side, in: document)
         }
-        guard row >= 0, row < painter.rows.count else { return nil }
-        return target(rows: row...row, painter: painter, document: document)
+        // A continuation row mentions its whole line.
+        guard let segment else { return nil }
+        return target(entries: segment.entry...segment.entry, painter: painter, document: document)
     }
 
-    /// The lines a run of rows shows: displayed lines when there are any, else peeked base lines.
-    private func target(rows: ClosedRange<Int>, painter: CodePainter, document: CodeDocument) -> MentionTarget? {
+    /// The lines a run of entries shows: displayed lines when there are any, else peeked base
+    /// lines.
+    private func target(entries: ClosedRange<Int>, painter: CodePainter, document: CodeDocument) -> MentionTarget? {
         var lines: [Int] = []
         var old: [Int] = []
-        for row in rows {
-            switch painter.rows.row(row) {
+        for entry in entries {
+            switch painter.rows.entryRow(entry) {
             case .line(let line)?: lines.append(line)
             case .peek(let line, _)?: old.append(line)
             case nil: break
@@ -545,11 +560,10 @@ extension CodeTile {
             let sign = document.signs.firstIndex { $0.old.contains(lines.start) }
             if let sign, rows.peekedSigns.contains(sign) {
                 first = rows.index(ofPeek: sign, old: lines.start)
-                last = rows.index(ofPeek: sign, old: min(lines.end, document.signs[sign].old.upperBound - 1))
+                last = rows.entry(ofPeek: sign, old: min(lines.end, document.signs[sign].old.upperBound - 1)).map { rows.rows(ofEntry: $0).upperBound - 1 }
             } else if let sign {
                 // An unpeeked deletion: its wedge.
-                let row = rows.index(ofLine: document.signs[sign].lines.lowerBound)
-                let edge = CodePainter.rowTop(row)
+                let edge = CodePainter.rowTop(rows.edgeRow(ofLine: document.signs[sign].lines.lowerBound))
                 let rect = NSRect(x: rowsView.bounds.minX, y: edge - 3, width: rowsView.bounds.width, height: 6)
                 return convert(rect, from: rowsView).intersection(rowsView.frame)
             } else {
@@ -557,7 +571,7 @@ extension CodeTile {
             }
         } else {
             first = rows.index(ofLine: lines.start)
-            last = rows.index(ofLine: lines.end)
+            last = rows.rows(ofLine: lines.end).upperBound - 1
         }
         guard let first, let last else { return nil }
         let rect = NSRect(x: rowsView.bounds.minX, y: CodePainter.rowTop(first), width: rowsView.bounds.width,
@@ -572,12 +586,12 @@ extension CodeTile {
     /// The body (header, caption, history, rows) drawn from the model: never from live views,
     /// so it works offscreen, not live, and on any Space. `full` draws every row from the top.
     private func image(of document: CodeDocument, size: CGSize, scale: CGFloat, full: Bool, appearance: NSAppearance) -> (image: NSImage?, content: CGSize) {
-        let rows = CodeRows(lineCount: document.text.lineCount, signs: document.signs, peeked: showsCurrent ? peeked : [])
-        var painter = CodePainter(document: document, rows: rows)
+        // Wrapped at the tile's width, exactly as the live rows are.
+        var painter = CodePainter(document: document, rows: document.rows(peeked: showsCurrent ? peeked : [], width: size.width))
         painter.rangeLines = displayed.range.flatMap(document.lines(for:))
         let headerHeight = header.height
-        let content = CGSize(width: max(size.width, painter.contentSize.width), height: headerHeight + painter.contentSize.height)
-        var imageSize = full ? CGSize(width: max(size.width, content.width), height: max(size.height, content.height)) : size
+        let content = CGSize(width: size.width, height: headerHeight + painter.contentHeight)
+        var imageSize = full ? CGSize(width: size.width, height: max(size.height, content.height)) : size
         // One bitmap dimension stays within what Core Graphics and memory allow.
         let maxPoints = 16_384 / max(scale, 0.1)
         imageSize = CGSize(width: min(imageSize.width, maxPoints), height: min(imageSize.height, maxPoints))
@@ -587,7 +601,7 @@ extension CodeTile {
                                          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let bitmap = NSGraphicsContext(bitmapImageRep: rep) else { return (nil, content) }
         rep.size = imageSize
-        let origin = full ? .zero : (showsCurrent && document.path == self.document?.path ? rowsView.bounds.origin : .zero)
+        let scrollY = full ? 0 : (showsCurrent && document.path == self.document?.path ? rowsView.bounds.minY : 0)
         appearance.performAsCurrentDrawingAppearance {
             let cg = bitmap.cgContext
             cg.saveGState()
@@ -599,11 +613,11 @@ extension CodeTile {
             CodeHeaderBar.drawStatic(in: NSRect(x: 0, y: 0, width: imageSize.width, height: headerHeight), path: document.path, diffBase: diffBaseProp,
                                      status: document.status, warning: document.warning, caption: object.props["caption"]?.string,
                                      history: followOf == nil ? [] : history, current: displayed, missed: lock.missed)
-            let rowsRect = CGRect(x: origin.x, y: origin.y, width: imageSize.width, height: max(0, imageSize.height - headerHeight))
+            let rowsRect = CGRect(x: 0, y: scrollY, width: imageSize.width, height: max(0, imageSize.height - headerHeight))
             cg.saveGState()
             cg.clip(to: CGRect(x: 0, y: headerHeight, width: imageSize.width, height: rowsRect.height))
-            cg.translateBy(x: -origin.x, y: headerHeight - origin.y)
-            painter.draw(in: cg, rect: rowsRect, gutterX: origin.x, cache: nil)
+            cg.translateBy(x: 0, y: headerHeight - scrollY)
+            painter.draw(in: cg, rect: rowsRect, cache: nil)
             cg.restoreGState()
             NSGraphicsContext.restoreGraphicsState()
             cg.restoreGState()
@@ -645,11 +659,12 @@ extension CodeTile: CodeNavigationHost {
     var navigationLineHeight: CGFloat { CodeMetrics.rowHeight }
 
     /// 1-based line and 0-based UTF-16 column of the working-tree file at a point in the rows
-    /// view; nil over peeked base rows, the gutter, and deleted files.
+    /// view (a continuation row maps into its line past the wrap); nil over peeked base rows,
+    /// the gutter, below the last row, and deleted files.
     func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)? {
         guard let document, showsCurrent, document.side == .new, !rowsView.isInGutter(point),
-              let position = rowsView.position(at: point), case .line(let line)? = rowsView.painter?.rows.row(position.row),
-              CodePainter.row(atY: point.y) == position.row else { return nil }
+              case .line(let line)? = rowsView.painter?.rows.row(CodePainter.row(atY: point.y)),
+              let position = rowsView.position(at: point) else { return nil }
         return (line, position.offset)
     }
 

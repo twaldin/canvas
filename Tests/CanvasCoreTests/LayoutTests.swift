@@ -81,6 +81,28 @@ final class LayoutApiTests {
         #expect(wide.width > measured.width)
     }
 
+    @Test func codeFitsUnderAMaxWidthByWrappingLongLines() async throws {
+        // Lines 45-54 hold the 120-column line 50: 120 columns fit under the default 960.
+        let natural = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54)])))
+        #expect(natural == CodeMetrics.size(lines: 10, longestLine: 120, caption: false), "under the max, exactly as wide as the longest line")
+        let roomy = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54), "width": 2000])))
+        #expect(roomy == natural, "a larger max doesn't widen it")
+
+        // At 500 pt the text column is 59 wide: line 50 takes 59 + 57 + 4 columns, 3 rows.
+        #expect(CodeMetrics.textColumns(width: 500, lineCount: 100) == 59)
+        let narrow = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54), "width": 500])))
+        #expect(narrow == CGSize(width: 500, height: CodeMetrics.size(lines: 12, longestLine: 0, caption: false).height))
+        let floor = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54), "width": 100])))
+        #expect(floor.width == CodeMetrics.minWidth, "never narrower than the header needs")
+
+        let fitted = try await result("object.create", .object(["type": "code", "props": Self.code(45, 54), "frame": .object(["x": 0, "y": 0, "w": 500]), "size": "fit"]))
+        let frame = try #require(fitted["object"]?["frame"]).decode(Frame.self)
+        #expect(CGSize(width: frame.w, height: frame.h) == narrow)
+        // A re-fit without a width uses the default max, not the tile's current width.
+        let refit = try await result("object.update", .object(["id": try #require(fitted["object"]?["id"]), "size": "fit"]))
+        #expect(try #require(refit["object"]?["frame"]).decode(Frame.self).w == Double(natural.width))
+    }
+
     @Test func unmeasurableContentSaysWhy() async throws {
         let html = try await call("object.measure", .object(["type": "html", "props": .object(["html": "<p>hi</p>"])]))
         #expect(html["error"]?["code"] == .string("unsupported"))
@@ -189,7 +211,9 @@ final class LayoutApiTests {
         #expect(crossings.contains(.object(["arrow": .string(through.id), "crosses": .array([.string(b.id)])])))
         #expect(!crossings.contains { $0["arrow"] == .string(around.id) }, "an avoid route goes around b")
         let overflow = try #require(report["overflow"]?.array?.first { $0["id"] == .string(tiny.id) })
-        #expect(overflow["y"]?.number == Double(CodeMetrics.size(lines: 30, longestLine: 64, caption: false).height) - 100)
+        // Code wraps at its tile's width: at 300 pt (32 columns) line 12's 64 columns take 3 rows.
+        #expect(overflow["x"]?.number == 0)
+        #expect(overflow["y"]?.number == Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - 100)
 
         let scoped = try await result("layout.check", .object(["ids": .array([.string(c.id)])]))
         #expect(scoped["overlaps"] == .array([]) && scoped["arrowCrossings"] == .array([]))

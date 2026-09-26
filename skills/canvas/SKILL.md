@@ -75,7 +75,7 @@ canvas render obj_… --full                       # a note/HTML/code tile's who
 Python: `canvas.view.render(target="obj_…", full=True, out="note.png")` (`target` is an id, a list of ids, or `{"x","y","w","h"}`). The app writes `out` (png or jpg by extension; clients resolve relative paths); without `out` the result has `imageBase64`. The result maps pixels to the canvas: pixel `(px, py)` is canvas `(canvasRect.x + px / scale, canvasRect.y + py / scale)`, and `objects` lists every object drawn with its `pixelRect` (a tile's includes its 26 pt title bar), `state`, and `overflow`:
 
 - `state: rendered` means the content painted. `placeholder` means it didn't in time or can't be rendered here (`reason` says why; the image shows an orange "not rendered" tag instead of a silent blank). Browser pages that aren't loaded are not reloaded for a render; they show their last capture as a placeholder. Content waits up to `timeoutMs` (8 s) for HTML pages and file reads to settle.
-- `overflow: {x, y}`: points of content beyond the tile's frame (a note taller than its box, code wider than the tile). Absent when the content fits. Resize the frame by that much to fit it, or render with `full`.
+- `overflow: {x, y}`: points of content beyond the tile's frame (a note or code taller than its box; code wraps at the tile's width, so it only overflows downward). Absent when the content fits. Resize the frame by that much to fit it, or render with `full`.
 - `contentSize`: the content's own extent at the tile's width.
 
 Terminals are drawn from their session text in the terminal's font and colors. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn; leave out object types with `exclude`.
@@ -117,7 +117,7 @@ Anchors prefer symbols (they survive edits); line anchors are re-found by conten
 
 ### Code tiles
 
-A code tile shows the whole current file, scrolled so `range` sits a few rows below the top, with `range` tinted. The gutter shows changes against `diffBase` (default `merge-base`: the whole branch; `head` for uncommitted work only) like gitsigns: green bar added, blue bar modified, red wedge where lines were deleted; the user can click a sign to see the old lines inline. A repo with no commits or no default branch shows plain source with a header warning, as do diffs too large to compute; a deleted file shows its base version. `caption` is one line under the header (plain text, `inline code`), so a tile doesn't need a separate note for its one-line explanation. Size a tile to exactly its range with `size: "fit"`.
+A code tile shows the whole current file, scrolled so `range` sits a few rows below the top, with `range` tinted. The gutter shows changes against `diffBase` (default `merge-base`: the whole branch; `head` for uncommitted work only) like gitsigns: green bar added, blue bar modified, red wedge where lines were deleted; the user can click a sign to see the old lines inline. A repo with no commits or no default branch shows plain source with a header warning, as do diffs too large to compute; a deleted file shows its base version. `caption` is one line under the header (plain text, `inline code`), so a tile doesn't need a separate note for its one-line explanation. Size a tile to exactly its range with `size: "fit"`: it gets as wide as the range's longest line up to 960 pt (pass `frame.w` for another maximum), and longer lines soft-wrap onto indented continuation rows, so keep long lines in the range rather than trimming around them.
 
 ### HTML explainers
 

@@ -2,8 +2,9 @@ import CoreGraphics
 
 /// Geometry of a code tile in points, shared by the renderer (which must obey it) and layout
 /// (`object.measure`, `size: "fit"`). Rows are a fixed height; text is the system monospaced
-/// font at `fontSize`, so every character (after expanding tabs to `tabWidth` columns) is
-/// `charAdvance` wide.
+/// font at `fontSize`, so every column (after expanding tabs to `tabWidth` columns) is
+/// `charAdvance` wide. Lines wider than the text column soft-wrap onto continuation rows
+/// (`wrap(_:columns:)`); nothing scrolls sideways.
 ///
 /// The object's frame, top to bottom: the tile title bar, the code header, the optional caption
 /// strip, the follow history strip (follow tiles only), then `verticalPadding`, the rows, and
@@ -43,6 +44,12 @@ public enum CodeMetrics {
     public static let trailingPadding: CGFloat = 12
     /// Narrowest frame the header controls fit in.
     public static let minWidth: CGFloat = 280
+    /// Widest frame `size: "fit"` and `object.measure` give a code tile when the caller names no
+    /// width: about 120 columns of text, which holds lines within the usual formatter limits
+    /// (80–120) unwrapped while one long line can't stretch a tile across a whole board.
+    public static let defaultFitWidth: CGFloat = 960
+    /// Continuation rows start this many columns right of their line's indentation.
+    public static let wrapIndent = 2
 
     public static func lineNumberDigits(lineCount: Int) -> Int {
         max(minLineNumberDigits, String(max(1, lineCount)).count)
@@ -51,6 +58,13 @@ public enum CodeMetrics {
     /// Width of everything left of the text for a file of `lineCount` lines.
     public static func gutterWidth(lineCount: Int) -> CGFloat {
         (gutterLeading + CGFloat(lineNumberDigits(lineCount: lineCount)) * charAdvance + signGap + signWidth + textGap).rounded(.up)
+    }
+
+    /// Text columns a code tile `width` points wide shows (its rows wrap there), for a file of
+    /// `lineCount` lines; at least 1.
+    public static func textColumns(width: CGFloat, lineCount: Int) -> Int {
+        // A frame sized for N columns (`size`, rounded up) must show N despite float error.
+        max(1, Int(((width - gutterWidth(lineCount: lineCount) - trailingPadding) / charAdvance + 0.001).rounded(.down)))
     }
 
     /// Height above the first row's padding, inside the object's frame.
@@ -66,12 +80,63 @@ public enum CodeMetrics {
         return CGSize(width: max(minWidth, width.rounded(.up)), height: height.rounded(.up))
     }
 
+    /// Columns one UTF-16 unit other than a tab takes. East Asian wide and fullwidth characters
+    /// take 2 (the font fallback draws them about 1.6 columns wide, so a row never overflows);
+    /// a surrogate pair (emoji and other astral characters) takes 2, all on its high half.
+    public static func columns(of unit: UInt16) -> Int {
+        switch unit {
+        case 0xD800...0xDBFF: 2
+        case 0xDC00...0xDFFF: 0
+        case 0x1100...0x115F, 0x2E80...0x303E, 0x3041...0x33FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xA000...0xA4CF,
+             0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE30...0xFE4F, 0xFF00...0xFF60, 0xFFE0...0xFFE6: 2
+        default: 1
+        }
+    }
+
     /// Columns a line occupies with tabs expanded to the next multiple of `tabWidth`.
     public static func columns(_ line: some StringProtocol) -> Int {
+        columns(units: line.utf16)
+    }
+
+    public static func columns(units: some Sequence<UInt16>) -> Int {
         var column = 0
-        for unit in line.utf16 {
-            column = unit == 0x09 ? (column / tabWidth + 1) * tabWidth : column + 1
+        for unit in units {
+            column += unit == 0x09 ? tabWidth - column % tabWidth : columns(of: unit)
         }
         return column
+    }
+
+    /// How a line soft-wraps at `columns` text columns: the UTF-16 offsets (within the line)
+    /// where its continuation rows start, and the columns those rows are indented by (the line's
+    /// own indentation plus `wrapIndent`, at most half the row). No breaks when the line fits.
+    /// Breaks fall between characters, never inside a surrogate pair; every row holds at least
+    /// one. Tabs expand against the unwrapped line's columns, so a wrapped line draws the same
+    /// spaces it would unwrapped.
+    public static func wrap(_ units: some Sequence<UInt16>, columns: Int) -> (breaks: [Int], indent: Int) {
+        var breaks: [Int] = []
+        var indent = 0
+        var limit = max(1, columns)
+        var virtual = 0, used = 0, leading = 0
+        var inLeading = true
+        var offset = 0, rowStart = 0
+        for unit in units {
+            let width = unit == 0x09 ? tabWidth - virtual % tabWidth : self.columns(of: unit)
+            if inLeading {
+                if unit == 0x20 || unit == 0x09 { leading += width } else { inLeading = false }
+            }
+            if width > 0, used + width > limit, offset > rowStart {
+                if breaks.isEmpty {
+                    indent = min(leading + wrapIndent, max(1, columns) / 2)
+                    limit = max(1, columns - indent)
+                }
+                breaks.append(offset)
+                rowStart = offset
+                used = 0
+            }
+            used += width
+            virtual += width
+            offset += 1
+        }
+        return (breaks, indent)
     }
 }

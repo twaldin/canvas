@@ -29,23 +29,15 @@ enum CodeTheme {
     }
 }
 
-/// A position in the rows: a row index and a UTF-16 offset into that row's source line.
-struct CodePosition: Comparable {
-    var row: Int
-    var offset: Int
-
-    static func < (lhs: CodePosition, rhs: CodePosition) -> Bool {
-        (lhs.row, lhs.offset) < (rhs.row, rhs.offset)
-    }
-}
-
-/// Laid-out lines for the rows on screen, keyed by what they show. Each draw keeps only the rows
-/// it drew, so the cache never outgrows the visible window.
+/// Laid-out rows on screen, keyed by what they show. Each draw keeps only the rows it drew, so
+/// the cache never outgrows the visible window.
 @MainActor
 final class CodeLineCache {
-    enum Key: Hashable {
-        case line(Int)
-        case peek(Int)
+    struct Key: Hashable {
+        var row: CodeRows.Row
+        var part: Int
+        /// Wrapping at another width lays the same part out differently.
+        var columns: Int?
     }
 
     private(set) var lines: [Key: CTLine] = [:]
@@ -74,9 +66,11 @@ final class CodeLineCache {
 }
 
 /// Draws a code document's rows (gutter, change signs, peek rows, tints, highlighted text) in
-/// document coordinates of a flipped context: row `i` spans
-/// `verticalPadding + i × rowHeight ..< + rowHeight`. The live view, zoomed-out cards, and
-/// offscreen renders all draw through this, straight from the model.
+/// document coordinates of a flipped context: visual row `i` spans
+/// `verticalPadding + i × rowHeight ..< + rowHeight`. Rows are soft-wrapped at `rows.columns`:
+/// a continuation row has no line number (a faint hook instead), its line's sign, tints, and
+/// highlighting, and its text indented by the segment's indent. The live view, zoomed-out
+/// cards, and offscreen renders all draw through this, straight from the model.
 @MainActor
 struct CodePainter {
     let document: CodeDocument
@@ -85,13 +79,13 @@ struct CodePainter {
     var rangeLines: ClosedRange<Int>?
     /// Displayed lines an edit just changed, and the accent's current strength (0…1).
     var flash: (lines: [Range<Int>], strength: CGFloat)?
-    var selection: (start: CodePosition, end: CodePosition)?
+    var selection: (start: CodeRows.Position, end: CodeRows.Position)?
 
-    var gutterWidth: CGFloat { CodeMetrics.gutterWidth(lineCount: max(document.text.lineCount, document.diff.old.lineCount)) }
+    var gutterWidth: CGFloat { CodeMetrics.gutterWidth(lineCount: document.gutterLineCount) }
 
-    var contentSize: CGSize {
-        CGSize(width: gutterWidth + CGFloat(document.longestLine) * CodeMetrics.charAdvance + CodeMetrics.trailingPadding,
-               height: 2 * CodeMetrics.verticalPadding + CGFloat(max(1, rows.count)) * CodeMetrics.rowHeight)
+    /// Height of all rows; there is no horizontal extent beyond the view (rows wrap).
+    var contentHeight: CGFloat {
+        2 * CodeMetrics.verticalPadding + CGFloat(max(1, rows.count)) * CodeMetrics.rowHeight
     }
 
     static func rowTop(_ row: Int) -> CGFloat {
@@ -111,79 +105,67 @@ struct CodePainter {
 
     // MARK: Row text
 
-    /// The source line a row shows: its text side, 1-based line, and syntax.
-    func source(ofRow row: Int) -> (text: SideText, line: Int, syntax: SyntaxLines, key: CodeLineCache.Key)? {
-        switch rows.row(row) {
-        case .line(let line)?: (document.text, line, document.syntax, .line(line))
-        case .peek(let old, _)?: (document.diff.old, old, document.oldSyntax, .peek(old))
-        case nil: nil
-        }
+    func text(ofEntry entry: Int) -> NSString {
+        guard let row = rows.entryRow(entry) else { return "" }
+        return document.text(of: row) as NSString
     }
 
-    func text(ofRow row: Int) -> NSString {
-        guard let source = source(ofRow: row) else { return "" }
-        return (source.text.text as NSString).substring(with: source.text.range(ofLine: source.line)) as NSString
+    /// Left edge of a row's text: continuation rows are indented.
+    func textX(_ segment: CodeRows.Segment) -> CGFloat {
+        gutterWidth + CGFloat(segment.indent) * CodeMetrics.charAdvance
     }
 
-    /// The row's line laid out: tabs expanded, highlighted. Colors resolve in the current
-    /// drawing appearance.
-    func makeLine(row: Int) -> CTLine {
-        let raw = text(ofRow: row)
-        let (display, map) = Self.expandTabs(raw)
-        let string = NSMutableAttributedString(string: display, attributes: [.font: CodeTheme.font, .foregroundColor: NSColor.labelColor.cgColor])
-        if let source = source(ofRow: row) {
-            for run in source.syntax.runs(line: source.line) {
-                let start = Int(run.start), end = min(Int(run.end), raw.length)
-                guard start < end else { continue }
-                let from = map?[start] ?? start, to = map?[end] ?? end
-                string.addAttribute(.foregroundColor, value: CodeTheme.color(run.style).cgColor, range: NSRange(location: from, length: to - from))
-            }
+    /// A visual row laid out: its slice of the line, tabs expanded, highlighted. Colors resolve
+    /// in the current drawing appearance.
+    func makeLine(_ segment: CodeRows.Segment) -> CTLine {
+        let text = document.rowText(segment)
+        let string = NSMutableAttributedString(string: text.display, attributes: [.font: CodeTheme.font, .foregroundColor: NSColor.labelColor.cgColor])
+        let source = document.source(of: segment.row)
+        for run in source.syntax.runs(line: source.line) {
+            let start = max(Int(run.start), text.start), end = min(Int(run.end), text.end)
+            guard start < end else { continue }
+            let from = text.display(ofOffset: start), to = text.display(ofOffset: end)
+            string.addAttribute(.foregroundColor, value: CodeTheme.color(run.style).cgColor, range: NSRange(location: from, length: to - from))
         }
         return CTLineCreateWithAttributedString(string)
     }
 
-    /// Tabs become spaces up to the next tab stop; `map[i]` is the display offset of source
-    /// offset `i` (nil when the line has no tabs).
-    static func expandTabs(_ line: NSString) -> (String, [Int]?) {
-        guard line.range(of: "\t").location != NSNotFound else { return (line as String, nil) }
-        var out: [unichar] = []
-        var map: [Int] = []
-        map.reserveCapacity(line.length + 1)
-        for index in 0..<line.length {
-            map.append(out.count)
-            let unit = line.character(at: index)
-            if unit == 0x09 {
-                let width = CodeMetrics.tabWidth - out.count % CodeMetrics.tabWidth
-                out.append(contentsOf: repeatElement(0x20, count: width))
-            } else {
-                out.append(unit)
-            }
-        }
-        map.append(out.count)
-        return (String(utf16CodeUnits: out, count: out.count), map)
+    func line(_ segment: CodeRows.Segment, cache: CodeLineCache?) -> CTLine {
+        let key = CodeLineCache.Key(row: segment.row, part: segment.part, columns: rows.columns)
+        return cache?.line(key) { makeLine(segment) } ?? makeLine(segment)
     }
 
-    /// Source offset in a row nearest to `x` (document coordinates, text starting at
-    /// `gutterWidth`).
-    func offset(inRow row: Int, x: CGFloat, line: CTLine) -> Int {
-        let display = CTLineGetStringIndexForPosition(line, CGPoint(x: x - gutterWidth, y: 0))
-        let raw = text(ofRow: row)
-        guard display != kCFNotFound else { return 0 }
-        guard let map = Self.expandTabs(raw).1 else { return min(max(0, display), raw.length) }
-        return map.lastIndex { $0 <= display } ?? 0
+    /// Line offset in a visual row nearest to `x` (document coordinates).
+    func offset(in segment: CodeRows.Segment, x: CGFloat, line: CTLine) -> Int {
+        let text = document.rowText(segment)
+        let display = CTLineGetStringIndexForPosition(line, CGPoint(x: x - textX(segment), y: 0))
+        guard display != kCFNotFound else { return text.start }
+        return text.offset(ofDisplay: display)
     }
 
-    func x(ofOffset offset: Int, inRow row: Int, line: CTLine) -> CGFloat {
-        let map = Self.expandTabs(text(ofRow: row)).1
-        let display = map.map { $0[min(offset, $0.count - 1)] } ?? offset
-        return gutterWidth + CTLineGetOffsetForStringIndex(line, display, nil)
+    /// X of a line offset within a visual row (clamped to the row's slice).
+    func x(ofOffset offset: Int, in segment: CodeRows.Segment, line: CTLine) -> CGFloat {
+        textX(segment) + CTLineGetOffsetForStringIndex(line, document.rowText(segment).display(ofOffset: offset), nil)
+    }
+
+    /// Selected span of a visual row: from/to x, `to` nil when the selection runs past the row.
+    private func selected(_ segment: CodeRows.Segment, _ selection: (start: CodeRows.Position, end: CodeRows.Position), line: CTLine) -> (from: CGFloat, to: CGFloat?)? {
+        guard selection.start.entry <= segment.entry, segment.entry <= selection.end.entry else { return nil }
+        let start = segment.start, end = segment.end
+        let lower = segment.entry == selection.start.entry ? selection.start.offset : Int.min
+        let upper = segment.entry == selection.end.entry ? selection.end.offset : Int.max
+        if let end, lower >= end { return nil }
+        if segment.isContinuation, upper <= start { return nil }
+        let from = lower <= start ? textX(segment) : x(ofOffset: lower, in: segment, line: line)
+        // Past this row: the rest of the line on a row that continues, or the line break.
+        let past = end.map { upper > $0 } ?? (upper == Int.max)
+        return (from, past ? nil : x(ofOffset: upper, in: segment, line: line))
     }
 
     // MARK: Drawing
 
-    /// Draws the rows crossing `rect` (document coordinates). The gutter is pinned at
-    /// `gutterX` (the visible left edge) so it stays put while the text scrolls sideways.
-    func draw(in context: CGContext, rect: CGRect, gutterX: CGFloat, cache: CodeLineCache?) {
+    /// Draws the rows crossing `rect` (document coordinates).
+    func draw(in context: CGContext, rect: CGRect, cache: CodeLineCache?) {
         NSColor.textBackgroundColor.setFill()
         rect.fill()
         if let notice = document.notice {
@@ -191,22 +173,19 @@ struct CodePainter {
             return
         }
         let visible = visibleRows(rect)
+        let segments = visible.map { rows.segment($0) }
         let width = rect.maxX
         let selection = self.selection.flatMap { $0.start < $0.end ? $0 : nil }
-        func line(_ row: Int) -> CTLine {
-            guard let key = source(ofRow: row)?.key else { return makeLine(row: row) }
-            return cache?.line(key) { makeLine(row: row) } ?? makeLine(row: row)
-        }
 
         // Row tints, then selection, under the text.
-        for row in visible {
+        for (row, segment) in zip(visible, segments) {
+            guard let segment else { continue }
             let frame = CGRect(x: rect.minX, y: Self.rowTop(row), width: width - rect.minX, height: CodeMetrics.rowHeight)
-            let shown = rows.row(row)
-            if case .peek? = shown {
+            switch segment.row {
+            case .peek:
                 CodeTheme.peek.setFill()
                 frame.fill()
-            }
-            if case .line(let number)? = shown {
+            case .line(let number):
                 if let rangeLines, rangeLines.contains(number) {
                     CodeTheme.range.setFill()
                     frame.fill()
@@ -216,71 +195,71 @@ struct CodePainter {
                     frame.fill()
                 }
             }
-            if let selection, selection.start.row <= row, row <= selection.end.row {
-                let laid = line(row)
-                let from = row == selection.start.row ? x(ofOffset: selection.start.offset, inRow: row, line: laid) : gutterWidth
-                let to = row == selection.end.row ? x(ofOffset: selection.end.offset, inRow: row, line: laid) : width
+            if let selection, let span = selected(segment, selection, line: line(segment, cache: cache)) {
                 NSColor.selectedTextBackgroundColor.setFill()
-                CGRect(x: from, y: frame.minY, width: max(0, to - from), height: frame.height).fill()
+                let to = span.to ?? width
+                CGRect(x: span.from, y: frame.minY, width: max(0, to - span.from), height: frame.height).fill()
             }
         }
 
         // Text.
         context.saveGState()
-        context.clip(to: CGRect(x: gutterX + gutterWidth, y: rect.minY, width: max(0, rect.maxX - gutterX - gutterWidth), height: rect.height))
+        context.clip(to: CGRect(x: gutterWidth, y: rect.minY, width: max(0, rect.maxX - gutterWidth), height: rect.height))
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        for row in visible {
-            context.textPosition = CGPoint(x: gutterWidth, y: Self.rowTop(row) + CodeMetrics.baseline)
-            CTLineDraw(line(row), context)
+        for (row, segment) in zip(visible, segments) {
+            guard let segment else { continue }
+            context.textPosition = CGPoint(x: textX(segment), y: Self.rowTop(row) + CodeMetrics.baseline)
+            CTLineDraw(line(segment, cache: cache), context)
         }
         context.restoreGState()
         cache?.commit()
 
-        drawGutter(in: context, rows: visible, rect: rect, x: gutterX)
+        drawGutter(in: context, rows: visible, segments: segments, rect: rect)
     }
 
-    private func drawGutter(in context: CGContext, rows visible: Range<Int>, rect: CGRect, x: CGFloat) {
-        let gutter = CGRect(x: x, y: rect.minY, width: gutterWidth, height: rect.height)
+    private func drawGutter(in context: CGContext, rows visible: Range<Int>, segments: [CodeRows.Segment?], rect: CGRect) {
+        let gutter = CGRect(x: 0, y: rect.minY, width: gutterWidth, height: rect.height)
         NSColor.textBackgroundColor.setFill()
         gutter.fill()
         NSColor.separatorColor.withAlphaComponent(0.4).setFill()
-        CGRect(x: x + gutterWidth - CodeMetrics.textGap / 2, y: rect.minY, width: 0.5, height: rect.height).fill()
-        let digits = CGFloat(CodeMetrics.lineNumberDigits(lineCount: max(document.text.lineCount, document.diff.old.lineCount)))
-        let numbersRight = x + CodeMetrics.gutterLeading + digits * CodeMetrics.charAdvance
+        CGRect(x: gutterWidth - CodeMetrics.textGap / 2, y: rect.minY, width: 0.5, height: rect.height).fill()
+        let digits = CGFloat(CodeMetrics.lineNumberDigits(lineCount: document.gutterLineCount))
+        let numbersRight = CodeMetrics.gutterLeading + digits * CodeMetrics.charAdvance
         let signX = numbersRight + CodeMetrics.signGap
         context.saveGState()
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-        for row in visible {
+        for (row, segment) in zip(visible, segments) {
+            guard let segment else { continue }
             let top = Self.rowTop(row)
             let number: Int
             let color: NSColor
-            switch rows.row(row) {
-            case .line(let line)?:
+            switch segment.row {
+            case .line(let line):
                 number = line
                 color = rangeLines?.contains(line) == true ? .secondaryLabelColor : .tertiaryLabelColor
                 if let sign = document.signs.first(where: { $0.lines.contains(line) }) {
                     (sign.kind == .added ? CodeTheme.added : CodeTheme.modified).setFill()
                     CGRect(x: signX, y: top, width: CodeMetrics.signWidth - 1, height: CodeMetrics.rowHeight).fill()
                 }
-            case .peek(let old, _)?:
+            case .peek(let old, _):
                 number = old
                 color = CodeTheme.deleted.withAlphaComponent(0.8)
                 CodeTheme.deleted.setFill()
                 CGRect(x: signX, y: top, width: CodeMetrics.signWidth - 1, height: CodeMetrics.rowHeight).fill()
-            case nil:
-                continue
             }
-            let label = NSAttributedString(string: String(number), attributes: [.font: CodeTheme.font, .foregroundColor: color.cgColor])
-            let laid = CTLineCreateWithAttributedString(label)
-            context.textPosition = CGPoint(x: numbersRight - CGFloat(String(number).count) * CodeMetrics.charAdvance, y: top + CodeMetrics.baseline)
+            // Continuation rows: a faint hook where the number would be.
+            let label = segment.isContinuation ? "↪" : String(number)
+            let attributes: [NSAttributedString.Key: Any] = [.font: CodeTheme.font, .foregroundColor: (segment.isContinuation ? NSColor.quaternaryLabelColor : color).cgColor]
+            let laid = CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: attributes))
+            let labelWidth = segment.isContinuation ? CTLineGetTypographicBounds(laid, nil, nil, nil) : CGFloat(label.count) * CodeMetrics.charAdvance
+            context.textPosition = CGPoint(x: numbersRight - labelWidth, y: top + CodeMetrics.baseline)
             CTLineDraw(laid, context)
         }
         context.restoreGState()
         // Deletion wedges sit on the edge between two lines; a peeked deletion shows its rows.
         let peeked = rows.peekedSigns
         for (index, sign) in document.signs.enumerated() where sign.kind == .deleted && !peeked.contains(index) {
-            let line = sign.lines.lowerBound
-            let edge = line <= document.text.lineCount ? Self.rowTop(rows.index(ofLine: line)) : Self.rowTop(rows.index(ofLine: document.text.lineCount) + 1)
+            let edge = Self.rowTop(rows.edgeRow(ofLine: sign.lines.lowerBound))
             guard edge >= rect.minY - 6, edge <= rect.maxY + 6 else { continue }
             let wedge = NSBezierPath()
             wedge.move(to: CGPoint(x: signX - 1, y: edge - 4.5))
@@ -300,18 +279,16 @@ struct CodePainter {
 
     // MARK: Hit testing
 
-    /// Sign under a gutter point: the bar of the row, or a deletion wedge within a few points of
-    /// the row edge it sits on.
+    /// Sign under a gutter point: the bar of the row (any of a wrapped line's rows), or a
+    /// deletion wedge within a few points of the row edge it sits on.
     func sign(atY y: CGFloat) -> Int? {
-        let row = Self.row(atY: y)
-        if case .peek(_, let sign)? = rows.row(row) { return sign }
+        let row = rows.row(Self.row(atY: y))
+        if case .peek(_, let sign)? = row { return sign }
         let peeked = rows.peekedSigns
         for (index, sign) in document.signs.enumerated() where sign.kind == .deleted && !peeked.contains(index) {
-            let line = sign.lines.lowerBound
-            let edge = line <= document.text.lineCount ? Self.rowTop(rows.index(ofLine: line)) : Self.rowTop(rows.index(ofLine: document.text.lineCount) + 1)
-            if abs(edge - y) <= 5 { return index }
+            if abs(Self.rowTop(rows.edgeRow(ofLine: sign.lines.lowerBound)) - y) <= 5 { return index }
         }
-        if case .line(let line)? = rows.row(row) {
+        if case .line(let line)? = row {
             return document.signs.firstIndex { $0.lines.contains(line) }
         }
         return nil

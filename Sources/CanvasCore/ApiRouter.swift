@@ -600,7 +600,9 @@ public final class ApiRouter {
     }
 
     /// The measured size an `object.create`/`object.update` with `size: "fit"` gets; nil without
-    /// `size`. Notes and text wrap at the given frame's `w` (an update keeps its current width).
+    /// `size`. Notes and text wrap at the given frame's `w` (an update keeps its current width);
+    /// code takes the given `w` as its widest (default `CodeMetrics.defaultFitWidth`, also on an
+    /// update, so a re-fit can widen a tile as well as narrow it).
     /// `pending` are the params of creates earlier in the same batch, for updates of `$n`.
     func fitSize(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> CGSize? {
         guard let size = p["size"] else { return nil }
@@ -623,7 +625,7 @@ public final class ApiRouter {
             base = (object.type, object.props, object.frame.w, board.root)
         }
         let props = p["props"].map { base.props.merging($0) } ?? base.props
-        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? base.width, root: base.root)
+        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? (base.type == .code ? nil : base.width), root: base.root)
     }
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
@@ -754,8 +756,9 @@ public final class ApiRouter {
             .filter { $0.type == .code || $0.type == .note || ($0.type == .shape && ShapeSpec($0.props)?.kind == .text) }
             .sorted { $0.id < $1.id }
         for object in measurable {
-            // Code has one intrinsic size; notes and text wrap at the frame's width.
-            guard let size = try? await ObjectMeasure.size(type: object.type, props: object.props, width: object.type == .code ? nil : object.frame.w, root: board.root),
+            // Code wraps at its frame's width (so only its height overflows); notes and text wrap
+            // there too.
+            guard let size = try? await ObjectMeasure.size(type: object.type, props: object.props, width: object.frame.w, root: board.root),
                   let current = board.objects[object.id]?.frame else { continue }
             let x = max(0, size.width - current.w)
             let y = max(0, size.height - current.h)

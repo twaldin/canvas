@@ -727,8 +727,10 @@ public final class ApiRouter {
         }
     }
 
-    /// `layout.check`: accidental overlaps, arrows through tiles, and content that doesn't fit
-    /// its frame, for `ids`, for what intersects `rect`, or for the whole board.
+    /// `layout.check`: accidental overlaps, arrows through tiles, labels on tiles or labels,
+    /// content that doesn't fit its frame, and truncated captions, for `ids`, for what
+    /// intersects `rect`, or for the whole board. Follow tiles are fixed-size viewers: never
+    /// overflow or truncated.
     private func check(_ p: JSONValue) async throws -> JSONValue {
         let board: Board
         var scope: Set<ObjectID>?
@@ -747,16 +749,42 @@ public final class ApiRouter {
                 }.map(\.id))
             }
         }
-        let report = board.layoutCheck(scope: scope)
+        // Code tiles read from disk: those checked for fit, and those line-bound arrows attach to
+        // (their line count bounds the scroll their anchors assume).
+        var lineBound = Set<ObjectID>()
+        for object in board.objects.values where object.type == .arrow && (scope?.contains(object.id) ?? true) {
+            guard let spec = ArrowSpec(object.props) else { continue }
+            for case .object(let id, .some, _) in [spec.from, spec.to] { lineBound.insert(id) }
+        }
+        var excerpts: [ObjectID: NoteExcerpt] = [:]
+        for object in board.objects.values.sorted(by: { $0.id < $1.id }) where object.type == .code && ((scope?.contains(object.id) ?? true) || lineBound.contains(object.id)) {
+            excerpts[object.id] = try? await ObjectMeasure.codeExcerpt(object.props, root: board.root)
+        }
+        let rows = excerpts.mapValues { CodeRows(lineCount: $0.fileLineCount) }
+        let report = board.layoutCheck(scope: scope, rows: rows)
         var overflow: [JSONValue] = []
+        var truncated: [JSONValue] = []
         let measurable = board.objects.values
             .filter { scope?.contains($0.id) ?? true }
-            .filter { $0.type == .code || $0.type == .note || ($0.type == .shape && ShapeSpec($0.props)?.kind == .text) }
+            .filter { $0.type == .code && $0.props["followOf"]?.string == nil || $0.type == .note || ($0.type == .shape && ShapeSpec($0.props)?.kind == .text) }
             .sorted { $0.id < $1.id }
         for object in measurable {
-            // Code has one intrinsic size; notes and text wrap at the frame's width.
-            guard let size = try? await ObjectMeasure.size(type: object.type, props: object.props, width: object.type == .code ? nil : object.frame.w, root: board.root),
-                  let current = board.objects[object.id]?.frame else { continue }
+            let size: CGSize
+            if object.type == .code {
+                // The rows' own extent; a caption too long for the frame is `truncated`, not overflow.
+                guard let excerpt = excerpts[object.id] else { continue }
+                let caption = object.props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+                size = ObjectMeasure.codeRows(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption != nil, follow: false)
+                if let caption, let current = board.objects[object.id]?.frame {
+                    let missing = ObjectMeasure.captionWidth(caption) - current.w
+                    if missing >= 1 { truncated.append(.object(["id": .string(object.id), "what": .string("caption"), "x": .number(missing.rounded(.up))])) }
+                }
+            } else {
+                // Notes and text wrap at the frame's width.
+                guard let measured = try? await ObjectMeasure.size(type: object.type, props: object.props, width: object.frame.w, root: board.root) else { continue }
+                size = measured
+            }
+            guard let current = board.objects[object.id]?.frame else { continue }
             let x = max(0, size.width - current.w)
             let y = max(0, size.height - current.h)
             guard x >= 1 || y >= 1 else { continue }
@@ -765,7 +793,9 @@ public final class ApiRouter {
         return .object([
             "overlaps": .array(report.overlaps.map { .array($0.map(JSONValue.string)) }),
             "arrowCrossings": .array(report.crossings.map { .object(["arrow": .string($0.arrow), "crosses": .array($0.crosses.map(JSONValue.string))]) }),
+            "labelOverlaps": .array(report.labelOverlaps.map { .object(["arrow": .string($0.arrow), "overlaps": .array($0.overlaps.map(JSONValue.string))]) }),
             "overflow": .array(overflow),
+            "truncated": .array(truncated),
         ])
     }
 

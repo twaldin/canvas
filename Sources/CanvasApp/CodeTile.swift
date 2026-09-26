@@ -27,6 +27,7 @@ final class CodeTile: NSView, TileContent {
     /// Dispatch sources must be resumed before they are released, so suspension is tracked.
     private var watcherSuspended = false
     private var reloadWork: DispatchWorkItem?
+    private var snapshotCover: NSImageView?
 
     /// What the background render produced; the attributed text is built off the main thread
     /// and handed over once.
@@ -47,7 +48,7 @@ final class CodeTile: NSView, TileContent {
         text.isRichText = false
         text.drawsBackground = true
         text.backgroundColor = .textBackgroundColor
-        text.textContainerInset = NSSize(width: 0, height: 6)
+        text.textContainerInset = NSSize(width: 4, height: 6)
         text.isHorizontallyResizable = true
         text.textContainer?.widthTracksTextView = false
         text.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -65,6 +66,7 @@ final class CodeTile: NSView, TileContent {
         header.onLocation = { [weak self] location in self?.aim(at: location) }
         NotificationCenter.default.addObserver(self, selector: #selector(baseChanged), name: .gitDiffBaseChanged, object: nil)
         refreshHeader()
+        resizeSubviews(withOldSize: .zero)
         load()
     }
 
@@ -198,15 +200,22 @@ final class CodeTile: NSView, TileContent {
 
 extension CodeTile {
     private func apply(_ rendered: Rendered) {
+        // Reloads of a file without a range keep the reader's place.
         let keepScroll = self.rendered != nil && range == nil ? scroll.contentView.bounds.origin : nil
+        let keepRow = keepScroll.flatMap { text.row(at: $0) } ?? 0
         self.rendered = rendered
         text.textStorage?.setAttributedString(rendered.attributed)
         text.display = rendered.display
+        text.minSize = scroll.contentSize
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         refreshHeader()
-        showRange()
-        if let keepScroll, range == nil {
+        if let keepScroll {
+            text.ensureLayout(throughRow: keepRow)
             text.scroll(keepScroll)
+        } else {
+            text.ensureLayout(throughRow: 0)
         }
+        showRange()
     }
 
     /// Tint the object's range and bring it into view.
@@ -421,6 +430,28 @@ extension CodeTile {
     }
 
     var takesKeyboardFocus: Bool { false }
+
+    func showSnapshot(_ show: Bool) {
+        snapshotCover?.removeFromSuperview()
+        snapshotCover = nil
+        guard show, let image = text.renderVisible() else { return }
+        let cover = NSImageView(frame: scroll.frame)
+        cover.image = image
+        cover.imageScaling = .scaleNone
+        cover.imageAlignment = .alignTopLeft
+        addSubview(cover)
+        snapshotCover = cover
+    }
+
+    func snapshot() -> NSImage? {
+        showSnapshot(true)
+        defer { showSnapshot(false) }
+        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
+        cacheDisplay(in: bounds, to: rep)
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
 }
 
 // MARK: Code navigation (CodeNavigationHost)

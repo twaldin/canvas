@@ -39,6 +39,10 @@ final class CodeTextView: NSTextView {
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
+        drawRowTints(in: rect)
+    }
+
+    private func drawRowTints(in rect: NSRect) {
         guard let display, !display.rows.isEmpty else { return }
         enumerateRowFrames(in: rect) { row, frame in
             if let tint = Self.tint(display.rows[row].kind) {
@@ -59,6 +63,39 @@ final class CodeTextView: NSTextView {
         case .header: CodeTheme.header
         case .context: nil
         }
+    }
+
+    /// The visible text drawn in-process. TextKit 2 renders fragments into layers that
+    /// `cacheDisplay` never captures, so `view.snapshot` and zoomed-out cards use this instead.
+    func renderVisible() -> NSImage? {
+        let rect = visibleRect
+        guard rect.width > 0, rect.height > 0, let rep = bitmapImageRepForCachingDisplay(in: rect),
+              let bitmap = NSGraphicsContext(bitmapImageRep: rep), let layout = textLayoutManager,
+              let content = layout.textContentManager else { return nil }
+        let cg = bitmap.cgContext
+        cg.saveGState()
+        cg.translateBy(x: 0, y: rect.height)
+        cg.scaleBy(x: 1, y: -1)
+        cg.translateBy(x: -rect.minX, y: -rect.minY)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+        backgroundColor.setFill()
+        rect.fill()
+        drawRowTints(in: rect)
+        let origin = textContainerOrigin
+        let top = NSPoint(x: 0, y: max(0, rect.minY - origin.y))
+        let start = layout.textLayoutFragment(for: top)?.rangeInElement.location ?? content.documentRange.location
+        layout.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+            let frame = fragment.layoutFragmentFrame
+            if frame.minY + origin.y > rect.maxY { return false }
+            fragment.draw(at: CGPoint(x: frame.minX + origin.x, y: frame.minY + origin.y), in: cg)
+            return true
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        cg.restoreGState()
+        let image = NSImage(size: rect.size)
+        image.addRepresentation(rep)
+        return image
     }
 
     /// Full-width frames (view coordinates) of the rows laid out across `rect`.
@@ -105,18 +142,29 @@ final class CodeTextView: NSTextView {
         return NSRect(x: 0, y: union.minY + textContainerOrigin.y, width: bounds.width, height: union.height)
     }
 
-    /// Scroll so a row sits a few rows below the top. The text view is grown to the laid-out
-    /// height first: an occluded window never runs the display pass that would size it.
+    /// Lay out through a screenful past `row` and grow the view to match: an occluded window
+    /// never runs the display pass that would otherwise size it, and scrolling clamps to it.
+    func ensureLayout(throughRow row: Int) {
+        guard let display, let layout = textLayoutManager, let content = layout.textContentManager, !display.rows.isEmpty else { return }
+        let last = display.rows[min(display.rows.count - 1, row + 80)].offset
+        guard let end = content.location(content.documentRange.location, offsetBy: last),
+              let range = NSTextRange(location: content.documentRange.location, end: end) else { return }
+        layout.ensureLayout(for: range)
+        sizeToFit()
+        // Fragment views are otherwise created by the display cycle, which a window on an
+        // unviewed Space never runs; view.snapshot must still see the text.
+        layout.textViewportLayoutController.layoutViewport()
+    }
+
+    /// Scroll so a row sits a few rows below the top.
     func scroll(toRow row: Int) {
         guard let display, let layout = textLayoutManager, let content = layout.textContentManager, !display.rows.isEmpty else { return }
-        let target = display.rows[max(0, min(row, display.rows.count - 1) - 3)].offset
-        guard let location = content.location(content.documentRange.location, offsetBy: target),
-              let upToTarget = NSTextRange(location: content.documentRange.location, end: location) else { return }
-        layout.ensureLayout(for: upToTarget)
-        sizeToFit()
-        if let fragment = layout.textLayoutFragment(for: location) {
-            scroll(NSPoint(x: 0, y: fragment.layoutFragmentFrame.minY))
-        }
+        let row = min(row, display.rows.count - 1)
+        ensureLayout(throughRow: row)
+        guard let location = content.location(content.documentRange.location, offsetBy: display.rows[max(0, row - 3)].offset),
+              let fragment = layout.textLayoutFragment(for: location) else { return }
+        scroll(NSPoint(x: 0, y: fragment.layoutFragmentFrame.minY))
+        layout.textViewportLayoutController.layoutViewport()
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {

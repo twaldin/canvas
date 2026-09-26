@@ -138,9 +138,10 @@ Testing runs on an empty yabai workspace (or floating behind active windows), ma
 
 Question cards (`canvas_ask`), MCP server, `canvas lsp-proxy`, multi-agent overview as an acceptance gate, runtime stack-trace and flame-graph tiles (DAP/profiler), extension-registered omp browser backend (would replace the cmux subset), screen-scraping lifecycle detection.
 
-## To verify during the skeleton
+## Skeleton findings
 
-- omp `input` hook: whether its payload distinguishes interactive user input from synthetic prompts.
-- Hyper-click interception: that a local event monitor swallows ⌃-containing clicks before AppKit turns them into right-clicks.
-- zmx: Kitty keyboard/graphics and bracketed-paste passthrough; image restore on reattach.
-- libghostty-spm: builds and links with Command Line Tools only (no Xcode app).
+- omp `input` events carry `source: "interactive" | "rpc" | "extension"`; the extension drains only on interactive submits. Text pasted into the TUI by `agent.prompt` counts as interactive, so an API prompt drains the tray too.
+- Hyper interception: the app-level local monitor sees ⌃-containing left clicks as `leftMouseDown` and consumes them, so AppKit's ⌃-click → context-menu path never runs. Verified with events replayed into the app's own queue; not yet with hardware clicks.
+- zmx: bracketed paste passes through (a pasted prompt plus Enter arrives as one submit). Sockets live under `$TMPDIR/zmx-<uid>`; GUI apps get a long `/var/folders/…` TMPDIR, which caps session names at 46 bytes, hence `canvas-<tileId>` with board/tile labels. Kitty image restore on reattach is unsupported.
+- libghostty-spm builds and links with Command Line Tools only. Ghostty renders through Metal, which `cacheDisplay` can't capture; terminal snapshots are drawn from the zmx session text.
+- A window on an unviewed space (or fully covered) stops redrawing, so window-server captures go stale. `view.snapshot` renders the window in-process instead, which also lets agents see the canvas as the user does.

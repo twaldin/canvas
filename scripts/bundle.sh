@@ -30,9 +30,13 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
-  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSPrincipalClass</key><string>CanvasApp.CanvasApplication</string>
 </dict>
 </plist>
 PLIST
 codesign --force --sign - "$app" >/dev/null 2>&1 || true
+# Development input replay helper (docs/testing.md); rebuilt only when its source changes.
+if [ ! -x "$repo/.build/dev-input" ] || [ "$repo/scripts/dev-input.swift" -nt "$repo/.build/dev-input" ]; then
+  swiftc -O "$repo/scripts/dev-input.swift" -o "$repo/.build/dev-input"
+fi
 echo "$app"

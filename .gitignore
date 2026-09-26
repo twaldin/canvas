@@ -6,3 +6,5 @@ __pycache__/
 *.pyc
 .venv/
 node_modules/
+
+.canvas-home/

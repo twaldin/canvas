@@ -6,7 +6,7 @@ if ProcessInfo.processInfo.environment["CANVAS_TERMINAL_DEBUG"] == "1" {
     TerminalDebugLog.enable([.lifecycle, .actions])
 }
 
-let app = NSApplication.shared
+let app = CanvasApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)

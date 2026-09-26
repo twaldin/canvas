@@ -3,7 +3,7 @@ import CanvasCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let registry = BoardRegistry()
+    private let registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards))
     private lazy var router = ApiRouter(registry: registry)
     private var server: SocketServer?
     private var controllers: [BoardID: CanvasWindowController] = [:]
@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.setEventHandler { NSApp.terminate(nil) }
         termination.resume()
         terminationSignal = termination
+        DevInput.install()
         registry.onEvent = { [weak self] board, event in
             self?.controllers[board.id]?.apply(event)
         }

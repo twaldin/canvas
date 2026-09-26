@@ -94,8 +94,12 @@ final class CodeTile: NSView, TileContent {
         pendingScrollLine = nil
         let target = NSRange(location: lineStarts[max(0, line - 4)], length: 0)
         if let layout = text.textLayoutManager, let content = layout.textContentManager,
-           let location = content.location(content.documentRange.location, offsetBy: target.location) {
-            layout.ensureLayout(for: NSTextRange(location: location))
+           let location = content.location(content.documentRange.location, offsetBy: target.location),
+           let upToTarget = NSTextRange(location: content.documentRange.location, end: location) {
+            // Lay out through the target and grow the text view to match; an occluded window
+            // never runs the display pass that would otherwise size it, and scrolling clamps to it.
+            layout.ensureLayout(for: upToTarget)
+            text.sizeToFit()
             if let fragment = layout.textLayoutFragment(for: location) {
                 text.scroll(NSPoint(x: 0, y: fragment.layoutFragmentFrame.minY))
                 return

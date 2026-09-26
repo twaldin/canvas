@@ -2,10 +2,16 @@ import Foundation
 
 /// Filesystem locations the app depends on (docs/contracts.md).
 enum AppPaths {
-    static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Canvas", isDirectory: true)
+    /// `CANVAS_HOME` relocates sockets and boards so a development build can run beside the
+    /// installed app (docs/testing.md).
+    static let support: URL = {
+        if let home = ProcessInfo.processInfo.environment["CANVAS_HOME"] { return URL(fileURLWithPath: home, isDirectory: true) }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Canvas", isDirectory: true)
+    }()
     static let apiSocket = support.appendingPathComponent("canvas.sock").path
     static let cmuxSocket = support.appendingPathComponent("cmux.sock").path
+    static let boards = support.appendingPathComponent("boards", isDirectory: true)
 
     /// Directory holding `schema/`, `bin/canvas`, and `clients/python` — the repo when run via
     /// `swift run`, or the bundle's Resources once packaged. CANVAS_RESOURCES overrides.

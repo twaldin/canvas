@@ -70,7 +70,7 @@ final class HyperMonitor {
             if marquee == nil { canvas.showOutline(nil, in: nil) }
             return
         }
-        let point = window.mouseLocationOutsideOfEventStream
+        let point = event.type == .mouseMoved ? event.locationInWindow : DevInput.pointer ?? window.mouseLocationOutsideOfEventStream
         guard let (tile, local) = canvas.tile(atWindowPoint: point) else { return canvas.showOutline(nil, in: nil) }
         let target = tile.content.mentionTarget(at: local) ?? .object(tile.objectID)
         canvas.showOutline(tile.content.outline(for: target) ?? tile.content.bounds, in: tile)

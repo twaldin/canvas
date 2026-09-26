@@ -125,17 +125,10 @@ final class CanvasView: NSScrollView {
     }
 
     private func add(_ object: CanvasObject) {
-        guard tiles[object.id] == nil, object.type != .arrow, object.type != .group else { return }
-        let content: any TileContent
-        switch object.type {
-        case .terminal:
-            let terminal = TerminalTile(object: object, board: board)
-            content = terminal
+        guard tiles[object.id] == nil, TileFactory.hasTile(object.type) else { return }
+        let content = TileFactory.make(object, board: board)
+        if let terminal = content as? TerminalTile {
             terminal.onTitle = { [weak self] title in self?.tiles[object.id]?.setTitle(title) }
-        case .code:
-            content = CodeTile(object: object, board: board)
-        default:
-            content = CardTile(object: object)
         }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
         tile.onFrameCommit = { [weak self] rect in

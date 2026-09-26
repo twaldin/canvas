@@ -61,6 +61,8 @@ Coordinates are window-content points from the top-left. Prefer Hyper clicks and
 
 `text`, `command`, and `shortcut` go to an open sheet (e.g. the ⌘G group-name prompt) when the window has one, so `input text "Auth"` then `input shortcut $'\r'` confirms it. Esc/Delete on the canvas: `input command cancelOperation:` / `input command deleteBackward:` (the canvas has keyboard focus unless a terminal does).
 
+Any kind takes `--repeat N [--interval ms]` (default 8 ms apart) for a trackpad-rate burst, e.g. `input scroll 950 220 -40 -15 --repeat 120`. When the burst ends, `app.log` records `step lateness worst … mean …`: how late the main thread ran each step. The worst value is the longest stall a person sees, and it is the number to compare before and after a performance change. `scripts/perf-replica.sh start <board-id|file>` copies a real board (terminals dropped) into a scratch home to measure against.
+
 ### Terminals and agents
 
 - Terminal text: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) zmx history canvas-<tileId> | tail -n 40` (zmx keys its socket directory off `TMPDIR`; the GUI app's differs from a herdr pane's).

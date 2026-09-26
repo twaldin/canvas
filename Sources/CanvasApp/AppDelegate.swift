@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return terminal.paste(text, submit: true)
         }
         router.snapshotBoard = { [weak self] board in self?.controllers[board.id]?.snapshotPNG() }
+        router.raiseAttention = { [weak self] board, id, message in
+            self?.controllers[board.id]?.canvas.raiseAttention(id, message: message)
+        }
         router.objectImage = { [weak self] board, id in
             guard let image = self?.controllers[board.id]?.canvas.tiles[id]?.content.snapshot(),
                   let tiff = image.tiffRepresentation else { return nil }
@@ -87,7 +90,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
-    @objc func closeSelected(_ sender: Any?) { keyController?.closeSelected(sender) }
+    @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
+    @objc func toggleLassoSelection(_ sender: Any?) { keyController?.toggleLassoSelection(sender) }
+    @objc func exitGroup(_ sender: Any?) { keyController?.exitGroup(sender) }
+    @objc func undoCanvas(_ sender: Any?) { keyController?.undoCanvas(sender) }
+    @objc func redoCanvas(_ sender: Any?) { keyController?.redoCanvas(sender) }
+    @objc func deleteSelection(_ sender: Any?) { keyController?.deleteSelection(sender) }
+    @objc func selectAll(_ sender: Any?) { keyController?.selectAllObjects(sender) }
+    @objc func groupSelection(_ sender: Any?) { keyController?.groupSelection(sender) }
+    @objc func ungroupSelection(_ sender: Any?) { keyController?.ungroupSelection(sender) }
+    @objc func bringToFront(_ sender: Any?) { keyController?.bringToFront(sender) }
+    @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
 
     static func makeMenu() -> NSMenu {
         let main = NSMenu()
@@ -107,16 +120,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
-            item("Close Selected Tiles", #selector(closeSelected(_:)), "w", [.command, .shift]),
         ])
         submenu("Edit", [
+            item("Undo", #selector(undoCanvas(_:)), "z"),
+            item("Redo", #selector(redoCanvas(_:)), "Z", [.command, .shift]),
+            .separator(),
             item("Copy", #selector(NSText.copy(_:)), "c"),
             item("Paste", #selector(NSText.paste(_:)), "v"),
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
+            item("Delete Selection", #selector(deleteSelection(_:)), "\u{8}"),
         ])
+        submenu("Object", [
+            item("Group", #selector(groupSelection(_:)), "g"),
+            item("Ungroup", #selector(ungroupSelection(_:)), "G", [.command, .shift]),
+            .separator(),
+            item("Bring to Front", #selector(bringToFront(_:)), "]", [.command, .shift]),
+            item("Send to Back", #selector(sendToBack(_:)), "[", [.command, .shift]),
+        ])
+        let lasso = item("Lasso Selection", #selector(toggleLassoSelection(_:)), "")
+        lasso.state = CanvasView.lassoSelection ? .on : .off
         submenu("View", [
             item("Actual Size", #selector(zoomToActual(_:)), "0"),
             item("Zoom Out", #selector(zoomOut(_:)), "-"),
+            item("Zoom to Fit", #selector(zoomToFit(_:)), "9"),
+            .separator(),
+            lasso,
+            item("Exit Group", #selector(exitGroup(_:)), ""),
         ])
         return main
     }

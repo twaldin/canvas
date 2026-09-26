@@ -1,0 +1,8 @@
+.build/
+build/
+*.xcodeproj
+.swiftpm/
+__pycache__/
+*.pyc
+.venv/
+node_modules/

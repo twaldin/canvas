@@ -78,7 +78,12 @@ public final class ApiRouter {
     public var submitToTerminal: ((Board, ObjectID, String) -> Bool)?
     /// PNG of the board's window as currently shown.
     public var snapshotBoard: ((Board) -> (png: Data, width: Int, height: Int)?)?
+    /// Full scrollback text of a terminal tile's session, read off the main actor; nil when the
+    /// session doesn't exist.
+    public var readTerminal: ((Board, ObjectID) async -> String?)?
     public static let schemaVersion = 1
+    static let readLinesDefault = 100
+    static let readLinesMax = 2000
 
     /// Terminals prompted through the API that have not yet reported work; `agent.wait` must not
     /// answer from the pre-prompt state.
@@ -100,7 +105,7 @@ public final class ApiRouter {
 
     /// Entry point for SocketServer. Returns the response line, or nil when the reply is deferred
     /// (agent.wait) or the connection became an event stream.
-    public func handle(_ request: JSONValue, connection: SocketServer.Connection) -> JSONValue? {
+    public func handle(_ request: JSONValue, connection: SocketServer.Connection) async -> JSONValue? {
         let id = request["id"] ?? .null
         guard let method = request["method"]?.string else {
             return Self.error(id, Failure("invalid_params", "missing method"))
@@ -113,6 +118,7 @@ public final class ApiRouter {
                 return nil
             }
             if method == "agent.wait" { return try wait(id, params, connection) }
+            if method == "agent.read" { return Self.ok(id, try await read(params)) }
             return Self.ok(id, try dispatch(method, params))
         } catch let failure as Failure {
             return Self.error(id, failure)
@@ -219,6 +225,30 @@ public final class ApiRouter {
         return .object(entry.filter { $0.value != .null })
     }
 
+    /// `agent.read`: the tail of the session text. The read runs off the main actor (it spawns
+    /// `zmx history`), and the reply stays in order because each connection is served serially.
+    private func read(_ p: JSONValue) async throws -> JSONValue {
+        let (board, terminal) = try agentTile(try string(p, "target"))
+        let requested = p["lines"]?.int ?? Self.readLinesDefault
+        guard requested >= 1 else { throw Failure("invalid_params", "lines must be at least 1") }
+        guard let readTerminal else { throw Failure("unsupported", "reading terminals needs the app UI") }
+        guard let text = await readTerminal(board, terminal.id) else {
+            throw Failure("unavailable", "terminal \(terminal.id) has no running session")
+        }
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { (line: Substring) -> Substring in
+            guard let last = line.lastIndex(where: { !$0.isWhitespace }) else { return line[line.startIndex..<line.startIndex] }
+            return line[...last]
+        }
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        let tail = lines.suffix(min(requested, Self.readLinesMax))
+        let current = board.objects[terminal.id] ?? terminal
+        return .object([
+            "agent": agentEntry(current, on: board),
+            "text": .string(tail.joined(separator: "\n")),
+            "lines": .number(Double(tail.count)),
+        ])
+    }
+
     func dispatch(_ method: String, _ p: JSONValue) throws -> JSONValue {
         switch method {
         case "system.ping":
@@ -233,6 +263,33 @@ public final class ApiRouter {
             ]
             if let since = p["since"]?.int { result["changed"] = .array(board.changed(since: since).map(JSONValue.string)) }
             return .object(result)
+
+        case "board.list":
+            // Open boards may have unsaved changes; flush so counts and times are current.
+            registry.store.flush(Array(registry.boards.values))
+            var stored = registry.store.list()
+            for board in registry.boards.values where !stored.contains(where: { $0.id == board.id }) {
+                stored.append(.init(id: board.id, root: board.root.path, archived: !BoardStore.isDirectory(board.root.path), updatedAt: nil, objectCount: board.objects.count))
+            }
+            let boards = stored.map { entry -> JSONValue in
+                var info: [String: JSONValue] = [
+                    "board": .string(entry.id), "root": .string(entry.root), "archived": .bool(entry.archived),
+                    "open": .bool(registry.boards[entry.id] != nil), "objects": .number(Double(entry.objectCount)),
+                ]
+                if let updatedAt = entry.updatedAt { info["updatedAt"] = .string(updatedAt.formatted(.iso8601)) }
+                return .object(info)
+            }
+            return .object(["boards": .array(boards)])
+
+        case "board.export":
+            let board = try board(p)
+            let url = board.absoluteURL(p["path"]?.string ?? ".canvas/board.json").standardizedFileURL
+            do {
+                try BoardStore.export(board, to: url)
+            } catch {
+                throw Failure("unavailable", "cannot write \(url.path): \(error.localizedDescription)")
+            }
+            return .object(["path": .string(url.path), "objects": .number(Double(board.objects.count))])
 
         case "object.get":
             let id = try string(p, "id")

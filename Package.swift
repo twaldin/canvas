@@ -20,7 +20,10 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.9.0"),
     ],
     targets: [
-        .target(name: "CanvasCore"),
+        .target(
+            name: "CanvasCore",
+            dependencies: [.product(name: "Markdown", package: "swift-markdown")]
+        ),
         .executableTarget(
             name: "CanvasApp",
             dependencies: [
@@ -31,7 +34,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "CanvasCoreTests",
-            dependencies: ["CanvasCore"],
+            dependencies: ["CanvasCore", .product(name: "Markdown", package: "swift-markdown")],
             path: "Tests/CanvasCoreTests",
             swiftSettings: [.unsafeFlags(["-F", cltFrameworks])],
             linkerSettings: [.unsafeFlags(["-F", cltFrameworks, "-framework", "Testing", "-Xlinker", "-rpath", "-Xlinker", cltFrameworks, "-Xlinker", "-rpath", "-Xlinker", cltLibs])]

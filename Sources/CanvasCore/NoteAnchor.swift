@@ -42,21 +42,20 @@ public enum NoteAnchor {
             }
             return Resolution(range: LineRange(start: moved + 1, end: min(moved + 1 + length, source.count)), status: .relocated(from: lines.start))
         }
-        let wanted = lines.start - 1 + offset
-        if wanted < source.count, normalized(source[wanted]) == key {
-            return Resolution(range: LineRange(start: lines.start, end: min(lines.end, source.count)), status: .exact)
-        }
-        // Every line matching the key is a candidate; more matching neighbours (from the captured
-        // text) wins, then nearness to where the range used to be.
+        // Every line matching the key is a candidate, the written position included: more
+        // matching neighbours (from the captured text) wins, nearness to where the range used to
+        // be only breaks ties, so a common first line (`}`) left at the old spot can't hold the
+        // range when the captured block sits elsewhere.
+        let written = lines.start - 1
         var best: (index: Int, score: Int, distance: Int)?
         for index in source.indices where normalized(source[index]) == key {
             let start = index - offset
             guard start >= 0 else { continue }
             var score = 0
-            for (k, line) in expected.enumerated() where k != offset && start + k < source.count && normalized(source[start + k]) == normalized(line) {
+            for (k, line) in expected.prefix(maxPlacementLines).enumerated() where k != offset && start + k < source.count && normalized(source[start + k]) == normalized(line) {
                 score += 1
             }
-            let distance = abs(start - (lines.start - 1))
+            let distance = abs(start - written)
             if best == nil || score > best!.score || (score == best!.score && distance < best!.distance) {
                 best = (start, score, distance)
             }
@@ -65,8 +64,13 @@ public enum NoteAnchor {
             return Resolution(range: nil, status: .stale("lines \(lines.start)-\(lines.end) no longer contain \"\(clip(key))\""))
         }
         let start = best.index + 1
-        return Resolution(range: LineRange(start: start, end: min(start + length, source.count)), status: .relocated(from: lines.start))
+        let range = LineRange(start: start, end: min(start + length, source.count))
+        return Resolution(range: range, status: best.index == written ? .exact : .relocated(from: lines.start))
     }
+
+    /// Body relocation diffs a window per nominee; these keep it bounded on huge or repetitive files.
+    static let maxPlacementLines = 400
+    static let maxNominees = 32
 
     /// 0-based start where `body` sits in `source` when that differs from `written`. Every body
     /// line found in the source nominates the start it implies; each nominee is scored by how many
@@ -74,6 +78,7 @@ public enum NoteAnchor {
     /// skew it). The winner must beat the written start and keep at least two lines (one, for a
     /// one-line body), so a lone `}` moves nothing.
     static func placement(of body: [String], in source: [String], near written: Int, length: Int) -> Int? {
+        guard body.count <= maxPlacementLines, length <= maxPlacementLines else { return nil }
         let wanted = body.enumerated().filter { !normalized($0.element).isEmpty }.map { ($0.offset, normalized($0.element)) }
         guard !wanted.isEmpty else { return nil }
         let keys = Set(wanted.map(\.1))
@@ -90,10 +95,10 @@ public enum NoteAnchor {
         func kept(_ start: Int) -> Int {
             guard start < source.count else { return 0 }
             let window = source[start..<min(source.count, start + length)].map(normalized)
-            return NoteDiff.lines(window, normalizedBody).filter { if case .same = $0 { true } else { false } }.count
+            return NoteDiff.keptCount(window, normalizedBody)
         }
         var best: (start: Int, kept: Int)?
-        for start in nominees.sorted(by: { abs($0 - written) < abs($1 - written) }) {
+        for start in nominees.sorted(by: { abs($0 - written) < abs($1 - written) }).prefix(maxNominees) {
             let score = kept(start)
             if best == nil || score > best!.kept { best = (start, score) }
         }

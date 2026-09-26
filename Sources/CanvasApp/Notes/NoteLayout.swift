@@ -45,16 +45,19 @@ final class NoteCodeRow: NSObject {
     let path: String
     let line: Int
     let symbol: String?
+    /// The excerpt is pinned to this revision.
+    let commit: String?
 
-    init(path: String, line: Int, symbol: String?) {
+    init(path: String, line: Int, symbol: String?, commit: String?) {
         self.path = path
         self.line = line
         self.symbol = symbol
+        self.commit = commit
     }
 
     override func isEqual(_ object: Any?) -> Bool {
         guard let other = object as? NoteCodeRow else { return false }
-        return path == other.path && line == other.line && symbol == other.symbol
+        return path == other.path && line == other.line && symbol == other.symbol && commit == other.commit
     }
 
     override var hash: Int { path.hashValue ^ line }

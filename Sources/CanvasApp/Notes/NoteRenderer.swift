@@ -6,38 +6,11 @@ import Markdown
 /// anchored fences render what `NoteSource` resolved from disk, keyed by their info string.
 @MainActor
 final class NoteRenderer {
-    /// An anchored fence (excerpt or proposal) in a note, keyed by its info string.
-    struct AnchoredFence {
-        let key: String
-        let fence: NoteFence
-        let body: [String]
-    }
-
     static let bodyFont = NSFont.systemFont(ofSize: 13)
     static let codeFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
     static let captionFont = NSFont.systemFont(ofSize: 10.5, weight: .medium)
     /// Rows past this in one excerpt are summarized; a whole-file excerpt stays cheap to lay out.
     static let maxRows = 400
-
-    static func parse(_ markdown: String) -> Document {
-        Document(parsing: markdown, options: [.disableSmartOpts])
-    }
-
-    static func anchoredFences(in document: Document) -> [AnchoredFence] {
-        var seen = Set<String>()
-        var out: [AnchoredFence] = []
-        func walk(_ markup: Markup) {
-            if let block = markup as? CodeBlock {
-                let key = (block.language ?? "").trimmingCharacters(in: .whitespaces)
-                let fence = NoteFence(info: key)
-                if fence.mode != .free, seen.insert(key).inserted { out.append(AnchoredFence(key: key, fence: fence, body: NoteSource.lines(of: block.code))) }
-                return
-            }
-            for child in markup.children { walk(child) }
-        }
-        walk(document)
-        return out
-    }
 
     private let excerpts: [String: NoteExcerpt]
     private let out = NSMutableAttributedString()
@@ -305,21 +278,13 @@ final class NoteRenderer {
         }
         let symbol = fence.symbol
         let width = String(range.end).count
-        func row(_ number: Int) -> NoteCodeRow { NoteCodeRow(path: excerpt.path, line: number, symbol: symbol) }
-        if proposing {
-            let diff = NoteDiff.lines(excerpt.lines, body)
-            // An added row mentions the real line it would be inserted before.
-            var nextOld = range.start
-            let lines = diff.map { entry -> (String, Int?, NoteBlock, NoteCodeRow?) in
+        func row(_ number: Int) -> NoteCodeRow { NoteCodeRow(path: excerpt.path, line: number, symbol: symbol, commit: fence.commit) }
+        if proposing, let diff = excerpt.diff {
+            let lines = zip(diff, excerpt.proposalLines).map { entry, source -> (String, Int?, NoteBlock, NoteCodeRow?) in
                 switch entry {
-                case .same(let old, _, let text):
-                    nextOld = range.start + old + 1
-                    return ("  " + text, range.start + old, .excerpt, row(range.start + old))
-                case .removed(let old, let text):
-                    nextOld = range.start + old + 1
-                    return ("- " + text, range.start + old, .removed, row(range.start + old))
-                case .added(_, let text):
-                    return ("+ " + text, nil, .added, row(min(nextOld, range.end)))
+                case .same(_, _, let text): ("  " + text, source, .excerpt, row(source))
+                case .removed(_, let text): ("- " + text, source, .removed, row(source))
+                case .added(_, let text): ("+ " + text, nil, .added, row(source))
                 }
             }
             rows(lines, context: context, markdownLine: line, numberWidth: width, referenceLinks: false)

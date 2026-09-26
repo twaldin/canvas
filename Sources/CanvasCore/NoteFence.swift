@@ -117,19 +117,19 @@ public struct NoteFence: Equatable, Sendable {
         return tokens
     }
 
+    /// Inside quotes, `\` escapes only the quote and itself; any other backslash is literal,
+    /// so code like `split("\d")` survives in an anchor.
     static func unquote(_ value: Substring) -> String {
         guard let first = value.first, first == "\"" || first == "'", value.count >= 2, value.last == first else { return String(value) }
+        let inner = Array(value.dropFirst().dropLast())
         var out = ""
-        var escaped = false
-        for character in value.dropFirst().dropLast() {
-            if escaped {
-                out.append(character)
-                escaped = false
-            } else if character == "\\" {
-                escaped = true
-            } else {
-                out.append(character)
+        var index = 0
+        while index < inner.count {
+            if inner[index] == "\\", index + 1 < inner.count, inner[index + 1] == first || inner[index + 1] == "\\" {
+                index += 1
             }
+            out.append(inner[index])
+            index += 1
         }
         return out
     }

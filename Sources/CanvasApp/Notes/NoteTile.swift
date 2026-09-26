@@ -5,6 +5,7 @@ import Markdown
 /// A markdown note (docs/design.md "Notes"). Displays rendered markdown with live code fences;
 /// double-click edits the raw markdown, ⌘↩ or clicking away commits, Esc cancels. The note
 /// holds keyboard focus only while editing, then hands it back to the prompt-target terminal.
+/// A conflicting change by someone else is only overwritten by an explicit ⌘↩.
 @MainActor
 final class NoteTile: NSView, TileContent {
     static let placeholder = "Double-click to write a note"
@@ -21,24 +22,29 @@ final class NoteTile: NSView, TileContent {
     private let banner = NSTextField(labelWithString: "")
 
     private var document: Document
-    private var fences: [NoteRenderer.AnchoredFence] = []
+    private var fences: [NoteMarkdown.AnchoredFence] = []
     private var excerpts: [String: NoteExcerpt] = [:]
-    /// Text each fence showed when first resolved: re-finds moved ranges, stands in when lost.
+    /// Text each fence showed when first resolved: re-finds moved ranges, stands in when lost,
+    /// for fences whose anchor couldn't be written back (see `persistAnchors`).
     private var captured: [String: [String]] = [:]
-    private var watchers: [String: DispatchSourceFileSystemObject] = [:]
+    /// Canonical paths of excerpted files; any change under `events` to one re-resolves.
+    private var watchedFiles: Set<String> = []
+    /// A symbol fence found no file yet: any (non-hidden) change under the root may declare it.
+    private var watchesRoot = false
+    private var events: FileEvents?
     private var resolveTask: Task<Void, Never>?
     private var resolveGeneration = 0
     private var pendingResolve: DispatchWorkItem?
     private var live = true
 
-    private(set) var isEditing = false
-    private var editBaseRev = 0
+    private var session: NoteEditSession?
+    var isEditing: Bool { session != nil }
     private var clickMonitor: Any?
 
     init(object: CanvasObject, board: Board) {
         self.object = object
         self.board = board
-        document = NoteRenderer.parse(object.props["markdown"]?.string ?? "")
+        document = NoteMarkdown.parse(object.props["markdown"]?.string ?? "")
         super.init(frame: NSRect(x: 0, y: 0, width: object.frame.w, height: object.frame.h))
         wantsLayer = true
         layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.16).cgColor
@@ -63,10 +69,10 @@ final class NoteTile: NSView, TileContent {
         editor.isAutomaticTextReplacementEnabled = false
         editor.isAutomaticSpellingCorrectionEnabled = false
         editor.autoresizingMask = [.width]
-        editor.onCommit = { [weak self] in self?.endEditing(commit: true) }
-        editor.onCancel = { [weak self] in self?.endEditing(commit: false) }
+        editor.onCommit = { [weak self] in self?.endEditing(.confirmed) }
+        editor.onCancel = { [weak self] in self?.endEditing(.cancel) }
         // Focus is already moving elsewhere; don't pull it to the prompt target mid-change.
-        editor.onResign = { [weak self] in self?.endEditing(commit: true, returningFocus: false) }
+        editor.onResign = { [weak self] in self?.endEditing(.implicit, returningFocus: false) }
         configure(editorScroll, document: editor)
         editorScroll.isHidden = true
 
@@ -79,9 +85,8 @@ final class NoteTile: NSView, TileContent {
         banner.isHidden = true
         addSubview(banner)
 
-        fences = NoteRenderer.anchoredFences(in: document)
+        fences = NoteMarkdown.anchoredFences(in: document)
         render()
-        resolve()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -113,16 +118,27 @@ final class NoteTile: NSView, TileContent {
         let changed = object.props["markdown"] != self.object.props["markdown"]
         self.object = object
         guard changed else { return }
-        if isEditing {
-            showBanner("Changed by someone else while you were editing. ⌘↩ saves yours over it; Esc keeps theirs.")
+        if let session {
+            session.observe(object)
+            if session.conflicted { showConflict() }
             return
         }
         applyMarkdown()
     }
 
     private func applyMarkdown() {
-        document = NoteRenderer.parse(markdown)
-        fences = NoteRenderer.anchoredFences(in: document)
+        let previous = fences
+        document = NoteMarkdown.parse(markdown)
+        fences = NoteMarkdown.anchoredFences(in: document)
+        // A fence that only gained an `anchor=` (ours, written back, or an agent's) keeps what
+        // it showed instead of flashing "loading…".
+        for fence in fences where excerpts[fence.key] == nil {
+            var bare = fence.fence
+            bare.anchor = nil
+            guard let old = previous.first(where: { $0.fence == bare }) else { continue }
+            excerpts[fence.key] = excerpts[old.key]
+            captured[fence.key] = captured[old.key]
+        }
         let keys = Set(fences.map(\.key))
         excerpts = excerpts.filter { keys.contains($0.key) }
         captured = captured.filter { keys.contains($0.key) }
@@ -138,14 +154,14 @@ final class NoteTile: NSView, TileContent {
     // MARK: Live fences
 
     /// Resolve every anchored fence off the main actor, one at a time per note, then re-render
-    /// if anything changed.
+    /// if anything changed. Only while live and on screen.
     private func resolve() {
         pendingResolve?.cancel()
         pendingResolve = nil
         resolveTask?.cancel()
-        guard live else { return }
+        guard live, window != nil else { return }
         guard !fences.isEmpty else {
-            watch([])
+            watch(files: [], root: false)
             return
         }
         resolveGeneration += 1
@@ -172,8 +188,26 @@ final class NoteTile: NSView, TileContent {
             excerpts = results
             render()
         }
-        let pinned = Set(fences.filter { $0.fence.commit != nil }.map(\.key))
-        watch(Set(results.filter { !pinned.contains($0.key) && !$0.value.path.isEmpty }.map { board.absoluteURL($0.value.path).path }))
+        let unpinned = fences.filter { $0.fence.commit == nil }
+        let files = unpinned.compactMap { results[$0.key]?.path }.filter { !$0.isEmpty }
+        let unfound = unpinned.contains { $0.fence.path == nil && results[$0.key]?.path.isEmpty != false }
+        watch(files: Set(files.map { FileEvents.canonical(board.absoluteURL($0).path) }), root: unfound)
+        persistAnchors(results)
+    }
+
+    /// A line-range fence without `anchor=` gets its resolved first line written back as
+    /// `anchor="…"`, so the range can be re-found after lines move even across app restarts,
+    /// and agents reading the markdown see what it's anchored to. One update for all fences.
+    private func persistAnchors(_ results: [String: NoteExcerpt]) {
+        guard session == nil else { return }
+        var text = markdown
+        for fence in fences where fence.fence.lines != nil && fence.fence.anchor == nil && fence.fence.symbol == nil && fence.fence.commit == nil {
+            guard let excerpt = results[fence.key], excerpt.status == .exact, let first = excerpt.lines.first,
+                  let anchored = NoteMarkdown.anchoring(text, fenceLines: fence.lines, anchor: first) else { continue }
+            text = anchored
+        }
+        guard text != markdown else { return }
+        _ = try? board.update(object.id, rev: object.rev, props: .object(["markdown": .string(text)]))
     }
 
     private func scheduleResolve() {
@@ -185,30 +219,52 @@ final class NoteTile: NSView, TileContent {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce, execute: work)
     }
 
-    /// One watcher per excerpted file. Editors and agents often replace a file by renaming over
-    /// it, which orphans the watcher, so a rename or delete drops it and the next resolve re-opens.
-    private func watch(_ paths: Set<String>) {
-        for (path, source) in watchers where !paths.contains(path) {
-            source.cancel()
-            watchers[path] = nil
+    /// One recursive FSEvents stream per note over the directories holding its files (the
+    /// nearest existing ancestor for a file that doesn't exist yet), plus the root while a
+    /// symbol is unfound. Creation, deletion, and replacement by rename all arrive as events.
+    private func watch(files: Set<String>, root: Bool) {
+        watchedFiles = files
+        watchesRoot = root
+        let rootPath = FileEvents.canonical(board.root.path)
+        var directories = Set(files.map(FileEvents.watchableDirectory(for:)))
+        if root { directories.insert(rootPath) }
+        // A directory inside another watched one adds nothing to a recursive stream.
+        let minimal = directories.filter { directory in !directories.contains { $0 != directory && directory.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") } }.sorted()
+        guard minimal != events?.directories else { return }
+        events = minimal.isEmpty ? nil : FileEvents(directories: minimal) { [weak self] paths in
+            self?.filesChanged(paths, root: rootPath)
         }
-        for path in paths where watchers[path] == nil {
-            let fd = Darwin.open(path, O_EVTONLY)
-            guard fd >= 0 else { continue }
-            let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .extend, .rename, .delete], queue: .main)
-            source.setEventHandler { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    if !source.data.intersection(DispatchSource.FileSystemEvent([.rename, .delete])).isEmpty {
-                        source.cancel()
-                        if self.watchers[path] === source { self.watchers[path] = nil }
-                    }
-                    self.scheduleResolve()
-                }
-            }
-            source.setCancelHandler { close(fd) }
-            source.resume()
-            watchers[path] = source
+    }
+
+    private func filesChanged(_ paths: [String], root: String) {
+        let relevant = paths.contains { path in
+            if watchedFiles.contains(path) { return true }
+            guard watchesRoot, path.hasPrefix(root + "/") else { return false }
+            // Hidden directories (.git, .build) churn constantly and declare nothing.
+            return !path.dropFirst(root.count + 1).split(separator: "/").contains { $0.hasPrefix(".") }
+        }
+        if relevant { scheduleResolve() }
+    }
+
+    /// Stop everything that runs on this note's behalf: resolution, file events, edit monitors.
+    private func suspendWork() {
+        pendingResolve?.cancel()
+        pendingResolve = nil
+        resolveTask?.cancel()
+        resolveTask = nil
+        events = nil
+        watchedFiles = []
+        watchesRoot = false
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            // Removed from the canvas (deleted, or its window closed).
+            suspendWork()
+            if session != nil { finishEditing(returningFocus: false) }
+        } else {
+            resolve()
         }
     }
 
@@ -304,9 +360,8 @@ final class NoteTile: NSView, TileContent {
     // MARK: Editing
 
     private func beginEditing(at point: NSPoint) {
-        guard !isEditing else { return }
-        isEditing = true
-        editBaseRev = object.rev
+        guard session == nil else { return }
+        session = NoteEditSession(object)
         let text = markdown
         editor.string = text
         editor.setSelectedRange(NSRange(location: caretOffset(at: point, in: text), length: 0))
@@ -316,9 +371,9 @@ final class NoteTile: NSView, TileContent {
         editor.scrollRangeToVisible(editor.selectedRange())
         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
             MainActor.assumeIsolated {
-                guard let self, self.isEditing, event.window === self.window else { return }
+                guard let self, self.session != nil, event.window === self.window else { return }
                 let point = self.convert(event.locationInWindow, from: nil)
-                if !self.bounds.contains(point) { self.endEditing(commit: true) }
+                if !self.bounds.contains(point) { self.endEditing(.implicit) }
             }
             return event
         }
@@ -341,22 +396,32 @@ final class NoteTile: NSView, TileContent {
         return utf16
     }
 
-    private func endEditing(commit: Bool, returningFocus: Bool = true) {
-        guard isEditing else { return }
-        let text = editor.string
-        if commit, text != markdown || object.rev != editBaseRev {
+    enum EditEnd {
+        /// ⌘↩: save, and overwrite a conflict that is already shown.
+        case confirmed
+        /// Clicking away or focus moving elsewhere: save unless there is a conflict.
+        case implicit
+        case cancel
+    }
+
+    private func endEditing(_ end: EditEnd, returningFocus: Bool = true) {
+        guard let session else { return }
+        if end != .cancel {
             do {
-                try board.update(object.id, rev: editBaseRev, props: .object(["markdown": .string(text)]))
-            } catch BoardError.conflict {
-                // Someone else changed the note meanwhile; keep the user's text and let them choose.
-                editBaseRev = board.objects[object.id]?.rev ?? object.rev
-                showBanner("Changed by someone else while you were editing. ⌘↩ saves yours over it; Esc keeps theirs.")
-                return
+                if try session.commit(editor.string, confirmed: end == .confirmed, on: board) == .conflict {
+                    // Keep the user's text in the editor until they choose (⌘↩ or Esc).
+                    showConflict()
+                    return
+                }
             } catch {
-                return
+                // The note is gone; nothing to save into.
             }
         }
-        isEditing = false
+        finishEditing(returningFocus: returningFocus)
+    }
+
+    private func finishEditing(returningFocus: Bool) {
+        session = nil
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
         banner.isHidden = true
@@ -366,6 +431,10 @@ final class NoteTile: NSView, TileContent {
         if let current = board.objects[object.id] { object = current }
         applyMarkdown()
         if hadFocus, returningFocus { returnFocus() }
+    }
+
+    private func showConflict() {
+        showBanner("Changed by someone else while you were editing. ⌘↩ saves yours over it; Esc keeps theirs.")
     }
 
     /// Keyboard focus goes back to where prompts go.
@@ -389,13 +458,7 @@ final class NoteTile: NSView, TileContent {
     func setLive(_ live: Bool) {
         guard live != self.live else { return }
         self.live = live
-        if live {
-            resolve()
-        } else {
-            pendingResolve?.cancel()
-            resolveTask?.cancel()
-            watch([])
-        }
+        if live { resolve() } else { suspendWork() }
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
@@ -423,11 +486,10 @@ final class NoteTile: NSView, TileContent {
     func outline(for target: MentionTarget) -> NSRect? {
         guard case .code(_, let path, let lines, _, let symbol) = target else { return bounds }
         if let hoveredRow, hoveredRow.target == target { return hoveredRow.rect }
-        let wanted = NoteCodeRow(path: path, line: lines.start, symbol: symbol)
         guard let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }
         var rect: NSRect?
         storage.enumerateAttribute(.noteCodeRow, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
-            guard let row = value as? NoteCodeRow, row == wanted,
+            guard let row = value as? NoteCodeRow, row.path == path, row.line == lines.start, row.symbol == symbol,
                   let location = content.location(content.documentRange.location, offsetBy: range.location),
                   let fragment = layout.textLayoutFragment(for: location) else { return }
             rect = self.rect(of: fragment)

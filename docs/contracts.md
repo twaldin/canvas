@@ -91,9 +91,11 @@ A note's `markdown` is plain markdown; the code fence info string selects how th
 | any anchored form plus `propose` | The fence body as a diff against the resolved range |
 | anything else | Free-written (authored) code; `path:line` references in it open code tiles |
 
-Anchor resolution, in order: a symbol that resolves wins; otherwise the line range is checked against `anchor="first line text"`, else against the text the tile captured when it first resolved the range (kept in memory for the app session), else against the fence body (a proposal's own lines vote for where they sit). A range that moved renders with "moved from L…"; one that can't be found renders a **stale** badge over the last text it showed. Agents that want anchors to survive app restarts should write `anchor="…"`.
+Anchor resolution, in order: a symbol that resolves wins; otherwise the line range is re-found by its first line (`anchor="first line text"`, or the text the tile captured when it first resolved the range), preferring the candidate whose following lines match best and the written position on ties, else by the fence body (a proposal's own lines vote for where they sit). A range that moved renders with "moved from L…"; one that can't be found renders a **stale** badge over the last text it showed.
 
-Hyper-click on an excerpt or proposal row mentions `code` (object = the note, the row's real path and line; an added proposal row mentions the line it would be inserted before); anywhere else mentions the note.
+The tile writes anchors back: when a line-range fence without `anchor=`, `symbol=`, or a pinned commit first resolves, it appends ` anchor="<first line>"` to the fence's info string in one `object.update`, so anchors survive restarts and agents see them. It skips first lines that can't be written (blank, or a backtick inside a backtick fence) and falls back to the in-memory capture. `commit=` must name a revision (`abc1234`, `HEAD~2`, `v1.0`); anything shaped like an option makes the fence stale.
+
+Hyper-click on an excerpt or proposal row mentions `code` (object = the note, the row's real path and line, and `commit` for a pinned fence; an added proposal row mentions the line it would be inserted before, or the file's last line when appended at the end of the file); anywhere else mentions the note.
 
 ## Lifecycle authority
 

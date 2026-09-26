@@ -611,7 +611,9 @@ public final class ApiRouter {
     }
 
     /// The measured size an `object.create`/`object.update` with `size: "fit"` gets; nil without
-    /// `size`. Notes and text wrap at the given frame's `w` (an update keeps its current width).
+    /// `size`. Notes and text wrap at the given frame's `w` (an update keeps its current width);
+    /// code takes the given `w` as its widest (default `CodeMetrics.defaultFitWidth`, also on an
+    /// update, so a re-fit can widen a tile as well as narrow it).
     /// `pending` are the params of creates earlier in the same batch, for updates of `$n`.
     func fitSize(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> CGSize? {
         guard let size = p["size"] else { return nil }
@@ -634,7 +636,7 @@ public final class ApiRouter {
             base = (object.type, object.props, object.frame.w, board.root)
         }
         let props = p["props"].map { base.props.merging($0) } ?? base.props
-        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? base.width, root: base.root)
+        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? (base.type == .code ? nil : base.width), root: base.root)
     }
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
@@ -771,7 +773,17 @@ public final class ApiRouter {
         for object in board.objects.values.sorted(by: { $0.id < $1.id }) where object.type == .code && ((scope?.contains(object.id) ?? true) || lineBound.contains(object.id)) {
             excerpts[object.id] = try? await ObjectMeasure.codeExcerpt(object.props, root: board.root)
         }
-        let rows = excerpts.mapValues { CodeRows(lineCount: $0.fileLineCount) }
+        // Line anchors sit on the rows the tile shows at its width: wrapped lines take several.
+        var rows: [ObjectID: CodeRows] = [:]
+        for (id, excerpt) in excerpts {
+            guard let object = board.objects[id], let path = object.props["path"]?.string,
+                  let text = try? await NoteSource.read(path, commit: nil, root: board.root) else {
+                rows[id] = CodeRows(lineCount: excerpt.fileLineCount)
+                continue
+            }
+            let width = CGFloat(object.frame.w)
+            rows[id] = await offPool { CodeRows(file: text, width: width) }
+        }
         let report = board.layoutCheck(scope: scope, rows: rows)
         var overflow: [JSONValue] = []
         var truncated: [JSONValue] = []
@@ -782,10 +794,12 @@ public final class ApiRouter {
         for object in measurable {
             let size: CGSize
             if object.type == .code {
-                // The rows' own extent; a caption too long for the frame is `truncated`, not overflow.
+                // The rows' own extent, wrapped at the frame's width (so only the height can
+                // overflow); a caption too long for the frame is `truncated`, not overflow.
                 guard let excerpt = excerpts[object.id] else { continue }
                 let caption = object.props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-                size = ObjectMeasure.codeRows(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption != nil, follow: false)
+                size = ObjectMeasure.codeRows(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption != nil, follow: false,
+                                              maxWidth: CGFloat(object.frame.w))
                 if let caption, let current = board.objects[object.id]?.frame {
                     let missing = ObjectMeasure.captionWidth(caption) - current.w
                     if missing >= 1 { truncated.append(.object(["id": .string(object.id), "what": .string("caption"), "x": .number(missing.rounded(.up))])) }

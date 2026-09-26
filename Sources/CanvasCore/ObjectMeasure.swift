@@ -25,13 +25,15 @@ public enum ObjectMeasure {
     static let shapeLabelPadding = CGSize(width: 16, height: 12)
 
     /// `width` wraps notes and text (a note defaults to a new note's width; text defaults to
-    /// one unwrapped line per paragraph); code ignores it.
+    /// one unwrapped line per paragraph); for code it is the widest the frame may get (default
+    /// `CodeMetrics.defaultFitWidth`), past which long lines wrap.
     public static func size(type: ObjectType, props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
         switch type {
         case .code:
             let excerpt = try await codeExcerpt(props, root: root)
             let caption = props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-            return code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil)
+            return code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil,
+                        maxWidth: width.map { CGFloat($0) } ?? CodeMetrics.defaultFitWidth)
         case .note:
             let markdown = props["markdown"]?.string ?? ""
             let document = NoteMarkdown.parse(markdown)
@@ -62,20 +64,26 @@ public enum ObjectMeasure {
     }
 
     /// A code tile showing exactly `lines` of a file with `fileLineCount` lines, wide enough for
-    /// its whole `caption` too.
-    public static func code(lines: [String], fileLineCount: Int, caption: String?, follow: Bool) -> CGSize {
-        var size = codeRows(lines: lines, fileLineCount: fileLineCount, caption: caption != nil, follow: follow)
-        if let caption { size.width = max(size.width, captionWidth(caption)) }
+    /// its whole `caption` too, but at most `maxWidth` (at least `CodeMetrics.minWidth`): past
+    /// that, long lines wrap and the caption truncates.
+    public static func code(lines: [String], fileLineCount: Int, caption: String?, follow: Bool, maxWidth: CGFloat) -> CGSize {
+        var size = codeRows(lines: lines, fileLineCount: fileLineCount, caption: caption != nil, follow: follow, maxWidth: maxWidth)
+        if let caption { size.width = min(max(size.width, captionWidth(caption)), max(CodeMetrics.minWidth, maxWidth.rounded(.down))) }
         return size
     }
 
-    /// `code` without the caption's width: the frame the rows themselves need.
-    public static func codeRows(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool) -> CGSize {
+    /// `code` without the caption's width: the frame the rows themselves need, as wide as the
+    /// longest line or `maxWidth` (at least `CodeMetrics.minWidth`) with the longer lines wrapped,
+    /// and as tall as the rows that makes.
+    public static func codeRows(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool, maxWidth: CGFloat) -> CGSize {
         let longest = lines.map { CodeMetrics.columns($0) }.max() ?? 0
         let header = CodeMetrics.chromeHeight(caption: caption, history: follow) - CodeMetrics.titleHeight
-        var size = CodeMetrics.content(rows: lines.count, longestLine: longest, gutterWidth: CodeMetrics.gutterWidth(lineCount: fileLineCount), headerHeight: header)
-        size.height += CodeMetrics.titleHeight
-        return size
+        let gutter = CodeMetrics.gutterWidth(lineCount: fileLineCount)
+        let natural = CodeMetrics.content(rows: lines.count, longestLine: longest, gutterWidth: gutter, headerHeight: header).width
+        let width = min(natural, max(CodeMetrics.minWidth, maxWidth.rounded(.down)))
+        let columns = CodeMetrics.textColumns(width: width, lineCount: fileLineCount)
+        let rows = longest <= columns ? lines.count : lines.reduce(0) { $0 + 1 + CodeMetrics.wrap($1.utf16, columns: columns).breaks.count }
+        return CGSize(width: width, height: CodeMetrics.content(rows: rows, longestLine: 0, gutterWidth: gutter, headerHeight: header).height + CodeMetrics.titleHeight)
     }
 
     /// Narrowest code tile frame whose caption strip shows `caption` untruncated: the header's

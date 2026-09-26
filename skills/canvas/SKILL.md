@@ -54,7 +54,7 @@ Omit `frame` and the canvas places new objects beside your terminal without cove
 
 | Want | Create |
 | --- | --- |
-| Point at real code | `code` tile: `{"path": "src/store.ts", "range": {"start": 41, "end": 60}, "mode": "source"}` (or `"mode": "diff"` for the merge-base diff; `path` relative to the board root) |
+| Point at real code | `code` tile: `{"path": "src/store.ts", "range": {"start": 41, "end": 60}, "caption": "restore replays the log"}` (`path` relative to the board root; see Code tiles) |
 | Several locations at once | `canvas.compositions.locations.open(["src/a.ts:10-40", "src/b.ts:7"])` |
 | Durable notes, plans, findings | `note`: `{"markdown": "…"}` |
 | A rich explainer, comparison, decision | `html` tile, see below |
@@ -72,6 +72,10 @@ Markdown. Code fences are live when anchored to real code, so prefer anchors ove
 - Plain fences are free-written snippets; `file:line` references in notes become links.
 
 Anchors prefer symbols (they survive edits); line anchors are re-found by content and show a stale badge when lost.
+
+### Code tiles
+
+A code tile shows the whole current file, scrolled so `range` sits a few rows below the top, with `range` tinted. The gutter shows changes against `diffBase` (default `merge-base`: the whole branch; `head` for uncommitted work only) like gitsigns: green bar added, blue bar modified, red wedge where lines were deleted; the user can click a sign to see the old lines inline. A repo with no commits or no default branch shows plain source with a header warning, as do diffs too large to compute; a deleted file shows its base version. `caption` is one line under the header (plain text, `inline code`), so a tile doesn't need a separate note for its one-line explanation. Size a tile to exactly its range with `size: "fit"`.
 
 ### HTML explainers
 
@@ -94,7 +98,7 @@ Ground every code claim with `<canvas-code>`/`<canvas-link>` instead of pasting 
 
 ## Follow mode
 
-Your terminal has one follow tile: the canvas re-aims it at every file you read or edit (shown as a merge-base diff, with a short history). It happens automatically; don't create code tiles just to show what you are reading. Create code tiles for code you want the user to keep looking at.
+Your terminal has one follow tile: the canvas re-aims it at every file you read, edit, or write, flashes the lines each edit or write changed, and keeps a short history. While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed ("N new ▸") before following again. It happens automatically; don't create code tiles just to show what you are reading. Create code tiles for code you want the user to keep looking at.
 
 ## Getting the user's attention
 
@@ -128,7 +132,7 @@ Reusable helpers come built into the SDKs, plus your own in `~/.canvas/compositi
 ```python
 canvas.compositions.available()                              # name -> summary
 canvas.compositions.grid.arrange([id1, id2, id3])            # grid beside your terminal, clear of other tiles
-canvas.compositions.locations.open(["src/a.ts:12-40", "src/b.ts#L7"], mode="diff")
+canvas.compositions.locations.open(["src/a.ts:12-40", "src/b.ts#L7"])
 ```
 
 A composition is a plain module; functions whose first parameter is named `canvas` receive the client. When you catch yourself repeating a multi-call canvas pattern, write it as a composition in `~/.canvas/compositions/<name>.py` (and `.ts` for the TS client, `client.compositions.<name>`), then `canvas.compositions.reload()`. Improve existing ones rather than forking them.

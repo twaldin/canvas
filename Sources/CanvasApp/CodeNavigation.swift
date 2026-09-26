@@ -84,14 +84,27 @@ final class CodeNavigation: NSObject {
         let codeView = host.navigationView
         self.codeView = codeView
         super.init()
-        codeView.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-        // Scrolling or new content (a re-aim, a reload) moves what the panels point at.
-        if let clip = codeView.enclosingScrollView?.contentView {
-            NotificationCenter.default.addObserver(self, selector: #selector(contentMoved), name: NSView.boundsDidChangeNotification, object: clip)
-        }
+        setActive(true)
         installOutlineButton(in: accessories, reservedWidth: reservedWidth)
         Self.controllers.add(self)
         Self.installMonitor()
+    }
+
+    private var hoverArea: NSTrackingArea?
+
+    /// Hover tracking exists only while the host's view is live: a tracking area on a tile the
+    /// canvas has zoomed out or scrolled away is rebuilt on every frame of a pan.
+    func setActive(_ active: Bool) {
+        guard active != (hoverArea != nil), let codeView else { return }
+        if active {
+            let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+            codeView.addTrackingArea(area)
+            hoverArea = area
+        } else if let hoverArea {
+            codeView.removeTrackingArea(hoverArea)
+            self.hoverArea = nil
+            dismissAll()
+        }
     }
 
     private var file: URL? {
@@ -124,11 +137,8 @@ final class CodeNavigation: NSObject {
 
     @objc func mouseEntered(with event: NSEvent) {}
 
-    @objc private func contentMoved() {
-        dismissAll()
-    }
-
-    /// The host showed new content (a re-aim or a reload): panels describe what was there.
+    /// The host scrolled or showed new content (a re-aim, a reload): panels point at what was
+    /// there.
     func contentChanged() {
         dismissAll()
     }

@@ -1,28 +1,26 @@
 import AppKit
 import CanvasCore
 
-/// The scroll view's document: an empty view sized to the content, so the scroll view knows
-/// its extent without anything that large ever being drawn or backed by a bitmap. The rows
-/// view inside it covers only the visible rect.
-@MainActor
-final class CodeScrollDocument: NSView {
-    override var isFlipped: Bool { true }
-}
-
 /// Draws the visible rows of a code document (CTLine per visible row, cached only while
-/// visible) and handles character selection, ⌘C, gutter clicks, and "Edit Here". It sits over
-/// the visible rect of a `CodeScrollDocument` with its bounds origin equal to its frame origin,
-/// so its own coordinates are document coordinates.
+/// visible) and scrolls itself: its bounds origin is the scroll offset, so its own coordinates
+/// are document coordinates. No scroll or clip view: those re-lay out and rebuild tracking
+/// areas on every frame of a canvas pan, even behind a zoomed-out card. Also handles character
+/// selection, ⌘C, gutter clicks, and "Edit Here".
 @MainActor
 final class CodeRowsView: NSView {
     var painter: CodePainter? {
-        didSet { needsDisplay = true }
+        didSet {
+            needsDisplay = true
+            scroll(to: bounds.origin)
+        }
     }
 
     /// A gutter sign was clicked (peek or unpeek).
     var onSign: ((Int) -> Void)?
     /// The user scrolled, clicked, or selected here.
     var onInteract: (() -> Void)?
+    /// The offset changed (by the user or programmatically).
+    var onScroll: (() -> Void)?
     var onEditHere: ((NSPoint) -> Void)?
 
     let cache = CodeLineCache()
@@ -40,12 +38,21 @@ final class CodeRowsView: NSView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    /// Keep covering the scroll view's visible rect.
-    func track(_ visible: NSRect) {
-        guard frame != visible || bounds.origin != visible.origin else { return }
-        frame = visible
-        setBoundsOrigin(visible.origin)
+    private var contentSize: CGSize { painter?.contentSize ?? .zero }
+
+    /// Scroll so `origin` (document coordinates) is the top-left, clamped to the content.
+    func scroll(to origin: CGPoint) {
+        let maxX = max(0, contentSize.width - bounds.width), maxY = max(0, contentSize.height - bounds.height)
+        let clamped = CGPoint(x: min(max(0, origin.x), maxX).rounded(), y: min(max(0, origin.y), maxY).rounded())
+        guard clamped != bounds.origin else { return }
+        setBoundsOrigin(clamped)
         needsDisplay = true
+        onScroll?()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        scroll(to: bounds.origin)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -56,6 +63,16 @@ final class CodeRowsView: NSView {
             return
         }
         painter.draw(in: context, rect: bounds, gutterX: bounds.minX, cache: cache)
+        drawScrollIndicator(content: painter.contentSize)
+    }
+
+    /// A thin thumb along the right edge when the file is taller than the view.
+    private func drawScrollIndicator(content: CGSize) {
+        guard content.height > bounds.height + 0.5 else { return }
+        let length = max(24, bounds.height * bounds.height / content.height)
+        let y = bounds.minY + (bounds.height - length) * bounds.minY / (content.height - bounds.height)
+        NSColor.secondaryLabelColor.withAlphaComponent(0.35).setFill()
+        NSBezierPath(roundedRect: NSRect(x: bounds.maxX - 5, y: y + 2, width: 3, height: length - 4), xRadius: 1.5, yRadius: 1.5).fill()
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -87,9 +104,19 @@ final class CodeRowsView: NSView {
 
     // MARK: Mouse
 
+    /// Scrolls along an axis the content overflows; anything else (a file that fits) goes on
+    /// to the canvas, which pans.
     override func scrollWheel(with event: NSEvent) {
+        var dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+        if !event.hasPreciseScrollingDeltas {
+            dx *= CodeMetrics.rowHeight
+            dy *= CodeMetrics.rowHeight
+        }
+        let vertical = abs(dy) >= abs(dx)
+        let overflows = vertical ? contentSize.height > bounds.height + 0.5 : contentSize.width > bounds.width + 0.5
+        guard overflows, dx != 0 || dy != 0 else { return super.scrollWheel(with: event) }
         onInteract?()
-        super.scrollWheel(with: event)
+        scroll(to: CGPoint(x: bounds.minX - (vertical ? 0 : dx), y: bounds.minY - (vertical ? dy : 0)))
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -111,8 +138,12 @@ final class CodeRowsView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         guard anchor != nil else { return }
-        autoscroll(with: event)
-        guard let position = position(at: convert(event.locationInWindow, from: nil)) else { return }
+        // Dragging past an edge scrolls toward it.
+        let point = convert(event.locationInWindow, from: nil)
+        let dy = point.y < bounds.minY ? point.y - bounds.minY : point.y > bounds.maxY ? point.y - bounds.maxY : 0
+        let dx = point.x < bounds.minX ? point.x - bounds.minX : point.x > bounds.maxX ? point.x - bounds.maxX : 0
+        if dx != 0 || dy != 0 { scroll(to: CGPoint(x: bounds.minX + dx, y: bounds.minY + dy)) }
+        guard let position = position(at: point) else { return }
         select(to: position)
     }
 

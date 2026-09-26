@@ -14,8 +14,6 @@ final class CodeTile: NSView, TileContent {
     private(set) var object: CanvasObject
     private let board: Board
     private let header = CodeHeaderBar(frame: .zero)
-    private let scroll = NSScrollView()
-    private let content = CodeScrollDocument()
     private let rowsView = CodeRowsView(frame: .zero)
 
     /// What the tile shows, which the user may hold behind the props' aim.
@@ -55,16 +53,8 @@ final class CodeTile: NSView, TileContent {
         propsAim = aim
         lock = FollowLock(showing: aim)
         super.init(frame: NSRect(x: 0, y: 0, width: object.frame.w, height: object.frame.h))
-        scroll.documentView = content
-        content.addSubview(rowsView)
-        scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
-        scroll.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(self, selector: #selector(clipMoved), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
-        addSubview(scroll)
+        addSubview(rowsView)
+        rowsView.onScroll = { [weak self] in self?.navigation?.contentChanged() }
         addSubview(header)
         rowsView.onSign = { [weak self] sign in self?.togglePeek(sign) }
         rowsView.onInteract = { [weak self] in self?.userInteracted() }
@@ -102,19 +92,7 @@ final class CodeTile: NSView, TileContent {
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         let height = header.height
         header.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
-        scroll.frame = NSRect(x: 0, y: height, width: bounds.width, height: max(0, bounds.height - height))
-        updateContentSize()
-    }
-
-    @objc private func clipMoved() {
-        rowsView.track(scroll.documentVisibleRect)
-    }
-
-    private func updateContentSize() {
-        let clip = scroll.contentView.bounds.size
-        let size = rowsView.painter?.contentSize ?? .zero
-        content.setFrameSize(NSSize(width: max(clip.width, size.width), height: max(clip.height, size.height)))
-        rowsView.track(scroll.documentVisibleRect)
+        rowsView.frame = NSRect(x: 0, y: height, width: bounds.width, height: max(0, bounds.height - height))
     }
 
     // MARK: Props
@@ -301,7 +279,6 @@ final class CodeTile: NSView, TileContent {
     private func refreshPainter(keepSelection: Bool) {
         guard let document, showsCurrent else {
             rowsView.painter = nil
-            updateContentSize()
             return
         }
         var painter = CodePainter(document: document, rows: CodeRows(lineCount: document.text.lineCount, signs: document.signs, peeked: peeked))
@@ -309,7 +286,6 @@ final class CodeTile: NSView, TileContent {
         painter.flash = flash.map { ($0.lines, flashStrength($0.start)) }
         painter.selection = keepSelection ? rowsView.painter?.selection : nil
         rowsView.painter = painter
-        updateContentSize()
     }
 }
 
@@ -323,11 +299,7 @@ extension CodeTile {
     }
 
     private func scroll(toRow row: Int) {
-        let clip = scroll.contentView
-        let top = CodePainter.rowTop(max(0, row - 3)) - CodeMetrics.verticalPadding
-        let maxY = max(0, content.frame.height - clip.bounds.height)
-        clip.scroll(to: NSPoint(x: 0, y: min(max(0, top), maxY)))
-        scroll.reflectScrolledClipView(clip)
+        rowsView.scroll(to: CGPoint(x: 0, y: CodePainter.rowTop(max(0, row - 3)) - CodeMetrics.verticalPadding))
     }
 
     private func startFlash(_ lines: [Range<Int>]) {
@@ -393,7 +365,7 @@ extension CodeTile {
     private func jumpToChange(forward: Bool) {
         guard let document, showsCurrent, let rows = rowsView.painter?.rows else { return }
         userInteracted()
-        let anchorRow = CodePainter.row(atY: scroll.documentVisibleRect.minY + CodeMetrics.verticalPadding) + 3
+        let anchorRow = CodePainter.row(atY: rowsView.bounds.minY + CodeMetrics.verticalPadding) + 3
         let line: Int
         switch rows.row(min(anchorRow, rows.count - 1)) {
         case .line(let number)?: line = number
@@ -485,6 +457,9 @@ extension CodeTile {
         if live {
             if watcherSuspended { watcher?.resume() }
             watcherSuspended = false
+            addSubview(rowsView)
+            addSubview(header)
+            navigation?.setActive(true)
             if needsLoad { load() }
         } else {
             if !watcherSuspended { watcher?.suspend() }
@@ -496,7 +471,12 @@ extension CodeTile {
             loadTask?.cancel()
             loadTask = nil
             stopFlash()
+            // Nothing with tracking areas, tooltips, or a backing store stays in the window: the
+            // card covers the tile, and pans would otherwise update them every frame.
+            navigation?.setActive(false)
             rowsView.releaseCaches()
+            rowsView.removeFromSuperview()
+            header.removeFromSuperview()
             if let heldRepository {
                 Task { await GitDiffEngine.shared.release(heldRepository) }
                 self.heldRepository = nil
@@ -507,7 +487,7 @@ extension CodeTile {
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
-        guard let document, showsCurrent, let painter = rowsView.painter, scroll.frame.contains(point) else { return nil }
+        guard let document, showsCurrent, let painter = rowsView.painter, rowsView.superview === self, rowsView.frame.contains(point) else { return nil }
         let local = rowsView.convert(point, from: self)
         let row = CodePainter.row(atY: local.y)
         if let selected = rowsView.selectedRows, selected.contains(row) {
@@ -563,8 +543,8 @@ extension CodeTile {
                 // An unpeeked deletion: its wedge.
                 let row = rows.index(ofLine: document.signs[sign].lines.lowerBound)
                 let edge = CodePainter.rowTop(row)
-                let rect = NSRect(x: scroll.documentVisibleRect.minX, y: edge - 3, width: scroll.documentVisibleRect.width, height: 6)
-                return convert(rect, from: content).intersection(scroll.frame)
+                let rect = NSRect(x: rowsView.bounds.minX, y: edge - 3, width: rowsView.bounds.width, height: 6)
+                return convert(rect, from: rowsView).intersection(rowsView.frame)
             } else {
                 return nil
             }
@@ -573,9 +553,9 @@ extension CodeTile {
             last = rows.index(ofLine: lines.end)
         }
         guard let first, let last else { return nil }
-        let rect = NSRect(x: scroll.documentVisibleRect.minX, y: CodePainter.rowTop(first), width: scroll.documentVisibleRect.width,
+        let rect = NSRect(x: rowsView.bounds.minX, y: CodePainter.rowTop(first), width: rowsView.bounds.width,
                           height: CGFloat(last - first + 1) * CodeMetrics.rowHeight)
-        return convert(rect, from: content).intersection(scroll.frame)
+        return convert(rect, from: rowsView).intersection(rowsView.frame)
     }
 
     var takesKeyboardFocus: Bool { false }
@@ -600,7 +580,7 @@ extension CodeTile {
                                          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let bitmap = NSGraphicsContext(bitmapImageRep: rep) else { return (nil, content) }
         rep.size = imageSize
-        let origin = full ? .zero : (showsCurrent && document.path == self.document?.path ? scroll.documentVisibleRect.origin : .zero)
+        let origin = full ? .zero : (showsCurrent && document.path == self.document?.path ? rowsView.bounds.origin : .zero)
         appearance.performAsCurrentDrawingAppearance {
             let cg = bitmap.cgContext
             cg.saveGState()

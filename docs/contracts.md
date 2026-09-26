@@ -112,14 +112,24 @@ Code views get language features by conforming to `CodeNavigationHost` (`Sources
 ```swift
 @MainActor
 protocol CodeNavigationHost: AnyObject {
-    var navigationPath: String { get }                           // board-relative path (new side of a diff)
-    var navigationTextView: NSTextView { get }
-    func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)?  // point in navigationTextView; 1-based line, 0-based UTF-16 column; nil on deleted rows/gutters
+    var navigationPath: String { get }                           // board-relative path of the file shown
+    var navigationView: NSView { get }                           // the view showing rows; its coordinates are the host's document coordinates
+    var navigationLineHeight: CGFloat { get }                    // row height, so panels open below the hovered line
+    func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)?  // point in navigationView; 1-based line, 0-based UTF-16 column; nil on peeked base rows/gutters
     func reveal(line: Int)                                       // scroll a 1-based line into view
+    func aim(at lines: LineRange)                                // a same-file definition: the user's own re-aim (never held by the follow lock)
 }
 ```
 
-The controller adds a tracking area to the text view, handles ⌘/⌥⌘-click and right-click on it through an app-level event monitor (Hyper stays with `HyperMonitor`), extends the view's own `menu(for:)` rather than replacing it, and places an Outline button in the host's header (`accessories:`), inside the trailing `reservedWidth` points the host keeps free (`CodeHeaderBar.reservedTrailing`). Going to a definition in the same file re-aims the tile with `object.update` of `props.range` (`{start, end}`, 1-based), so hosts must follow range updates.
+The controller adds a hover tracking area to the view only while `setActive(true)` (hosts deactivate it when the tile goes not live: tracking areas on hidden tiles are rebuilt on every frame of a pan), handles ⌘/⌥⌘-click and right-click on it through an app-level event monitor (Hyper stays with `HyperMonitor`), extends the view's own `menu(for:)` rather than replacing it, and places an Outline button in the host's header (`accessories:`), inside the trailing `reservedWidth` points the host keeps free (`CodeHeaderBar.reservedTrailing`). Hosts call `contentChanged()` when they scroll or show new content, which dismisses hover and panels.
+
+### Code tiles
+
+One view per tile, no modes: the whole file (the base version for a deleted file), scrolled to `props.range` with the range tinted. Geometry is `CodeMetrics` (CanvasCore): fixed 16 pt rows, the 12 pt system monospaced font (every glyph `charAdvance` wide, tabs to 4 columns), a gutter of line numbers plus a sign column, and header/caption/history strip heights; `object.measure` uses the same numbers. The model is CanvasCore's `CodeDocument` (built off the main thread from `GitDiffEngine`'s `FileDiff`): `GitSign`s from the diff's change records (added bar, modified bar, deleted wedge on the top edge of the line after the deletion, `lineCount + 1` at the end of the file), per-line highlight runs (`SyntaxLines`) for both sides, and the header's status and warning (`noBase`: no commits yet / no default branch / no merge-base, `diffTooLarge`, deleted). `CodeRows` inserts peeked base lines above the lines that replaced them. `CodeEdits.changes` diffs the texts of consecutive loads of the same file: those rows flash for 3 s (a follow tile also jumps to the first). `FollowLock` holds a follow tile's re-aims for 10 s after the user scrolls, clicks, or selects in it, counting them ("N new ▸"), then shows the newest.
+
+The view draws only visible rows (a CTLine per visible row, cached only while visible) and scrolls itself, with no NSScrollView; not live, it keeps no line cache, layer contents, tracking areas, or views in the window, and cards, `snapshot()`, and `render(_:)` draw rows straight from the model.
+
+Mentions: a row is the line on the side it shows; a sign in the gutter is the whole change (a deletion: its base lines, `side: old`); a peeked row is a base line (`side: old`, `commit` = the base). While a tile shows changes against a base, its new-side mentions carry `side: new` and that base's commit.
 
 ## Drawing layer
 
@@ -190,7 +200,7 @@ The tile writes anchors back: when a line-range fence without `anchor=`, `symbol
 
 Hyper-click on an excerpt or proposal row mentions `code` (object = the note, the row's real path and line, and `commit` for a pinned fence; an added proposal row mentions the line it would be inserted before, or the file's last line when appended at the end of the file); anywhere else mentions the note.
 
-Code mentions carry the commit their lines are read against (`MentionTarget.code.commit`, schema `MentionTarget`): with `side: old` or no side, the commit whose version of `path` holds the lines (deleted diff rows, pinned excerpts); with `side: new`, the base the working-tree lines were diffed against; absent, the working tree. The context line names it from the mention alone, never from what the tile shows at drain time: `· diff vs merge-base 1a2b3c4` (the kind word comes from the tile's `diffBase`), `· diff vs merge-base 1a2b3c4, old side` for deleted rows with the excerpt read by `git cat-file blob <commit>:<path>`, and `· at 1a2b3c4` for a pinned excerpt without a side. `tray.drain` is therefore asynchronous.
+Code mentions carry the commit their lines are read against (`MentionTarget.code.commit`, schema `MentionTarget`): with `side: old` or no side, the commit whose version of `path` holds the lines (peeked base rows, deleted files, pinned excerpts); with `side: new`, the base the working-tree lines were diffed against; absent, the working tree. The context line names it from the mention alone, never from what the tile shows at drain time: `· diff vs merge-base 1a2b3c4` (the kind word comes from the tile's `diffBase`), `· diff vs merge-base 1a2b3c4, old side` for peeked base rows with the excerpt read by `git cat-file blob <commit>:<path>`, and `· at 1a2b3c4` for a pinned excerpt without a side. `tray.drain` is therefore asynchronous.
 
 ## Git
 

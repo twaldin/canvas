@@ -76,11 +76,14 @@ launch() {
   mkdir -p "$home"
   rm -f "$CANVAS_SOCKET"
   # yabai can't place a new window on another display's Space (it lands on the Space being
-  # viewed), so the rule parks it on Space 7, an unviewed Space on the built-in display (8 is where
-  # Tim watches), and the window moves to the testing Space once it exists.
+  # viewed), so a one-shot rule parks this launch's first window on Space 7, an unviewed Space on
+  # the built-in display (8 is where Tim watches), and it moves to the testing Space once it
+  # exists. One-shot and removed afterwards: a standing rule on app=Canvas also grabbed every later
+  # window (tabs, other instances, Tim's own boards) and hid them on Space 7.
+  rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
   if [ -x "$yabai" ]; then
-    "$yabai" -m rule --remove canvas-dev >/dev/null 2>&1 || true
-    "$yabai" -m rule --add label=canvas-dev app="^Canvas$" space=7 manage=off grid=1:1:0:0:1:1 >/dev/null
+    "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
+    "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space=7 manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
   open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
     --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_ROOT="$root" "$app"
@@ -95,6 +98,7 @@ launch() {
     wid="$(window_id)"
     [ -n "$wid" ] && "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
   fi
+  [ -x "$yabai" ] && { "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true; }
   echo "Canvas pid $(cat "$home/pid") on Space $target, CANVAS_SOCKET=$CANVAS_SOCKET"
 }
 

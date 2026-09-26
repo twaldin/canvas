@@ -15,6 +15,8 @@ enum AppPaths {
     /// tiles get it in their environment. Without it the socket relies on its 0600 mode.
     static let cmuxPassword: String? = ProcessInfo.processInfo.environment["CMUX_SOCKET_PASSWORD"].flatMap { $0.isEmpty ? nil : $0 }
     static let boards = support.appendingPathComponent("boards", isDirectory: true)
+    /// Roots of the boards open as tabs, in tab order, reopened at the next launch.
+    static let openBoards = support.appendingPathComponent("open-boards.json")
 
     /// A bundled asset from the repo's `resources/` directory (copied into the app bundle by
     /// scripts/bundle.sh), e.g. `asset("kit/mermaid.min.js")`.

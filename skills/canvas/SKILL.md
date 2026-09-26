@@ -187,4 +187,4 @@ A composition is a plain module; functions whose first parameter is named `canva
 
 ## Boards
 
-One canvas per directory (repo or worktree, keyed by branch). `canvas board.list` shows every stored board, including archived ones whose worktree is gone. `canvas board.export` writes a readable snapshot to `<root>/.canvas/board.json` for committing when the user asks to save the board with the repo.
+One canvas per directory (repo or worktree, keyed by branch). Boards open as tabs of one window. `canvas board.open --root <absolute dir>` opens a directory's board as a tab (creating it if new) behind the user's current tab; pass `--select true` only when the user asked to see it. Then address it with `board: <id>` (from the result) on every call, and start agents there by creating terminal tiles on that board. `canvas board.list` shows every stored board, including archived ones whose worktree is gone. `canvas board.export` writes a readable snapshot to `<root>/.canvas/board.json` for committing when the user asks to save the board with the repo.

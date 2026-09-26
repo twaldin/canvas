@@ -248,17 +248,24 @@ struct CodeContentTests {
         try await repo.write("f.txt", lines.joined(separator: "\n") + "\n")
         _ = try await repo.commit("base")
         let document = CodeDocument(path: "f.txt", diff: await GitDiffEngine(watchesRepositories: false).diff(file: repo.url("f.txt"), base: .head))
-        let rows = CodeRows(lineCount: document.text.lineCount, signs: document.signs)
         let header = CodeMetrics.headerHeight
+        func body(_ start: Int, _ end: Int) async throws -> (content: CGSize, measured: CGSize) {
+            let props: JSONValue = .object(["path": "f.txt", "range": .object(["start": .number(Double(start)), "end": .number(Double(end))])])
+            let measured = try await ObjectMeasure.size(type: .code, props: props, width: nil, root: repo.root)
+            let rows = document.rows(peeked: [], width: measured.width)
+            return (document.content(range: LineRange(start: start, end: end), rows: rows, width: measured.width, headerHeight: header), measured)
+        }
 
-        let range = LineRange(start: 10, end: 19)
-        let content = document.content(range: range, rows: rows, headerHeight: header)
-        let props: JSONValue = .object(["path": "f.txt", "range": .object(["start": 10, "end": 19])])
-        let measured = try await ObjectMeasure.size(type: .code, props: props, width: nil, root: repo.root)
+        let (content, measured) = try await body(10, 19)
         #expect(content.width == measured.width && content.height + CodeMetrics.titleHeight == measured.height, "a fit tile's body has no overflow")
+        // Line 200's 400 columns wrap at the default 960 pt (121 columns) onto 4 rows; the fit
+        // tile and its render agree on them.
+        let (wrapped, wrappedFit) = try await body(195, 204)
+        #expect(wrappedFit.width == CodeMetrics.defaultFitWidth && wrapped.height == header + 2 * CodeMetrics.verticalPadding + 13 * CodeMetrics.rowHeight)
+        #expect(wrapped.height + CodeMetrics.titleHeight == wrappedFit.height)
 
-        let whole = document.content(range: nil, rows: rows, headerHeight: header)
-        #expect(whole.height == header + 2 * CodeMetrics.verticalPadding + 300 * CodeMetrics.rowHeight && whole.width > 400 * CodeMetrics.charAdvance)
-        #expect(content.height < whole.height / 20 && content.width < whole.width / 4, "the range, not the file's 300 rows and 400-column line 200")
+        let whole = document.content(range: nil, rows: document.rows(peeked: [], width: 960), width: 960, headerHeight: header)
+        #expect(whole.height == header + 2 * CodeMetrics.verticalPadding + 303 * CodeMetrics.rowHeight && whole.width == 960, "never wider than the tile: rows wrap")
+        #expect(content.height < whole.height / 20 && content.width < whole.width / 1.5, "the range, not the file's 300 rows and 400-column line 200")
     }
 }

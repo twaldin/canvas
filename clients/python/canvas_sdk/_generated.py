@@ -242,12 +242,12 @@ class ObjectApi:
         return self._call("object.get", params, [])
 
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`). The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
+        """Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
         params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "caller": caller}
         return self._call("object.create", params, ["board","caller"])
 
     def update(self, *, id: "Id", rev: int | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, props: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width, or at `frame` x, y, w."""
+        """Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w."""
         params = {"id": id, "rev": rev, "frame": frame, "size": size, "props": props, "caller": caller}
         return self._call("object.update", params, ["caller"])
 
@@ -257,7 +257,7 @@ class ObjectApi:
         return self._call("object.delete", params, ["caller"])
 
     def measure(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, width: float | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set, and at least as wide as the whole caption; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`."""
+        """Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`."""
         params = {"board": board, "type": type, "props": props, "width": width, "caller": caller}
         return self._call("object.measure", params, ["board","caller"])
 
@@ -392,7 +392,7 @@ class ViewApi:
         return self._call("view.get", params, ["board"])
 
     def render(self, *, target: Union["Id", list["Id"], "Frame"], board: "Id" | None = None, scale: float | None = None, full: bool | None = None, exclude: list["ObjectType"] | None = None, padding: float | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
-        """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn."""
+        """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn."""
         params = {"board": board, "target": target, "scale": scale, "full": full, "exclude": exclude, "padding": padding, "out": out, "format": format, "timeoutMs": timeout_ms}
         return self._call("view.render", params, ["board"])
 

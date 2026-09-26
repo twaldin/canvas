@@ -135,7 +135,7 @@ export type GroupProps = {
 export type FitFrame = {
   x: number;
   y: number;
-  /** wrap width for notes and text */
+  /** wrap width for notes and text; for code the widest the tile may get (default 960), past which long lines wrap */
   w?: number;
 };
 
@@ -365,7 +365,7 @@ export type ObjectCreateParams = {
   type: ObjectType;
   props: Record<string, unknown>;
   frame?: Frame | FitFrame;
-  /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note or text) */
+  /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note or text, or to cap a code tile's width) */
   size?: "fit";
   parent?: Id;
   /** calling tile id; clients fill from CANVAS_TILE_ID */
@@ -398,7 +398,7 @@ export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
   props: Record<string, unknown>;
-  /** wrap width for notes and text */
+  /** wrap width for notes and text; maximum width for code (default 960) */
   width?: number;
   caller?: Id;
 };
@@ -747,13 +747,13 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`). The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
-    /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width, or at `frame` x, y, w. */
+    /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
-    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set, and at least as wide as the whole caption; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`. */
+    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;
@@ -807,7 +807,7 @@ export interface CanvasApi {
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
     /** What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, and whether the window is visible on screen. */
     get(params?: ViewGetParams): Promise<ViewGetResult>;
-    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. */
+    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. */
     render(params: ViewRenderParams): Promise<ViewRenderResult>;
     /** The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render. */
     snapshot(params?: ViewSnapshotParams): Promise<ViewSnapshotResult>;

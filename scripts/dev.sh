@@ -56,18 +56,11 @@ quit() {
   rm -f "$home/pid"
 }
 
-board_ids() {
-  for file in "$home"/boards/*.json; do [ -e "$file" ] && basename "$file" .json; done
-}
-
+# Sessions this instance created (their `canvas.home` label). Matching board ids instead killed
+# the live instance's agents from a dev home holding copies of its boards.
 sessions() {
-  ids="$(board_ids)"
-  [ -n "$ids" ] || return 0
-  zmx_env zmx list 2>/dev/null | while IFS= read -r line; do
-    for id in $ids; do
-      case "$line" in *"canvas.board=$id"*) echo "$line" | sed -E 's/.*name=([^[:space:]]+).*/\1/' ;; esac
-    done
-  done
+  zmx_env zmx list 2>/dev/null | awk -F'\t' -v label="canvas.home=$home" '
+    { for (i = 1; i <= NF; i++) if ($i == label) { sub(/^ *name=/, "", $1); print $1 } }'
 }
 
 launch() {

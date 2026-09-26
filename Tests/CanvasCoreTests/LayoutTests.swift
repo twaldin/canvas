@@ -85,6 +85,28 @@ final class LayoutApiTests {
         #expect(wide.width > measured.width)
     }
 
+    @Test func codeFitsUnderAMaxWidthByWrappingLongLines() async throws {
+        // Lines 45-54 hold the 120-column line 50: 120 columns fit under the default 960.
+        let natural = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54)])))
+        #expect(natural == CodeMetrics.size(lines: 10, longestLine: 120, caption: false), "under the max, exactly as wide as the longest line")
+        let roomy = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54), "width": 2000])))
+        #expect(roomy == natural, "a larger max doesn't widen it")
+
+        // At 500 pt the text column is 59 wide: line 50 takes 59 + 57 + 4 columns, 3 rows.
+        #expect(CodeMetrics.textColumns(width: 500, lineCount: 100) == 59)
+        let narrow = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54), "width": 500])))
+        #expect(narrow == CGSize(width: 500, height: CodeMetrics.size(lines: 12, longestLine: 0, caption: false).height))
+        let floor = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(45, 54), "width": 100])))
+        #expect(floor.width == CodeMetrics.minWidth, "never narrower than the header needs")
+
+        let fitted = try await result("object.create", .object(["type": "code", "props": Self.code(45, 54), "frame": .object(["x": 0, "y": 0, "w": 500]), "size": "fit"]))
+        let frame = try #require(fitted["object"]?["frame"]).decode(Frame.self)
+        #expect(CGSize(width: frame.w, height: frame.h) == narrow)
+        // A re-fit without a width uses the default max, not the tile's current width.
+        let refit = try await result("object.update", .object(["id": try #require(fitted["object"]?["id"]), "size": "fit"]))
+        #expect(try #require(refit["object"]?["frame"]).decode(Frame.self).w == Double(natural.width))
+    }
+
     @Test func unmeasurableContentSaysWhy() async throws {
         let html = try await call("object.measure", .object(["type": "html", "props": .object(["html": "<p>hi</p>"])]))
         #expect(html["error"]?["code"] == .string("unsupported"))
@@ -239,7 +261,9 @@ final class LayoutApiTests {
         #expect(crossings.contains(.object(["arrow": .string(through.id), "crosses": .array([.string(b.id)])])))
         #expect(!crossings.contains { $0["arrow"] == .string(around.id) }, "an avoid route goes around b")
         let overflow = try #require(report["overflow"]?.array?.first { $0["id"] == .string(tiny.id) })
-        #expect(overflow["y"]?.number == Double(CodeMetrics.size(lines: 30, longestLine: 64, caption: false).height) - 100)
+        // Code wraps at its tile's width: at 300 pt (32 columns) line 12's 64 columns take 3 rows.
+        #expect(overflow["x"]?.number == 0)
+        #expect(overflow["y"]?.number == Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - 100)
 
         let scoped = try await result("layout.check", .object(["ids": .array([.string(c.id)])]))
         #expect(scoped["overlaps"] == .array([]) && scoped["arrowCrossings"] == .array([]))
@@ -265,8 +289,10 @@ final class LayoutApiTests {
         let short = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: "why")])))
         #expect(short.width == rows.width, "a caption that fits doesn't widen the tile")
         let long = String(repeating: "The JSON is a spec, not the `runtime` config. ", count: 6)
-        let wide = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: long)])))
+        let wide = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: long), "width": 3000])))
         #expect(wide.width == ObjectMeasure.captionWidth(long) && wide.width > rows.width + 400)
+        let capped = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: long)])))
+        #expect(capped.width == CodeMetrics.defaultFitWidth && capped.height == wide.height, "past the max width the caption truncates")
 
         let cut = board.create(type: .code, props: Self.code(10, 19, caption: long), frame: Frame(x: 0, y: 0, w: Double(rows.width), h: Double(wide.height)))
         let report = try await result("layout.check", .object(["ids": .array([.string(cut.id)])]))
@@ -525,6 +551,36 @@ struct LayoutBoardTests {
         // A caption strip moves the rows down.
         let captioned: JSONValue = .object(["path": "src.txt", "caption": "why", "range": .object(["start": 10, "end": 19])])
         #expect(CodeMetrics.lineY(line: 10, frame: fit, props: captioned, rows: nil) == 100 + middle(ofRow: 0, scroll: 0) + CodeMetrics.captionHeight)
+    }
+
+    @Test func lineAnchorsBelowAWrappedLineLandOnTheirVisualRow() {
+        // 20 lines; line 12 is 120 columns, which a 400 pt tile (45 columns) wraps onto 3 rows.
+        var lines = (1...20).map { "line \($0)" }
+        lines[11] = String(repeating: "w", count: 120)
+        let text = lines.joined(separator: "\n")
+        #expect(CodeMetrics.textColumns(width: 400, lineCount: 20) == 45)
+        let rows = CodeRows(file: text, width: 400)
+        #expect(rows.rows(ofLine: 12) == 11..<14 && rows.index(ofLine: 13) == 14)
+
+        let range: JSONValue = .object(["path": "src.txt", "range": .object(["start": 10, "end": 19])])
+        let rowsTop = CodeMetrics.titleHeight + CodeMetrics.headerHeight
+        func middle(ofRow row: Int) -> CGFloat { rowsTop + CodeMetrics.verticalPadding + CGFloat(row) * CodeMetrics.rowHeight + CodeMetrics.rowHeight / 2 }
+        // Fit to its range, 10 lines in 12 rows: line 10 is the first row, line 13 the sixth.
+        let fit = Frame(x: 0, y: 100, w: 400, h: Double(rowsTop + 2 * CodeMetrics.verticalPadding + 12 * CodeMetrics.rowHeight))
+        #expect(CodeMetrics.lineY(line: 10, frame: fit, props: range, rows: rows) == 100 + middle(ofRow: 0))
+        #expect(CodeMetrics.lineY(line: 12, frame: fit, props: range, rows: rows) == 100 + middle(ofRow: 2), "a wrapped line anchors on its first row")
+        #expect(CodeMetrics.lineY(line: 13, frame: fit, props: range, rows: rows) == 100 + middle(ofRow: 5))
+        #expect(CodeMetrics.lineY(line: 19, frame: fit, props: range, rows: rows) == 100 + middle(ofRow: 11), "the whole wrapped range is in view")
+
+        // Arrows route to the wrapped row when the board is given the tile's rows.
+        let tile = board.create(type: .code, props: range, frame: fit)
+        let note = board.create(type: .note, props: .object(["markdown": "why"]), frame: Frame(x: 600, y: 100, w: 200, h: 100))
+        let bound = board.create(type: .arrow, props: .object([
+            "from": .object(["object": .string(note.id)]),
+            "to": .object(["object": .string(tile.id), "lines": .object(["start": 13, "end": 13])]),
+        ]))
+        let path = try! #require(board.routes(rows: [tile.id: rows])[bound.id])
+        #expect(path.last == CGPoint(x: 400 + G.arrowGap, y: 100 + middle(ofRow: 5)))
     }
 
     func code(_ x: Double, _ y: Double, lines: ClosedRange<Int>) -> CanvasObject {

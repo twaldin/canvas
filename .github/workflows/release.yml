@@ -1,0 +1,34 @@
+name: Release
+
+# Push a tag like v0.2.0 to build Canvas.app (ad-hoc signed, not notarized) and attach
+# Canvas-0.2.0.zip to a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Command Line Tools
+        run: |
+          sudo xcode-select -s /Library/Developer/CommandLineTools
+          swift --version
+      - name: Build Canvas.app
+        env:
+          CANVAS_VERSION: ${{ github.ref_name }}
+          CANVAS_BUILD: ${{ github.run_number }}
+        run: |
+          export CANVAS_VERSION="${CANVAS_VERSION#v}"
+          scripts/bundle.sh release
+          codesign --verify --deep --strict .build/Canvas.app
+      - name: Zip
+        run: ditto -c -k --keepParent .build/Canvas.app "Canvas-${GITHUB_REF_NAME#v}.zip"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "Canvas-${GITHUB_REF_NAME#v}.zip" --title "Canvas ${GITHUB_REF_NAME#v}" --generate-notes

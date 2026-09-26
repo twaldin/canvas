@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      # The package builds with the Command Line Tools, like local development (see Package.swift
+      # for how the test executable finds swift-testing there).
+      - name: Select Command Line Tools
+        run: |
+          sudo xcode-select -s /Library/Developer/CommandLineTools
+          swift --version
+      - name: Build
+        run: swift build
+      - name: Test
+        run: swift run CanvasCoreTests
+      - name: Generated clients are current
+        run: bun scripts/gen-clients.ts --check
+      - name: Python client tests
+        run: cd clients/python && python3 -m unittest

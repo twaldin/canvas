@@ -122,6 +122,33 @@ class BoardInfo(TypedDict):
     updatedAt: NotRequired[str]
     objects: Required[int]
 
+class Viewport(TypedDict):
+    """What the board's window shows: `rect` is the visible canvas area in canvas coordinates, `zoom` the magnification (1 = 100%, one point per canvas unit)."""
+    rect: Required["Frame"]
+    zoom: Required[float]
+
+class RenderedObject(TypedDict):
+    """Where an object landed in a rendered image and whether its content really painted."""
+    id: Required["Id"]
+    type: Required["ObjectType"]
+    pixelRect: Required["Frame"]
+    state: Required[Literal["rendered", "placeholder", "failed"]]
+    reason: NotRequired[str]
+    contentSize: NotRequired[dict[str, Any]]
+    overflow: NotRequired[dict[str, Any]]
+
+class HistoryEntry(TypedDict):
+    seq: Required[int]
+    rev: Required[int]
+    at: Required[str]
+    actor: Required[str]
+    kind: Required[Literal["created", "updated", "deleted", "viewport", "selection", "follow", "restart"]]
+    id: NotRequired["Id"]
+    type: NotRequired["ObjectType"]
+    summary: Required[str]
+    viewport: NotRequired["Viewport"]
+    selection: NotRequired[list["Id"]]
+
 def _with_env(params: dict[str, Any], keys: list[str]) -> dict[str, Any]:
     for k in keys:
         if params.get(k) is None and os.environ.get(ENV_DEFAULTS[k]):
@@ -146,6 +173,11 @@ class BoardApi:
         params = {"board": board, "since": since}
         return self._call("board.get", _with_env(params, ["board"]))
 
+    def history(self, *, board: "Id" | None = None, since: Union[int, str] | None = None, limit: int | None = None, kinds: list[Literal["created", "updated", "deleted", "viewport", "selection", "follow", "restart"]] | None = None) -> dict[str, Any]:
+        """Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, and app starts. Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry."""
+        params = {"board": board, "since": since, "limit": limit, "kinds": kinds}
+        return self._call("board.history", _with_env(params, ["board"]))
+
     def list(self) -> dict[str, Any]:
         """Every stored board, open or not, including archived boards whose root directory is gone."""
         params = {}
@@ -160,8 +192,8 @@ class ObjectApi:
     def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
         self._call = call
 
-    def get(self, *, id: "Id", as_: Literal["raw", "graph", "image"] | None = None) -> dict[str, Any]:
-        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow; `as: image` returns a PNG crop as base64 (a tile's content, or the canvas region under a drawn object including the tiles and ink inside it)."""
+    def get(self, *, id: "Id", as_: Literal["raw", "graph"] | None = None) -> dict[str, Any]:
+        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it."""
         params = {"id": id, "as": as_}
         return self._call("object.get", _with_env(params, []))
 
@@ -261,14 +293,24 @@ class ViewApi:
     def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
         self._call = call
 
-    def attention(self, *, id: "Id", message: str | None = None) -> dict[str, Any]:
-        """Raise an attention marker pointing at an object. Never moves the user's viewport."""
-        params = {"id": id, "message": message}
+    def attention(self, *, id: "Id", message: str | None = None, clear: bool | None = None) -> dict[str, Any]:
+        """Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. The user seeing the object also clears it. Never moves the user's viewport."""
+        params = {"id": id, "message": message, "clear": clear}
         return self._call("view.attention", _with_env(params, []))
 
-    def snapshot(self, *, board: "Id" | None = None) -> dict[str, Any]:
-        """PNG of the board's window as the user sees it right now (viewport, tiles, tray). Terminal tiles are drawn from their session text."""
+    def get(self, *, board: "Id" | None = None) -> dict[str, Any]:
+        """What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, and whether the window is visible on screen."""
         params = {"board": board}
+        return self._call("view.get", _with_env(params, ["board"]))
+
+    def render(self, *, target: Union["Id", list["Id"], "Frame"], board: "Id" | None = None, scale: float | None = None, full: bool | None = None, exclude: list["ObjectType"] | None = None, padding: float | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
+        """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML/code scroll height, code line width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn."""
+        params = {"board": board, "target": target, "scale": scale, "full": full, "exclude": exclude, "padding": padding, "out": out, "format": format, "timeoutMs": timeout_ms}
+        return self._call("view.render", _with_env(params, ["board"]))
+
+    def snapshot(self, *, board: "Id" | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None) -> dict[str, Any]:
+        """The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render."""
+        params = {"board": board, "out": out, "format": format}
         return self._call("view.snapshot", _with_env(params, ["board"]))
 
 class EventsApi:
@@ -291,4 +333,4 @@ class GeneratedApi:
         self.view = ViewApi(call)
         self.events = EventsApi(call)
 
-METHODS = ["system.ping","board.get","board.list","board.export","object.get","object.create","object.update","object.delete","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.snapshot","events.subscribe"]
+METHODS = ["system.ping","board.get","board.history","board.list","board.export","object.get","object.create","object.update","object.delete","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"]

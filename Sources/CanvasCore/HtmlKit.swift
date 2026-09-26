@@ -79,14 +79,18 @@ public enum HtmlKit {
     // MARK: Network
 
     /// Normalizes one `props.allowNetwork` entry: `host`, `host:port`, or `*.host` (the host and
-    /// its subdomains). Anything else (schemes, paths, wildcards elsewhere) is not an allowlist
-    /// entry and is ignored, so a malformed entry never opens more than it names.
+    /// its subdomains), lowercased with a canonical port. Anything else (schemes, paths, userinfo,
+    /// wildcards elsewhere) is not an allowlist entry and is ignored, so a malformed entry never
+    /// opens more than it names.
     public static func allowedHost(_ entry: String) -> String? {
         let lower = entry.lowercased()
-        var host = lower.hasPrefix("*.") ? String(lower.dropFirst(2)) : lower
+        let wildcard = lower.hasPrefix("*.")
+        var host = wildcard ? String(lower.dropFirst(2)) : lower
+        var port: Int?
         if let colon = host.lastIndex(of: ":") {
-            let port = host[host.index(after: colon)...]
-            guard (1...5).contains(port.count), port.allSatisfy(\.isASCII), port.allSatisfy(\.isNumber), let value = Int(port), (1...65535).contains(value) else { return nil }
+            let digits = host[host.index(after: colon)...]
+            guard (1...5).contains(digits.count), digits.allSatisfy({ $0.isASCII && $0.isNumber }), let value = Int(digits), (1...65535).contains(value) else { return nil }
+            port = value
             host = String(host[..<colon])
         }
         let labels = host.split(separator: ".", omittingEmptySubsequences: false)
@@ -94,20 +98,43 @@ public enum HtmlKit {
             (1...63).contains(label.count) && label.first != "-" && label.last != "-"
                 && label.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-") }
         }) else { return nil }
-        return lower
+        return (wildcard ? "*." : "") + host + (port.map { ":\($0)" } ?? "")
     }
 
-    /// WKContentRuleList JSON: block every http(s)/ws(s)/file load, then let allowlisted hosts
-    /// through. WebKit's rule regexes have no alternation, hence one exception rule per host.
+    /// URL regexes that exempt allowlisted hosts from the network block. WebKit matches rules
+    /// against the canonical URL (lowercase host, default port dropped, path always present), so
+    /// each pattern pins the whole authority: scheme, the host (no userinfo), an optional numeric
+    /// port, then the `/` that starts the path. WebKit's rule regexes have no alternation, hence
+    /// one pattern per scheme family.
+    public static func exceptionPatterns(allow entries: [String]) -> [String] {
+        var patterns: [String] = []
+        for entry in Set(entries.compactMap(allowedHost)).sorted() {
+            let wildcard = entry.hasPrefix("*.")
+            var name = wildcard ? String(entry.dropFirst(2)) : entry
+            var port: Int?
+            if let colon = name.lastIndex(of: ":") {
+                port = Int(name[name.index(after: colon)...])
+                name = String(name[..<colon])
+            }
+            let host = (wildcard ? "([a-z0-9-]+\\.)*" : "") + name.replacingOccurrences(of: ".", with: "\\.")
+            guard let port else {
+                patterns += ["https?", "wss?"].map { "^\($0)://\(host)(:[0-9]+)?/" }
+                continue
+            }
+            patterns += ["https?", "wss?"].map { "^\($0)://\(host):\(port)/" }
+            // An explicit default port is dropped from the canonical URL WebKit matches.
+            if port == 443 { patterns += ["^https://\(host)/", "^wss://\(host)/"] }
+            if port == 80 { patterns += ["^http://\(host)/", "^ws://\(host)/"] }
+        }
+        return patterns
+    }
+
+    /// WKContentRuleList JSON: block every http(s)/ws(s)/file load, then let allowlisted hosts through.
     public static func networkRules(allow entries: [String]) -> String {
         var rules: [[String: Any]] = ["^https?:", "^wss?:", "^file:"].map {
             ["trigger": ["url-filter": $0], "action": ["type": "block"]]
         }
-        for entry in Set(entries.compactMap(allowedHost)).sorted() {
-            let wildcard = entry.hasPrefix("*.")
-            let name = wildcard ? String(entry.dropFirst(2)) : entry
-            let hasPort = name.contains(":")
-            let pattern = "^[a-z]+://" + (wildcard ? "([^/:]+\\.)?" : "") + name.replacingOccurrences(of: ".", with: "\\.") + (hasPort ? "/" : "[:/]")
+        for pattern in exceptionPatterns(allow: entries) {
             rules.append(["trigger": ["url-filter": pattern], "action": ["type": "ignore-previous-rules"]])
         }
         let data = try! JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys])

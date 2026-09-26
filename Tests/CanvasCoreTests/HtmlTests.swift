@@ -99,12 +99,144 @@ struct HtmlPathTests {
     }
 
     @Test func networkAllowlistAcceptsOnlyHosts() {
-        #expect(HtmlKit.allowedHost("LOCALHOST:8123") == "localhost:8123")
-        #expect(HtmlKit.allowedHost("*.github.io") == "*.github.io")
+        #expect(HtmlKit.allowedHost("LOCALHOST:08123") == "localhost:8123")
+        #expect(HtmlKit.allowedHost("*.GitHub.io") == "*.github.io")
         #expect(HtmlKit.allowedHost("api.example.com") == "api.example.com")
-        for entry in ["https://example.com", "example.com/path", "exa mple.com", "a|b.com", "*", "*.", "host:99999", "-bad.com", "a..b"] {
+        for entry in ["https://example.com", "example.com/path", "exa mple.com", "a|b.com", "*", "*.", "host:99999", "host:0", "-bad.com", "a..b", "user@example.com", "example.com:x@evil.com"] {
             #expect(HtmlKit.allowedHost(entry) == nil, "\(entry)")
         }
+    }
+
+    /// Whether any exception pattern lets `url` through. WebKit matches url-filters
+    /// case-insensitively against the canonical URL string, as here.
+    private func allowed(_ url: String, by entries: [String]) -> Bool {
+        HtmlKit.exceptionPatterns(allow: entries).contains { pattern in
+            let regex = try! NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+            return regex.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil
+        }
+    }
+
+    @Test func exceptionsPinTheWholeAuthority() {
+        let entries = ["allowed.example"]
+        for url in ["https://allowed.example/", "http://allowed.example:8080/x?y", "wss://allowed.example/socket", "HTTPS://ALLOWED.EXAMPLE/"] {
+            #expect(allowed(url, by: entries), "\(url)")
+        }
+        for url in [
+            "https://allowed.example:x@attacker.example/",
+            "https://allowed.example:1@attacker.example/",
+            "https://allowed.example@attacker.example/",
+            "https://user@attacker.example/allowed.example/",
+            "https://allowed.example.attacker.com/",
+            "https://allowed.example%2eattacker.com/",
+            "https://notallowed.example/",
+            "https://sub.allowed.example/",
+            "https://attacker.com/?u=https://allowed.example/",
+            "file://allowed.example/etc/passwd",
+            "ftp://allowed.example/",
+        ] {
+            #expect(!allowed(url, by: entries), "\(url)")
+        }
+    }
+
+    @Test func wildcardAndPortEntriesStayNarrow() {
+        let wildcard = ["*.allowed.example"]
+        #expect(allowed("https://allowed.example/", by: wildcard))
+        #expect(allowed("https://a.b.allowed.example/", by: wildcard))
+        #expect(!allowed("https://evilallowed.example/", by: wildcard))
+        #expect(!allowed("https://x.allowed.example.evil.com/", by: wildcard))
+        #expect(!allowed("https://x.allowed.example:1@evil.com/", by: wildcard))
+
+        let port = ["localhost:8123"]
+        #expect(allowed("http://localhost:8123/", by: port))
+        #expect(!allowed("http://localhost:8124/", by: port))
+        #expect(!allowed("http://localhost/", by: port))
+        #expect(!allowed("http://localhost:81234/", by: port))
+        #expect(!allowed("http://localhost:8123@evil.com/", by: port))
+    }
+
+    @Test func explicitDefaultPortsMatchCanonicalURLs() {
+        // WebKit drops a scheme's default port before matching, so `:443` must match the bare host.
+        let https = ["example.com:0443"]
+        #expect(allowed("https://example.com/", by: https))
+        #expect(allowed("wss://example.com/", by: https))
+        #expect(allowed("http://example.com:443/", by: https))
+        #expect(!allowed("http://example.com/", by: https), "port 80 is not port 443")
+        #expect(!allowed("https://example.com:8443/", by: https))
+
+        let http = ["example.com:80"]
+        #expect(allowed("http://example.com/", by: http))
+        #expect(allowed("ws://example.com/", by: http))
+        #expect(!allowed("https://example.com/", by: http))
+    }
+}
+
+@MainActor
+struct HtmlWorkQueueTests {
+    /// A job that runs until released, recording that it started and whether it saw cancellation.
+    @MainActor final class Gate {
+        var started = 0
+        var cancelled = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func job() async throws -> Int {
+            started += 1
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { waiters.append($0) }
+            } onCancel: {
+                Task { @MainActor in self.releaseAll() }
+            }
+            if Task.isCancelled { cancelled += 1 }
+            try Task.checkCancellation()
+            return started
+        }
+
+        func releaseAll() {
+            let pending = waiters
+            waiters.removeAll()
+            pending.forEach { $0.resume() }
+        }
+    }
+
+    private func settle() async {
+        for _ in 0..<20 { await Task.yield() }
+    }
+
+    @Test func boundsRunningAndQueuedWorkAndRejectsTheRest() async throws {
+        let queue = HtmlWorkQueue(maxRunning: 2, maxQueued: 3)
+        let gate = Gate()
+        let jobs = (0..<5).map { _ in Task { try await queue.perform { try await gate.job() } } }
+        await settle()
+        #expect(gate.started == 2 && queue.running == 2 && queue.queued == 3)
+
+        await #expect(throws: HtmlError.busy) { try await queue.perform { try await gate.job() } }
+
+        // Finishing jobs hand their slots to the queue in order until everything has run.
+        while gate.started < 5 {
+            gate.releaseAll()
+            await settle()
+        }
+        gate.releaseAll()
+        for job in jobs { _ = try await job.value }
+        #expect(queue.running == 0 && queue.queued == 0)
+    }
+
+    @Test func cancelAllFailsQueuedCancelsRunningAndKeepsServing() async throws {
+        let queue = HtmlWorkQueue(maxRunning: 1, maxQueued: 2)
+        let gate = Gate()
+        let running = Task { try await queue.perform { try await gate.job() } }
+        let queued = Task { try await queue.perform { try await gate.job() } }
+        await settle()
+        #expect(gate.started == 1 && queue.queued == 1)
+
+        queue.cancelAll()
+        await #expect(throws: HtmlError.cancelled) { try await queued.value }
+        await #expect(throws: (any Error).self) { try await running.value }
+        #expect(gate.cancelled == 1, "the running job observed cancellation")
+        #expect(gate.started == 1, "the queued job never started")
+        #expect(queue.running == 0)
+
+        let after = Task { try await queue.perform { 42 } }
+        #expect(try await after.value == 42)
     }
 }
 

@@ -156,13 +156,22 @@
 
     load() {
       const path = this.getAttribute('path');
-      if (!path) return this.showError(new Error('<canvas-code> needs a path'));
+      if (!path) {
+        this.request = (this.request || 0) + 1;
+        this.loadedKey = this.excerpt = null;
+        return this.showError(new Error('<canvas-code> needs a path'));
+      }
       const lines = this.getAttribute('lines');
       const symbol = this.getAttribute('symbol');
       const key = `${path}|${lines}|${symbol}`;
       if (key === this.loadedKey) return;
       this.loadedKey = key;
-      track(canvasKit.excerpt(path, { lines, symbol }).then((excerpt) => this.render(excerpt), (error) => this.showError(error)));
+      // A new target: drop the old excerpt so clicks and a late reply can't mix the two.
+      const request = (this.request = (this.request || 0) + 1);
+      this.excerpt = null;
+      this.innerHTML = `<div class="ck-head"><span class="ck-path">${escapeHTML(path)}</span></div>`;
+      const current = () => request === this.request;
+      track(canvasKit.excerpt(path, { lines, symbol }).then((excerpt) => current() && this.render(excerpt), (error) => current() && this.showError(error)));
     }
 
     render(excerpt) {

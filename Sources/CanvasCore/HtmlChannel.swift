@@ -11,17 +11,19 @@ public enum HtmlChannel {
         switch message {
         case .excerpt(let path, let lines, let symbol):
             let file = try HtmlKit.boardFile(path, root: board.root)
-            let excerpt = await Task.detached { SourceExcerpt.load(url: file.url, path: file.relative, lines: lines, symbol: symbol) }.value
+            let excerpt = await offMain { SourceExcerpt.load(url: file.url, path: file.relative, lines: lines, symbol: symbol) }
+            try Task.checkCancellation()
             return try JSONValue.encode(excerpt)
 
         case .openCode(let path, let lines, let symbol):
             let file = try HtmlKit.boardFile(path, root: board.root)
             var range = lines
             if range == nil, let symbol {
-                range = await Task.detached { () -> LineRange? in
+                range = await offMain { () -> LineRange? in
                     let excerpt = SourceExcerpt.load(url: file.url, path: file.relative, lines: nil, symbol: symbol)
                     return excerpt.stale ? nil : LineRange(start: excerpt.start, end: excerpt.end)
-                }.value
+                }
+                try Task.checkCancellation()
             }
             guard FileManager.default.fileExists(atPath: file.url.path) else { throw HtmlError.notFound(file.relative) }
             return try openCode(path: file.relative, range: range, symbol: symbol, beside: tile, on: board)
@@ -41,6 +43,12 @@ public enum HtmlChannel {
         case .rendered:
             return .object([:])
         }
+    }
+
+    /// File reads run off the main actor and stop early when the requesting page goes away.
+    private static func offMain<T: Sendable>(_ work: @escaping @Sendable () -> T) async -> T {
+        let task = Task.detached(operation: work)
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
     /// Re-aims the topmost code tile already showing `path` (follow tiles excluded: they belong

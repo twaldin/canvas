@@ -30,6 +30,8 @@ public struct SourceExcerpt: Codable, Equatable, Sendable {
         guard (attributes[.size] as? Int ?? 0) <= maxFileBytes else { return failed("\(path) is larger than \(maxFileBytes / 1024 / 1024) MB") }
         guard let data = try? Data(contentsOf: url) else { return failed("\(path) is unreadable") }
         guard !data.prefix(8192).contains(0) else { return failed("\(path) is a binary file") }
+        // The page that asked went away while reading; skip the (possibly large) symbol search.
+        guard !Task.isCancelled else { return failed("cancelled") }
         return resolve(text: String(decoding: data, as: UTF8.self), path: path, lines: lines, symbol: symbol)
     }
 

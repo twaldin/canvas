@@ -23,6 +23,8 @@ final class HtmlTile: NSView, TileContent {
     private var hovered: WebMentions.Element?
     private var hoverInFlight = false
     private var queuedHover: NSPoint?
+    /// Bounds the native work a page can have outstanding; cancelled when the web view goes away.
+    private let work = HtmlWorkQueue()
 
     init(object: CanvasObject, board: Board) {
         self.object = object
@@ -44,22 +46,25 @@ final class HtmlTile: NSView, TileContent {
 
     // MARK: Web view lifecycle
 
-    /// The rule list compiles asynchronously; the page never loads without it (fail closed).
+    /// The rule list compiles asynchronously; the page never loads without it (fail closed), and
+    /// never with a list compiled for an allowlist that has since changed.
     private func build() {
         guard live, webView == nil, !building else { return }
         building = true
         let hosts = allowNetwork
         Task { @MainActor [weak self] in
-            let rules: WKContentRuleList
+            let rules: WKContentRuleList?
+            var failure: Error?
             do {
                 rules = try await HtmlRuleLists.list(allowing: hosts)
             } catch {
-                self?.building = false
-                self?.showFailure("Network rules failed to compile: \(error)")
-                return
+                rules = nil
+                failure = error
             }
             guard let self else { return }
             self.building = false
+            guard hosts == self.allowNetwork else { return self.build() }
+            guard let rules else { return self.showFailure("Network rules failed to compile: \(failure.map(String.init(describing:)) ?? "")") }
             guard self.live, self.webView == nil else { return }
             self.attach(rules: rules)
         }
@@ -90,6 +95,7 @@ final class HtmlTile: NSView, TileContent {
     private func detach() {
         snapshotTask?.cancel()
         snapshotTask = nil
+        work.cancelAll()
         guard let web = webView else { return }
         web.stopLoading()
         web.configuration.userContentController.removeAllScriptMessageHandlers()
@@ -115,7 +121,7 @@ final class HtmlTile: NSView, TileContent {
             if let y { scrollY = y }
             scheduleSnapshot()
         }
-        return try await HtmlChannel.handle(message, tile: object.id, board: board)
+        return try await work.perform { [object, board] in try await HtmlChannel.handle(message, tile: object.id, board: board) }
     }
 
     // MARK: Snapshots
@@ -169,6 +175,7 @@ final class HtmlTile: NSView, TileContent {
             detach()
             build()
         } else if object.props["html"] != previous.props["html"] {
+            work.cancelAll()
             web.load(URLRequest(url: pageURL))
         } else if object.props["state"] != previous.props["state"] {
             let state = (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(object.props["state"] ?? .object([:])))) ?? [String: Any]()

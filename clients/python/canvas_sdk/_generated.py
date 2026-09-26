@@ -155,7 +155,7 @@ class ObjectApi:
         return self._call("object.update", _with_env(params, ["caller"]))
 
     def delete(self, *, id: "Id", caller: "Id" | None = None) -> dict[str, Any]:
-        """Delete an object (and remove it from any staged mentions)."""
+        """Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached."""
         params = {"id": id, "caller": caller}
         return self._call("object.delete", _with_env(params, ["caller"]))
 

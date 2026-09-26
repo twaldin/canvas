@@ -73,6 +73,9 @@ public final class Board {
     public var onChange: (() -> Void)?
     /// Viewport center in canvas coordinates, for user-created objects without a frame.
     public var viewportCenter: () -> (x: Double, y: Double) = { (0, 0) }
+    /// An arrow's route as currently drawn (canvas coordinates), so deleting what it points at
+    /// keeps its end exactly where the user saw it. Without it, routes come from object frames.
+    public var arrowRoute: ((ObjectID) -> (start: CGPoint, end: CGPoint)?)?
 
     public init(id: BoardID, root: URL) {
         self.id = id
@@ -132,7 +135,9 @@ public final class Board {
     }
 
     public func delete(_ id: ObjectID) throws {
-        guard objects.removeValue(forKey: id) != nil else { throw BoardError.notFound("object \(id)") }
+        guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
+        detachArrows(from: id)
+        objects.removeValue(forKey: id)
         changedAt.removeValue(forKey: id)
         revision += 1
         let before = tray.count

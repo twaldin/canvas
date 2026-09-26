@@ -52,7 +52,7 @@ final class ShapeLayer: NSView {
             guard tool != oldValue else { return }
             cancelGesture()
             // Resize handles show only with the select tool.
-            for item in resizable { invalidate(item.frame.insetBy(dx: -handleSize, dy: -handleSize)) }
+            for item in resizable { invalidate(handleArea(item.frame)) }
             window?.invalidateCursorRects(for: self)
             onToolChange?()
         }
@@ -97,6 +97,9 @@ final class ShapeLayer: NSView {
         canvas.onSelectionChange = { [unowned layer] in layer.selectionChanged() }
         canvas.onSelectionDrag = { [unowned layer] ids, offset in layer.previewDrag(ids, offset: offset) }
         canvas.moveProps = { object, dx, dy in ShapeLayer.moveProps(object, dx: dx, dy: dy) }
+        canvas.board.arrowRoute = { [unowned layer] id in
+            layer.items[id]?.arrow.map { (ShapeLayer.canvasPoint($0.start), ShapeLayer.canvasPoint($0.end)) }
+        }
         let toolbar = DrawingToolbar(layer: layer)
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(toolbar)
@@ -124,7 +127,9 @@ final class ShapeLayer: NSView {
     }
 
     override var isFlipped: Bool { true }
-    override var acceptsFirstResponder: Bool { true }
+    /// Drawing never takes the keyboard: it stays with the prompt-target terminal. Only the
+    /// inline editors take focus, and they hand it back when they close.
+    override var acceptsFirstResponder: Bool { false }
 
     // MARK: Coordinates
 
@@ -248,7 +253,7 @@ final class ShapeLayer: NSView {
         if dragPreview.ids.contains(item.object.id) {
             invalidate(item.bounds.offsetBy(dx: dragPreview.offset.width, dy: dragPreview.offset.height))
         }
-        if canvas.selection.contains(item.object.id) { invalidate(item.frame.insetBy(dx: -handleSize, dy: -handleSize)) }
+        if canvas.selection.contains(item.object.id) { invalidate(handleArea(item.frame)) }
     }
 
     func invalidate(_ rect: NSRect) {
@@ -324,6 +329,7 @@ final class ShapeLayer: NSView {
 
     // MARK: Selection
 
+    /// Resize handle size in screen points.
     let handleSize: CGFloat = 12
 
     /// Selected rect/ellipse shapes get corner handles for resizing (the scene draws the selection).
@@ -331,8 +337,17 @@ final class ShapeLayer: NSView {
         canvas.selection.compactMap { items[$0] }.filter { [.rect, .ellipse].contains($0.shape?.kind) }
     }
 
+    /// Handles are a fixed size on screen, so in document points they grow as the canvas zooms out.
+    private var handleDocSize: CGFloat { handleSize / max(canvas.magnification, 0.1) }
+
+    /// Everything the handles of `frame` paint, including their border.
+    func handleArea(_ frame: NSRect) -> NSRect {
+        let outset = handleDocSize / 2 + 2 / max(canvas.magnification, 0.1)
+        return frame.insetBy(dx: -outset, dy: -outset)
+    }
+
     private func handleRects(_ frame: NSRect) -> [(corner: NSPoint, opposite: NSPoint, rect: NSRect)] {
-        let size = handleSize / max(canvas.magnification, 0.1)
+        let size = handleDocSize
         let corners = [NSPoint(x: frame.minX, y: frame.minY), NSPoint(x: frame.maxX, y: frame.minY),
                        NSPoint(x: frame.maxX, y: frame.maxY), NSPoint(x: frame.minX, y: frame.maxY)]
         return corners.indices.map { index in
@@ -373,7 +388,7 @@ final class ShapeLayer: NSView {
     func selectionChanged() {
         let current = Set(canvas.selection.filter { items[$0] != nil })
         for id in current.symmetricDifference(selectionShown) {
-            if let item = items[id] { invalidate(item.frame.insetBy(dx: -handleSize, dy: -handleSize)) }
+            if let item = items[id] { invalidate(handleArea(item.frame)) }
         }
         selectionShown = current
     }

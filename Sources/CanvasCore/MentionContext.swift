@@ -109,7 +109,8 @@ public enum MentionContext {
             let detail = lines.map { ":\($0.start)-\($0.end)" } ?? selector.map { " \($0)" } ?? ""
             return id + detail
         case .point(let point):
-            return "(\(Int(point.x.rounded())), \(Int(point.y.rounded())))"
+            // Coordinates are any JSON number; an Int conversion would trap on huge ones.
+            return String(format: "(%.0f, %.0f)", Double(point.x), Double(point.y))
         }
     }
 

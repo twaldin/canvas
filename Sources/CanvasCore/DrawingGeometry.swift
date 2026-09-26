@@ -115,8 +115,9 @@ public enum DrawingGeometry {
     // MARK: Hit testing
 
     /// Whether `point` (same coordinates as `frame`) hits the drawn shape: its stroke within
-    /// `tolerance`, its text, or its fill. `labelRect` is the laid-out label of a rect/ellipse.
-    public static func hits(_ shape: ShapeSpec, frame: CGRect, at point: CGPoint, tolerance: CGFloat, labelRect: CGRect? = nil) -> Bool {
+    /// `tolerance`, its text, or its fill. `labelRect` is the laid-out label of a rect/ellipse;
+    /// `inkOutline` is the painted outline polygon of an ink stroke (`DrawingInk.outline`).
+    public static func hits(_ shape: ShapeSpec, frame: CGRect, at point: CGPoint, tolerance: CGFloat, labelRect: CGRect? = nil, inkOutline: [CGPoint] = []) -> Bool {
         if let labelRect, labelRect.contains(point) { return true }
         let reach = tolerance + strokeWidth / 2 + jitterAllowance
         switch shape.kind {
@@ -129,10 +130,35 @@ public enum DrawingGeometry {
             if shape.fill != .none, ellipseContains(frame, point) { return true }
             return distanceToEllipse(point, frame) <= reach
         case .ink:
-            let local = CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)
-            let widest = shape.points.map { CGFloat($0.pressure ?? 0.5) }.max() ?? 0.5
-            return distanceToPolyline(local, shape.points.map(\.point)) <= tolerance + inkSize * max(widest, 0.5)
+            return polygonContains(inkOutline, point) || distanceToPolygon(point, inkOutline) <= tolerance
         }
+    }
+
+    /// Nonzero winding: the stroke outline can cross itself where the ink loops.
+    static func polygonContains(_ polygon: [CGPoint], _ p: CGPoint) -> Bool {
+        guard polygon.count > 2 else { return false }
+        var winding = 0
+        var a = polygon[polygon.count - 1]
+        for b in polygon {
+            let side = (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)
+            if a.y <= p.y {
+                if b.y > p.y, side > 0 { winding += 1 }
+            } else if b.y <= p.y, side < 0 {
+                winding -= 1
+            }
+            a = b
+        }
+        return winding != 0
+    }
+
+    static func distanceToPolygon(_ p: CGPoint, _ polygon: [CGPoint]) -> CGFloat {
+        guard var a = polygon.last else { return .infinity }
+        var best = CGFloat.infinity
+        for b in polygon {
+            best = min(best, distanceToSegment(p, a, b))
+            a = b
+        }
+        return best
     }
 
     public static func hitsArrow(start: CGPoint, end: CGPoint, at point: CGPoint, tolerance: CGFloat) -> Bool {
@@ -146,16 +172,6 @@ public enum DrawingGeometry {
         guard lengthSquared > 0 else { return hypot(p.x - a.x, p.y - a.y) }
         let t = max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared))
         return hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy))
-    }
-
-    public static func distanceToPolyline(_ p: CGPoint, _ points: [CGPoint]) -> CGFloat {
-        guard let first = points.first else { return .infinity }
-        guard points.count > 1 else { return hypot(p.x - first.x, p.y - first.y) }
-        var best = CGFloat.infinity
-        for index in 1..<points.count {
-            best = min(best, distanceToSegment(p, points[index - 1], points[index]))
-        }
-        return best
     }
 
     static func distanceToRectBorder(_ p: CGPoint, _ rect: CGRect) -> CGFloat {

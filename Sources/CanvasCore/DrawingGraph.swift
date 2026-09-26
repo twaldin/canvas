@@ -28,4 +28,31 @@ extension Board {
             .filter { within($0.spec.from) && within($0.spec.to) }
             .sorted { $0.arrow.id < $1.arrow.id }
     }
+
+    /// Before `id` is deleted, every arrow bound to it gets a free end where it last attached, so
+    /// the arrow keeps its drawn direction (also after a reload) and its other end keeps routing.
+    func detachArrows(from id: ObjectID) {
+        for arrow in objects.values.sorted(by: { $0.id < $1.id }) where arrow.type == .arrow && arrow.id != id {
+            guard var spec = ArrowSpec(arrow.props), spec.from.objectID == id || spec.to.objectID == id,
+                  let route = arrowRoute?(arrow.id) ?? route(of: spec) else { continue }
+            if spec.from.objectID == id { spec.from = .point(route.start) }
+            if spec.to.objectID == id { spec.to = .point(route.end) }
+            _ = try? update(arrow.id, props: .object(["from": spec.from.json, "to": spec.to.json]))
+        }
+    }
+
+    /// An arrow's route from object frames alone (no app to ask for what is drawn).
+    func route(of spec: ArrowSpec) -> (start: CGPoint, end: CGPoint)? {
+        func end(_ binding: ArrowBinding) -> DrawingGeometry.ArrowEnd? {
+            switch binding {
+            case .point(let point): return .point(point)
+            case .object(let id, _, _):
+                guard let object = objects[id] else { return nil }
+                let isEllipse = object.type == .shape && ShapeSpec(object.props)?.kind == .ellipse
+                return .bound(isEllipse ? .ellipse(object.frame.rect) : .rect(object.frame.rect))
+            }
+        }
+        guard let from = end(spec.from), let to = end(spec.to) else { return nil }
+        return DrawingGeometry.route(from: from, to: to)
+    }
 }

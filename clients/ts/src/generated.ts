@@ -372,7 +372,7 @@ export interface CanvasApi {
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
-    /** Delete an object (and remove it from any staged mentions). */
+    /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
   };
   tray: {

@@ -83,11 +83,23 @@ struct DrawingHitTests {
         #expect(G.hits(ShapeSpec(kind: .text, text: "note"), frame: frame, at: CGPoint(x: 200, y: 160), tolerance: 4))
     }
 
+    func inkHits(_ points: [InkPoint], at point: CGPoint) -> Bool {
+        let ink = ShapeSpec(kind: .ink, points: points)
+        return G.hits(ink, frame: .zero, at: point, tolerance: 4, inkOutline: DrawingInk.outline(points))
+    }
+
     @Test func inkHitsAlongItsPathOnly() {
-        let ink = ShapeSpec(kind: .ink, points: (0...20).map { InkPoint(x: Double($0) * 10, y: 0) })
-        let inkFrame = CGRect(x: 100, y: 100, width: 200, height: 10)
-        #expect(G.hits(ink, frame: inkFrame, at: CGPoint(x: 250, y: 104), tolerance: 4))
-        #expect(!G.hits(ink, frame: inkFrame, at: CGPoint(x: 250, y: 130), tolerance: 4))
+        let points = (0...20).map { InkPoint(x: Double($0) * 10, y: 0) }
+        #expect(inkHits(points, at: CGPoint(x: 150, y: 4)))
+        #expect(!inkHits(points, at: CGPoint(x: 150, y: 30)))
+    }
+
+    @Test func inkHitsWhereTheSmoothedStrokeIsPaintedNotAtRawInputCorners() {
+        // Streamlining pulls the middle input point to (57.5, 0): the painted stroke cuts the
+        // corner diagonally toward (100, 100) and never reaches (100, 0).
+        let points = [InkPoint(x: 0, y: 0), InkPoint(x: 100, y: 0), InkPoint(x: 100, y: 100)]
+        #expect(inkHits(points, at: CGPoint(x: 78.75, y: 50)), "on the painted diagonal")
+        #expect(!inkHits(points, at: CGPoint(x: 100, y: 2)), "the raw corner is empty canvas")
     }
 
     @Test func arrowsHitAlongTheShaft() {
@@ -178,5 +190,52 @@ struct RoughStrokeTests {
                 #expect(rect.insetBy(dx: -rect.width * 0.08, dy: -rect.height * 0.08).contains(point))
             }
         }
+    }
+}
+
+@MainActor
+struct ArrowBindingLifecycleTests {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-drawing-\(UUID().uuidString)")
+
+    @Test func deletingABoundObjectLeavesTheArrowEndWhereItWasAndItsOtherEndStillFollows() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = BoardStore(directory: root.appendingPathComponent("boards"))
+        let board = store.load(root: root)
+        let left = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        let right = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 400, y: 0, w: 200, h: 100))
+        // Drawn right to left: its direction must survive losing the source.
+        let arrow = board.create(type: .arrow, props: ArrowSpec(from: .object(right.id), to: .object(left.id)).props)
+
+        try board.delete(right.id)
+        let detached = try #require(ArrowSpec(try board.object(arrow.id).props))
+        #expect(detached.from == .point(CGPoint(x: 400 - DrawingGeometry.arrowGap, y: 50)))
+        #expect(detached.to == .object(left.id), "the surviving end stays bound")
+
+        store.save(board)
+        let reloaded = try #require(ArrowSpec(try store.load(root: root).object(arrow.id).props))
+        #expect(reloaded == detached)
+
+        // Moving the survivor still re-routes that end; the free end holds still.
+        try board.update(left.id, frame: Frame(x: 0, y: 300, w: 200, h: 100))
+        let route = DrawingGeometry.route(from: .point(CGPoint(x: 394, y: 50)), to: .bound(.rect(CGRect(x: 0, y: 300, width: 200, height: 100))))
+        #expect(route.start == CGPoint(x: 394, y: 50))
+        #expect(route.end.y < 300, "attaches to the moved rect's upper side")
+    }
+
+    @Test func theAppsDrawnRouteWinsOverFrameGeometry() throws {
+        let board = Board(id: "brd_t", root: root)
+        let a = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
+        let b = board.create(type: .terminal, props: .object([:]), frame: Frame(x: 300, y: 0, w: 100, h: 100))
+        let arrow = board.create(type: .arrow, props: ArrowSpec(from: .object(a.id), to: .object(b.id)).props)
+        board.arrowRoute = { id in id == arrow.id ? (CGPoint(x: 106, y: 50), CGPoint(x: 294, y: 63)) : nil }
+        try board.delete(b.id)
+        #expect(ArrowSpec(try board.object(arrow.id).props)?.to == .point(CGPoint(x: 294, y: 63)))
+    }
+
+    @Test func hugeFreeCoordinatesDescribeWithoutCrashing() throws {
+        let board = Board(id: "brd_t", root: root)
+        let arrow = board.create(type: .arrow, props: ArrowSpec(from: .point(CGPoint(x: 1e20, y: -1e20)), to: .point(CGPoint(x: 0, y: 0))).props)
+        try board.stage(.object(arrow.id))
+        #expect(board.drain().context.contains("(100000000000000000000, -100000000000000000000) → (0, 0)"))
     }
 }

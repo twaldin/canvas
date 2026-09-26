@@ -13,16 +13,14 @@ extension ShapeLayer {
     var canvasHasKeyboard: Bool {
         guard let window else { return false }
         let responder = window.firstResponder
-        if responder == nil || responder === window || responder === self { return true }
+        if responder == nil || responder === window { return true }
         return responder === canvas || responder === canvas.contentView || responder === canvas.document
     }
 
+    /// The layer is never first responder, so tool keys arrive here: the window offers key downs
+    /// to its views as potential key equivalents (verified with real posted key events).
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         handleKey(event) || super.performKeyEquivalent(with: event)
-    }
-
-    override func keyDown(with event: NSEvent) {
-        if !handleKey(event) { super.keyDown(with: event) }
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
@@ -205,7 +203,7 @@ extension ShapeLayer {
             guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { return .zero }
             return NSRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY).insetBy(dx: -DrawingGeometry.inkSize * 2, dy: -DrawingGeometry.inkSize * 2)
         case .resize(_, _, let frame):
-            return frame.insetBy(dx: -handleSize * 2, dy: -handleSize * 2)
+            return handleArea(frame)
         case nil:
             return .zero
         }

@@ -42,15 +42,25 @@ private final class EditorSession {
         return true
     }
 
+    /// `restoreFocus`: the editor closed on its own (Enter, Escape, click-away), so the keyboard
+    /// goes back to where it was. When focus already moved elsewhere, it stays there.
     func end(_ editor: ShapeEditing, in layer: ShapeLayer, restoreFocus: Bool) {
         let window = editor.window
-        let hadFocus = window?.firstResponder.map { ($0 as? NSView)?.isDescendant(of: editor) == true || $0 === editor } ?? false
+        let holdsFocus = (window?.firstResponder as? NSView)?.isDescendant(of: editor) == true
         editor.removeFromSuperview()
-        if restoreFocus || hadFocus {
-            let previous = (previousResponder as? NSView)?.window === window ? previousResponder : nil
-            window?.makeFirstResponder(previous ?? layer)
-        }
+        if restoreFocus && holdsFocus { returnFocus(in: window, layer: layer) }
         layer.editorEnded(editor)
+    }
+
+    /// Back to the view that had the keyboard before editing, else the prompt-target terminal.
+    private func returnFocus(in window: NSWindow?, layer: ShapeLayer) {
+        if let previous = previousResponder as? NSView, previous.window === window {
+            window?.makeFirstResponder(previous)
+        } else if let target = layer.canvas.promptTarget, let terminal = layer.canvas.tiles[target]?.content as? TerminalTile {
+            terminal.focus()
+        } else {
+            window?.makeFirstResponder(nil)
+        }
     }
 }
 
@@ -111,6 +121,10 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
     }
 
     func commit() {
+        save(restoreFocus: true)
+    }
+
+    private func save(restoreFocus: Bool) {
         guard session.finish() else { return }
         let text = string.trimmingCharacters(in: .whitespacesAndNewlines)
         let board = shapeLayer.board
@@ -129,7 +143,7 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
             let created = board.create(type: .shape, props: spec.props, frame: ShapeLayer.canvasFrame(rect))
             shapeLayer.canvas.select(created.id, extend: false)
         }
-        session.end(self, in: shapeLayer, restoreFocus: true)
+        session.end(self, in: shapeLayer, restoreFocus: restoreFocus)
     }
 
     func cancel() {
@@ -170,9 +184,10 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        // Focus moved elsewhere (a terminal, another window): keep what was typed.
+        // Focus moved elsewhere (a new terminal, another window): keep what was typed, and leave
+        // the keyboard where it went.
         if resigned, !session.finished {
-            DispatchQueue.main.async { [weak self] in self?.commit() }
+            DispatchQueue.main.async { [weak self] in self?.save(restoreFocus: false) }
         }
         return resigned
     }

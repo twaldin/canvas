@@ -21,6 +21,8 @@ struct DrawnItem {
     let fillAlpha: CGFloat
     let label: NSAttributedString?
     let labelRect: NSRect?
+    /// Ink's painted outline polygon (document coordinates), kept for hit testing.
+    var inkOutline: [CGPoint] = []
 
     var color: NSColor { DrawingStyle.color(colorName) }
 
@@ -50,6 +52,7 @@ struct DrawnItem {
         var fillAlpha: CGFloat = 0
         var label: NSAttributedString?
         var labelRect: NSRect?
+        var inkOutline: [CGPoint] = []
         switch spec.kind {
         case .rect, .ellipse:
             let strokes = spec.kind == .rect ? DrawingRough.rectangle(frame, random: &random) : DrawingRough.ellipse(frame, random: &random)
@@ -71,8 +74,8 @@ struct DrawnItem {
             label = DrawingStyle.text(spec.text ?? "", size: DrawingStyle.textSize, color: DrawingStyle.color(spec.color))
             labelRect = frame
         case .ink:
-            let outline = DrawingInk.outline(spec.points).map { CGPoint(x: $0.x + frame.minX, y: $0.y + frame.minY) }
-            fill = smoothPolygon(outline)
+            inkOutline = DrawingInk.outline(spec.points).map { CGPoint(x: $0.x + frame.minX, y: $0.y + frame.minY) }
+            fill = smoothPolygon(inkOutline)
             fillAlpha = 1
         }
         var bounds = frame.insetBy(dx: -DrawingGeometry.strokeWidth - 4, dy: -DrawingGeometry.strokeWidth - 4)
@@ -80,7 +83,8 @@ struct DrawnItem {
         if let stroke { bounds = bounds.union(stroke.boundingBoxOfPath.insetBy(dx: -2, dy: -2)) }
         if let fill { bounds = bounds.union(fill.boundingBoxOfPath.insetBy(dx: -2, dy: -2)) }
         if let labelRect { bounds = bounds.union(labelRect) }
-        return DrawnItem(object: object, kind: .shape(spec), frame: frame, bounds: bounds, stroke: stroke, fill: fill, fillAlpha: fillAlpha, label: label, labelRect: labelRect)
+        return DrawnItem(object: object, kind: .shape(spec), frame: frame, bounds: bounds, stroke: stroke, fill: fill, fillAlpha: fillAlpha,
+                         label: label, labelRect: labelRect, inkOutline: inkOutline)
     }
 
     static func arrow(_ object: CanvasObject, _ spec: ArrowSpec, start: CGPoint, end: CGPoint) -> DrawnItem {
@@ -170,7 +174,7 @@ struct DrawnItem {
     func hits(_ point: CGPoint, tolerance: CGFloat) -> Bool {
         switch kind {
         case .shape(let spec):
-            return DrawingGeometry.hits(spec, frame: frame, at: point, tolerance: tolerance, labelRect: spec.kind == .text ? nil : labelRect)
+            return DrawingGeometry.hits(spec, frame: frame, at: point, tolerance: tolerance, labelRect: spec.kind == .text ? nil : labelRect, inkOutline: inkOutline)
         case .arrow(_, let start, let end):
             if let labelRect, labelRect.contains(point) { return true }
             return DrawingGeometry.hitsArrow(start: start, end: end, at: point, tolerance: tolerance)

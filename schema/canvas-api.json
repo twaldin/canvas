@@ -333,7 +333,7 @@
       "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" } } }
     },
     "object.delete": {
-      "description": "Delete an object (and remove it from any staged mentions).",
+      "description": "Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached.",
       "params": {
         "type": "object",
         "required": ["id"],

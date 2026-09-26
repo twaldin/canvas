@@ -26,7 +26,7 @@ final class CodeRowsView: NSView {
     let cache = CodeLineCache()
     private var anchor: CodePosition?
 
-    override var isFlipped: Bool { true }
+    nonisolated override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 

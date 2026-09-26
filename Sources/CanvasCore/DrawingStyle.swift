@@ -47,4 +47,18 @@ public enum DrawingStyle {
         paragraph.alignment = alignment
         return NSAttributedString(string: string, attributes: [.font: font(size: size), .foregroundColor: color, .paragraphStyle: paragraph])
     }
+
+    /// Widest an arrow caption lays out before it wraps.
+    public static let arrowLabelWidth: CGFloat = 240
+
+    /// An arrow's caption (its `label`, else its `relation` in the secondary color) and the size
+    /// of the chip it sits on: what the drawing layer draws and `layout.check` places, both
+    /// with `DrawingGeometry.labelRect`. Nil when the arrow has no caption.
+    public static func arrowLabel(_ spec: ArrowSpec) -> (text: NSAttributedString, size: CGSize)? {
+        guard let caption = spec.label ?? spec.relation, !caption.isEmpty else { return nil }
+        let color = spec.label == nil ? NSColor.secondaryLabelColor : Self.color(spec.color)
+        let text = Self.text(caption, size: arrowLabelSize, color: color, alignment: .center)
+        let size = text.boundingRect(with: NSSize(width: arrowLabelWidth, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
+        return (text, CGSize(width: ceil(size.width) + 8, height: ceil(size.height)))
+    }
 }

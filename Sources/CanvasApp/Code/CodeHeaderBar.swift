@@ -119,26 +119,15 @@ final class CodeHeaderBar: NSView {
         needsLayout = true
     }
 
-    /// One line under the header; `inline code` in backticks is set in the code font.
+    /// One line under the header (`CodeCaption`: `inline code` in backticks is set in the code font).
     func show(caption text: String?) {
-        let text = text.flatMap { $0.isEmpty ? nil : $0.replacingOccurrences(of: "\n", with: " ") }
+        let text = text.flatMap { $0.isEmpty ? nil : CodeCaption.text($0) }
         guard text != captionText else { return }
         captionText = text
         caption.isHidden = text == nil
-        caption.attributedStringValue = text.map(Self.captionString) ?? NSAttributedString()
+        caption.attributedStringValue = text.map(CodeCaption.string) ?? NSAttributedString()
         caption.toolTip = text
         needsLayout = true
-    }
-
-    static func captionString(_ text: String) -> NSAttributedString {
-        let out = NSMutableAttributedString()
-        let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11.5), .foregroundColor: NSColor.labelColor]
-        let code: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.labelColor,
-                                                   .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.25)]
-        for (index, part) in text.split(separator: "`", omittingEmptySubsequences: false).enumerated() {
-            out.append(NSAttributedString(string: String(part), attributes: index % 2 == 1 ? code : body))
-        }
-        return out
     }
 
     func show(history: [Location], current: Location?) {
@@ -179,7 +168,7 @@ final class CodeHeaderBar: NSView {
         status.frame = NSRect(x: x + 4, y: (middle - 8).rounded(), width: max(0, end - x - 4), height: 16)
         var y = CodeMetrics.headerHeight
         if captionText != nil {
-            caption.frame = NSRect(x: 8, y: y + 1, width: max(0, bounds.width - 16), height: CodeMetrics.captionHeight - 4)
+            caption.frame = NSRect(x: CodeMetrics.captionInset, y: y + 1, width: max(0, bounds.width - 2 * CodeMetrics.captionInset), height: CodeMetrics.captionHeight - 4)
             y += CodeMetrics.captionHeight
         }
         strip.frame = NSRect(x: 6, y: y, width: max(0, bounds.width - 12), height: CodeMetrics.historyHeight - 2)
@@ -208,8 +197,9 @@ final class CodeHeaderBar: NSView {
         }
         line.draw(with: NSRect(x: rect.minX + 8, y: rect.minY + 6, width: rect.width - 16, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         var y = rect.minY + CodeMetrics.headerHeight
-        if let caption {
-            captionString(caption).draw(with: NSRect(x: rect.minX + 8, y: y + 2, width: rect.width - 16, height: CodeMetrics.captionHeight - 4), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        if let caption, !caption.isEmpty {
+            CodeCaption.string(caption).draw(with: NSRect(x: rect.minX + CodeMetrics.captionInset + 2, y: y + 2, width: rect.width - 2 * CodeMetrics.captionInset - 4, height: CodeMetrics.captionHeight - 4),
+                                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
             y += CodeMetrics.captionHeight
         }
         if !history.isEmpty {

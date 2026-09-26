@@ -101,13 +101,9 @@ struct DrawnItem {
         let stroke = path(strokes)
         var label: NSAttributedString?
         var labelRect: NSRect?
-        let caption = spec.label ?? spec.relation
-        if let caption, !caption.isEmpty {
-            let color = spec.label == nil ? NSColor.secondaryLabelColor : DrawingStyle.color(spec.color)
-            let attributed = DrawingStyle.text(caption, size: DrawingStyle.arrowLabelSize, color: color, alignment: .center)
-            let size = attributed.boundingRect(with: NSSize(width: 240, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
-            label = attributed
-            labelRect = DrawingGeometry.labelRect(along: points, size: CGSize(width: ceil(size.width) + 8, height: ceil(size.height)), side: labelSide, obstacles: obstacles)
+        if let caption = DrawingStyle.arrowLabel(spec) {
+            label = caption.text
+            labelRect = DrawingGeometry.labelRect(along: points, size: caption.size, side: labelSide, obstacles: obstacles)
         }
         let xs = points.map(\.x)
         let ys = points.map(\.y)

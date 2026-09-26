@@ -43,6 +43,9 @@ public enum BoardEvent: Sendable {
 
 /// Serializable board state; what BoardStore persists.
 public struct BoardSnapshot: Codable, Sendable {
+    /// On-disk format (`Board.format`); absent in boards saved before tile frames included the
+    /// title bar (format 1).
+    public var format: Int?
     public var id: BoardID
     public var root: String
     public var revision: Int
@@ -96,16 +99,23 @@ public final class Board {
         self.root = root
     }
 
+    /// Board format written by `snapshot`. 2: a tile's frame is its whole drawn box, title bar
+    /// included (format 1 stored the body below the title bar).
+    public static let format = 2
+
     public init(snapshot: BoardSnapshot) {
         id = snapshot.id
         root = URL(fileURLWithPath: snapshot.root)
         revision = snapshot.revision
+        let format = snapshot.format ?? 1
         for var object in snapshot.objects {
             // Groups were labelled by `name` before they became titled regions.
             if object.type == .group, var props = object.props.object, let name = props.removeValue(forKey: "name") {
                 if props["title"] == nil { props["title"] = name }
                 object.props = .object(props)
             }
+            // Format 1 stored a tile's body; the title bar drew above it. Same box on screen.
+            if format < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
             objects[object.id] = object
             changedAt[object.id] = snapshot.revision
         }
@@ -124,7 +134,7 @@ public final class Board {
     }
 
     public var snapshot: BoardSnapshot {
-        BoardSnapshot(id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray)
+        BoardSnapshot(format: Self.format, id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -270,13 +280,14 @@ public final class Board {
         }
     }
 
+    /// Frame size a new object gets without one; a tile's includes its title bar.
     public static func defaultSize(_ type: ObjectType) -> (w: Double, h: Double) {
         switch type {
-        case .terminal: (820, 520)
-        case .browser: (1000, 700)
-        case .code: (640, 420)
-        case .note: (280, 240)
-        case .html: (640, 480)
+        case .terminal: (820, 546)
+        case .browser: (1000, 726)
+        case .code: (640, 446)
+        case .note: (280, 266)
+        case .html: (640, 506)
         case .shape: (160, 100)
         case .arrow, .group: (0, 0)
         }

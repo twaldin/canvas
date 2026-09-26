@@ -297,6 +297,13 @@ public struct CodeRows: Equatable, Sendable {
 }
 
 extension CodeRows {
+    /// The rows a code tile `width` points wide shows for a file's `text` without its diff (no
+    /// peeks): the model's view of a tile it hasn't loaded, for line anchors.
+    public init(file text: String, width: CGFloat) {
+        let side = SideText(text)
+        self.init(text: WrapText(side), columns: CodeMetrics.textColumns(width: width, lineCount: side.lineCount))
+    }
+
     /// A place in the text: an entry and a UTF-16 offset into its line. Rewrapping doesn't move
     /// it, so selections survive resizes.
     public struct Position: Comparable, Sendable {
@@ -577,6 +584,30 @@ public struct CodeDocument: Sendable {
             pieces.append(line.substring(with: NSRange(location: start, length: max(0, end - start))))
         }
         return pieces.joined(separator: "\n")
+    }
+
+    /// Width of everything left of the text, for this file and its base.
+    public var gutterWidth: CGFloat {
+        CodeMetrics.gutterWidth(lineCount: gutterLineCount)
+    }
+
+    /// A code tile's content (body coordinates) showing this document at `range` in a tile
+    /// `width` wide: the header strips (`headerHeight`) over the range's visual `rows` (built at
+    /// that width, so wrapped lines count every row) and its longest line, or every row and the
+    /// file's longest line without a range; never wider than the tile, since rows wrap there.
+    /// What `size: "fit"` makes the body show, and what `view.render` reports as the tile's
+    /// `contentSize`.
+    public func content(range: LineRange?, rows: CodeRows, width: CGFloat, headerHeight: CGFloat) -> CGSize {
+        var size: CGSize
+        if let range, let lines = lines(for: range) {
+            let first = rows.index(ofLine: lines.lowerBound)
+            let longest = lines.map { Int(wrapText.columns[$0 - 1]) }.max() ?? 0
+            size = CodeMetrics.content(rows: rows.rows(ofLine: lines.upperBound).upperBound - first, longestLine: longest, gutterWidth: gutterWidth, headerHeight: headerHeight)
+        } else {
+            size = CodeMetrics.content(rows: rows.count, longestLine: wrapText.longest, gutterWidth: gutterWidth, headerHeight: headerHeight)
+        }
+        size.width = min(size.width, width)
+        return size
     }
 
     /// The commit mentions of this tile's lines name: the diff base while the tile shows changes

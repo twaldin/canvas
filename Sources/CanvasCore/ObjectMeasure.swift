@@ -30,15 +30,8 @@ public enum ObjectMeasure {
     public static func size(type: ObjectType, props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
         switch type {
         case .code:
-            guard let path = props["path"]?.string else { throw Failure.invalidParams("code props need a path") }
-            let range = try? props["range"]?.decode(LineRange.self)
-            let fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: props["symbol"]?.string)
-            let excerpt = await NoteSource.excerpt(for: fence, root: root, captured: nil)
-            guard excerpt.range != nil else {
-                if case .stale(let reason) = excerpt.status { throw Failure.unavailable(reason) }
-                throw Failure.unavailable("cannot resolve \(path)")
-            }
-            let caption = props["caption"]?.string.map { !$0.isEmpty } ?? false
+            let excerpt = try await codeExcerpt(props, root: root)
+            let caption = props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
             return code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil,
                         maxWidth: width.map { CGFloat($0) } ?? CodeMetrics.defaultFitWidth)
         case .note:
@@ -57,19 +50,49 @@ public enum ObjectMeasure {
         }
     }
 
-    /// A code tile showing exactly `lines` of a file with `fileLineCount` lines: as wide as the
-    /// longest line, or `maxWidth` (at least `CodeMetrics.minWidth`) with the longer lines
-    /// wrapped, and as tall as the rows that makes.
-    public static func code(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool, maxWidth: CGFloat) -> CGSize {
+    /// The lines a code tile's `range` (or symbol, or whole file) resolves to, read from disk.
+    public static func codeExcerpt(_ props: JSONValue, root: URL) async throws -> NoteExcerpt {
+        guard let path = props["path"]?.string else { throw Failure.invalidParams("code props need a path") }
+        let range = try? props["range"]?.decode(LineRange.self)
+        let fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: props["symbol"]?.string)
+        let excerpt = await NoteSource.excerpt(for: fence, root: root, captured: nil)
+        guard excerpt.range != nil else {
+            if case .stale(let reason) = excerpt.status { throw Failure.unavailable(reason) }
+            throw Failure.unavailable("cannot resolve \(path)")
+        }
+        return excerpt
+    }
+
+    /// A code tile showing exactly `lines` of a file with `fileLineCount` lines, wide enough for
+    /// its whole `caption` too, but at most `maxWidth` (at least `CodeMetrics.minWidth`): past
+    /// that, long lines wrap and the caption truncates.
+    public static func code(lines: [String], fileLineCount: Int, caption: String?, follow: Bool, maxWidth: CGFloat) -> CGSize {
+        var size = codeRows(lines: lines, fileLineCount: fileLineCount, caption: caption != nil, follow: follow, maxWidth: maxWidth)
+        if let caption { size.width = min(max(size.width, captionWidth(caption)), max(CodeMetrics.minWidth, maxWidth.rounded(.down))) }
+        return size
+    }
+
+    /// `code` without the caption's width: the frame the rows themselves need, as wide as the
+    /// longest line or `maxWidth` (at least `CodeMetrics.minWidth`) with the longer lines wrapped,
+    /// and as tall as the rows that makes.
+    public static func codeRows(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool, maxWidth: CGFloat) -> CGSize {
         let longest = lines.map { CodeMetrics.columns($0) }.max() ?? 0
-        let natural = CodeMetrics.size(lines: lines.count, longestLine: longest, caption: caption).width
-            + CodeMetrics.gutterWidth(lineCount: fileLineCount) - CodeMetrics.gutterWidth(lineCount: 1)
+        let header = CodeMetrics.chromeHeight(caption: caption, history: follow) - CodeMetrics.titleHeight
+        let gutter = CodeMetrics.gutterWidth(lineCount: fileLineCount)
+        let natural = CodeMetrics.content(rows: lines.count, longestLine: longest, gutterWidth: gutter, headerHeight: header).width
         let width = min(natural, max(CodeMetrics.minWidth, maxWidth.rounded(.down)))
         let columns = CodeMetrics.textColumns(width: width, lineCount: fileLineCount)
         let rows = longest <= columns ? lines.count : lines.reduce(0) { $0 + 1 + CodeMetrics.wrap($1.utf16, columns: columns).breaks.count }
-        var size = CGSize(width: width, height: CodeMetrics.size(lines: rows, longestLine: 0, caption: caption).height)
-        if follow { size.height += CodeMetrics.historyHeight }
-        return size
+        return CGSize(width: width, height: CodeMetrics.content(rows: rows, longestLine: 0, gutterWidth: gutter, headerHeight: header).height + CodeMetrics.titleHeight)
+    }
+
+    /// Narrowest code tile frame whose caption strip shows `caption` untruncated: the header's
+    /// caption text (`CodeCaption.string`), `CodeMetrics.captionInset` on each side, and the
+    /// label cell's 2-point text padding on each side, plus a point of slack.
+    public static func captionWidth(_ caption: String) -> CGFloat {
+        let text = CodeCaption.string(caption)
+        let width = text.boundingRect(with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).width
+        return (ceil(width) + 2 * CodeMetrics.captionInset + 4 + 1).rounded(.up)
     }
 
     /// A note of `width` points whose rendered markdown fits without scrolling.
@@ -122,5 +145,26 @@ public enum ObjectMeasure {
     static func textBounds(_ text: NSAttributedString, width: CGFloat?) -> CGSize {
         let size = text.boundingRect(with: NSSize(width: width ?? .greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
         return CGSize(width: ceil(size.width) + 2, height: ceil(size.height) + 2)
+    }
+}
+
+/// The one-line caption strip of a code tile, as the header draws it (live and offscreen) and as
+/// `ObjectMeasure` sizes it.
+public enum CodeCaption {
+    /// Newlines become spaces: the strip is one line.
+    public static func text(_ caption: String) -> String {
+        caption.replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// `inline code` in backticks is set in the code font.
+    public static func string(_ caption: String) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11.5), .foregroundColor: NSColor.labelColor]
+        let code: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.labelColor,
+                                                   .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.25)]
+        for (index, part) in text(caption).split(separator: "`", omittingEmptySubsequences: false).enumerated() {
+            out.append(NSAttributedString(string: String(part), attributes: index % 2 == 1 ? code : body))
+        }
+        return out
     }
 }

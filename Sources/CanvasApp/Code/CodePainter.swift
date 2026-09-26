@@ -81,7 +81,7 @@ struct CodePainter {
     var flash: (lines: [Range<Int>], strength: CGFloat)?
     var selection: (start: CodeRows.Position, end: CodeRows.Position)?
 
-    var gutterWidth: CGFloat { CodeMetrics.gutterWidth(lineCount: document.gutterLineCount) }
+    var gutterWidth: CGFloat { document.gutterWidth }
 
     /// Height of all rows; there is no horizontal extent beyond the view (rows wrap).
     var contentHeight: CGFloat {
@@ -164,7 +164,9 @@ struct CodePainter {
 
     // MARK: Drawing
 
-    /// Draws the rows crossing `rect` (document coordinates).
+    /// Draws the rows crossing `rect` (document coordinates). Rows never paint into the
+    /// `verticalPadding` bands at the top and bottom of `rect`, so a tile scrolled to its range
+    /// shows none of the lines around it (a fit tile shows exactly it).
     func draw(in context: CGContext, rect: CGRect, cache: CodeLineCache?) {
         NSColor.textBackgroundColor.setFill()
         rect.fill()
@@ -172,6 +174,9 @@ struct CodePainter {
             drawNotice(notice, in: rect)
             return
         }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.clip(to: rect.insetBy(dx: 0, dy: min(CodeMetrics.verticalPadding, rect.height / 2)))
         let visible = visibleRows(rect)
         let segments = visible.map { rows.segment($0) }
         let width = rect.maxX

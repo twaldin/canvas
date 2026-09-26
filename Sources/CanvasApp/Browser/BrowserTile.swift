@@ -54,7 +54,7 @@ final class BrowserTile: NSView, TileContent {
         objectID = object.id
         self.board = board
         self.object = object
-        super.init(frame: NSRect(x: 0, y: 0, width: object.frame.w, height: object.frame.h))
+        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(object.frame)))
         chrome.autoresizingMask = [.width]
         chrome.onBack = { [weak self] in self?.webView?.goBack() }
         chrome.onForward = { [weak self] in self?.webView?.goForward() }

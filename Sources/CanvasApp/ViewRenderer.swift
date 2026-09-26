@@ -32,7 +32,7 @@ extension CanvasView {
             for id in ids {
                 guard var frame = outline(of: id) else { continue }
                 if let object = board.objects[id], let render = renders[id], request.full {
-                    frame = RenderMath.extended(frame, body: CGSize(width: object.frame.w, height: object.frame.h), content: render.image?.size ?? render.contentSize)
+                    frame = RenderMath.extended(frame, body: RenderMath.body(object.frame), content: render.image?.size ?? render.contentSize)
                 }
                 outlines[id] = frame
             }
@@ -47,7 +47,7 @@ extension CanvasView {
         // Everything else under the region.
         let others = board.objects.values.filter { object in
             TileFactory.hasTile(object.type) && renders[object.id] == nil && !excluded.contains(object.type)
-                && RenderMath.outline(object).intersects(region)
+                && object.frame.intersects(region)
         }
         let otherRenders = await renderTiles(others.compactMap { tileJob($0.id, scale: scale, full: false, appearance: appearance) }, deadline: deadline)
         renders.merge(otherRenders) { first, _ in first }
@@ -67,7 +67,7 @@ extension CanvasView {
 
         var drawn: [RenderedObject] = []
         func record(_ object: CanvasObject, _ frame: Frame, _ render: TileRender? = nil) {
-            let body = CGSize(width: object.frame.w, height: object.frame.h)
+            let body = RenderMath.body(object.frame)
             drawn.append(RenderedObject(
                 id: object.id, type: object.type, pixelRect: RenderMath.pixelRect(frame, in: region, scale: scale),
                 state: render?.state ?? .rendered, reason: render?.reason,
@@ -98,7 +98,7 @@ extension CanvasView {
             let tiled = board.objects.values.filter { renders[$0.id] != nil }.sorted { $0.z < $1.z }
             @MainActor func paint(_ object: CanvasObject) {
                 guard let render = renders[object.id] else { return }
-                let frame = outlines[object.id] ?? RenderMath.outline(object)
+                let frame = outlines[object.id] ?? object.frame
                 drawTile(object, render: render, in: NSRect(x: frame.x + origin.x, y: frame.y + origin.y, width: frame.w, height: frame.h))
                 record(object, frame, render)
             }
@@ -122,27 +122,27 @@ extension CanvasView {
         return RenderOutput(image: encoded, format: format, width: size.width, height: size.height, canvasRect: region, scale: scale, objects: drawn)
     }
 
-    /// Canvas-space outline: a tile with its title bar, a drawn object's painted bounds, a group's region.
+    /// Canvas-space outline: a tile's frame, a drawn object's painted bounds, a group's region.
     private func outline(of id: ObjectID) -> Frame? {
         guard let object = board.objects[id] else { return nil }
         let origin = CanvasDocumentView.origin
         let doc: NSRect?
         switch object.type {
         case .group: doc = groupRegion(object)
-        case .shape, .arrow: doc = shapeOutline?(id) ?? CanvasView.drawnRect(object.frame)
-        default: return RenderMath.outline(object)
+        case .shape, .arrow: doc = shapeOutline?(id) ?? CanvasView.docRect(object.frame)
+        default: return object.frame
         }
         return doc.map { Frame(x: $0.minX - origin.x, y: $0.minY - origin.y, w: $0.width, h: $0.height) }
     }
 
     /// A group's region: its frame wraps its members, padding, and title band.
     private func groupRegion(_ group: CanvasObject) -> NSRect? {
-        group.frame.w > 0 && group.frame.h > 0 ? CanvasView.drawnRect(group.frame) : nil
+        group.frame.w > 0 && group.frame.h > 0 ? CanvasView.docRect(group.frame) : nil
     }
 
     private func tileJob(_ id: ObjectID, scale: Double, full: Bool, appearance: NSAppearance) -> TileJob? {
         guard let object = board.objects[id], let tile = tiles[id] else { return nil }
-        let request = TileRenderRequest(size: CGSize(width: object.frame.w, height: object.frame.h), scale: scale, full: full, appearance: appearance)
+        let request = TileRenderRequest(size: RenderMath.body(object.frame), scale: scale, full: full, appearance: appearance)
         return TileJob(object: object, content: tile.content, request: request)
     }
 

@@ -19,12 +19,14 @@ public enum CodeMetrics {
     public static let baseline: CGFloat = 12
     public static let tabWidth = 4
 
-    /// The tile chrome's title bar (every tile type).
-    public static let titleHeight: CGFloat = 26
+    /// The tile chrome's title bar (every tile type), at the top of the frame.
+    public static let titleHeight = CGFloat(RenderMath.tileTitleHeight)
     /// Code header: diff base, change navigation, status and warnings.
     public static let headerHeight: CGFloat = 26
     /// The one-line `caption` strip under the header (truncated, never wraps).
     public static let captionHeight: CGFloat = 20
+    /// Caption text's inset from the tile's left and right edges.
+    public static let captionInset: CGFloat = 8
     /// Recent-locations strip under the header of follow tiles.
     public static let historyHeight: CGFloat = 22
     /// Above the first row and below the last.
@@ -75,8 +77,17 @@ public enum CodeMetrics {
     /// Full object frame that shows `lines` rows of at most `longestLine` columns (tabs
     /// expanded) without scrolling, for files of up to 9,999 lines.
     public static func size(lines: Int, longestLine: Int, caption: Bool) -> CGSize {
-        let width = gutterWidth(lineCount: 1) + CGFloat(max(0, longestLine)) * charAdvance + trailingPadding
-        let height = chromeHeight(caption: caption) + 2 * verticalPadding + CGFloat(max(1, lines)) * rowHeight
+        var size = content(rows: lines, longestLine: longestLine, gutterWidth: gutterWidth(lineCount: 1), headerHeight: chromeHeight(caption: caption) - titleHeight)
+        size.height += titleHeight
+        return size
+    }
+
+    /// A code tile's content (its body, below the title bar) showing `rows` rows of at most
+    /// `longestLine` columns beside a `gutterWidth` gutter, under header strips `headerHeight`
+    /// tall: what `view.render` reports as its `contentSize`.
+    public static func content(rows: Int, longestLine: Int, gutterWidth: CGFloat, headerHeight: CGFloat) -> CGSize {
+        let width = gutterWidth + CGFloat(max(0, longestLine)) * charAdvance + trailingPadding
+        let height = headerHeight + 2 * verticalPadding + CGFloat(max(1, rows)) * rowHeight
         return CGSize(width: max(minWidth, width.rounded(.up)), height: height.rounded(.up))
     }
 
@@ -138,5 +149,57 @@ public enum CodeMetrics {
             offset += 1
         }
         return (breaks, indent)
+    }
+
+    // MARK: Scroll rule and line anchors
+
+    /// Rows of context shown above a range when the viewport has room for them and the range.
+    public static let rangeContext = 3
+
+    /// Scroll offset (points from the top of the rows, before `verticalPadding`) that shows the
+    /// range starting at visual row `row` and `count` rows long in a rows viewport `viewport`
+    /// points tall: the range's first row near the top with up to `rangeContext` rows of context
+    /// above it, fewer when the viewport can't show that context and all `count` rows too (a
+    /// tile sized to fit its range shows exactly the range). Clamped to the content when
+    /// `totalRows` is known.
+    public static func scrollOffset(toRow row: Int, count: Int, viewport: CGFloat, totalRows: Int?) -> CGFloat {
+        let visible = Int(((viewport - verticalPadding) / rowHeight).rounded(.down))
+        let context = max(0, min(rangeContext, visible - count))
+        var offset = CGFloat(max(0, row - context)) * rowHeight
+        if let totalRows {
+            let content = 2 * verticalPadding + CGFloat(max(1, totalRows)) * rowHeight
+            offset = min(offset, max(0, content - viewport))
+        }
+        return max(0, offset)
+    }
+
+    /// Where an arrow bound to `line` attaches on a code tile, in points from the top of its
+    /// frame: the middle of the line's first visual row (`rows`, or one row per line), with the
+    /// rows scrolled by `scroll` below `rowsTop`, clamped into the rows viewport
+    /// (`rowsTop`…`frameHeight`), so a line scrolled out of view pins the end to the top or
+    /// bottom edge of the code.
+    public static func lineY(line: Int, rows: CodeRows?, scroll: CGFloat, rowsTop: CGFloat, frameHeight: CGFloat) -> CGFloat {
+        let row = rows?.index(ofLine: line) ?? max(0, line - 1)
+        let y = rowsTop + verticalPadding + CGFloat(row) * rowHeight - scroll + rowHeight / 2
+        return min(max(y, rowsTop), max(rowsTop, frameHeight))
+    }
+
+    /// `lineY` for a code tile at `frame` with `props` as it shows them freshly aimed: scrolled to
+    /// `props.range` by `scrollOffset`. Canvas y. `rows` nil: one row per line, content length
+    /// unknown. Live tiles use their real scroll instead (the user may have scrolled).
+    public static func lineY(line: Int, frame: Frame, props: JSONValue, rows: CodeRows?) -> CGFloat {
+        let caption = props["caption"]?.string.map { !$0.isEmpty } ?? false
+        let history = props["followOf"]?.string != nil && !(props["history"]?.array?.isEmpty ?? true)
+        let rowsTop = chromeHeight(caption: caption, history: history)
+        let viewport = max(0, CGFloat(frame.h) - rowsTop)
+        var scroll: CGFloat = 0
+        if let start = props["range"]?["start"]?.int {
+            let end = max(start, props["range"]?["end"]?.int ?? start)
+            // All rows of the range, wrapped lines' continuations included.
+            let first = rows?.index(ofLine: start) ?? max(0, start - 1)
+            let stop = rows?.rows(ofLine: end).upperBound ?? end
+            scroll = scrollOffset(toRow: first, count: stop - first, viewport: viewport, totalRows: rows?.count)
+        }
+        return CGFloat(frame.y) + lineY(line: line, rows: rows, scroll: scroll, rowsTop: rowsTop, frameHeight: CGFloat(frame.h))
     }
 }

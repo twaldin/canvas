@@ -212,17 +212,14 @@ final class CanvasView: NSScrollView {
 
     // MARK: Coordinates
 
+    /// Document rect of an object's frame: a tile's whole drawn box (title bar included), a
+    /// drawn object's box.
     static func docRect(_ frame: Frame) -> NSRect {
-        NSRect(x: frame.x + CanvasDocumentView.origin.x, y: frame.y + CanvasDocumentView.origin.y, width: frame.w, height: frame.h + TileFrameView.titleHeight)
+        NSRect(x: frame.x + CanvasDocumentView.origin.x, y: frame.y + CanvasDocumentView.origin.y, width: frame.w, height: frame.h)
     }
 
     static func canvasFrame(_ rect: NSRect) -> Frame {
-        Frame(x: rect.minX - CanvasDocumentView.origin.x, y: rect.minY - CanvasDocumentView.origin.y, w: rect.width, h: rect.height - TileFrameView.titleHeight)
-    }
-
-    /// Document rect of a drawn object's frame (no title bar).
-    static func drawnRect(_ frame: Frame) -> NSRect {
-        NSRect(x: frame.x + CanvasDocumentView.origin.x, y: frame.y + CanvasDocumentView.origin.y, width: frame.w, height: frame.h)
+        Frame(x: rect.minX - CanvasDocumentView.origin.x, y: rect.minY - CanvasDocumentView.origin.y, w: rect.width, h: rect.height)
     }
 
     func viewportCenter() -> (x: Double, y: Double) {
@@ -236,7 +233,7 @@ final class CanvasView: NSScrollView {
         if let group = groups[id] { return group.isHidden ? nil : group.region }
         if let start = move?.drawn[id], let delta = move?.delta { return start.offsetBy(dx: delta.width, dy: delta.height) }
         guard let object = board.objects[id] else { return nil }
-        return shapeOutline?(id) ?? Self.drawnRect(object.frame)
+        return shapeOutline?(id) ?? Self.docRect(object.frame)
     }
 
     private func docPoint(_ event: NSEvent) -> NSPoint {
@@ -424,7 +421,7 @@ final class CanvasView: NSScrollView {
         board.objects.values.compactMap { object in
             guard object.type != .group else { return nil }
             // Drawn objects: rendered bounds (an arrow reroutes with its tiles without a frame write).
-            return (object.id, tiles[object.id]?.frame ?? shapeOutline?(object.id) ?? Self.drawnRect(object.frame))
+            return (object.id, tiles[object.id]?.frame ?? shapeOutline?(object.id) ?? Self.docRect(object.frame))
         }
     }
 

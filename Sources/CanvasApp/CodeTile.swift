@@ -52,9 +52,12 @@ final class CodeTile: NSView, TileContent {
         displayed = aim
         propsAim = aim
         lock = FollowLock(showing: aim)
-        super.init(frame: NSRect(x: 0, y: 0, width: object.frame.w, height: object.frame.h))
+        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(object.frame)))
         addSubview(rowsView)
-        rowsView.onScroll = { [weak self] in self?.navigation?.contentChanged() }
+        rowsView.onScroll = { [weak self] in
+            self?.navigation?.contentChanged()
+            self?.rowsMoved()
+        }
         addSubview(header)
         rowsView.onSign = { [weak self] sign in self?.togglePeek(sign) }
         rowsView.onInteract = { [weak self] in self?.userInteracted() }
@@ -94,6 +97,7 @@ final class CodeTile: NSView, TileContent {
         header.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
         rowsView.frame = NSRect(x: 0, y: height, width: bounds.width, height: max(0, bounds.height - height))
         rewrap()
+        rowsMoved()
     }
 
     /// Rows wrap at the tile's width: when a resize changes the columns, rewrap and keep the
@@ -107,6 +111,28 @@ final class CodeTile: NSView, TileContent {
         let row = min(rewrapped.rows(ofEntry: top.entry).lowerBound + top.part, rewrapped.rows(ofEntry: top.entry).upperBound - 1)
         rowsView.scroll(toY: CodePainter.rowTop(row) - CodeMetrics.verticalPadding)
     }
+
+    /// Where an arrow bound to `line` attaches, in points from the top of the tile's frame (the
+    /// title bar above this view included): the line's row as scrolled now, clamped to the rows
+    /// (`CodeMetrics.lineY`). Before the file has loaded, the row it will show when aimed.
+    func lineY(_ line: Int, frameHeight: CGFloat) -> CGFloat {
+        let rowsTop = CodeMetrics.titleHeight + rowsView.frame.minY
+        guard showsCurrent, let rows = rowsView.painter?.rows else {
+            var frame = object.frame
+            frame.y = 0
+            frame.h = Double(frameHeight)
+            return CodeMetrics.lineY(line: line, frame: frame, props: object.props, rows: nil)
+        }
+        return CodeMetrics.lineY(line: line, rows: rows, scroll: rowsView.bounds.origin.y, rowsTop: rowsTop, frameHeight: frameHeight)
+    }
+
+    /// Rows moved under the tile's frame (scroll, peeks, a new file, header height): arrows bound
+    /// to its lines re-attach.
+    private func rowsMoved() {
+        NotificationCenter.default.post(name: Self.rowsMoved, object: self)
+    }
+
+    static let rowsMoved = Notification.Name("CodeTile.rowsMoved")
 
     // MARK: Props
 
@@ -299,6 +325,7 @@ final class CodeTile: NSView, TileContent {
         painter.flash = flash.map { ($0.lines, flashStrength($0.start)) }
         painter.selection = keepSelection ? rowsView.painter?.selection : nil
         rowsView.painter = painter
+        rowsMoved()
     }
 }
 
@@ -314,12 +341,11 @@ extension CodeTile {
     }
 
     /// Scroll `row` near the top with up to three rows of context above it, fewer when the tile
-    /// can't show that context and all `count` rows too (a tile sized to fit its range shows
-    /// exactly the range).
+    /// can't show that context and all `count` rows too (`CodeMetrics.scrollOffset`: the rule
+    /// line-bound arrows and offscreen routing assume).
     private func scroll(toRow row: Int, count: Int = 1) {
-        let visible = Int(((rowsView.bounds.height - CodeMetrics.verticalPadding) / CodeMetrics.rowHeight).rounded(.down))
-        let context = max(0, min(3, visible - count))
-        rowsView.scroll(toY: CodePainter.rowTop(max(0, row - context)) - CodeMetrics.verticalPadding)
+        let offset = CodeMetrics.scrollOffset(toRow: row, count: count, viewport: rowsView.bounds.height, totalRows: rowsView.painter?.rows.count)
+        rowsView.scroll(toY: offset)
     }
 
     private func startFlash(_ lines: [Range<Int>]) {
@@ -584,13 +610,23 @@ extension CodeTile {
     // MARK: Offscreen drawing
 
     /// The body (header, caption, history, rows) drawn from the model: never from live views,
-    /// so it works offscreen, not live, and on any Space. `full` draws every row from the top.
+    /// so it works offscreen, not live, and on any Space. The content is the range (the whole
+    /// file without one): its rows and longest line under the header, what `size: "fit"` shows
+    /// (the caption's own width is `layout.check`'s `truncated`, not content). `full` draws all
+    /// of it, scrolled to the range by the tile's rule.
     private func image(of document: CodeDocument, size: CGSize, scale: CGFloat, full: Bool, appearance: NSAppearance) -> (image: NSImage?, content: CGSize) {
         // Wrapped at the tile's width, exactly as the live rows are.
-        var painter = CodePainter(document: document, rows: document.rows(peeked: showsCurrent ? peeked : [], width: size.width))
+        let rows = document.rows(peeked: showsCurrent ? peeked : [], width: size.width)
+        var painter = CodePainter(document: document, rows: rows)
         painter.rangeLines = displayed.range.flatMap(document.lines(for:))
         let headerHeight = header.height
-        let content = CGSize(width: size.width, height: headerHeight + painter.contentHeight)
+        let content = document.content(range: displayed.range, rows: rows, width: size.width, headerHeight: headerHeight)
+        var fullScroll: CGFloat = 0
+        if let lines = painter.rangeLines {
+            let first = rows.index(ofLine: lines.lowerBound)
+            let count = rows.rows(ofLine: lines.upperBound).upperBound - first
+            fullScroll = CodeMetrics.scrollOffset(toRow: first, count: count, viewport: max(size.height, content.height) - headerHeight, totalRows: rows.count)
+        }
         var imageSize = full ? CGSize(width: size.width, height: max(size.height, content.height)) : size
         // One bitmap dimension stays within what Core Graphics and memory allow.
         let maxPoints = 16_384 / max(scale, 0.1)
@@ -601,7 +637,7 @@ extension CodeTile {
                                          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let bitmap = NSGraphicsContext(bitmapImageRep: rep) else { return (nil, content) }
         rep.size = imageSize
-        let scrollY = full ? 0 : (showsCurrent && document.path == self.document?.path ? rowsView.bounds.minY : 0)
+        let scrollY = full ? fullScroll : (showsCurrent && document.path == self.document?.path ? rowsView.bounds.minY : 0)
         appearance.performAsCurrentDrawingAppearance {
             let cg = bitmap.cgContext
             cg.saveGState()

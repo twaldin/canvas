@@ -88,7 +88,11 @@ enum DevInput {
             timer.resume()
             return
         }
-        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.windowController is CanvasWindowController }),
+        // The front board window: with tabs, the selected tab (the others are ordered out).
+        guard let window = NSApp.orderedWindows.first(where: { window in
+                  window.isVisible && window.windowController is CanvasWindowController
+                      && (window.tabGroup.map { $0.selectedWindow === window } ?? true)
+              }),
               let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])
         func number(_ key: String) -> CGFloat { CGFloat(Double(fields[key] ?? "") ?? 0) }

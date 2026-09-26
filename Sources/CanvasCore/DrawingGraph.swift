@@ -57,26 +57,49 @@ extension Board {
     }
 
     /// Every arrow's routed polyline from object frames alone (the app routes the same way from
-    /// what it draws): parallel arrows offset apart, `avoid` routes around blocking objects.
-    public func routes() -> [ObjectID: [CGPoint]] {
+    /// what it draws): parallel arrows offset apart, `avoid` routes around blocking objects, an
+    /// end bound to `lines` of a code tile at that line's row (`CodeMetrics.lineY`, freshly
+    /// aimed; `rows` gives a tile's visual rows when known, else one row per line).
+    public func routes(rows: [ObjectID: CodeRows] = [:]) -> [ObjectID: [CGPoint]] {
         let arrows = objects.values.filter { $0.type == .arrow }.compactMap { arrow in ArrowSpec(arrow.props).map { (arrow, $0) } }
         let offsets = DrawingGeometry.parallelOffsets(arrows.map { ($0.0.id, $0.1.from.objectID, $0.1.to.objectID) })
         let blockers = objects.values.filter(Self.blocksRoutes)
         var result: [ObjectID: [CGPoint]] = [:]
         for (arrow, spec) in arrows {
-            func end(_ binding: ArrowBinding) -> DrawingGeometry.ArrowEnd? {
-                switch binding {
-                case .point(let point): return .point(point)
-                case .object(let id, _, _):
-                    guard let object = objects[id] else { return nil }
-                    let isEllipse = object.type == .shape && ShapeSpec(object.props)?.kind == .ellipse
-                    return .bound(isEllipse ? .ellipse(object.frame.rect) : .rect(object.frame.rect))
-                }
-            }
-            guard let from = end(spec.from), let to = end(spec.to) else { continue }
+            guard let from = arrowEnd(spec.from, rows: rows), let to = arrowEnd(spec.to, rows: rows) else { continue }
             let ends = Set([spec.from.objectID, spec.to.objectID].compactMap { $0 })
             let obstacles = spec.route == .avoid ? blockers.filter { !ends.contains($0.id) }.map(\.frame.rect) : []
             result[arrow.id] = DrawingGeometry.path(from: from, to: to, style: spec.route, offset: offsets[arrow.id] ?? 0, obstacles: obstacles)
+        }
+        return result
+    }
+
+    /// What a binding attaches to: a point, an object's frame (an ellipse's curve), or the row
+    /// of the first of `lines` on a code tile. Nil when the object is gone.
+    func arrowEnd(_ binding: ArrowBinding, rows: [ObjectID: CodeRows]) -> DrawingGeometry.ArrowEnd? {
+        switch binding {
+        case .point(let point): return .point(point)
+        case .object(let id, let lines, _):
+            guard let object = objects[id] else { return nil }
+            if let lines, object.type == .code {
+                return .row(object.frame.rect, y: CodeMetrics.lineY(line: lines.start, frame: object.frame, props: object.props, rows: rows[id]))
+            }
+            let isEllipse = object.type == .shape && ShapeSpec(object.props)?.kind == .ellipse
+            return .bound(isEllipse ? .ellipse(object.frame.rect) : .rect(object.frame.rect))
+        }
+    }
+
+    /// Where each captioned arrow's label sits along `routes`, as the drawing layer places it
+    /// (`DrawingStyle.arrowLabel`, `DrawingGeometry.labelRect`): beside the route, clear of
+    /// blocking objects where it can be.
+    public func labelRects(routes: [ObjectID: [CGPoint]]) -> [ObjectID: CGRect] {
+        let arrows = objects.values.filter { $0.type == .arrow }.compactMap { arrow in ArrowSpec(arrow.props).map { (arrow, $0) } }
+        let offsets = DrawingGeometry.parallelOffsets(arrows.map { ($0.0.id, $0.1.from.objectID, $0.1.to.objectID) })
+        let blockers = objects.values.filter(Self.blocksRoutes).map(\.frame.rect)
+        var result: [ObjectID: CGRect] = [:]
+        for (arrow, spec) in arrows {
+            guard let path = routes[arrow.id], let label = DrawingStyle.arrowLabel(spec) else { continue }
+            result[arrow.id] = DrawingGeometry.labelRect(along: path, size: label.size, side: offsets[arrow.id] ?? 0, obstacles: blockers)
         }
         return result
     }

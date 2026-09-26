@@ -14,8 +14,7 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
     /// Posting needs a bundled app: `UNUserNotificationCenter.current()` traps without a bundle id.
     private let enabled = ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] != "1" && Bundle.main.bundleIdentifier != nil
     private var authorized: Bool?
-    /// Last announced "state|message" per tile, so repeated reports of the same state stay quiet.
-    private var announced: [ObjectID: String] = [:]
+    private var notices = AgentNotices()
     private var delivered: Set<ObjectID> = []
 
     func install() {
@@ -24,35 +23,32 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func observe(_ event: BoardEvent, on board: Board) {
+        let tile: ObjectID
+        let notice: AgentNotices.Notice?
         switch event {
         case .agentLifecycle(let id, let lifecycle):
-            let state = lifecycle["state"]?.string
-            guard state == LifecycleState.done.rawValue || state == LifecycleState.blocked.rawValue,
-                  let terminal = board.objects[id] else {
-                announced.removeValue(forKey: id)
-                withdraw(id)
-                return
-            }
-            let message = lifecycle["message"]?.string
-            let key = "\(state ?? "")|\(message ?? "")"
-            guard announced[id] != key else { return }
-            announced[id] = key
-            guard !NSApp.isActive else { return }
-            post(tile: terminal, board: board, blocked: state == LifecycleState.blocked.rawValue, message: message)
+            tile = id
+            notice = notices.observe(tile: id, lifecycle: lifecycle)
         case .objectDeleted(let id):
-            announced.removeValue(forKey: id)
-            withdraw(id)
+            tile = id
+            notice = notices.observe(tile: id, lifecycle: nil)
         default:
             return
         }
+        guard let notice else {
+            if !notices.isAnnounced(tile) { withdraw(tile) }
+            return
+        }
+        guard !NSApp.isActive, let terminal = board.objects[tile] else { return }
+        post(notice, tile: terminal, board: board)
     }
 
-    private func post(tile terminal: CanvasObject, board: Board, blocked: Bool, message: String?) {
+    private func post(_ notice: AgentNotices.Notice, tile terminal: CanvasObject, board: Board) {
         let name = terminal.props["name"]?.string ?? TileFrameView.title(for: terminal)
         let content = UNMutableNotificationContent()
-        content.title = blocked ? "\(name) needs you" : "\(name) is done"
+        content.title = notice.blocked ? "\(name) needs you" : "\(name) is done"
         content.subtitle = board.root.lastPathComponent
-        content.body = message ?? (blocked ? "Waiting for your answer." : "Finished and waiting for your next prompt.")
+        content.body = notice.message ?? (notice.blocked ? "Waiting for your answer." : "Finished and waiting for your next prompt.")
         content.userInfo = ["board": board.id, "tile": terminal.id]
         guard enabled else {
             NSLog("Canvas: notification suppressed (CANVAS_NO_ACTIVATE): %@ — %@", content.title, content.body)
@@ -60,10 +56,13 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         }
         // One notification per tile: a newer state replaces the older one.
         let request = UNNotificationRequest(identifier: "agent.\(terminal.id)", content: content, trigger: nil)
-        delivered.insert(terminal.id)
         Task {
-            guard await self.authorize() else { return }
+            // Authorization can wait on the user; by then the agent may have moved on or the user
+            // may have come back to the app.
+            guard await self.authorize(), self.notices.isCurrent(notice), !NSApp.isActive else { return }
+            self.delivered.insert(notice.tile)
             try? await UNUserNotificationCenter.current().add(request)
+            if !self.notices.isCurrent(notice) { self.withdraw(notice.tile) }
         }
     }
 

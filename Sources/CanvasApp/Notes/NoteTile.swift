@@ -86,7 +86,7 @@ final class NoteTile: NSView, TileContent {
         addSubview(banner)
 
         fences = NoteMarkdown.anchoredFences(in: document)
-        render()
+        renderDisplay()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -142,11 +142,14 @@ final class NoteTile: NSView, TileContent {
         let keys = Set(fences.map(\.key))
         excerpts = excerpts.filter { keys.contains($0.key) }
         captured = captured.filter { keys.contains($0.key) }
-        render()
+        renderDisplay()
         resolve()
     }
 
-    private func render() {
+    /// Fills the on-screen text view. Only while live: a not-live note keeps its parsed document
+    /// and excerpts but no text layout (about 1 MB per note on a large board).
+    private func renderDisplay() {
+        guard live || isEditing else { return }
         let text = NoteRenderer(excerpts: excerpts).render(document, placeholder: Self.placeholder)
         display.textStorage?.setAttributedString(text)
     }
@@ -186,7 +189,7 @@ final class NoteTile: NSView, TileContent {
         }
         if results != excerpts {
             excerpts = results
-            render()
+            renderDisplay()
         }
         let unpinned = fences.filter { $0.fence.commit == nil }
         let files = unpinned.compactMap { results[$0.key]?.path }.filter { !$0.isEmpty }
@@ -207,7 +210,7 @@ final class NoteTile: NSView, TileContent {
             text = anchored
         }
         guard text != markdown else { return }
-        _ = try? board.update(object.id, rev: object.rev, props: .object(["markdown": .string(text)]))
+        _ = try? board.update(object.id, rev: object.rev, props: .object(["markdown": .string(text)]), actor: .system)
     }
 
     private func scheduleResolve() {
@@ -458,7 +461,71 @@ final class NoteTile: NSView, TileContent {
     func setLive(_ live: Bool) {
         guard live != self.live else { return }
         self.live = live
-        if live { resolve() } else { suspendWork() }
+        if live {
+            attachScrollViews()
+            renderDisplay()
+            resolve()
+        } else {
+            suspendWork()
+            guard !isEditing else { return }
+            // Offscreen or carded, a note holds no text layout, and its scroll views leave the
+            // hierarchy: AppKit re-tiles every scroll view and rebuilds its tracking areas on each
+            // frame of a canvas pan, hidden or not. `render(_:)` and cards don't use them.
+            display.textStorage?.setAttributedString(NSAttributedString())
+            displayScroll.removeFromSuperview()
+            editorScroll.removeFromSuperview()
+        }
+    }
+
+    private func attachScrollViews() {
+        for scroll in [displayScroll, editorScroll] where scroll.superview !== self {
+            scroll.frame = bounds
+            addSubview(scroll, positioned: .below, relativeTo: banner)
+        }
+    }
+
+    /// Lays the note out on its own text stack (never the on-screen view, which only holds text
+    /// while live) and draws every paragraph. Anchored fences the note hasn't resolved yet (it
+    /// was never live) are resolved first.
+    func render(_ request: TileRenderRequest) async -> TileRender {
+        var resolved = excerpts
+        let root = board.root
+        for fence in fences where resolved[fence.key] == nil {
+            resolved[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: captured[fence.key], body: fence.body)
+        }
+        if resolved != excerpts, !live {
+            excerpts = resolved
+        }
+        let text = NoteRenderer(excerpts: resolved).render(document, placeholder: Self.placeholder)
+        let inset = NSSize(width: 8, height: 10)
+        let content = NSTextContentStorage()
+        let layout = NSTextLayoutManager()
+        let delegate = NoteLayoutDelegate()
+        layout.delegate = delegate
+        let container = NSTextContainer(size: CGSize(width: max(1, request.size.width - 2 * inset.width), height: 0))
+        container.lineFragmentPadding = 2
+        layout.textContainer = container
+        content.addTextLayoutManager(layout)
+        content.attributedString = text
+        layout.ensureLayout(for: layout.documentRange)
+        var fragments: [NSTextLayoutFragment] = []
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
+            fragments.append(fragment)
+            return true
+        }
+        let used = fragments.last.map { $0.layoutFragmentFrame.maxY } ?? 0
+        let contentSize = CGSize(width: request.size.width, height: (used + 2 * inset.height).rounded(.up))
+        let size = request.full ? CGSize(width: request.size.width, height: min(max(request.size.height, contentSize.height), RenderMath.maxContentExtent)) : request.size
+        let image = request.image(size: size) { bounds in
+            NSColor.systemYellow.withAlphaComponent(0.16).setFill()
+            bounds.fill()
+            guard let context = NSGraphicsContext.current?.cgContext else { return }
+            for fragment in fragments where fragment.layoutFragmentFrame.minY < bounds.height {
+                fragment.draw(at: CGPoint(x: fragment.layoutFragmentFrame.minX + inset.width, y: fragment.layoutFragmentFrame.minY + inset.height), in: context)
+            }
+        }
+        withExtendedLifetime((content, delegate)) {}
+        return TileRender(image: image, contentSize: contentSize, state: image == nil ? .failed : .rendered, reason: image == nil ? "bitmap allocation failed" : nil)
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? {

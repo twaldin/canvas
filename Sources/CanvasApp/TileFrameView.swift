@@ -6,7 +6,7 @@ import CanvasCore
 /// drawn by the canvas overlay.
 @MainActor
 final class TileFrameView: NSView {
-    static let titleHeight: CGFloat = 26
+    static let titleHeight = CGFloat(RenderMath.tileTitleHeight)
 
     let objectID: ObjectID
     let content: any TileContent
@@ -109,6 +109,9 @@ final class TileFrameView: NSView {
         updateTint()
         content.update(object)
     }
+
+    /// The title as shown (terminals report theirs).
+    var title: String { titleLabel.stringValue }
 
     func setTitle(_ title: String) {
         titleLabel.stringValue = title

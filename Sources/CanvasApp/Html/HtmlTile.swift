@@ -14,7 +14,7 @@ final class HtmlTile: NSView, TileContent {
     private var live = true
     private var building = false
     private var loadFailure: NSTextField?
-    /// Last rendered image: zoomed-out cards, `object.get --as image`, and `view.snapshot` covers.
+    /// Last rendered image: zoomed-out cards and `view.snapshot` covers.
     private var lastSnapshot: NSImage?
     private var snapshotCover: NSImageView?
     private var snapshotTask: Task<Void, Never>?
@@ -70,7 +70,9 @@ final class HtmlTile: NSView, TileContent {
         }
     }
 
-    private func attach(rules: WKContentRuleList) {
+    /// The sandbox every page of this tile runs in: its own data store, the network rules, the
+    /// kit scheme, and the validated `canvas` channel.
+    private func configuration(rules: WKContentRuleList) -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.add(rules)
@@ -78,6 +80,11 @@ final class HtmlTile: NSView, TileContent {
         configuration.userContentController.addScriptMessageHandler(HtmlChannelHandler(tile: self), contentWorld: .page, name: "canvas")
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.preferences.isFraudulentWebsiteWarningEnabled = false
+        return configuration
+    }
+
+    private func attach(rules: WKContentRuleList) {
+        let configuration = configuration(rules: rules)
         WebMentions.install(on: configuration)
 
         let web = HtmlWebView(frame: bounds, configuration: configuration)
@@ -116,8 +123,20 @@ final class HtmlTile: NSView, TileContent {
 
     // MARK: Channel
 
-    func handle(_ message: HtmlMessage) async throws -> JSONValue {
-        if case .rendered(let y) = message {
+    /// `rendering`: from the offscreen page `render(_:)` loads, which may read (excerpts, state)
+    /// but never act for the user.
+    func handle(_ message: HtmlMessage, rendering: Bool) async throws -> JSONValue {
+        if rendering {
+            switch message {
+            case .rendered:
+                renderSettled?()
+                return .object([:])
+            case .openCode, .setState:
+                throw HtmlError.malformed("not available while the page renders offscreen")
+            default:
+                break
+            }
+        } else if case .rendered(let y) = message {
             if let y { scrollY = y }
             scheduleSnapshot()
         }
@@ -154,7 +173,94 @@ final class HtmlTile: NSView, TileContent {
         if live { build() } else { detach() }
     }
 
-    func snapshot() -> NSImage? { lastSnapshot }
+    /// Card image: the live page's last capture, else an offscreen render.
+    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
+        if let lastSnapshot { return deliver(lastSnapshot) }
+        let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
+                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+        Task { @MainActor in
+            let render = await self.render(request)
+            deliver(render.state == .rendered ? render.image : nil)
+        }
+    }
+
+    // MARK: Offscreen render
+
+    /// The page `render(_:)` loaded; the channel accepts its messages (read-only).
+    private(set) var renderWebView: WKWebView?
+    private var renderSettled: (() -> Void)?
+    private var renderBusy = false
+
+    /// Loads the page in a separate web view parked in the window (never the user's live page,
+    /// whose size and scroll must not change), waits for the kit's `view.rendered` (Mermaid,
+    /// `<canvas-code>` excerpts settled), measures it, and snapshots it: the tile's window at
+    /// its scroll position, or with `full` the whole page height.
+    func render(_ request: TileRenderRequest) async -> TileRender {
+        guard let window else { return .placeholder(request, "the tile has no window") }
+        while renderBusy {
+            guard !Task.isCancelled else { return .placeholder(request, "timed out waiting for another render of this tile") }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        renderBusy = true
+        defer {
+            renderBusy = false
+            renderSettled = nil
+            renderWebView?.stopLoading()
+            renderWebView?.configuration.userContentController.removeAllScriptMessageHandlers()
+            renderWebView?.removeFromSuperview()
+            renderWebView = nil
+        }
+        let rules: WKContentRuleList
+        do {
+            rules = try await HtmlRuleLists.list(allowing: allowNetwork)
+        } catch {
+            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "network rules failed to compile: \(error)")
+        }
+        let web = HtmlWebView(frame: NSRect(origin: .zero, size: request.size), configuration: configuration(rules: rules))
+        web.navigationDelegate = self
+        web.uiDelegate = self
+        web.appearance = request.appearance
+        web.underPageBackgroundColor = .textBackgroundColor
+        WebStage.setOcclusionDetection(false, on: web)
+        WebStage.park(web, frame: NSRect(origin: .zero, size: request.size), in: window)
+        renderWebView = web
+        var settled = false
+        renderSettled = { settled = true }
+        web.load(URLRequest(url: pageURL))
+        guard await Self.wait(until: { settled }) else { return .placeholder(request, "the page did not finish rendering") }
+
+        let measure = "[Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0), Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)]"
+        let extent = (try? await web.evaluateJavaScript(measure)) as? [Double] ?? []
+        let content = CGSize(width: max(request.size.width, extent.first ?? 0), height: extent.count > 1 ? extent[1] : request.size.height)
+        if request.full, content.height > request.size.height + 1 {
+            settled = false
+            let size = CGSize(width: request.size.width, height: min(content.height, RenderMath.maxContentExtent))
+            WebStage.park(web, frame: NSRect(origin: .zero, size: size), in: window)
+            _ = await Self.wait(until: { settled }, limit: .seconds(2))
+        } else if !request.full, scrollY > 0 {
+            settled = false
+            _ = try? await web.callAsyncJavaScript("window.canvasKit?.restoreScroll(y)", arguments: ["y": scrollY], contentWorld: .page)
+            _ = await Self.wait(until: { settled }, limit: .seconds(1))
+        }
+        guard !Task.isCancelled else { return .placeholder(request, "timed out") }
+        let shot = WKSnapshotConfiguration()
+        shot.snapshotWidth = NSNumber(value: Double(web.bounds.width * request.scale / max(window.backingScaleFactor, 1)))
+        guard let page = try? await web.takeSnapshot(configuration: shot) else {
+            return TileRender(image: nil, contentSize: content, state: .failed, reason: "WebKit produced no snapshot")
+        }
+        let image = request.image(size: web.bounds.size) { bounds in page.drawUpright(in: bounds) }
+        return TileRender(image: image, contentSize: content, state: image == nil ? .failed : .rendered)
+    }
+
+    /// Polls `condition` until it holds, the task is cancelled (the render deadline), or `limit` passes.
+    private static func wait(until condition: () -> Bool, limit: Duration = .seconds(60)) async -> Bool {
+        let deadline = ContinuousClock.now + limit
+        while !condition() {
+            guard !Task.isCancelled, ContinuousClock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(30))
+        }
+        return true
+    }
 
     func showSnapshot(_ show: Bool) {
         snapshotCover?.removeFromSuperview()

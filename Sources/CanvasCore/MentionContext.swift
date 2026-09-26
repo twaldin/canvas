@@ -78,7 +78,7 @@ public enum MentionContext {
         guard !resolved.isEmpty else { return "" }
         var out = ["<canvas-mentions board=\"\(board.id)\" root=\"\(board.root.path)\">"]
         out.append(contentsOf: resolved.map(\.summary))
-        out.append("Read more with the canvas SDK or CLI: canvas get <id> --as graph|image")
+        out.append("Read more with the canvas SDK or CLI: canvas get <id> --as graph; look with canvas render <id>")
         out.append("</canvas-mentions>")
         return out.joined(separator: "\n")
     }

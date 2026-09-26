@@ -16,12 +16,15 @@ final class CanvasDocumentView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
+        Self.drawBackground(in: dirtyRect, pointsPerUnit: max(convert(NSSize(width: 1, height: 0), to: nil).width, 0.01))
+    }
+
+    /// The canvas background: 2-point dots at least 16 points apart at `scale` screen points (or
+    /// render pixels) per document unit, whatever the zoom. Drawn as one path: AppKit records view
+    /// drawing into display lists, and a rect fill per dot at 10% zoom was ~100k retained entries.
+    static func drawBackground(in dirtyRect: NSRect, pointsPerUnit scale: CGFloat) {
         NSColor.underPageBackgroundColor.setFill()
         dirtyRect.fill()
-        // Dot grid: 2-point dots at least 16 points apart on screen, whatever the zoom. Drawn as one
-        // path: AppKit records view drawing into display lists, and a rect fill per dot at 10% zoom
-        // was ~100k retained entries.
-        let scale = max(convert(NSSize(width: 1, height: 0), to: nil).width, 0.01)
         var spacing: CGFloat = 40
         while spacing * scale < 16 { spacing *= 2 }
         let dot = 2 / scale
@@ -99,6 +102,9 @@ final class CanvasView: NSScrollView {
     private var mouseMonitor: Any?
     /// Terminals seen since their agent last started working (mirrors Board's seen set).
     private var seenLocally: Set<ObjectID> = []
+    /// Who the activity log credits for viewport moves: the user, except while the app moves it.
+    private var viewportMover: ActivityActor = .user
+    private var activitySettle: DispatchWorkItem?
     private lazy var seen = SeenTracker { [weak self] id in self?.didSee(id) }
 
     /// Last terminal that held keyboard focus: where the tray drains and Superwhisper pastes.
@@ -156,6 +162,9 @@ final class CanvasView: NSScrollView {
         contentView.postsBoundsChangedNotifications = true
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(boundsChanged), name: NSView.boundsDidChangeNotification, object: contentView)
+        // A window resize changes what's visible without moving the bounds origin.
+        contentView.postsFrameChangedNotifications = true
+        center.addObserver(self, selector: #selector(boundsChanged), name: NSView.frameDidChangeNotification, object: contentView)
         center.addObserver(self, selector: #selector(magnifyStarted), name: NSScrollView.willStartLiveMagnifyNotification, object: self)
         center.addObserver(self, selector: #selector(magnifyEnded), name: NSScrollView.didEndLiveMagnifyNotification, object: self)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didBecomeActiveNotification, object: nil)
@@ -354,6 +363,8 @@ final class CanvasView: NSScrollView {
         let added = ids.subtracting(selection)
         selection = ids
         for (id, group) in groups { group.isSelected = ids.contains(id) }
+        board.activity.selectionChanged(Array(ids), actor: .user, rev: board.revision)
+        scheduleActivitySettle()
         refreshRings()
         // Selecting a marked object is the user acknowledging it.
         for id in added where markers[id] != nil { clearAttention(id) }
@@ -759,6 +770,8 @@ final class CanvasView: NSScrollView {
     // MARK: Navigation (user-initiated only)
 
     func centerOnContent() {
+        viewportMover = .system
+        defer { viewportMover = .user }
         let frames = tiles.values.map(\.frame)
         let target = frames.isEmpty ? NSRect(origin: CanvasDocumentView.origin, size: .zero) : frames.dropFirst().reduce(frames[0]) { $0.union($1) }
         let visible = documentVisibleRect
@@ -837,10 +850,12 @@ final class CanvasView: NSScrollView {
         scheduleLiveness()
     }
 
-    func clearAttention(_ id: ObjectID) {
-        guard let marker = markers.removeValue(forKey: id) else { return }
+    @discardableResult
+    func clearAttention(_ id: ObjectID) -> Bool {
+        guard let marker = markers.removeValue(forKey: id) else { return false }
         marker.removeFromSuperview()
         scheduleLiveness()
+        return true
     }
 
     private func layoutMarkers() {
@@ -907,7 +922,43 @@ final class CanvasView: NSScrollView {
     // MARK: Scene pass (zoom LOD, offscreen culling, chrome scale, chevrons, seen)
 
     @objc private func boundsChanged() {
+        board.activity.viewportChanged(viewport, actor: viewportMover, rev: board.revision)
+        scheduleActivitySettle()
         scheduleLiveness()
+    }
+
+    // MARK: Viewport state (view.get, board.history)
+
+    /// What the window shows, in canvas coordinates.
+    var viewport: Viewport {
+        let visible = documentVisibleRect
+        return Viewport(rect: Frame(x: visible.minX - CanvasDocumentView.origin.x, y: visible.minY - CanvasDocumentView.origin.y,
+                                    w: visible.width, h: visible.height), zoom: magnification)
+    }
+
+    var viewState: ViewState {
+        var focused: ObjectID?
+        var responder = window?.firstResponder as? NSView
+        while let view = responder {
+            if let tile = view as? TileFrameView {
+                focused = tile.objectID
+                break
+            }
+            responder = view.superview
+        }
+        return ViewState(viewport: viewport, promptTarget: promptTarget, focused: focused, selection: selection.sorted(),
+                         enteredGroup: enteredGroup, visible: window?.occlusionState.contains(.visible) ?? false)
+    }
+
+    /// Viewport and selection changes are logged once they settle; this makes sure that happens
+    /// even if nothing reads the log meanwhile.
+    private func scheduleActivitySettle() {
+        activitySettle?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.board.activity.settle() }
+        }
+        activitySettle = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + ActivityLog.settleInterval + 0.05, execute: work)
     }
 
     @objc private func magnifyStarted() {

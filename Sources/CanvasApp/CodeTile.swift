@@ -463,14 +463,13 @@ extension CodeTile {
         snapshotCover = cover
     }
 
-    func snapshot() -> NSImage? {
+    /// Captures the tile as shown; content loads only while live, so an offscreen tile is a placeholder.
+    func render(_ request: TileRenderRequest) async -> TileRender {
+        guard isLive, shown != nil else { return .placeholder(request, "code loads only while the tile is on screen") }
         showSnapshot(true)
         defer { showSnapshot(false) }
-        guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return nil }
-        cacheDisplay(in: bounds, to: rep)
-        let image = NSImage(size: bounds.size)
-        image.addRepresentation(rep)
-        return image
+        let image = request.image(of: self)
+        return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
     }
 }
 

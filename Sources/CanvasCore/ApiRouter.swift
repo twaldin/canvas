@@ -29,6 +29,8 @@ public final class BoardRegistry {
             self.broadcast(event, board: board.id)
         }
         boards[id] = board
+        board.activity.record(.restart, actor: .system, rev: board.revision,
+                              summary: "Canvas started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
         frontmost = frontmost ?? id
         return board
     }
@@ -72,12 +74,17 @@ public final class ApiRouter {
     }
 
     public let registry: BoardRegistry
-    public var objectImage: ((Board, ObjectID) -> Data?)?
     public var raiseAttention: ((Board, ObjectID, String?) -> Void)?
+    /// Removes an object's attention marker; false when it had none.
+    public var clearAttention: ((Board, ObjectID) -> Bool)?
     /// Types text into a terminal tile (bracketed paste) and presses Enter; false when the surface isn't attached.
     public var submitToTerminal: ((Board, ObjectID, String) -> Bool)?
-    /// PNG of the board's window as currently shown.
-    public var snapshotBoard: ((Board) -> (png: Data, width: Int, height: Int)?)?
+    /// The board's window as currently shown, encoded in `format`, with the viewport it shows.
+    public var snapshotBoard: ((Board, ImageFormat) -> (output: RenderOutput, viewport: Viewport)?)?
+    /// Offscreen render for `view.render`; throws `Failure` for bad targets.
+    public var renderView: ((Board, RenderRequest, ImageFormat) async throws -> RenderOutput)?
+    /// What the board's window shows; nil when it has none.
+    public var viewState: ((Board) -> ViewState?)?
     /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`), read and
     /// trimmed off the main actor; nil when the session doesn't exist.
     public var readTerminal: ((Board, ObjectID, _ lines: Int) async -> (text: String, lines: Int)?)?
@@ -119,6 +126,8 @@ public final class ApiRouter {
             }
             if method == "agent.wait" { return try wait(id, params, connection) }
             if method == "agent.read" { return Self.ok(id, try await read(params)) }
+            if method == "view.render" { return Self.ok(id, try await render(params)) }
+            if method == "view.snapshot" { return Self.ok(id, try await snapshot(params)) }
             if method == "tray.drain" {
                 let drained = try await board(params).drain(peek: params["peek"]?.bool ?? false)
                 return Self.ok(id, .object(["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)]))
@@ -247,6 +256,98 @@ public final class ApiRouter {
         ])
     }
 
+    // MARK: Images
+
+    /// `view.render`: parse the target, render offscreen in the app, then deliver the image.
+    private func render(_ p: JSONValue) async throws -> JSONValue {
+        let board: Board
+        let target: RenderTarget
+        switch p["target"] {
+        case .string(let id)?:
+            board = try p["board"] == nil ? self.board(forObject: id) : self.board(p)
+            target = .objects([id])
+        case .array(let values)?:
+            let ids = values.compactMap(\.string)
+            guard !ids.isEmpty, ids.count == values.count else { throw Failure("invalid_params", "target list must be object ids") }
+            board = try p["board"] == nil ? self.board(forObject: ids[0]) : self.board(p)
+            target = .objects(ids)
+        case .object?:
+            board = try self.board(p)
+            let rect = try p["target"]!.decode(Frame.self)
+            guard rect.w > 0, rect.h > 0 else { throw Failure("invalid_params", "target rect must have a positive size") }
+            target = .rect(rect)
+        default:
+            throw Failure("invalid_params", "target must be an object id, a list of ids, or a rect {x, y, w, h}")
+        }
+        if case .objects(let ids) = target {
+            for id in ids where board.objects[id] == nil { throw Failure("not_found", "object \(id) is not on board \(board.id)") }
+        }
+        let scale = p["scale"]?.number ?? 1
+        guard (0.1...4).contains(scale) else { throw Failure("invalid_params", "scale must be between 0.1 and 4") }
+        let exclude = try Set((p["exclude"]?.array ?? []).map { value in
+            guard let type = value.string.flatMap(ObjectType.init(rawValue:)) else { throw Failure("invalid_params", "exclude takes object types, not \(value)") }
+            return type
+        })
+        let timeout = min(max(p["timeoutMs"]?.int ?? 8000, 0), 60_000)
+        let request = RenderRequest(target: target, scale: scale, full: p["full"]?.bool ?? false, exclude: exclude,
+                                    padding: max(0, p["padding"]?.number ?? 0), timeout: .milliseconds(timeout))
+        let (format, out) = try imageDestination(p)
+        guard let renderView else { throw Failure("unsupported", "rendering needs the app UI") }
+        let output = try await renderView(board, request, format)
+        var result = try await deliver(output, to: out)
+        result["canvasRect"] = RenderMath.json(output.canvasRect)
+        result["scale"] = .number(output.scale)
+        result["objects"] = .array(output.objects.map(\.json))
+        return .object(result)
+    }
+
+    /// `view.snapshot`: the window as shown, with the viewport it shows.
+    private func snapshot(_ p: JSONValue) async throws -> JSONValue {
+        let board = try board(p)
+        let (format, out) = try imageDestination(p)
+        guard let snapshotBoard else { throw Failure("unsupported", "snapshots need the app UI") }
+        guard let shot = snapshotBoard(board, format) else { throw Failure("unavailable", "board \(board.id) has no window") }
+        var result = try await deliver(shot.output, to: out)
+        result["viewport"] = shot.viewport.json
+        result["scale"] = .number(shot.output.scale)
+        result["objects"] = .array(shot.output.objects.map(\.json))
+        return .object(result)
+    }
+
+    /// Format from `out`'s extension (which must be absolute and writable), else `format`.
+    private func imageDestination(_ p: JSONValue) throws -> (ImageFormat, String?) {
+        if let out = p["out"]?.string {
+            guard out.hasPrefix("/") else { throw Failure("invalid_params", "out must be an absolute path (clients resolve relative paths)") }
+            guard let format = ImageFormat(path: out) else { throw Failure("invalid_params", "out must end in .png, .jpg, or .jpeg") }
+            return (format, out)
+        }
+        guard let name = p["format"]?.string else { return (.png, nil) }
+        guard let format = ImageFormat(rawValue: name) else { throw Failure("invalid_params", "format must be png or jpeg") }
+        return (format, nil)
+    }
+
+    private func deliver(_ output: RenderOutput, to out: String?) async throws -> [String: JSONValue] {
+        var result: [String: JSONValue] = [
+            "format": .string(output.format.rawValue), "width": .number(Double(output.width)), "height": .number(Double(output.height)),
+        ]
+        guard let out else {
+            result["imageBase64"] = .string(output.image.base64EncodedString())
+            return result
+        }
+        let image = output.image
+        let failure: String? = await offPool {
+            do {
+                try image.write(to: URL(fileURLWithPath: out), options: .atomic)
+                return nil
+            } catch {
+                return error.localizedDescription
+            }
+        }
+        if let failure { throw Failure("unavailable", "cannot write \(out): \(failure)") }
+        result["path"] = .string(out)
+        return result
+    }
+
     func dispatch(_ method: String, _ p: JSONValue) throws -> JSONValue {
         switch method {
         case "system.ping":
@@ -261,6 +362,31 @@ public final class ApiRouter {
             ]
             if let since = p["since"]?.int { result["changed"] = .array(board.changed(since: since).map(JSONValue.string)) }
             return .object(result)
+
+        case "board.history":
+            let board = try board(p)
+            let since: ActivityLog.Since?
+            switch p["since"] {
+            case .number(let value): since = .seq(Int(value))
+            case .string(let text):
+                guard let time = try? Date(text, strategy: .iso8601) else { throw Failure("invalid_params", "since must be a seq cursor or an ISO 8601 time") }
+                since = .time(time)
+            case nil, .null?: since = nil
+            default: throw Failure("invalid_params", "since must be a seq cursor or an ISO 8601 time")
+            }
+            let limit = min(max(p["limit"]?.int ?? 100, 1), board.activity.capacity)
+            var kinds: Set<ActivityEntry.Kind>?
+            if let names = p["kinds"]?.array {
+                kinds = Set(try names.map { name in
+                    guard let kind = name.string.flatMap(ActivityEntry.Kind.init(rawValue:)) else { throw Failure("invalid_params", "unknown history kind \(name)") }
+                    return kind
+                })
+            }
+            let page = board.activity.query(since: since, limit: limit, kinds: kinds)
+            return .object([
+                "board": .string(board.id), "cursor": .number(Double(page.cursor)), "entries": .array(page.entries.map(\.json)),
+                "truncated": .bool(page.truncated), "restarted": .bool(page.restarted),
+            ])
 
         case "board.list":
             // Open boards are the truth for root and contents: a moved worktree's new root and any
@@ -305,10 +431,9 @@ public final class ApiRouter {
             var result: [String: JSONValue] = ["object": try JSONValue.encode(object)]
             switch p["as"]?.string ?? "raw" {
             case "graph": result["graph"] = graph(of: object, on: board)
-            case "image":
-                guard let data = objectImage?(board, id) else { throw Failure("unsupported", "object images are not available for \(object.type.rawValue) tiles yet") }
-                result["pngBase64"] = .string(data.base64EncodedString())
-            default: break
+            case "raw": break
+            case "image": throw Failure("invalid_params", "object.get no longer renders images: use view.render with target \(id)")
+            case let other: throw Failure("invalid_params", "unknown as: \(other)")
             }
             return .object(result)
 
@@ -329,7 +454,8 @@ public final class ApiRouter {
 
         case "object.delete":
             let id = try string(p, "id")
-            try board(forObject: id).delete(id)
+            let board = try board(forObject: id)
+            try board.delete(id, caller: caller(p, on: board))
             return .object([:])
 
         case "tray.list":
@@ -384,15 +510,26 @@ public final class ApiRouter {
         case "view.attention":
             let id = try string(p, "id")
             let board = try board(forObject: id)
-            guard let raiseAttention else { throw Failure("unsupported", "attention markers need the app UI") }
+            guard let raiseAttention, let clearAttention else { throw Failure("unsupported", "attention markers need the app UI") }
+            if p["clear"]?.bool == true {
+                _ = clearAttention(board, id)
+                return .object(["id": .string(id), "active": .bool(false)])
+            }
             raiseAttention(board, id, p["message"]?.string)
-            return .object([:])
+            return .object(["id": .string(id), "active": .bool(true)])
 
-        case "view.snapshot":
+        case "view.get":
             let board = try board(p)
-            guard let snapshotBoard else { throw Failure("unsupported", "snapshots need the app UI") }
-            guard let shot = snapshotBoard(board) else { throw Failure("unavailable", "board \(board.id) has no window") }
-            return .object(["pngBase64": .string(shot.png.base64EncodedString()), "width": .number(Double(shot.width)), "height": .number(Double(shot.height))])
+            guard let viewState else { throw Failure("unsupported", "the viewport needs the app UI") }
+            guard let state = viewState(board) else { throw Failure("unavailable", "board \(board.id) has no window") }
+            var result: [String: JSONValue] = [
+                "board": .string(board.id), "viewport": state.viewport.json,
+                "selection": .array(state.selection.map(JSONValue.string)), "visible": .bool(state.visible),
+            ]
+            if let target = state.promptTarget { result["promptTarget"] = .string(target) }
+            if let focused = state.focused { result["focused"] = .string(focused) }
+            if let group = state.enteredGroup { result["enteredGroup"] = .string(group) }
+            return .object(result)
 
         case "agent.prompt":
             let (board, terminal) = try agentTile(try string(p, "target"))

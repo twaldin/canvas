@@ -74,6 +74,12 @@ public final class Board {
     public var onEvent: ((BoardEvent) -> Void)?
     /// Content changes by anyone, for ⌘Z; see UndoHistory.
     public let history = UndoHistory()
+    /// Who did what, for `board.history` (in memory; see ActivityLog).
+    public let activity = ActivityLog()
+    /// Set while a change's own entry is written by its caller (follow re-aims).
+    private var activityMuted = false
+    /// "undo"/"redo" while one replays, so its changes are logged as such.
+    var replayVerb: String?
     /// Called after any persisted change; BoardStore debounces saves.
     public var onChange: (() -> Void)?
     /// Viewport center in canvas coordinates, for user-created objects without a frame.
@@ -121,12 +127,15 @@ public final class Board {
         let object = CanvasObject(id: IDs.make("obj"), type: type, frame: placed, z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(), props: props)
         commit(object)
         history.record(.created(object))
+        log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(object.frame))")
         onEvent?(.objectCreated(object))
         return object
     }
 
+    /// `actor` names who the activity log credits when it isn't the caller (the app's own
+    /// write-backs are `.system`).
     @discardableResult
-    public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil) throws -> CanvasObject {
+    public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws -> CanvasObject {
         let before = try object(id)
         if let rev, rev != before.rev { throw BoardError.conflict("object \(id) is at rev \(before.rev), not \(rev)") }
         var object = before
@@ -138,12 +147,15 @@ public final class Board {
         object.updatedBy = Actor(caller: caller)
         commit(object)
         history.record(.updated(before: before, after: object))
+        if let changes = ActivityLog.changes(from: before, to: object) {
+            log(.updated, object, actor: actor ?? ActivityActor(caller: caller), "\(ActivityLog.describe(object)): \(changes)")
+        }
         markMentionsEdited(for: id)
         onEvent?(.objectUpdated(object))
         return object
     }
 
-    public func delete(_ id: ObjectID) throws {
+    public func delete(_ id: ObjectID, caller: ObjectID? = nil) throws {
         guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
         // Arrows bound to it detach within the same undo step, so one ⌘Z restores both.
         history.begin()
@@ -153,6 +165,7 @@ public final class Board {
         changedAt.removeValue(forKey: id)
         revision += 1
         history.record(.deleted(removed))
+        log(.deleted, removed, actor: ActivityActor(caller: caller), "deleted \(ActivityLog.describe(removed))")
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         onChange?()
@@ -160,17 +173,27 @@ public final class Board {
         if tray.count != before { trayChanged() }
     }
 
+    private func log(_ kind: ActivityEntry.Kind, _ object: CanvasObject, actor: ActivityActor, _ summary: String) {
+        guard !activityMuted else { return }
+        let text = replayVerb.map { "\($0): \(summary)" } ?? summary
+        activity.record(kind, actor: replayVerb == nil ? actor : .user, rev: revision, id: object.id, type: object.type, summary: text)
+    }
+
     /// Undo/redo: puts an object state back verbatim (same id and z), announced as a normal change.
     /// The object gets a revision newer than any it has ever had.
     func restore(_ object: CanvasObject) {
         var object = object
-        let existed = objects[object.id] != nil
+        let previous = objects[object.id]
         object.rev = max(revHighWater[object.id] ?? 0, objects[object.id]?.rev ?? 0, object.rev) + 1
         commit(object)
-        if existed {
+        if let previous {
+            if let changes = ActivityLog.changes(from: previous, to: object) {
+                log(.updated, object, actor: .user, "\(ActivityLog.describe(object)): \(changes)")
+            }
             markMentionsEdited(for: object.id)
             onEvent?(.objectUpdated(object))
         } else {
+            log(.created, object, actor: .user, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(object.frame))")
             onEvent?(.objectCreated(object))
         }
     }
@@ -339,6 +362,8 @@ public final class Board {
         history.insert(.object(entry), at: 0)
         props["history"] = .array(Array(history.prefix(Self.followHistoryLimit)))
         let follow: CanvasObject
+        activityMuted = true
+        defer { activityMuted = false }
         if let existing {
             follow = try update(existing.id, props: .object(props), caller: tile)
         } else {
@@ -346,6 +371,10 @@ public final class Board {
             props["diffBase"] = .string("merge-base")
             follow = create(type: .code, props: .object(props.filter { $0.value != .null }), caller: tile)
         }
+        activityMuted = false
+        let at = range.map { ":\($0.start)-\($0.end)" } ?? ""
+        activity.record(.follow, actor: .agent(tile), rev: revision, id: follow.id, type: .code,
+                        summary: "\(existing == nil ? "follow tile created" : "follow tile re-aimed") at \(relative)\(at) (\(action))")
         onEvent?(.followUpdated(tile: tile, follow: follow.id))
         return follow
     }

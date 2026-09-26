@@ -18,6 +18,7 @@ app="$repo/.build/Canvas.app"
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
 # The testing Space: CANVAS_DEV_SPACE, else the first Space of the "CanvasTest" BetterDisplay virtual
 # screen (a headless monitor, so the window renders while nobody looks at it), else Space 8.
+# CANVAS_DEV_SPACE=8 puts the window where Tim watches.
 test_space() {
   if [ -n "${CANVAS_DEV_SPACE:-}" ]; then echo "$CANVAS_DEV_SPACE"; return; fi
   id="$(betterdisplaycli get --name=CanvasTest --identifiers 2>/dev/null | sed -n 's/.*"displayID" : "\([0-9]*\)".*/\1/p' | head -n 1)"
@@ -74,11 +75,11 @@ launch() {
   mkdir -p "$home"
   rm -f "$CANVAS_SOCKET"
   # yabai can't place a new window on another display's Space (it lands on the Space being
-  # viewed), so the rule parks it on Space 8, an unviewed Space on the built-in display, and the
-  # window moves to the testing Space once it exists.
+  # viewed), so the rule parks it on Space 7, an unviewed Space on the built-in display (8 is where
+  # Tim watches), and the window moves to the testing Space once it exists.
   if [ -x "$yabai" ]; then
     "$yabai" -m rule --remove canvas-dev >/dev/null 2>&1 || true
-    "$yabai" -m rule --add label=canvas-dev app="^Canvas$" space=8 manage=off grid=1:1:0:0:1:1 >/dev/null
+    "$yabai" -m rule --add label=canvas-dev app="^Canvas$" space=7 manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
   open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
     --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_ROOT="$root" "$app"
@@ -87,7 +88,7 @@ launch() {
   [ -S "$CANVAS_SOCKET" ] || { echo "Canvas did not open its socket; see $home/app.log" >&2; exit 1; }
   pgrep -n -f "$app/Contents/MacOS/Canvas" > "$home/pid"
   target="$(test_space)"
-  if [ -x "$yabai" ] && [ "$target" != 8 ]; then
+  if [ -x "$yabai" ] && [ "$target" != 7 ]; then
     i=0
     while [ -z "$(window_id)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
     wid="$(window_id)"

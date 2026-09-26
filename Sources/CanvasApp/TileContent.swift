@@ -5,10 +5,14 @@ import CanvasCore
 /// TileFrameView supplies the shared chrome (title bar, drag, resize, lifecycle badge).
 @MainActor
 protocol TileContent: NSView {
-    /// Live = visible at readable zoom. Not live = release heavy resources and show `snapshot()`.
+    /// Live = visible at readable zoom. Not live = release heavy resources and show the card.
     func setLive(_ live: Bool)
-    /// Cheap image for zoomed-out cards; nil draws a title card.
+    /// Full-resolution image of the content (`object.get --as image`); nil draws a title card.
     func snapshot() -> NSImage?
+    /// Image for the zoomed-out card, delivered on the main actor before the tile goes not-live
+    /// (defaults to `snapshot()`, synchronously). Tiles whose snapshot blocks on a subprocess
+    /// deliver later, from off-main work.
+    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void)
     /// While `view.snapshot` renders the window with `cacheDisplay`, cover content that renders
     /// outside AppKit's drawing (Metal, WebKit) with an image of it; `false` restores the live view.
     func showSnapshot(_ show: Bool)
@@ -37,6 +41,10 @@ extension TileContent {
     }
 
     func showSnapshot(_ show: Bool) {}
+
+    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
+        deliver(snapshot())
+    }
 
     func snapshot() -> NSImage? {
         guard let rep = bitmapImageRepForCachingDisplay(in: bounds) else { return nil }

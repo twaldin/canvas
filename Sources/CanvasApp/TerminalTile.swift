@@ -180,13 +180,35 @@ final class TerminalTile: NSView, TileContent {
     /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so snapshots (LOD cards,
     /// `view.snapshot`, `object.get --as image`) render the tail of the zmx session's text instead.
     func snapshot() -> NSImage? {
+        guard let rows = snapshotRows else { return nil }
+        return Self.history(session: sessionName, lines: rows).map { render($0.text) }
+    }
+
+    /// Zooming out flips every terminal at once; each `zmx history` takes tens of milliseconds,
+    /// so cards read it on GCD instead of stalling the main thread once per terminal.
+    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
+        guard let rows = snapshotRows else { return deliver(nil) }
+        let session = sessionName
+        DispatchQueue.global(qos: .utility).async {
+            let tail = Self.history(session: session, lines: rows)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { [weak self] in deliver(tail.flatMap { self?.render($0.text) }) }
+            }
+        }
+    }
+
+    private static let snapshotFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    private static let snapshotLineHeight = ceil(snapshotFont.ascender - snapshotFont.descender + snapshotFont.leading) + 2
+
+    private var snapshotRows: Int? {
         guard bounds.width > 0, bounds.height > 0 else { return nil }
-        let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        let lineHeight = ceil(font.ascender - font.descender + font.leading) + 2
-        let rows = max(1, Int((bounds.height - 12) / lineHeight))
-        guard let tail = Self.history(session: sessionName, lines: rows) else { return nil }
-        let visible = tail.text.split(separator: "\n", omittingEmptySubsequences: false)
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(white: 0.85, alpha: 1)]
+        return max(1, Int((bounds.height - 12) / Self.snapshotLineHeight))
+    }
+
+    private func render(_ text: String) -> NSImage {
+        let visible = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let attributes: [NSAttributedString.Key: Any] = [.font: Self.snapshotFont, .foregroundColor: NSColor(white: 0.85, alpha: 1)]
+        let lineHeight = Self.snapshotLineHeight
         return NSImage(size: bounds.size, flipped: true) { rect in
             NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.13, alpha: 1).setFill()
             rect.fill()

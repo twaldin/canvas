@@ -139,21 +139,51 @@ final class TileFrameView: NSView {
         }
     }
 
+    /// Cards show below `CanvasView.liveThreshold` zoom, so ~0.6 pixels per point is all they need
+    /// (a full 2× capture would be ~11× the memory, held for every card on the board).
+    static let cardPixelsPerPoint: CGFloat = 0.6
+
     /// Zoomed-out or offscreen: freeze to a card and let the content release its resources.
     func setLive(_ live: Bool) {
         guard live != isLive else { return }
+        isLive = live
+        cardRequest += 1
         if !live {
-            card.image = content.snapshot()
-            card.isHidden = card.image == nil
-            cardTitle.isHidden = card.image != nil
+            card.isHidden = true
+            cardTitle.isHidden = false
+            let request = cardRequest
+            content.cardSnapshot { [weak self] image in
+                guard let self, !self.isLive, self.cardRequest == request else { return }
+                self.card.image = image.map { Self.cardImage($0, size: self.bounds.size) }
+                self.card.isHidden = self.card.image == nil
+                self.cardTitle.isHidden = self.card.image != nil
+            }
         } else {
+            card.image = nil
             card.isHidden = true
             cardTitle.isHidden = true
         }
         content.isHidden = !live
         content.setLive(live)
-        isLive = live
         updateTint()
+    }
+
+    private var cardRequest = 0
+
+    private static func cardImage(_ image: NSImage, size: NSSize) -> NSImage {
+        let width = max(1, Int(size.width * cardPixelsPerPoint)), height = max(1, Int(size.height * cardPixelsPerPoint))
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: rep) else { return image }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.imageInterpolation = .high
+        image.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        let card = NSImage(size: size)
+        card.addRepresentation(rep)
+        return card
     }
 
     /// Zoomed-out cards carry the agent's lifecycle color so a board of agents reads at a glance.

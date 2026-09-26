@@ -59,6 +59,26 @@ Arrows, shapes, and groups have no tile; the canvas draws them.
 
 Tiles never read or write the board store directly; they go through the board model on the main actor, which persists and broadcasts events.
 
+## Scene seams
+
+`CanvasView` (`Sources/CanvasApp/CanvasView.swift`) owns selection, moves, groups, attention markers, and the viewport. Drawn objects (shapes, arrows) have no view of their own; the drawing layer plugs in through:
+
+| Seam | Direction | Meaning |
+| --- | --- | --- |
+| `installShapeLayer(_:)` | drawing → scene | Adds the drawing layer above tiles, below attention markers and the overlay; restacking keeps it there. |
+| `shapeHitTest(docPoint) -> ObjectID?` | drawing → scene | Drawn object under a point (strokes, text, fills). Plain clicks there select it and drag the selection; Hyper-clicks mention it. |
+| `shapeOutline(id) -> NSRect?` | drawing → scene | Committed document rect, for rings and hover outlines. |
+| `drawingOwnsPoint(docPoint) -> Bool` | drawing → scene | True while a tool is active or over a shape handle; scene selection, marquee, and moves stand down. |
+| `moveProps(object, dx, dy) -> JSONValue?` | drawing → scene | Props merged into a drawn object's move update (e.g. free arrow endpoints). |
+| `onSelectionDrag(ids, offset)` | scene → drawing | Live drag offset in document points; `.zero` just before the move commits. |
+| `selection`, `onSelectionChange` | scene → all | Current selection (tiles, drawn objects, groups). |
+
+Groups (`type: group`, props `{members, name?}`, frame = union of member frames) are drawn by the scene as regions behind their members. `focus(tile:)` zooms a tile to 100%, centers, selects, and focuses it; `raiseAttention(_:message:)` backs `view.attention`.
+
+## Undo
+
+`Board.history` records every create, update, and delete from any actor; ⌘Z (`Board.undo()`) reverts the latest step even when an agent made it, and an undo is a new revision (`rev` keeps increasing). Terminal bookkeeping props (`lifecycle`, `agent`, `title`) are never recorded and never rewound. Multi-object gestures wrap their updates in `Board.transaction { }` to form one step. Undoing a delete restores the object with the same id and `z`; staged mentions of it are not restored. History lives in memory only.
+
 ## Mention context format
 
 `tray.drain` returns a `context` string that the omp extension injects as hidden context with the submitted prompt. Shape:

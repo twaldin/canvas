@@ -33,9 +33,11 @@ json.dump(board, open(sys.argv[2], "w"))
 print(f"{len(kept)} objects ({len(drop)} terminals dropped)")
 EOF
     root="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['root'])" "$home/boards/$board.json")"
-    # The testing Space lives on the virtual screen; park on Space 7 first (see docs/testing.md).
-    "$yabai" -m rule --remove canvas-dev >/dev/null 2>&1 || true
-    "$yabai" -m rule --add label=canvas-dev app="^Canvas$" space=7 manage=off grid=1:1:0:0:1:1 >/dev/null
+    # The testing Space lives on the virtual screen; park the first window on Space 7 with a
+    # one-shot rule, removed once placed (see scripts/dev.sh launch).
+    rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
+    "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
+    "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space=7 manage=off grid=1:1:0:0:1:1 >/dev/null
     # PERF_MALLOC_STACKS=1 records allocation stacks for `malloc_history <pid> <address>`.
     open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
       ${PERF_MALLOC_STACKS:+--env MallocStackLogging=1} --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_ROOT="$root" "$app"
@@ -45,6 +47,7 @@ EOF
     space="$(CANVAS_DEV_SPACE= sh -c ". /dev/null; $(sed -n '/^test_space()/,/^}/p' "$repo/scripts/dev.sh"); yabai=$yabai; test_space")"
     "$yabai" -m window "$(window)" --space "$space"
     "$yabai" -m window "$(window)" --grid 1:1:0:0:1:1
+    "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
     echo "replica pid $(pid) window $(window) on Space $space, CANVAS_SOCKET=$home/canvas.sock"
     ;;
   stop)

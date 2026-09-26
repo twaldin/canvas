@@ -88,6 +88,8 @@ public final class ApiRouter {
     /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`), read and
     /// trimmed off the main actor; nil when the session doesn't exist.
     public var readTerminal: ((Board, ObjectID, _ lines: Int) async -> (text: String, lines: Int)?)?
+    /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
+    public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
     static let readLinesDefault = 100
     static let readLinesMax = 2000
@@ -427,6 +429,15 @@ public final class ApiRouter {
                 return .object(info)
             }
             return .object(["boards": .array(boards)])
+
+        case "board.open":
+            guard let path = p["root"]?.string, !path.isEmpty else { throw Failure("invalid_params", "root is required") }
+            let expanded = (path as NSString).expandingTildeInPath
+            guard expanded.hasPrefix("/") else { throw Failure("invalid_params", "root must be an absolute path (or start with ~)") }
+            let root = URL(fileURLWithPath: expanded).standardizedFileURL
+            guard BoardStore.isDirectory(root.path) else { throw Failure("not_found", "no directory at \(root.path)") }
+            let board = openBoard?(root, p["select"]?.bool ?? false) ?? registry.open(root: root)
+            return .object(["board": .string(board.id), "root": .string(board.root.path), "objects": .number(Double(board.objects.count))])
 
         case "board.export":
             let board = try board(p)

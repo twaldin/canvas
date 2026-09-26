@@ -104,6 +104,32 @@ final class ApiRouterTests {
         #expect(try await client.next()["error"]?["code"] == .string("unavailable"))
     }
 
+    @Test func boardOpenOpensADirectoryOnceAndRejectsBadRoots() async throws {
+        let second = dir.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        var opened: [(String, Bool)] = []
+        router.openBoard = { [unowned self] root, select in
+            opened.append((root.path, select))
+            return registry.open(root: root)
+        }
+        let client = try connect()
+        client.send(#"{"id":"a","method":"board.open","params":{"root":"\#(second.path)"}}"#)
+        let first = try await client.next()
+        let id = try #require(first["result"]?["board"]?.string)
+        #expect(id != board.id)
+        #expect(registry.boards[id]?.root.path == second.path)
+        // Opening it again (asking for its tab) is the same board.
+        client.send(#"{"id":"b","method":"board.open","params":{"root":"\#(second.path)/","select":true}}"#)
+        #expect(try await client.next()["result"]?["board"]?.string == id)
+        #expect(opened.map(\.1) == [false, true])
+
+        client.send(#"{"id":"c","method":"board.open","params":{"root":"relative/dir"}}"#)
+        #expect(try await client.next()["error"]?["code"] == .string("invalid_params"))
+        client.send(#"{"id":"d","method":"board.open","params":{"root":"\#(dir.path)/missing"}}"#)
+        #expect(try await client.next()["error"]?["code"] == .string("not_found"))
+        #expect(opened.count == 2)
+    }
+
     @Test func pipelinedRequestsAreAnsweredInOrder() async throws {
         let note = board.create(type: .note, props: .object(["markdown": .string("a")]))
         let client = try connect()

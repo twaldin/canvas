@@ -20,6 +20,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         window.subtitle = board.root.path
         window.acceptsMouseMovedEvents = true
         window.setFrameAutosaveName("Canvas-\(board.id)")
+        // Boards open as tabs of one window (AppDelegate.open adds them to the frontmost group).
+        window.tabbingMode = .preferred
+        window.tabbingIdentifier = "net.waldin.canvas.board"
         super.init(window: window)
         window.delegate = self
 
@@ -83,6 +86,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     func windowDidBecomeKey(_ notification: Notification) {
         registry.frontmost = board.id
+    }
+
+    /// The board's tab or window closed (not app quit, which closes nothing).
+    var onClose: (() -> Void)?
+
+    func windowWillClose(_ notification: Notification) {
+        onClose?()
     }
 
     /// The window content as the user sees it, with the viewport it shows. Content drawn outside

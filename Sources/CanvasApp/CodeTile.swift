@@ -295,11 +295,18 @@ extension CodeTile {
     /// Bring the range into view (a few rows below the top), or the top of a new file.
     private func showRange() {
         guard showsCurrent, let rows = rowsView.painter?.rows else { return }
-        scroll(toRow: displayed.range.map { rows.index(ofLine: $0.start) } ?? 0)
+        guard let range = displayed.range else { return scroll(toRow: 0) }
+        let first = rows.index(ofLine: range.start)
+        scroll(toRow: first, count: rows.index(ofLine: range.end) - first + 1)
     }
 
-    private func scroll(toRow row: Int) {
-        rowsView.scroll(to: CGPoint(x: 0, y: CodePainter.rowTop(max(0, row - 3)) - CodeMetrics.verticalPadding))
+    /// Scroll `row` near the top with up to three rows of context above it, fewer when the tile
+    /// can't show that context and all `count` rows too (a tile sized to fit its range shows
+    /// exactly the range).
+    private func scroll(toRow row: Int, count: Int = 1) {
+        let visible = Int(((rowsView.bounds.height - CodeMetrics.verticalPadding) / CodeMetrics.rowHeight).rounded(.down))
+        let context = max(0, min(3, visible - count))
+        rowsView.scroll(to: CGPoint(x: 0, y: CodePainter.rowTop(max(0, row - context)) - CodeMetrics.verticalPadding))
     }
 
     private func startFlash(_ lines: [Range<Int>]) {

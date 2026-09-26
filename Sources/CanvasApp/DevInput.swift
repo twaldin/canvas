@@ -113,6 +113,22 @@ enum DevInput {
             let at = point("x", "y")
             mouse(.rightMouseDown, at)
             mouse(.rightMouseUp, at)
+        case "move":
+            // Tracking-area mouseMoved events come from the window server; a posted mouseMoved
+            // never reaches their owners. Deliver it to the areas under the point directly.
+            let at = point("x", "y")
+            guard let frame = content.superview, let hit = content.hitTest(frame.convert(at, from: nil)),
+                  let event = NSEvent.mouseEvent(with: .mouseMoved, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return }
+            for view in sequence(first: hit, next: \.superview) {
+                let local = view.convert(at, from: nil)
+                for area in view.trackingAreas where area.options.contains(.mouseMoved) {
+                    let rect = area.options.contains(.inVisibleRect) ? view.visibleRect : area.rect
+                    // Owners needn't be responders (any object implementing mouseMoved:).
+                    let moved = #selector(NSResponder.mouseMoved(with:))
+                    if rect.contains(local), let owner = area.owner as? NSObject, owner.responds(to: moved) { owner.perform(moved, with: event) }
+                }
+            }
         case "drag":
             let start = point("x", "y")
             let end = point("toX", "toY")

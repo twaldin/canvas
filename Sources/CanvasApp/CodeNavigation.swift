@@ -113,7 +113,9 @@ final class CodeNavigation: NSObject {
 
     // MARK: Hover
 
-    @objc func mouseMoved(with event: NSEvent) {
+    // Tracking areas send `mouseMoved:`/`mouseEntered:`/`mouseExited:` to their owner. This class
+    // isn't an NSResponder, so Swift would name these `mouseMovedWith:` etc. and hover never fired.
+    @objc(mouseMoved:) func mouseMoved(with event: NSEvent) {
         guard let codeView, event.window === codeView.window else { return }
         pointer = event.locationInWindow
         if let hoverPanel, hoverPanel.superview != nil {
@@ -129,13 +131,13 @@ final class CodeNavigation: NSObject {
         perform(#selector(hoverDue), with: nil, afterDelay: Self.hoverDelay)
     }
 
-    @objc func mouseExited(with event: NSEvent) {
+    @objc(mouseExited:) func mouseExited(with event: NSEvent) {
         cancelPendingHover()
         if let hoverPanel, hoverPanel.contains(windowPoint: event.locationInWindow, in: event.window) { return }
         dismissHover()
     }
 
-    @objc func mouseEntered(with event: NSEvent) {}
+    @objc(mouseEntered:) func mouseEntered(with event: NSEvent) {}
 
     /// The host scrolled or showed new content (a re-aim, a reload): panels point at what was
     /// there.

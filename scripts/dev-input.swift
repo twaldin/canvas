@@ -5,11 +5,12 @@
 //   dev-input <pid> rightclick <x> <y>
 //   dev-input <pid> drag <x> <y> <toX> <toY> [--mods …]
 //   dev-input <pid> flags <x> <y> [--mods …]         hold modifiers with the pointer at x,y (hover); no --mods releases
+//   dev-input <pid> move <x> <y>                     move the pointer (tracking-area hover, e.g. code navigation)
 //   dev-input <pid> text "<string>"                  insert text into the first responder
 //   dev-input <pid> command <selector>               e.g. insertNewline: deleteBackward: cancelOperation:
 //   dev-input <pid> shortcut <key> [--mods cmd]      key equivalent, e.g. shortcut z --mods cmd
 //   dev-input <pid> scroll <x> <y> <dx> <dy>         pan by pixels
-//   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the lag
+//   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
 import Foundation
 
 var args = Array(CommandLine.arguments.dropFirst())
@@ -30,7 +31,7 @@ guard args.count >= 2 else {
 var info: [String: String] = ["pid": args[0], "kind": args[1]]
 let rest = Array(args.dropFirst(2))
 switch args[1] {
-case "click", "rightclick", "flags":
+case "click", "rightclick", "flags", "move":
     guard rest.count >= 2 else { exit(2) }
     info["x"] = rest[0]; info["y"] = rest[1]
 case "drag":

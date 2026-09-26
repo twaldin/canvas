@@ -233,6 +233,53 @@ export type BoardInfo = {
   objects: number;
 };
 
+/** What the board's window shows: `rect` is the visible canvas area in canvas coordinates, `zoom` the magnification (1 = 100%, one point per canvas unit). */
+export type Viewport = {
+  rect: Frame;
+  zoom: number;
+};
+
+/** Where an object landed in a rendered image and whether its content really painted. */
+export type RenderedObject = {
+  id: Id;
+  type: ObjectType;
+  /** image pixels, top-left origin; a tile's rect includes its 26 pt title bar */
+  pixelRect: Frame;
+  /** placeholder: content not loaded in time or not renderable (a stand-in was drawn); failed: rendering errored */
+  state: "rendered" | "placeholder" | "failed";
+  /** why a tile is a placeholder or failed */
+  reason?: string;
+  /** the content's own extent in points at the tile's width (tiles only) */
+  contentSize?: {
+    w?: number;
+    h?: number;
+  };
+  /** points of content beyond the frame (right, bottom); absent when it fits */
+  overflow?: {
+    x?: number;
+    y?: number;
+  };
+};
+
+export type HistoryEntry = {
+  /** log cursor; pass the largest seen as `since` */
+  seq: number;
+  /** board revision right after the entry (viewport/selection entries don't change it) */
+  rev: number;
+  /** ISO 8601 time */
+  at: string;
+  /** `user`, `system`, or `agent:<terminal tile id>` */
+  actor: string;
+  kind: "created" | "updated" | "deleted" | "viewport" | "selection" | "follow" | "restart";
+  /** the object (for follow: the follow tile) */
+  id?: Id;
+  type?: ObjectType;
+  /** one human-readable line */
+  summary: string;
+  viewport?: Viewport;
+  selection?: Id[];
+};
+
 export type SystemPingParams = Record<string, unknown>;
 export type SystemPingResult = {
   version: number;
@@ -250,6 +297,27 @@ export type BoardGetResult = {
   revision: number;
   objects: CanvasObject[];
   changed?: Id[];
+};
+
+export type BoardHistoryParams = {
+  board?: Id;
+  /** entries after this `seq` cursor, or after this ISO 8601 time */
+  since?: number | string;
+  /** newest entries returned when more match */
+  limit?: number;
+  /** only these kinds */
+  kinds?: ("created" | "updated" | "deleted" | "viewport" | "selection" | "follow" | "restart")[];
+};
+export type BoardHistoryResult = {
+  board: Id;
+  /** newest `seq` in the log */
+  cursor: number;
+  /** oldest first */
+  entries: HistoryEntry[];
+  /** more entries matched than `limit`, or the ring buffer already dropped some after `since` */
+  truncated: boolean;
+  /** `since` is newer than this log: the app restarted, so every entry is returned */
+  restarted: boolean;
 };
 
 export type BoardListParams = Record<string, unknown>;
@@ -270,12 +338,11 @@ export type BoardExportResult = {
 
 export type ObjectGetParams = {
   id: Id;
-  as?: "raw" | "graph" | "image";
+  as?: "raw" | "graph";
 };
 export type ObjectGetResult = {
   object: CanvasObject;
   graph?: Record<string, unknown>;
-  pngBase64?: string;
 };
 
 export type ObjectCreateParams = {
@@ -496,16 +563,90 @@ export type FollowReportResult = Record<string, unknown>;
 export type ViewAttentionParams = {
   id: Id;
   message?: string;
+  /** remove this object's marker instead of raising it */
+  clear?: boolean;
 };
-export type ViewAttentionResult = Record<string, unknown>;
+export type ViewAttentionResult = {
+  /** the marked object (markers are keyed by object) */
+  id: Id;
+  /** a marker is showing after this call */
+  active: boolean;
+};
+
+export type ViewGetParams = {
+  board?: Id;
+};
+export type ViewGetResult = {
+  board: Id;
+  viewport: Viewport;
+  /** terminal that receives the tray and dictation */
+  promptTarget?: Id;
+  /** tile holding keyboard focus */
+  focused?: Id;
+  selection: Id[];
+  enteredGroup?: Id;
+  /** the window is at least partly visible on a displayed Space */
+  visible: boolean;
+};
+
+export type ViewRenderParams = {
+  board?: Id;
+  target: Id | Id[] | Frame;
+  /** pixels per canvas point; lowered to keep the image under 32 megapixels (the result says what was used) */
+  scale?: number;
+  /** id targets: render the whole content, not just the part inside the frame */
+  full?: boolean;
+  /** object types to leave out (e.g. ["terminal"]) */
+  exclude?: ObjectType[];
+  /** canvas points added around the target */
+  padding?: number;
+  /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths */
+  out?: string;
+  /** inline format when no `out` is given */
+  format?: "png" | "jpeg";
+  /** how long to wait for content (HTML pages, file reads) before drawing placeholders */
+  timeoutMs?: number;
+};
+export type ViewRenderResult = {
+  /** absolute path written (when `out` was given) */
+  path?: string;
+  /** encoded image (when no `out` was given) */
+  imageBase64?: string;
+  format: "png" | "jpeg";
+  /** pixels */
+  width: number;
+  /** pixels */
+  height: number;
+  /** canvas area the image covers: pixel (px, py) = canvas (x + px / scale, y + py / scale) */
+  canvasRect: Frame;
+  /** pixels per canvas point actually used */
+  scale: number;
+  /** every object drawn, bottom to top */
+  objects: RenderedObject[];
+};
 
 export type ViewSnapshotParams = {
   board?: Id;
+  /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths */
+  out?: string;
+  /** inline format when no `out` is given */
+  format?: "png" | "jpeg";
 };
 export type ViewSnapshotResult = {
-  pngBase64: string;
+  /** absolute path written (when `out` was given) */
+  path?: string;
+  /** encoded image (when no `out` was given) */
+  imageBase64?: string;
+  format: "png" | "jpeg";
+  /** pixels */
   width: number;
+  /** pixels */
   height: number;
+  viewport: Viewport;
+  /** image pixels per canvas point (backing scale × zoom); the canvas fills the image from its top-left: pixel (px, py) = canvas (viewport.rect.x + px / scale, viewport.rect.y + py / scale) */
+  scale: number;
+  /** objects at least partly visible, bottom to top (state is always rendered) */
+  objects: RenderedObject[];
 };
 
 export type EventsSubscribeParams = {
@@ -523,13 +664,15 @@ export interface CanvasApi {
   board: {
     /** Board manifest: all objects (props summarized for heavy types) plus a change cursor. Objects created or changed since `since` are flagged. */
     get(params?: BoardGetParams): Promise<BoardGetResult>;
+    /** Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, and app starts. Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry. */
+    history(params?: BoardHistoryParams): Promise<BoardHistoryResult>;
     /** Every stored board, open or not, including archived boards whose root directory is gone. */
     list(params?: BoardListParams): Promise<BoardListResult>;
     /** Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller. */
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
   object: {
-    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow; `as: image` returns a PNG crop as base64 (a tile's content, or the canvas region under a drawn object including the tiles and ink inside it). */
+    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`). The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
@@ -583,9 +726,13 @@ export interface CanvasApi {
     report(params: FollowReportParams): Promise<FollowReportResult>;
   };
   view: {
-    /** Raise an attention marker pointing at an object. Never moves the user's viewport. */
+    /** Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. The user seeing the object also clears it. Never moves the user's viewport. */
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
-    /** PNG of the board's window as the user sees it right now (viewport, tiles, tray). Terminal tiles are drawn from their session text. */
+    /** What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, and whether the window is visible on screen. */
+    get(params?: ViewGetParams): Promise<ViewGetResult>;
+    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML/code scroll height, code line width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. */
+    render(params: ViewRenderParams): Promise<ViewRenderResult>;
+    /** The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render. */
     snapshot(params?: ViewSnapshotParams): Promise<ViewSnapshotResult>;
   };
   events: {
@@ -594,67 +741,63 @@ export interface CanvasApi {
   };
 }
 
+/** Params a client fills from its tile (`caller`) and board when the call omits them, with the env var each defaults from. */
 export const ENV_DEFAULTS: Record<string, string> = {"caller":"CANVAS_TILE_ID","board":"CANVAS_BOARD_ID"};
 
-export function withEnv<T extends object>(params: T, keys: string[]): T {
-  const filled: Record<string, unknown> = { ...params };
-  for (const k of keys) {
-    const v = process.env[ENV_DEFAULTS[k]];
-    if (filled[k] === undefined && v) filled[k] = v;
-  }
-  return filled as T;
-}
-
-export function bindMethods(call: (method: string, params: object) => Promise<unknown>): CanvasApi {
+/** `call` receives the method's auto-filled param names (keys of ENV_DEFAULTS it accepts). */
+export function bindMethods(call: (method: string, params: object, envKeys: string[]) => Promise<unknown>): CanvasApi {
   return {
     system: {
-      ping: (params?: SystemPingParams) => call("system.ping", withEnv(params ?? {}, [])) as Promise<SystemPingResult>,
+      ping: (params?: SystemPingParams) => call("system.ping", params ?? {}, []) as Promise<SystemPingResult>,
     },
     board: {
-      get: (params?: BoardGetParams) => call("board.get", withEnv(params ?? {}, ["board"])) as Promise<BoardGetResult>,
-      list: (params?: BoardListParams) => call("board.list", withEnv(params ?? {}, [])) as Promise<BoardListResult>,
-      export: (params?: BoardExportParams) => call("board.export", withEnv(params ?? {}, ["board"])) as Promise<BoardExportResult>,
+      get: (params?: BoardGetParams) => call("board.get", params ?? {}, ["board"]) as Promise<BoardGetResult>,
+      history: (params?: BoardHistoryParams) => call("board.history", params ?? {}, ["board"]) as Promise<BoardHistoryResult>,
+      list: (params?: BoardListParams) => call("board.list", params ?? {}, []) as Promise<BoardListResult>,
+      export: (params?: BoardExportParams) => call("board.export", params ?? {}, ["board"]) as Promise<BoardExportResult>,
     },
     object: {
-      get: (params: ObjectGetParams) => call("object.get", withEnv(params ?? {}, [])) as Promise<ObjectGetResult>,
-      create: (params: ObjectCreateParams) => call("object.create", withEnv(params ?? {}, ["board","caller"])) as Promise<ObjectCreateResult>,
-      update: (params: ObjectUpdateParams) => call("object.update", withEnv(params ?? {}, ["caller"])) as Promise<ObjectUpdateResult>,
-      delete: (params: ObjectDeleteParams) => call("object.delete", withEnv(params ?? {}, ["caller"])) as Promise<ObjectDeleteResult>,
-      measure: (params: ObjectMeasureParams) => call("object.measure", withEnv(params ?? {}, ["board","caller"])) as Promise<ObjectMeasureResult>,
-      batch: (params: ObjectBatchParams) => call("object.batch", withEnv(params ?? {}, ["board","caller"])) as Promise<ObjectBatchResult>,
+      get: (params: ObjectGetParams) => call("object.get", params ?? {}, []) as Promise<ObjectGetResult>,
+      create: (params: ObjectCreateParams) => call("object.create", params ?? {}, ["board","caller"]) as Promise<ObjectCreateResult>,
+      update: (params: ObjectUpdateParams) => call("object.update", params ?? {}, ["caller"]) as Promise<ObjectUpdateResult>,
+      delete: (params: ObjectDeleteParams) => call("object.delete", params ?? {}, ["caller"]) as Promise<ObjectDeleteResult>,
+      measure: (params: ObjectMeasureParams) => call("object.measure", params ?? {}, ["board","caller"]) as Promise<ObjectMeasureResult>,
+      batch: (params: ObjectBatchParams) => call("object.batch", params ?? {}, ["board","caller"]) as Promise<ObjectBatchResult>,
     },
     layout: {
-      place: (params: LayoutPlaceParams) => call("layout.place", withEnv(params ?? {}, ["caller"])) as Promise<LayoutPlaceResult>,
-      stack: (params: LayoutStackParams) => call("layout.stack", withEnv(params ?? {}, ["caller"])) as Promise<LayoutStackResult>,
-      check: (params?: LayoutCheckParams) => call("layout.check", withEnv(params ?? {}, ["board","caller"])) as Promise<LayoutCheckResult>,
+      place: (params: LayoutPlaceParams) => call("layout.place", params ?? {}, ["caller"]) as Promise<LayoutPlaceResult>,
+      stack: (params: LayoutStackParams) => call("layout.stack", params ?? {}, ["caller"]) as Promise<LayoutStackResult>,
+      check: (params?: LayoutCheckParams) => call("layout.check", params ?? {}, ["board","caller"]) as Promise<LayoutCheckResult>,
     },
     tray: {
-      list: (params?: TrayListParams) => call("tray.list", withEnv(params ?? {}, ["board"])) as Promise<TrayListResult>,
-      stage: (params: TrayStageParams) => call("tray.stage", withEnv(params ?? {}, ["board"])) as Promise<TrayStageResult>,
-      unstage: (params: TrayUnstageParams) => call("tray.unstage", withEnv(params ?? {}, [])) as Promise<TrayUnstageResult>,
-      drain: (params?: TrayDrainParams) => call("tray.drain", withEnv(params ?? {}, ["board","caller"])) as Promise<TrayDrainResult>,
-      commit: (params: TrayCommitParams) => call("tray.commit", withEnv(params ?? {}, ["board"])) as Promise<TrayCommitResult>,
+      list: (params?: TrayListParams) => call("tray.list", params ?? {}, ["board"]) as Promise<TrayListResult>,
+      stage: (params: TrayStageParams) => call("tray.stage", params ?? {}, ["board"]) as Promise<TrayStageResult>,
+      unstage: (params: TrayUnstageParams) => call("tray.unstage", params ?? {}, []) as Promise<TrayUnstageResult>,
+      drain: (params?: TrayDrainParams) => call("tray.drain", params ?? {}, ["board","caller"]) as Promise<TrayDrainResult>,
+      commit: (params: TrayCommitParams) => call("tray.commit", params ?? {}, ["board"]) as Promise<TrayCommitResult>,
     },
     agent: {
-      report: (params: AgentReportParams) => call("agent.report", withEnv(params ?? {}, [])) as Promise<AgentReportResult>,
-      report_session: (params: AgentReportSessionParams) => call("agent.report_session", withEnv(params ?? {}, [])) as Promise<AgentReportSessionResult>,
-      release: (params: AgentReleaseParams) => call("agent.release", withEnv(params ?? {}, [])) as Promise<AgentReleaseResult>,
-      list: (params?: AgentListParams) => call("agent.list", withEnv(params ?? {}, [])) as Promise<AgentListResult>,
-      prompt: (params: AgentPromptParams) => call("agent.prompt", withEnv(params ?? {}, [])) as Promise<AgentPromptResult>,
-      wait: (params: AgentWaitParams) => call("agent.wait", withEnv(params ?? {}, [])) as Promise<AgentWaitResult>,
-      read: (params: AgentReadParams) => call("agent.read", withEnv(params ?? {}, [])) as Promise<AgentReadResult>,
+      report: (params: AgentReportParams) => call("agent.report", params ?? {}, []) as Promise<AgentReportResult>,
+      report_session: (params: AgentReportSessionParams) => call("agent.report_session", params ?? {}, []) as Promise<AgentReportSessionResult>,
+      release: (params: AgentReleaseParams) => call("agent.release", params ?? {}, []) as Promise<AgentReleaseResult>,
+      list: (params?: AgentListParams) => call("agent.list", params ?? {}, []) as Promise<AgentListResult>,
+      prompt: (params: AgentPromptParams) => call("agent.prompt", params ?? {}, []) as Promise<AgentPromptResult>,
+      wait: (params: AgentWaitParams) => call("agent.wait", params ?? {}, []) as Promise<AgentWaitResult>,
+      read: (params: AgentReadParams) => call("agent.read", params ?? {}, []) as Promise<AgentReadResult>,
     },
     follow: {
-      report: (params: FollowReportParams) => call("follow.report", withEnv(params ?? {}, [])) as Promise<FollowReportResult>,
+      report: (params: FollowReportParams) => call("follow.report", params ?? {}, []) as Promise<FollowReportResult>,
     },
     view: {
-      attention: (params: ViewAttentionParams) => call("view.attention", withEnv(params ?? {}, [])) as Promise<ViewAttentionResult>,
-      snapshot: (params?: ViewSnapshotParams) => call("view.snapshot", withEnv(params ?? {}, ["board"])) as Promise<ViewSnapshotResult>,
+      attention: (params: ViewAttentionParams) => call("view.attention", params ?? {}, []) as Promise<ViewAttentionResult>,
+      get: (params?: ViewGetParams) => call("view.get", params ?? {}, ["board"]) as Promise<ViewGetResult>,
+      render: (params: ViewRenderParams) => call("view.render", params ?? {}, ["board"]) as Promise<ViewRenderResult>,
+      snapshot: (params?: ViewSnapshotParams) => call("view.snapshot", params ?? {}, ["board"]) as Promise<ViewSnapshotResult>,
     },
     events: {
-      subscribe: (params?: EventsSubscribeParams) => call("events.subscribe", withEnv(params ?? {}, ["board"])) as Promise<EventsSubscribeResult>,
+      subscribe: (params?: EventsSubscribeParams) => call("events.subscribe", params ?? {}, ["board"]) as Promise<EventsSubscribeResult>,
     },
   };
 }
 
-export const METHODS = ["system.ping","board.get","board.list","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","board.get","board.history","board.list","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;

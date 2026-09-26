@@ -53,6 +53,11 @@ final class CardTile: NSView, TileContent {
 
     func setLive(_ live: Bool) {}
 
+    func render(_ request: TileRenderRequest) async -> TileRender {
+        let image = request.image(of: self)
+        return TileRender(image: image, contentSize: request.size, state: image == nil ? .failed : .rendered)
+    }
+
     func mentionTarget(at point: NSPoint) -> MentionTarget? { .object(object.id) }
 
     func outline(for target: MentionTarget) -> NSRect? { bounds }

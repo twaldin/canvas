@@ -73,12 +73,12 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
         guard let tile, message.frameInfo.isMainFrame, message.frameInfo.securityOrigin.protocol == HtmlKit.scheme,
-              message.webView != nil, message.webView === tile.webView else { return (nil, "not allowed") }
+              let source = message.webView, source === tile.webView || source === tile.renderWebView else { return (nil, "not allowed") }
         guard let body = message.body as? [String: Any], JSONSerialization.isValidJSONObject(body),
               let data = try? JSONSerialization.data(withJSONObject: body) else { return (nil, HtmlError.malformed("message must be an object").description) }
         do {
             let parsed = try HtmlMessage.parse(data)
-            let reply = try await tile.handle(parsed)
+            let reply = try await tile.handle(parsed, rendering: source === tile.renderWebView)
             let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reply), options: .fragmentsAllowed)
             return (object, nil)
         } catch let error as HtmlError {

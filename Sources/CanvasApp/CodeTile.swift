@@ -607,8 +607,8 @@ extension CodeTile {
     }
 
     func render(_ request: TileRenderRequest) async -> TileRender {
-        guard let document = await loadOffscreen() else {
-            return TileRender(image: nil, contentSize: request.size, state: .placeholder, reason: "the tile changed while loading")
+        guard let document = await loadOffscreen(), !Task.isCancelled else {
+            return .placeholder(request, Task.isCancelled ? "cancelled" : "the tile changed while loading")
         }
         let drawn = image(of: document, size: request.size, scale: request.scale, full: request.full, appearance: request.appearance)
         guard let image = drawn.image else { return TileRender(image: nil, contentSize: drawn.content, state: .failed, reason: "could not allocate the bitmap") }
@@ -625,11 +625,6 @@ extension CodeTile {
             guard let self, let document = await self.loadOffscreen() else { return deliver(nil) }
             deliver(self.image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image)
         }
-    }
-
-    func snapshot() -> NSImage? {
-        guard let document, showsCurrent else { return nil }
-        return image(of: document, size: bounds.size, scale: window?.backingScaleFactor ?? 2, full: false, appearance: effectiveAppearance).image
     }
 }
 

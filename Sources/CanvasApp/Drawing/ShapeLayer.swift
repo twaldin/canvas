@@ -72,8 +72,6 @@ final class ShapeLayer: NSView {
     private var avoiding: Set<ObjectID> = []
     /// Selection-drag preview from the scene: these drawn objects are painted offset.
     private var dragPreview: (ids: Set<ObjectID>, offset: NSSize) = ([], .zero)
-    /// Hides selection handles while rendering an object image.
-    var exporting = false
 
     var gesture: Gesture?
     var editor: ShapeEditing?
@@ -344,7 +342,25 @@ final class ShapeLayer: NSView {
             }
         }
         drawGesture(in: context)
-        if !exporting { drawHandles(in: context, dirtyRect: dirtyRect) }
+        drawHandles(in: context, dirtyRect: dirtyRect)
+    }
+
+    /// `view.render`: draws the committed drawn objects whose bounds meet `docRect` (document
+    /// coordinates; the context maps them) in paint order, without handles, gestures, or drag
+    /// previews, and returns what it drew.
+    func renderItems(in context: CGContext, docRect: NSRect, excluding excluded: Set<ObjectType>) -> [(object: CanvasObject, bounds: NSRect)] {
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.setLineWidth(DrawingGeometry.strokeWidth)
+        var drawn: [(object: CanvasObject, bounds: NSRect)] = []
+        for id in ordered {
+            guard let item = items[id], !excluded.contains(item.object.type), item.bounds.intersects(docRect) else { continue }
+            item.draw(in: context)
+            drawn.append((item.object, item.bounds))
+        }
+        return drawn
     }
 
     // MARK: Hit testing

@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { type Compositions, createCompositions } from "./compositions";
 import { bindMethods, type CanvasApi } from "./generated";
 
@@ -8,6 +10,8 @@ export * from "./compositions";
 export * from "./generated";
 
 export const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Canvas/canvas.sock");
+/** The app takes 5-10 s to restart; a request that never left waits this long for it. */
+export const RECONNECT_TIMEOUT_MS = 15_000;
 
 export class CanvasError extends Error {
   constructor(
@@ -20,7 +24,14 @@ export class CanvasError extends Error {
   }
 }
 
-type Pending = { resolve: (value: unknown) => void; reject: (error: unknown) => void; timer?: ReturnType<typeof setTimeout> };
+/** Connecting or writing failed before the request left, so it is safe to send again. */
+class NotSent extends Error {}
+
+/** `end`: the connection's byte count once this request's line (newline last) is queued. */
+type Pending = { method: string; resolve: (value: unknown) => void; reject: (error: unknown) => void; timer?: NodeJS.Timeout; end: number };
+
+/** `queued`: bytes handed to the socket so far; minus `socket.writableLength` it is what really left. */
+type Connection = { socket: Socket; pending: Map<string, Pending>; buffer: string; queued: number; closed: boolean };
 
 type WireMessage = {
   id?: string;
@@ -32,12 +43,30 @@ type WireMessage = {
 };
 
 export type CanvasClientOptions = {
+  /** Default: CANVAS_SOCKET, else the default socket if it exists; otherwise the constructor throws `unavailable`. */
   socketPath?: string;
+  /** Filled in as `caller` when a method takes it and the call omits it. Default: CANVAS_TILE_ID. */
+  tile?: string;
+  /** Filled in as `board` when a method takes it and the call omits it. Default: CANVAS_BOARD_ID. */
+  board?: string;
   /** Per-call timeout. Omit for none (agent.wait can legitimately block for minutes). */
   timeoutMs?: number;
+  /** How long a call whose request was not sent waits for the socket to come back (app restart). Default 15 s. */
+  reconnectTimeoutMs?: number;
   /** Where `compositions` looks; default `~/.canvas/compositions`, then the shipped `builtin_compositions/`. */
   compositionsDirs?: string[];
 };
+
+function resolveSocket(explicit: string | undefined): string {
+  const path = explicit || process.env.CANVAS_SOCKET || (existsSync(DEFAULT_SOCKET) ? DEFAULT_SOCKET : undefined);
+  if (path) return path;
+  throw new CanvasError(
+    "unavailable",
+    `CANVAS_SOCKET is unset and the default socket ${DEFAULT_SOCKET} does not exist, so this process has no Canvas connection (it did not inherit the terminal tile's environment). ` +
+      "In the Canvas terminal run `echo $CANVAS_SOCKET $CANVAS_TILE_ID $CANVAS_BOARD_ID`, then pass those values: " +
+      "`new CanvasClient({ socketPath, tile, board })` (Python: `canvas_sdk.connect(socket=..., tile=..., board=...)`; CLI: export the three variables).",
+  );
+}
 
 /** Split a newline-delimited JSON stream into messages, keeping any partial trailing line. */
 function drainLines(buffer: string, onMessage: (message: WireMessage) => void): string {
@@ -52,23 +81,27 @@ function drainLines(buffer: string, onMessage: (message: WireMessage) => void): 
   return rest;
 }
 
-/** One persistent connection to the Canvas API socket. */
+/** One persistent connection to the Canvas API socket; the next call reconnects after an app restart. */
 export class CanvasClient {
   readonly socketPath: string;
+  readonly tileId: string | undefined;
+  readonly boardId: string | undefined;
   readonly api: CanvasApi;
   readonly #timeoutMs: number | undefined;
+  readonly #reconnectTimeoutMs: number;
   readonly #compositionsDirs: string[] | undefined;
   #compositions: Compositions | undefined;
-  #socket: Promise<Socket> | undefined;
-  #buffer = "";
+  #connection: Promise<Connection> | undefined;
   #nextId = 0;
-  readonly #pending = new Map<string, Pending>();
 
   constructor(options: CanvasClientOptions = {}) {
-    this.socketPath = options.socketPath ?? process.env.CANVAS_SOCKET ?? DEFAULT_SOCKET;
+    this.socketPath = resolveSocket(options.socketPath);
+    this.tileId = options.tile || process.env.CANVAS_TILE_ID || undefined;
+    this.boardId = options.board || process.env.CANVAS_BOARD_ID || undefined;
     this.#timeoutMs = options.timeoutMs;
+    this.#reconnectTimeoutMs = options.reconnectTimeoutMs ?? RECONNECT_TIMEOUT_MS;
     this.#compositionsDirs = options.compositionsDirs;
-    this.api = bindMethods((method, params) => this.call(method, params));
+    this.api = bindMethods((method, params, envKeys) => this.call(method, params, envKeys));
   }
 
   /** Reusable helpers, loaded on first access: `client.compositions.grid.arrange(ids)`. */
@@ -77,79 +110,129 @@ export class CanvasClient {
     return this.#compositions;
   }
 
-  async call(method: string, params: object): Promise<unknown> {
-    const socket = await this.#connect();
-    const id = String(++this.#nextId);
-    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
-    const pending: Pending = { resolve, reject };
-    if (this.#timeoutMs !== undefined) {
-      pending.timer = setTimeout(() => {
-        this.#pending.delete(id);
-        reject(new CanvasError("timeout", `${method} timed out after ${this.#timeoutMs}ms`));
-      }, this.#timeoutMs);
+  /** Send one request. `envKeys` (e.g. ["caller", "board"]) are filled from this client when omitted; a relative `out` resolves against the cwd. */
+  async call(method: string, params: object, envKeys: readonly string[] = []): Promise<unknown> {
+    const filled: Record<string, unknown> = { ...params };
+    const defaults: Record<string, string | undefined> = { caller: this.tileId, board: this.boardId };
+    for (const key of envKeys) filled[key] ??= defaults[key];
+    if (typeof filled.out === "string") filled.out = resolve(filled.out.replace(/^~(?=\/|$)/, homedir()));
+    try {
+      return await this.#send(method, filled, 0);
+    } catch (error) {
+      if (!(error instanceof NotSent)) throw error;
     }
-    this.#pending.set(id, pending);
-    socket.write(`${JSON.stringify({ id, method, params })}\n`);
-    return promise;
+    // Stale connection or the app is restarting: nothing was delivered, so send once more.
+    try {
+      return await this.#send(method, filled, this.#reconnectTimeoutMs);
+    } catch (error) {
+      throw error instanceof NotSent ? new CanvasError("unavailable", `${error.message} (${method} was not sent)`) : error;
+    }
   }
 
   close(): void {
-    void this.#socket?.then((s) => s.end());
-    this.#socket = undefined;
+    const connection = this.#connection;
+    this.#connection = undefined;
+    void connection?.then(
+      (c) => c.socket.end(),
+      () => undefined,
+    );
   }
 
-  #connect(): Promise<Socket> {
-    if (this.#socket) return this.#socket;
-    const { promise, resolve, reject } = Promise.withResolvers<Socket>();
-    const socket = connect(this.socketPath);
-    socket.setEncoding("utf8");
-    socket.once("connect", () => resolve(socket));
-    socket.once("error", (error) => {
-      this.#socket = undefined;
-      const failure = new CanvasError("unavailable", `Canvas socket ${this.socketPath}: ${error.message}`);
-      reject(failure);
-      this.#failAll(failure);
+  async #send(method: string, params: object, waitMs: number): Promise<unknown> {
+    const connection = await this.#connect(waitMs);
+    const id = String(++this.#nextId);
+    const line = `${JSON.stringify({ id, method, params })}\n`;
+    connection.queued += Buffer.byteLength(line);
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    connection.pending.set(id, { method, resolve, reject, end: connection.queued });
+    if (this.#timeoutMs !== undefined) {
+      connection.pending.get(id)!.timer = setTimeout(() => fail(connection, id, new CanvasError("timeout", `${method} timed out after ${this.#timeoutMs}ms`)), this.#timeoutMs);
+    }
+    connection.socket.write(line, (error) => {
+      if (error) fail(connection, id, new NotSent(`Canvas socket ${this.socketPath}: ${error.message}`));
     });
-    socket.on("close", () => {
-      this.#socket = undefined;
-      this.#failAll(new CanvasError("closed", "Canvas socket closed"));
-    });
-    socket.on("data", (chunk: string) => {
-      this.#buffer = drainLines(this.#buffer + chunk, (message) => this.#settle(message));
-    });
-    this.#socket = promise;
     return promise;
   }
 
-  #settle(message: WireMessage): void {
-    const pending = message.id === undefined ? undefined : this.#pending.get(message.id);
-    if (!pending) return;
-    this.#pending.delete(message.id!);
-    clearTimeout(pending.timer);
-    if (message.ok) pending.resolve(message.result);
-    else pending.reject(new CanvasError(message.error?.code ?? "internal", message.error?.message ?? "unknown error", message.error?.data));
+  /** The open connection, or a new one; each caller chains on the previous attempt so concurrent calls share it. */
+  #connect(waitMs: number): Promise<Connection> {
+    this.#connection = this.#connection?.then((c) => (c.closed ? this.#open(waitMs) : c), () => this.#open(waitMs)) ?? this.#open(waitMs);
+    return this.#connection;
   }
 
-  #failAll(error: unknown): void {
-    for (const [id, pending] of this.#pending) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-      this.#pending.delete(id);
+  async #open(waitMs: number): Promise<Connection> {
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      try {
+        return await this.#dial();
+      } catch (error) {
+        if (Date.now() >= deadline) {
+          throw new NotSent(`Canvas socket ${this.socketPath}: ${(error as Error).message}${waitMs ? ` after waiting ${waitMs / 1000}s for the app` : ""}`);
+        }
+        await sleep(200);
+      }
     }
   }
+
+  #dial(): Promise<Connection> {
+    const { promise, resolve, reject } = Promise.withResolvers<Connection>();
+    const socket = connect(this.socketPath);
+    const connection: Connection = { socket, pending: new Map(), buffer: "", queued: 0, closed: false };
+    socket.setEncoding("utf8");
+    // Before `connect` this fails the dial; afterwards `close` follows and fails the pending calls.
+    socket.on("error", reject);
+    socket.once("connect", () => resolve(connection));
+    // The app hung up. Bun can leave a socket with unflushed writes half-open after `end`, so close it.
+    socket.on("end", () => socket.destroy());
+    socket.on("close", () => {
+      connection.closed = true;
+      // Requests are newline-framed: one whose newline never left was not read by the app, so it
+      // is safe to send again; one that fully left may have applied.
+      const flushed = connection.queued - socket.writableLength;
+      for (const [id, pending] of connection.pending) {
+        fail(
+          connection,
+          id,
+          pending.end > flushed
+            ? new NotSent(`Canvas socket ${this.socketPath}: connection closed`)
+            : new CanvasError("unavailable", `Canvas connection lost after sending ${pending.method}; it may or may not have applied — re-read before retrying`),
+        );
+      }
+    });
+    socket.on("data", (chunk: string) => {
+      connection.buffer = drainLines(connection.buffer + chunk, (message) => {
+        const pending = message.id === undefined ? undefined : connection.pending.get(message.id);
+        if (!pending) return;
+        connection.pending.delete(message.id!);
+        clearTimeout(pending.timer);
+        if (message.ok) pending.resolve(message.result);
+        else pending.reject(new CanvasError(message.error?.code ?? "internal", message.error?.message ?? "unknown error", message.error?.data));
+      });
+    });
+    return promise;
+  }
+}
+
+function fail(connection: Connection, id: string, error: Error): void {
+  const pending = connection.pending.get(id);
+  if (!pending) return;
+  connection.pending.delete(id);
+  clearTimeout(pending.timer);
+  pending.reject(error);
 }
 
 /** Open a dedicated connection that streams `{ event, data }` messages to `onEvent`. Returns a closer. */
 export async function subscribe(
   onEvent: (event: string, data: unknown) => void,
   params: { board?: string; events?: string[] } = {},
-  socketPath = process.env.CANVAS_SOCKET ?? DEFAULT_SOCKET,
+  socketPath?: string,
 ): Promise<() => void> {
-  const socket = connect(socketPath);
+  const path = resolveSocket(socketPath);
+  const socket = connect(path);
   socket.setEncoding("utf8");
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   socket.once("connect", () => resolve());
-  socket.once("error", reject);
+  socket.on("error", (error) => reject(new CanvasError("unavailable", `Canvas socket ${path}: ${error.message}`)));
   await promise;
   let buffer = "";
   socket.on("data", (chunk: string) => {

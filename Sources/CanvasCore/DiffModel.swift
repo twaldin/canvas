@@ -70,10 +70,14 @@ public struct DiffHunk: Equatable, Sendable {
     public var original: Range<Int> { mappings.first!.original.lowerBound..<mappings.last!.original.upperBound }
     public var modified: Range<Int> { mappings.first!.modified.lowerBound..<mappings.last!.modified.upperBound }
 
+    /// Whether every change in the hunk only removes lines (its new-side span, if any, is
+    /// unchanged lines between deletions).
+    public var removesOnly: Bool { mappings.allSatisfy(\.modified.isEmpty) }
+
     /// Lines a mention of the whole hunk refers to: the new side, or the old side when the hunk
     /// only removes lines.
     public var mentionLines: (side: DiffSide, lines: LineRange) {
-        if modified.isEmpty {
+        if removesOnly {
             return (.old, LineRange(start: original.lowerBound, end: max(original.lowerBound, original.upperBound - 1)))
         }
         return (.new, LineRange(start: modified.lowerBound, end: modified.upperBound - 1))
@@ -105,7 +109,12 @@ public struct FileDiff: Sendable, Equatable {
         case missing
         /// Outside any git repository; `new` holds the file as source.
         case notRepository
+        /// Either side exceeds `GitDiffEngine.maxFileSize`.
         case tooLarge
+        /// A gitlink (submodule) in the base or on disk: not a text file.
+        case submodule
+        /// The file kept changing while it was being diffed; the next write reloads it.
+        case unstable
     }
 
     public var state: State
@@ -116,8 +125,11 @@ public struct FileDiff: Sendable, Equatable {
     public var old: SideText
     public var new: SideText
     public var hunks: [DiffHunk]
+    /// Top-level directory of the repository the file belongs to.
+    public var repository: String?
 
-    public init(state: State, base: String?, baseLabel: String?, old: SideText, new: SideText, hunks: [DiffHunk]) {
+    public init(state: State, base: String?, baseLabel: String?, old: SideText, new: SideText, hunks: [DiffHunk], repository: String? = nil) {
+        self.repository = repository
         self.state = state
         self.base = base
         self.baseLabel = baseLabel
@@ -131,29 +143,55 @@ public struct FileDiff: Sendable, Equatable {
     public var removedCount: Int { mappings.reduce(0) { $0 + $1.original.count } }
 }
 
-/// Parses `git diff -U0` output for one file.
+/// Parses `git diff -U0 --inter-hunk-context=0` output for one file. Lines are split on LF
+/// bytes, not Characters: a CRLF pair is one Character, and its CR belongs to the source line.
 public enum UnifiedDiff {
     public struct Parsed: Equatable, Sendable {
-        public var mappings: [LineRangeMapping]
-        /// Removed lines keyed by old line number, the only old-side text the patch carries.
-        public var removed: [Int: Substring]
-        public var binary: Bool
+        public var mappings: [LineRangeMapping] = []
+        /// Removed lines keyed by old line number (with any CR), the only old-side text the
+        /// patch carries.
+        public var removed: [Int: String] = [:]
+        /// `\ No newline at end of file` followed a removed line: the base's last line has none.
+        public var oldMissingFinalNewline = false
+        public var binary = false
+        /// The entry is a gitlink (mode 160000) on either side.
+        public var gitlink = false
     }
 
-    public static func parse(_ patch: String) -> Parsed {
-        var parsed = Parsed(mappings: [], removed: [:], binary: false)
+    public static func parse(_ patch: Data) -> Parsed {
+        var parsed = Parsed()
         var oldLine = 0
-        for line in patch.split(separator: "\n", omittingEmptySubsequences: false) {
-            if line.hasPrefix("@@") {
-                guard let mapping = mapping(fromHeader: line) else { continue }
-                parsed.mappings.append(mapping)
-                oldLine = mapping.original.lowerBound
-            } else if line.hasPrefix("-"), !parsed.mappings.isEmpty {
-                // Inside hunks every `-` line is a removal, even one whose text starts with `--`.
-                parsed.removed[oldLine] = line.dropFirst()
-                oldLine += 1
-            } else if line.hasPrefix("Binary files ") || line == "GIT binary patch" {
-                parsed.binary = true
+        var lastWasRemoval = false
+        patch.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+            let bytes = buffer.bindMemory(to: UInt8.self)
+            var start = 0
+            while start < bytes.count {
+                var end = start
+                while end < bytes.count, bytes[end] != 0x0A { end += 1 }
+                let line = UnsafeBufferPointer(rebasing: bytes[start..<end])
+                start = end + 1
+                guard let first = line.first else { continue }
+                switch first {
+                case UInt8(ascii: "@"):
+                    lastWasRemoval = false
+                    guard let mapping = mapping(fromHeader: Substring(decoding: line, as: UTF8.self)) else { continue }
+                    parsed.mappings.append(mapping)
+                    oldLine = mapping.original.lowerBound
+                case UInt8(ascii: "-") where !parsed.mappings.isEmpty:
+                    // Inside hunks every `-` line is a removal, even one whose text starts with `--`.
+                    parsed.removed[oldLine] = String(decoding: UnsafeBufferPointer(rebasing: line.dropFirst()), as: UTF8.self)
+                    oldLine += 1
+                    lastWasRemoval = true
+                case UInt8(ascii: "+") where !parsed.mappings.isEmpty:
+                    lastWasRemoval = false
+                case UInt8(ascii: "\\"):
+                    if lastWasRemoval { parsed.oldMissingFinalNewline = true }
+                default:
+                    guard parsed.mappings.isEmpty else { continue }
+                    let text = String(decoding: line, as: UTF8.self)
+                    if text.hasPrefix("Binary files ") || text == "GIT binary patch" { parsed.binary = true }
+                    if text.hasSuffix(" 160000") && (text.hasPrefix("index ") || text.contains(" mode 160000")) { parsed.gitlink = true }
+                }
             }
         }
         return parsed
@@ -162,14 +200,14 @@ public enum UnifiedDiff {
     /// `@@ -a[,b] +c[,d] @@`: a zero count means the range is empty and sits after line a/c.
     static func mapping(fromHeader header: Substring) -> LineRangeMapping? {
         let fields = header.split(separator: " ")
-        guard fields.count >= 3, fields[1].hasPrefix("-"), fields[2].hasPrefix("+"),
+        guard fields.count >= 3, fields[0] == "@@", fields[1].hasPrefix("-"), fields[2].hasPrefix("+"),
               let original = range(fields[1].dropFirst()), let modified = range(fields[2].dropFirst()) else { return nil }
         return LineRangeMapping(original: original, modified: modified)
     }
 
     private static func range(_ field: Substring) -> Range<Int>? {
         let parts = field.split(separator: ",")
-        guard let start = Int(parts[0]) else { return nil }
+        guard let first = parts.first, let start = Int(first) else { return nil }
         let count = parts.count > 1 ? Int(parts[1]) ?? 1 : 1
         let lower = count == 0 ? start + 1 : start
         return lower..<(lower + count)
@@ -189,28 +227,37 @@ public enum UnifiedDiff {
     }
 
     /// The base version of the file: the new lines with each change's removed lines put back.
-    /// Unchanged runs are copied as whole spans, not line by line.
-    public static func reconstructOld(new: SideText, mappings: [LineRangeMapping], removed: [Int: Substring]) -> SideText {
+    /// Unchanged runs are copied as whole spans with their own line endings. Returns nil when the
+    /// patch doesn't describe `new` (e.g. the file changed after it was read).
+    public static func reconstructOld(new: SideText, parsed: Parsed) -> SideText? {
         let source = new.text as NSString
         let out = NSMutableString(capacity: new.utf16Count)
-        func copyLines(_ lines: Range<Int>) {
-            let lines = lines.clamped(to: 1..<(new.lineCount + 1))
-            guard !lines.isEmpty else { return }
-            let start = new.lineStarts[lines.lowerBound - 1]
-            let end = lines.upperBound <= new.lineCount ? new.lineStarts[lines.upperBound - 1] : new.utf16Count
-            out.append(source.substring(with: NSRange(location: start, length: end - start)))
-            if lines.upperBound > new.lineCount, new.lineEnds[new.lineCount - 1] == new.utf16Count { out.append("\n") }
-        }
         var next = 1
-        for mapping in mappings {
-            copyLines(next..<mapping.modified.lowerBound)
+        var nextOld = 1
+        for mapping in parsed.mappings {
+            let unchanged = mapping.modified.lowerBound - next
+            guard unchanged >= 0, mapping.original.lowerBound - nextOld == unchanged,
+                  mapping.modified.upperBound - 1 <= new.lineCount else { return nil }
+            if unchanged > 0 {
+                let start = new.lineStarts[next - 1]
+                let end = new.lineStarts[mapping.modified.lowerBound - 1]
+                out.append(source.substring(with: NSRange(location: start, length: end - start)))
+            }
             for old in mapping.original {
-                out.append(String(removed[old] ?? ""))
+                guard let line = parsed.removed[old] else { return nil }
+                out.append(line)
                 out.append("\n")
             }
             next = mapping.modified.upperBound
+            nextOld = mapping.original.upperBound
         }
-        copyLines(next..<(new.lineCount + 1))
+        guard next <= new.lineCount + 1 else { return nil }
+        if next <= new.lineCount {
+            let start = new.lineStarts[next - 1]
+            out.append(source.substring(with: NSRange(location: start, length: new.utf16Count - start)))
+        } else if parsed.oldMissingFinalNewline, out.hasSuffix("\n") {
+            out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1))
+        }
         return SideText(out as String)
     }
 }

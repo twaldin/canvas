@@ -136,8 +136,11 @@ export type MentionTarget = {
   object: Id;
   path: string;
   lines: LineRange;
+  /** diff side of the lines; absent outside a diff */
   side?: "old" | "new";
   symbol?: string;
+  /** with side old or absent: the commit whose version of path holds the lines (deleted diff rows, pinned excerpts); with side new: the diff base. Absent: the working tree */
+  commit?: string;
 } | {
   kind: "dom";
   object: Id;

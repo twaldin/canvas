@@ -3,6 +3,8 @@ import Foundation
 public enum GitError: Error, Equatable, Sendable {
     case launch(String)
     case failed(status: Int32, stderr: String)
+    /// stdout passed the caller's `maxOutput`; git was stopped.
+    case outputTooLarge
 }
 
 /// Runs git with an app-wide cap on concurrent processes (docs/design.md, Performance). Every
@@ -19,23 +21,17 @@ public actor GitRunner {
     }
 
     /// stdout of `git <args>` run in `directory`. Exit codes outside `allowedStatus` throw
-    /// `GitError.failed` with git's stderr.
-    public func run(_ args: [String], in directory: URL, allowedStatus: Set<Int32> = [0]) async throws -> Data {
+    /// `GitError.failed` with git's stderr; more than `maxOutput` bytes of stdout stops git and
+    /// throws `GitError.outputTooLarge`.
+    public func run(_ args: [String], in directory: URL, allowedStatus: Set<Int32> = [0], maxOutput: Int = .max) async throws -> Data {
         await acquire()
         defer { release() }
-        let result = try await Self.spawn(args, in: directory)
+        let result = try await Self.spawn(args, in: directory, maxOutput: maxOutput)
         guard allowedStatus.contains(result.status) else {
             let message = String(decoding: result.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             throw GitError.failed(status: result.status, stderr: message)
         }
         return result.stdout
-    }
-
-    /// Exit status only, for probes such as `cat-file -e`.
-    public func status(_ args: [String], in directory: URL) async throws -> Int32 {
-        await acquire()
-        defer { release() }
-        return try await Self.spawn(args, in: directory).status
     }
 
     private func acquire() async {
@@ -59,7 +55,7 @@ public actor GitRunner {
         var stderr = Data()
     }
 
-    private static func spawn(_ args: [String], in directory: URL) async throws -> (status: Int32, stdout: Data, stderr: Data) {
+    private static func spawn(_ args: [String], in directory: URL, maxOutput: Int) async throws -> (status: Int32, stdout: Data, stderr: Data) {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
@@ -91,11 +87,34 @@ public actor GitRunner {
                     output.stderr = stderr.fileHandleForReading.readDataToEndOfFile()
                     group.leave()
                 }
-                let data = stdout.fileHandleForReading.readDataToEndOfFile()
+                var data = Data()
+                let reader = stdout.fileHandleForReading
+                while true {
+                    let chunk = reader.availableData
+                    if chunk.isEmpty { break }
+                    data.append(chunk)
+                    if data.count > maxOutput {
+                        process.terminate()
+                        _ = reader.readDataToEndOfFile()
+                        group.wait()
+                        process.waitUntilExit()
+                        continuation.resume(throwing: GitError.outputTooLarge)
+                        return
+                    }
+                }
                 group.wait()
                 process.waitUntilExit()
                 continuation.resume(returning: (process.terminationStatus, data, output.stderr))
             }
         }
+    }
+}
+
+/// Runs blocking work (file reads, parsing large files) on GCD rather than a Swift concurrency
+/// thread: the cooperative pool is only as wide as the core count, and parking it starves the
+/// socket servers' request tasks.
+public func offPool<T: Sendable>(qos: DispatchQoS.QoSClass = .userInitiated, _ work: @escaping @Sendable () -> T) async -> T {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.global(qos: qos).async { continuation.resume(returning: work()) }
     }
 }

@@ -13,14 +13,16 @@ final class CodeTile: NSView, TileContent {
     private let scroll = NSScrollView()
     private let text: CodeTextView
 
-    /// The loaded diff and what was rendered from it.
-    private var diff: FileDiff?
-    private var rendered: Rendered?
+    /// What the text view shows: one file, mode, diff, and its rendering, installed together
+    /// so mentions and actions always describe the rows on screen.
+    private var shown: Shown?
     private var isLive = true
     private var needsLoad = true
     private var loadTask: Task<Void, Never>?
-    private var loadGeneration = 0
-    private var renderGeneration = 0
+    /// Bumped by every load; only the newest load installs its result.
+    private var generation = 0
+    /// Repository this tile holds in the git engine while live (bases watched).
+    private var heldRepository: String?
     private var pendingScrollRow: Int?
     private var watcher: DispatchSourceFileSystemObject?
     private var watchedPath: String?
@@ -29,9 +31,11 @@ final class CodeTile: NSView, TileContent {
     private var reloadWork: DispatchWorkItem?
     private var snapshotCover: NSImageView?
 
-    /// What the background render produced; the attributed text is built off the main thread
-    /// and handed over once.
-    private struct Rendered: @unchecked Sendable {
+    /// Built off the main thread and handed over once.
+    private struct Shown: @unchecked Sendable {
+        var path: String
+        var mode: DiffDisplay.Mode
+        var diff: FileDiff
         var display: DiffDisplay
         var old: SyntaxAnalysis
         var new: SyntaxAnalysis
@@ -75,6 +79,7 @@ final class CodeTile: NSView, TileContent {
     deinit {
         if watcherSuspended { watcher?.resume() }
         watcher?.cancel()
+        if let heldRepository { Task { await GitDiffEngine.shared.release(heldRepository) } }
     }
 
     /// Posted off the main thread by the git engine when a commit, checkout, or fetch moved a base.
@@ -108,70 +113,65 @@ final class CodeTile: NSView, TileContent {
     func update(_ object: CanvasObject) {
         let old = self.object
         self.object = object
-        let props = { (key: String) in old.props[key] != object.props[key] }
+        let changed = { (key: String) in old.props[key] != object.props[key] }
         refreshHeader()
-        if props("path") || props("diffBase") {
+        if changed("path") || changed("diffBase") || changed("mode") {
             load()
-        } else if props("mode") {
-            render()
-        } else if props("range") {
+        } else if changed("range") {
             // Follow re-aims that only move the range reuse the loaded diff.
             showRange()
         }
     }
 
+    /// Whether the rows on screen are the file and mode the object asks for; while a reload
+    /// changes either, mentions and navigation wait for it.
+    private var showsCurrent: Bool { shown.map { $0.path == path && $0.mode == mode } ?? false }
+
     // MARK: Loading
 
-    /// Diff the file against its base (git, off the main thread) and render it. Deferred until
-    /// the tile is live.
+    /// Diff the file against its base (git, off the main thread), render it off the main thread,
+    /// and install both at once. Deferred until the tile is live.
     private func load() {
         guard isLive else {
             needsLoad = true
             return
         }
         needsLoad = false
+        let path = self.path
         let url = board.absoluteURL(path)
         watch(url)
         let base = diffBase
-        loadGeneration += 1
-        let current = loadGeneration
+        let mode = self.mode
+        generation += 1
+        let current = generation
         loadTask?.cancel()
         loadTask = Task { [weak self] in
-            let diff = await GitDiffEngine.shared.diff(file: url, base: base)
-            guard let self, !Task.isCancelled, current == self.loadGeneration else { return }
-            self.loadTask = nil
-            self.diff = diff
-            if let sha = diff.base {
-                self.board.setDiffContext(.init(base: sha, old: diff.old), for: self.object.id)
+            let engine = GitDiffEngine.shared
+            let held = await engine.retain(containing: url)
+            let diff = await engine.diff(file: url, base: base)
+            let shown = await offPool { Self.render(diff, path: path, mode: mode) }
+            guard let self, !Task.isCancelled, current == self.generation, self.isLive else {
+                if let held { await engine.release(held) }
+                return
             }
-            self.render()
+            self.loadTask = nil
+            if let previous = self.heldRepository { Task { await engine.release(previous) } }
+            self.heldRepository = held
+            self.install(shown)
         }
     }
 
-    /// Rebuild the display (mode switch or new diff): syntax, rows, and attributes off-main.
-    private func render() {
-        guard let diff else { return }
-        let mode = self.mode
+    nonisolated private static func render(_ diff: FileDiff, path: String, mode: DiffDisplay.Mode) -> Shown {
         let language = SyntaxLanguage(path: path)
-        renderGeneration += 1
-        let current = renderGeneration
-        Task { [weak self] in
-            let rendered = await Task.detached(priority: .userInitiated) { Self.render(diff, mode: mode, language: language) }.value
-            guard let self, current == self.renderGeneration else { return }
-            self.apply(rendered)
-        }
-    }
-
-    nonisolated private static func render(_ diff: FileDiff, mode: DiffDisplay.Mode, language: SyntaxLanguage?) -> Rendered {
         let showsOld = diff.state == .deleted || (mode == .diff && diff.state == .modified)
         let new = language.map { Syntax.analyze(diff.new.text, language: $0) } ?? .empty
         let old = language.flatMap { showsOld ? Syntax.analyze(diff.old.text, language: $0) : nil } ?? .empty
         let titles: [String?] = diff.hunks.map { hunk in
-            hunk.modified.isEmpty ? old.enclosingSymbol(line: hunk.original.lowerBound) : new.enclosingSymbol(line: hunk.modified.lowerBound)
+            hunk.removesOnly ? old.enclosingSymbol(line: hunk.original.lowerBound) : new.enclosingSymbol(line: hunk.modified.lowerBound)
         }
         let display = DiffDisplay(diff, mode: mode, hunkTitles: titles)
         let spans = display.place(old: old.spans, new: new.spans, diff: diff)
-        return Rendered(display: display, old: old, new: new, attributed: attributed(display, spans: spans))
+        return Shown(path: path, mode: mode, diff: diff, display: display, old: old, new: new, attributed: attributed(display, spans: spans))
     }
 
     nonisolated private static func attributed(_ display: DiffDisplay, spans: [SyntaxSpan]) -> NSAttributedString {
@@ -199,13 +199,13 @@ final class CodeTile: NSView, TileContent {
 // MARK: Presentation
 
 extension CodeTile {
-    private func apply(_ rendered: Rendered) {
-        // Reloads of a file without a range keep the reader's place.
-        let keepScroll = self.rendered != nil && range == nil ? scroll.contentView.bounds.origin : nil
+    private func install(_ shown: Shown) {
+        // Reloads of the same file without a range keep the reader's place.
+        let keepScroll = self.shown?.path == shown.path && range == nil ? scroll.contentView.bounds.origin : nil
         let keepRow = keepScroll.flatMap { text.row(at: $0) } ?? 0
-        self.rendered = rendered
-        text.textStorage?.setAttributedString(rendered.attributed)
-        text.display = rendered.display
+        self.shown = shown
+        text.textStorage?.setAttributedString(shown.attributed)
+        text.display = shown.display
         text.minSize = scroll.contentSize
         text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         refreshHeader()
@@ -220,15 +220,15 @@ extension CodeTile {
 
     /// Tint the object's range and bring it into view.
     private func showRange() {
-        guard let rendered, let diff else { return }
+        guard let shown, showsCurrent else { return }
         guard let range else {
             text.rangeRows = nil
             return
         }
         // Ranges are new-side lines; a deleted file only has old ones.
-        let side: DiffSide = diff.state == .deleted ? .old : .new
-        text.rangeRows = rendered.display.rows(for: range, side: side, hunks: [])
-        if let row = text.rangeRows?.lowerBound ?? rendered.display.row(showing: range.start, side: side) {
+        let side: DiffSide = shown.diff.state == .deleted ? .old : .new
+        text.rangeRows = shown.display.rows(for: range, side: side, hunks: [])
+        if let row = text.rangeRows?.lowerBound ?? shown.display.row(showing: range.start, side: side) {
             scroll(toRow: row)
         }
     }
@@ -251,7 +251,7 @@ extension CodeTile {
     }
 
     private func refreshHeader() {
-        let hunks = mode == .diff && !(diff?.hunks.isEmpty ?? true)
+        let hunks = showsCurrent && mode == .diff && !(shown?.diff.hunks.isEmpty ?? true)
         header.show(mode: mode, status: statusText, hunks: hunks, follow: followOf != nil)
         let history = (object.props["history"]?.array ?? []).compactMap { entry -> CodeHeaderBar.Location? in
             guard let path = entry["path"]?.string else { return nil }
@@ -264,7 +264,7 @@ extension CodeTile {
     }
 
     private var statusText: String {
-        guard let diff else { return "loading…" }
+        guard let diff = shown?.diff, showsCurrent else { return "loading…" }
         let base = diff.base.map { " · \(diff.baseLabel ?? "base") \($0.prefix(7))" } ?? diff.baseLabel.map { " · \($0)" } ?? ""
         switch diff.state {
         case .modified: return "+\(diff.addedCount) −\(diff.removedCount)\(base)"
@@ -275,6 +275,8 @@ extension CodeTile {
         case .missing: return "file not found: \(path)"
         case .notRepository: return "not in a git repository"
         case .tooLarge: return "file too large to show"
+        case .submodule: return "submodule (not a text file)"
+        case .unstable: return "file kept changing while diffing; waiting for the next write"
         }
     }
 
@@ -287,11 +289,12 @@ extension CodeTile {
 
     /// Scroll to the hunk after (or before) the one nearest the top of the view.
     private func jumpToHunk(forward: Bool) {
-        guard let display = rendered?.display, let diff, !diff.hunks.isEmpty else { return }
+        guard let shown, showsCurrent, !shown.diff.hunks.isEmpty else { return }
+        let display = shown.display
         let visibleTop = text.row(at: NSPoint(x: 0, y: scroll.contentView.bounds.minY + 1)) ?? 0
         // The view parks a jump target three rows below the top; measure from there.
         let anchor = visibleTop + 3
-        let headers = diff.hunks.indices.compactMap { display.headerRow(ofHunk: $0) }
+        let headers = shown.diff.hunks.indices.compactMap { display.headerRow(ofHunk: $0) }
         let target = forward ? headers.first { $0 > anchor } ?? headers.first : headers.last { $0 < anchor } ?? headers.last
         if let target { scroll(toRow: target) }
     }
@@ -311,18 +314,19 @@ extension CodeTile {
 
     /// Open nvim at the clicked line in a terminal tile beside this one.
     private func editHere(at point: NSPoint) {
-        let line = sourceLine(atTextPoint: point, preferring: .new) ?? range?.start ?? 1
+        guard let shown else { return }
+        let line = sourceLine(atTextPoint: point, in: shown.display) ?? range?.start ?? 1
         let size = Board.defaultSize(.terminal)
         let frame = board.place(width: size.w, height: size.h, near: object.id)
         board.create(type: .terminal, props: .object([
             "cwd": .string(board.root.path),
-            "command": .array(["nvim", "+\(line)", path].map(JSONValue.string)),
+            "command": .array(["nvim", "+\(line)", "--", shown.path].map(JSONValue.string)),
         ]), frame: frame)
     }
 
     /// New-side line of a row; deleted rows and headers map to the nearest following new line.
-    private func sourceLine(atTextPoint point: NSPoint, preferring side: DiffSide) -> Int? {
-        guard let display = rendered?.display, let row = text.row(at: point) else { return nil }
+    private func sourceLine(atTextPoint point: NSPoint, in display: DiffDisplay) -> Int? {
+        guard let row = text.row(at: point) else { return nil }
         for index in row..<display.rows.count {
             if let line = display.rows[index].newLine, display.rows[index].kind != .deleted { return line }
         }
@@ -363,7 +367,10 @@ extension CodeTile {
     private func scheduleReload() {
         reloadWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.load() }
+            MainActor.assumeIsolated {
+                self?.reloadWork = nil
+                self?.load()
+            }
         }
         reloadWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
@@ -383,48 +390,59 @@ extension CodeTile {
         } else {
             if !watcherSuspended { watcher?.suspend() }
             watcherSuspended = watcher != nil
+            // A cancelled load or a pending debounced reload must run when the tile comes back.
+            if loadTask != nil || reloadWork != nil { needsLoad = true }
             reloadWork?.cancel()
+            reloadWork = nil
             loadTask?.cancel()
-            // A cancelled load must run again when the tile comes back.
-            if loadTask != nil { needsLoad = true }
+            loadTask = nil
+            if let heldRepository {
+                Task { await GitDiffEngine.shared.release(heldRepository) }
+                self.heldRepository = nil
+                // Bases aren't watched while offscreen, so revalidate on return.
+                needsLoad = true
+            }
         }
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
-        guard let rendered, let diff, scroll.frame.contains(point) else { return nil }
-        let display = rendered.display
+        guard let shown, showsCurrent, scroll.frame.contains(point) else { return nil }
+        let display = shown.display
         let local = text.convert(point, from: self)
         let selection = text.selectedRange()
         if selection.length > 0, let row = text.row(at: local), let first = display.row(atOffset: selection.location),
            let last = display.row(atOffset: NSMaxRange(selection) - 1), (first...last).contains(row) {
-            return target(rows: first...last, display: display, rendered: rendered)
+            return target(rows: first...last, in: shown)
         }
         guard let row = text.row(at: local) else { return nil }
         if display.rows[row].kind == .header, let hunk = display.rows[row].hunk {
-            let mention = diff.hunks[hunk].mentionLines
-            return code(mention.lines, side: mention.side, rendered: rendered)
+            let mention = shown.diff.hunks[hunk].mentionLines
+            return code(mention.lines, side: mention.side, in: shown)
         }
-        return target(rows: row...row, display: display, rendered: rendered)
+        return target(rows: row...row, in: shown)
     }
 
     /// The lines a run of rows shows: new-side lines when there are any, else old-side ones.
-    private func target(rows: ClosedRange<Int>, display: DiffDisplay, rendered: Rendered) -> MentionTarget? {
-        let shown = rows.compactMap { display.rows[$0].sourceLine }
-        let side: DiffSide = shown.contains { $0.side == .new } ? .new : .old
-        let lines = shown.filter { $0.side == side }.map(\.line)
-        guard let first = lines.min(), let last = lines.max() else { return nil }
-        return code(LineRange(start: first, end: last), side: side, rendered: rendered)
+    private func target(rows: ClosedRange<Int>, in shown: Shown) -> MentionTarget? {
+        let lines = rows.compactMap { shown.display.rows[$0].sourceLine }
+        let side: DiffSide = lines.contains { $0.side == .new } ? .new : .old
+        let numbers = lines.filter { $0.side == side }.map(\.line)
+        guard let first = numbers.min(), let last = numbers.max() else { return nil }
+        return code(LineRange(start: first, end: last), side: side, in: shown)
     }
 
-    private func code(_ lines: LineRange, side: DiffSide, rendered: Rendered) -> MentionTarget {
-        let analysis = side == .old ? rendered.old : rendered.new
-        let showsDiff = mode == .diff && diff?.base != nil
-        return .code(object: object.id, path: path, lines: lines, side: showsDiff ? side.rawValue : nil, symbol: analysis.enclosingSymbol(line: lines.start))
+    /// In diff mode the mention carries its base commit, so the prompt can quote old-side lines
+    /// and name the base however the tile changes before the tray drains.
+    private func code(_ lines: LineRange, side: DiffSide, in shown: Shown) -> MentionTarget {
+        let analysis = side == .old ? shown.old : shown.new
+        let base = shown.mode == .diff ? shown.diff.base : nil
+        return .code(object: object.id, path: shown.path, lines: lines, side: base == nil ? nil : side.rawValue,
+                     symbol: analysis.enclosingSymbol(line: lines.start), commit: base)
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
-        guard case .code(_, _, let lines, let side, _) = target, let rendered, let diff,
-              let rows = rendered.display.rows(for: lines, side: side == DiffSide.old.rawValue ? .old : .new, hunks: diff.hunks),
+        guard case .code(_, let path, let lines, let side, _, _) = target, let shown, showsCurrent, path == shown.path,
+              let rows = shown.display.rows(for: lines, side: side == DiffSide.old.rawValue ? .old : .new, hunks: shown.diff.hunks),
               let frame = text.frame(ofRows: rows) else { return nil }
         return convert(frame, from: text).intersection(scroll.frame)
     }
@@ -465,7 +483,7 @@ extension CodeTile {
     /// 1-based line and 0-based UTF-16 column on the new side at a point in the text view;
     /// nil on deleted rows, hunk headers, and the gutter.
     func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)? {
-        guard let display = rendered?.display, let row = text.row(at: point),
+        guard let display = shown?.display, showsCurrent, let row = text.row(at: point),
               let shown = display.rows[row].sourceLine, shown.side == .new else { return nil }
         let index = text.characterIndexForInsertion(at: point)
         let lineRange = display.range(ofRow: row)
@@ -476,7 +494,7 @@ extension CodeTile {
 
     /// Scroll a new-side line into view.
     func reveal(line: Int) {
-        guard let row = rendered?.display.row(showing: line, side: .new) else { return }
+        guard showsCurrent, let row = shown?.display.row(showing: line, side: .new) else { return }
         scroll(toRow: row)
     }
 }

@@ -15,7 +15,7 @@ public enum MentionContext {
 
     public static func label(for target: MentionTarget, on board: Board) -> String {
         switch target {
-        case .code(_, let path, let lines, let side, let symbol):
+        case .code(_, let path, let lines, let side, let symbol, _):
             let range = lines.start == lines.end ? "\(lines.start)" : "\(lines.start)-\(lines.end)"
             let location = side == DiffSide.old.rawValue ? "\(path):\(range) (old)" : "\(path):\(range)"
             return symbol.map { "\(location) \($0)" } ?? location
@@ -31,20 +31,23 @@ public enum MentionContext {
         }
     }
 
-    public static func resolve(_ mention: Mention, index: Int, on board: Board) -> Resolved {
+    public static func resolve(_ mention: Mention, index: Int, on board: Board) async -> Resolved {
         let edited = mention.edited ? " (edited)" : ""
         var lines: [String] = []
         switch mention.target {
-        case .code(let object, let path, let range, let side, let symbol):
+        case .code(let object, let path, let range, let side, let symbol, let commit):
             let symbolText = symbol.map { " (symbol \($0))" } ?? ""
-            let diff = board.diffContexts[object]
-            lines.append("[\(index)] code \(path):\(range.start)-\(range.end)\(symbolText) · tile \(object)\(diffBase(of: object, on: board, side: side))\(edited)")
-            if side == DiffSide.old.rawValue {
-                lines.append(contentsOf: diff.map { excerpt($0.old, range) } ?? ["    (old side not loaded; open the tile to read it)"])
-            } else if let text = try? String(contentsOf: board.absoluteURL(path), encoding: .utf8) {
+            lines.append("[\(index)] code \(path):\(range.start)-\(range.end)\(symbolText) · tile \(object)\(provenance(of: object, side: side, commit: commit, on: board))\(edited)")
+            let url = board.absoluteURL(path)
+            if let commit, side != DiffSide.new.rawValue {
+                // The mention names its commit, so the excerpt never depends on what the tile
+                // shows now.
+                let text = await GitDiffEngine.shared.text(of: url, at: commit)
+                lines.append(contentsOf: text.map { excerpt($0, range) } ?? ["    (\(path) is not readable at \(commit.prefix(7)))"])
+            } else if let text = try? String(contentsOf: url, encoding: .utf8) {
                 lines.append(contentsOf: excerpt(SideText(text), range))
             } else {
-                lines.append("    (file unreadable: \(board.absoluteURL(path).path))")
+                lines.append("    (file unreadable: \(url.path))")
             }
         case .dom(let object, let url, let selector, let text):
             let textPart = text.map { " \"\(clip($0, 80))\"" } ?? ""
@@ -114,14 +117,15 @@ public enum MentionContext {
         }
     }
 
-    /// ` · diff vs merge-base 1a2b3c4` for code tiles showing a diff, plus which side the lines
-    /// are on when it is the old one.
-    static func diffBase(of object: ObjectID, on board: Board, side: String?) -> String {
-        guard let tile = board.objects[object], tile.type == .code, (tile.props["mode"]?.string ?? DiffDisplay.Mode.diff.rawValue) == DiffDisplay.Mode.diff.rawValue else { return "" }
-        let name = DiffBase(prop: tile.props["diffBase"]?.string).name
-        let sha = board.diffContexts[object].map { " " + String($0.base.prefix(7)) } ?? ""
-        let oldSide = side == DiffSide.old.rawValue ? ", old side" : ""
-        return " · diff vs \(name)\(sha)\(oldSide)"
+    /// Where the lines come from, from the mention alone: ` · diff vs merge-base 1a2b3c4` (plus
+    /// `, old side` for deleted rows), ` · at 1a2b3c4` for a pinned excerpt, nothing for the
+    /// working tree. The tile's `diffBase` only names the kind of base.
+    static func provenance(of object: ObjectID, side: String?, commit: String?, on board: Board) -> String {
+        guard let commit else { return side == DiffSide.old.rawValue ? " · old side of diff" : "" }
+        let sha = commit.prefix(7)
+        guard side != nil else { return " · at \(sha)" }
+        let kind = board.objects[object].map { $0.type == .code ? DiffBase(prop: $0.props["diffBase"]?.string).name + " " : "" } ?? ""
+        return " · diff vs \(kind)\(sha)\(side == DiffSide.old.rawValue ? ", old side" : "")"
     }
 
     /// The mentioned lines marked `>`, plus up to `contextLines` unmarked lines on each side while

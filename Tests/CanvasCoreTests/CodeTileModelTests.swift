@@ -94,22 +94,32 @@ struct CodeBoardTests {
         #expect(board.objects[follow.id]?.props["history"]?.array?.count == Board.followHistoryLimit)
     }
 
-    @Test func codeMentionsNameTheDiffBaseAndExcerptTheOldSide() throws {
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let board = Board(id: "brd_test", root: root)
-        try "fn new()\n".write(to: root.appendingPathComponent("lib.rs"), atomically: true, encoding: .utf8)
-        let tile = board.create(type: .code, props: .object(["path": .string("lib.rs"), "mode": .string("diff")]))
-        board.setDiffContext(.init(base: "1a2b3c4d5e6f", old: SideText("fn old()\nfn gone()\n")), for: tile.id)
-        try board.stage(.code(object: tile.id, path: "lib.rs", lines: LineRange(start: 2, end: 2), side: "old", symbol: nil))
-        try board.stage(.code(object: tile.id, path: "lib.rs", lines: LineRange(start: 1, end: 1), side: "new", symbol: nil))
-        let context = board.drain().context
-        #expect(context.contains("[1] code lib.rs:2-2 · tile \(tile.id) · diff vs merge-base 1a2b3c4, old side"))
-        #expect(context.contains("  > 2    fn gone()"), "old-side lines come from the base version")
-        #expect(context.contains("[2] code lib.rs:1-1 · tile \(tile.id) · diff vs merge-base 1a2b3c4\n"))
-        #expect(context.contains("  > 1    fn new()"))
+    @Test func stagedCodeMentionsResolveFromTheirOwnCommitNotTheTile() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("lib.rs", "fn old()\nfn gone()\n")
+        try await repo.write("other.rs", "fn unrelated()\n")
+        let base = try await repo.commit("base")
+        try await repo.write("lib.rs", "fn new()\n")
+        let board = Board(id: "brd_test", root: repo.root)
+        let tile = board.create(type: .code, props: .object(["path": .string("lib.rs"), "mode": .string("diff"), "diffBase": .string("merge-base")]))
+        try board.stage(.code(object: tile.id, path: "lib.rs", lines: LineRange(start: 2, end: 2), side: "old", symbol: nil, commit: base))
+        try board.stage(.code(object: tile.id, path: "lib.rs", lines: LineRange(start: 1, end: 1), side: "new", symbol: nil, commit: base))
+        try board.stage(.code(object: tile.id, path: "lib.rs", lines: LineRange(start: 1, end: 1), side: nil, symbol: nil, commit: base))
+        // The reusable tile moves on to another file in source mode before the prompt is sent.
+        try board.update(tile.id, props: .object(["path": .string("other.rs"), "mode": .string("source")]))
+
+        let context = await board.drain().context
+        let short = base.prefix(7)
+        #expect(context.contains("[1] code lib.rs:2-2 · tile \(tile.id) · diff vs merge-base \(short), old side"))
+        #expect(context.contains("  > 2    fn gone()"), "old-side lines come from the mention's commit")
+        #expect(context.contains("[2] code lib.rs:1-1 · tile \(tile.id) · diff vs merge-base \(short) (edited)"))
+        #expect(context.contains("  > 1    fn new()"), "new-side lines come from the working tree")
+        #expect(context.contains("[3] code lib.rs:1-1 · tile \(tile.id) · at \(short)"))
+        #expect(context.contains("  > 1    fn old()"), "a pinned excerpt reads the commit")
+        #expect(!context.contains("unrelated"))
 
         let source = board.create(type: .code, props: .object(["path": .string("lib.rs"), "mode": .string("source")]))
-        try board.stage(.code(object: source.id, path: "lib.rs", lines: LineRange(start: 1, end: 1), side: nil, symbol: nil))
-        #expect(!board.drain().context.contains("diff vs"), "source views have no diff base")
+        try board.stage(.code(object: source.id, path: "lib.rs", lines: LineRange(start: 1, end: 1)))
+        #expect(!(await board.drain().context.contains("diff vs")), "working-tree mentions name no base")
     }
 }

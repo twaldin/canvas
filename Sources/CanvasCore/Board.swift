@@ -143,7 +143,6 @@ public final class Board {
     public func delete(_ id: ObjectID) throws {
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
-        diffContexts.removeValue(forKey: id)
         revision += 1
         history.record(.deleted(removed))
         let before = tray.count
@@ -226,8 +225,12 @@ public final class Board {
 
     /// Resolve every staged mention at its current revision and return the prompt context.
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids.
-    public func drain(peek: Bool = false) -> (mentions: [MentionContext.Resolved], context: String) {
-        let resolved = tray.enumerated().map { MentionContext.resolve($0.element, index: $0.offset + 1, on: self) }
+    /// Old-side and pinned code excerpts are read from git, hence async.
+    public func drain(peek: Bool = false) async -> (mentions: [MentionContext.Resolved], context: String) {
+        var resolved: [MentionContext.Resolved] = []
+        for (index, mention) in tray.enumerated() {
+            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self))
+        }
         let context = MentionContext.render(resolved, board: self)
         if !peek { commit(resolved.map(\.id)) }
         return (resolved, context)
@@ -333,24 +336,6 @@ public final class Board {
         }
         onEvent?(.followUpdated(tile: tile, follow: follow.id))
         return follow
-    }
-
-    /// What a code tile last diffed against, recorded by the tile when its diff loads. Mention
-    /// context names the base and excerpts old-side lines from it; runtime only, not persisted.
-    public struct DiffContext: Sendable {
-        public var base: String
-        public var old: SideText
-
-        public init(base: String, old: SideText) {
-            self.base = base
-            self.old = old
-        }
-    }
-
-    public private(set) var diffContexts: [ObjectID: DiffContext] = [:]
-
-    public func setDiffContext(_ context: DiffContext?, for object: ObjectID) {
-        diffContexts[object] = context
     }
 
     /// Paths are stored relative to the board root when they live under it.

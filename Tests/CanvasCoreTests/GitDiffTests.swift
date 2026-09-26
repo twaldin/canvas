@@ -2,52 +2,67 @@ import Foundation
 import Testing
 @testable import CanvasCore
 
-/// A throwaway git repository in a temp directory.
-struct TempRepo {
+/// A throwaway git repository in a temp directory. Every fixture step runs on GCD: blocking a
+/// Swift task (Process, pipes, large writes) parks the cooperative pool the socket tests need.
+struct TempRepo: Sendable {
     let root: URL
 
-    init(branch: String = "main") throws {
+    init(branch: String = "main") async throws {
         root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-git-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try git("init", "-q", "-b", branch)
+        try await git("init", "-q", "-b", branch)
     }
 
-    init(cloning origin: TempRepo) throws {
+    init(cloning origin: TempRepo) async throws {
         root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-git-\(UUID().uuidString)")
-        _ = try TempRepo.run(["clone", "-q", origin.root.path, root.path], in: origin.root)
+        try await TempRepo.run(["clone", "-q", origin.root.path, root.path], in: origin.root)
     }
 
     @discardableResult
-    func git(_ args: String...) throws -> String {
-        try TempRepo.run(args, in: root)
+    func git(_ args: String...) async throws -> String {
+        try await TempRepo.run(args, in: root)
     }
 
-    static func run(_ args: [String], in directory: URL) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-c", "user.name=Canvas Tests", "-c", "user.email=tests@canvas.invalid", "-c", "commit.gpgsign=false"] + args
-        process.currentDirectoryURL = directory
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw GitError.failed(status: process.terminationStatus, stderr: args.joined(separator: " ")) }
-        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    @discardableResult
+    static func run(_ args: [String], in directory: URL) async throws -> String {
+        let result: Result<String, Error> = await offPool {
+            Result {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+                process.arguments = ["-c", "user.name=Canvas Tests", "-c", "user.email=tests@canvas.invalid", "-c", "commit.gpgsign=false"] + args
+                process.currentDirectoryURL = directory
+                let out = Pipe()
+                process.standardOutput = out
+                process.standardError = FileHandle.nullDevice
+                try process.run()
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                guard process.terminationStatus == 0 else { throw GitError.failed(status: process.terminationStatus, stderr: args.joined(separator: " ")) }
+                return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return try result.get()
     }
 
-    func write(_ path: String, _ text: String) throws {
+    func write(_ path: String, _ text: String) async throws {
+        try await writeData(path, Data(text.utf8))
+    }
+
+    func writeData(_ path: String, _ data: Data) async throws {
         let url = root.appendingPathComponent(path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try text.write(to: url, atomically: true, encoding: .utf8)
+        try await offPool {
+            Result {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url)
+            }
+        }.get()
     }
 
     @discardableResult
-    func commit(_ message: String) throws -> String {
-        try git("add", "-A")
-        try git("commit", "-q", "-m", message)
-        return try git("rev-parse", "HEAD")
+    func commit(_ message: String) async throws -> String {
+        try await git("add", "-A")
+        try await git("commit", "-q", "-m", message)
+        return try await git("rev-parse", "HEAD")
     }
 
     func url(_ path: String) -> URL { root.appendingPathComponent(path) }
@@ -59,62 +74,63 @@ func numbered(_ range: ClosedRange<Int>) -> String {
 
 struct GitBaseTests {
     @Test func mergeBaseUsesMainWhenThereIsNoRemote() async throws {
-        let repo = try TempRepo(branch: "main")
-        try repo.write("a.txt", numbered(1...3))
-        let fork = try repo.commit("base")
-        try repo.git("checkout", "-q", "-b", "feature")
-        try repo.write("a.txt", numbered(1...4))
-        try repo.commit("feature work")
+        let repo = try await TempRepo(branch: "main")
+        try await repo.write("a.txt", numbered(1...3))
+        let fork = try await repo.commit("base")
+        try await repo.git("checkout", "-q", "-b", "feature")
+        try await repo.write("a.txt", numbered(1...4))
+        try await repo.commit("feature work")
         let resolved = await GitDiffEngine(watchesRepositories: false).resolvedBase(for: repo.url("a.txt"), base: .mergeBase)
         #expect(resolved == .init(sha: fork, label: "merge-base with main"))
     }
 
     @Test func mergeBaseFallsBackToMaster() async throws {
-        let repo = try TempRepo(branch: "master")
-        try repo.write("a.txt", numbered(1...3))
-        let fork = try repo.commit("base")
-        try repo.git("checkout", "-q", "-b", "topic")
-        try repo.write("b.txt", "new\n")
-        try repo.commit("topic")
-        try repo.git("checkout", "-q", "master")
-        try repo.write("a.txt", numbered(1...5))
-        try repo.commit("master moved on")
-        try repo.git("checkout", "-q", "topic")
+        let repo = try await TempRepo(branch: "master")
+        try await repo.write("a.txt", numbered(1...3))
+        let fork = try await repo.commit("base")
+        try await repo.git("checkout", "-q", "-b", "topic")
+        try await repo.write("b.txt", "new\n")
+        try await repo.commit("topic")
+        try await repo.git("checkout", "-q", "master")
+        try await repo.write("a.txt", numbered(1...5))
+        try await repo.commit("master moved on")
+        try await repo.git("checkout", "-q", "topic")
         let resolved = await GitDiffEngine(watchesRepositories: false).resolvedBase(for: repo.url("b.txt"), base: .mergeBase)
         #expect(resolved == .init(sha: fork, label: "merge-base with master"))
     }
 
     @Test func originHeadWinsOverLocalBranches() async throws {
-        let origin = try TempRepo(branch: "trunk")
-        try origin.write("a.txt", numbered(1...3))
-        let shared = try origin.commit("shared")
-        let clone = try TempRepo(cloning: origin)
+        let origin = try await TempRepo(branch: "trunk")
+        try await origin.write("a.txt", numbered(1...3))
+        let shared = try await origin.commit("shared")
+        let clone = try await TempRepo(cloning: origin)
         // A local `main` that diverged from the remote default branch must not be the base.
-        try clone.git("checkout", "-q", "-b", "main")
-        try clone.write("a.txt", numbered(1...9))
-        try clone.commit("unrelated local main")
-        try clone.git("checkout", "-q", "-b", "feature", "origin/trunk")
-        try clone.write("b.txt", "feature\n")
-        try clone.commit("feature")
+        try await clone.git("checkout", "-q", "-b", "main")
+        try await clone.write("a.txt", numbered(1...9))
+        try await clone.commit("unrelated local main")
+        try await clone.git("checkout", "-q", "-b", "feature", "origin/trunk")
+        try await clone.write("b.txt", "feature\n")
+        try await clone.commit("feature")
         let resolved = await GitDiffEngine(watchesRepositories: false).resolvedBase(for: clone.url("b.txt"), base: .mergeBase)
         #expect(resolved == .init(sha: shared, label: "merge-base with origin/trunk"))
     }
 
     @Test func committingOnTheBaseBranchReResolvesTheBase() async throws {
-        let repo = try TempRepo(branch: "main")
-        try repo.write("a.txt", numbered(1...3))
-        let first = try repo.commit("one")
-        try repo.write("a.txt", numbered(1...4))
+        let repo = try await TempRepo(branch: "main")
+        try await repo.write("a.txt", numbered(1...3))
+        let first = try await repo.commit("one")
+        try await repo.write("a.txt", numbered(1...4))
         let engine = GitDiffEngine()
+        let held = try #require(await engine.retain(containing: repo.url("a.txt")))
         let before = await engine.diff(file: repo.url("a.txt"), base: .mergeBase)
         #expect(before.state == .modified && before.base == first)
 
-        let toplevel = try repo.git("rev-parse", "--show-toplevel")
+        let toplevel = try await repo.git("rev-parse", "--show-toplevel")
         let moved = Task {
             for await note in NotificationCenter.default.notifications(named: .gitDiffBaseChanged) where note.object as? String == toplevel { return true }
             return false
         }
-        let second = try repo.commit("two")
+        let second = try await repo.commit("two")
         let announced = try await withThrowingTaskGroup(of: Bool.self) { group in
             group.addTask { await moved.value }
             group.addTask {
@@ -129,21 +145,24 @@ struct GitBaseTests {
         let after = await engine.diff(file: repo.url("a.txt"), base: .mergeBase)
         #expect(after.base == second)
         #expect(after.state == .unchanged)
+
+        await engine.release(held)
+        #expect(await engine.watchedRepositoryCount == 0, "the last live holder going away stops the stream")
     }
 }
 
 struct GitDiffTests {
     @Test func modifiedFileMapsEveryHunkToOldAndNewLines() async throws {
-        let repo = try TempRepo()
-        try repo.write("f.txt", numbered(1...40))
-        let base = try repo.commit("base")
+        let repo = try await TempRepo()
+        try await repo.write("f.txt", numbered(1...40))
+        let base = try await repo.commit("base")
         // Change line 2, insert two lines after 10, delete 37-38, and append at the end.
         var lines = (1...40).map { "line \($0)" }
         lines[1] = "line 2 changed"
         lines.insert(contentsOf: ["new a", "new b"], at: 10)
         lines.removeSubrange(38...39)
         lines.append("tail")
-        try repo.write("f.txt", lines.joined(separator: "\n") + "\n")
+        try await repo.write("f.txt", lines.joined(separator: "\n") + "\n")
 
         let diff = await GitDiffEngine(watchesRepositories: false).diff(file: repo.url("f.txt"), base: .mergeBase)
         #expect(diff.state == .modified)
@@ -174,12 +193,12 @@ struct GitDiffTests {
     }
 
     @Test func pureDeletionHunkIsMentionedOnTheOldSide() async throws {
-        let repo = try TempRepo()
-        try repo.write("f.txt", numbered(1...30))
-        try repo.commit("base")
+        let repo = try await TempRepo()
+        try await repo.write("f.txt", numbered(1...30))
+        try await repo.commit("base")
         var lines = (1...30).map { "line \($0)" }
         lines.removeSubrange(19...21)
-        try repo.write("f.txt", lines.joined(separator: "\n") + "\n")
+        try await repo.write("f.txt", lines.joined(separator: "\n") + "\n")
         let diff = await GitDiffEngine(watchesRepositories: false).diff(file: repo.url("f.txt"), base: .head)
         let hunk = try #require(diff.hunks.first)
         #expect(diff.hunks.count == 1)
@@ -191,13 +210,13 @@ struct GitDiffTests {
     }
 
     @Test func untrackedAddedDeletedBinaryAndMissingFilesHaveClearStates() async throws {
-        let repo = try TempRepo()
-        try repo.write("keep.txt", "same\n")
-        try repo.write("gone.txt", numbered(1...3))
-        try repo.commit("base")
-        try repo.write("fresh.txt", "one\ntwo\n")
-        try FileManager.default.removeItem(at: repo.url("gone.txt"))
-        try Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x01]).write(to: repo.url("image.png"))
+        let repo = try await TempRepo()
+        try await repo.write("keep.txt", "same\n")
+        try await repo.write("gone.txt", numbered(1...3))
+        try await repo.commit("base")
+        try await repo.write("fresh.txt", "one\ntwo\n")
+        try await offPool { Result { try FileManager.default.removeItem(at: repo.url("gone.txt")) } }.get()
+        try await repo.writeData("image.png", Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x01]))
         let engine = GitDiffEngine(watchesRepositories: false)
 
         let fresh = await engine.diff(file: repo.url("fresh.txt"), base: .mergeBase)
@@ -213,16 +232,16 @@ struct GitDiffTests {
         #expect(await engine.diff(file: repo.url("never.txt"), base: .mergeBase).state == .missing)
 
         let outside = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-plain-\(UUID().uuidString).txt")
-        try "plain\n".write(to: outside, atomically: true, encoding: .utf8)
+        try await offPool { Result { try "plain\n".write(to: outside, atomically: true, encoding: .utf8) } }.get()
         let plain = await engine.diff(file: outside, base: .mergeBase)
         #expect(plain.state == .notRepository && plain.new.lineCount == 1)
     }
 
     @Test func unchangedContentIsServedFromCacheWithoutGit() async throws {
-        let repo = try TempRepo()
-        try repo.write("f.txt", numbered(1...5))
-        try repo.commit("base")
-        try repo.write("f.txt", numbered(1...6))
+        let repo = try await TempRepo()
+        try await repo.write("f.txt", numbered(1...5))
+        try await repo.commit("base")
+        try await repo.write("f.txt", numbered(1...6))
         let engine = GitDiffEngine(watchesRepositories: false)
         let first = await engine.diff(file: repo.url("f.txt"), base: .mergeBase)
         let runs = await engine.diffRuns
@@ -230,18 +249,20 @@ struct GitDiffTests {
         #expect(again == first)
         #expect(await engine.diffRuns == runs, "same base and content must not run git diff again")
 
-        try repo.write("f.txt", numbered(1...7))
+        try await repo.write("f.txt", numbered(1...7))
         let changed = await engine.diff(file: repo.url("f.txt"), base: .mergeBase)
         #expect(await engine.diffRuns == runs + 1)
         #expect(changed.mappings == [LineRangeMapping(original: 6..<6, modified: 6..<8)])
     }
 
     @Test func filesRequestedTogetherShareOneGitDiff() async throws {
-        let repo = try TempRepo()
-        for name in ["a", "b", "c"] { try repo.write("\(name) file.txt", numbered(1...3)) }
-        try repo.commit("base")
-        for name in ["a", "b", "c"] { try repo.write("\(name) file.txt", numbered(1...4)) }
+        let repo = try await TempRepo()
+        for name in ["a", "b", "c"] { try await repo.write("\(name) file.txt", numbered(1...3)) }
+        try await repo.commit("base")
+        for name in ["a", "b", "c"] { try await repo.write("\(name) file.txt", numbered(1...4)) }
         let engine = GitDiffEngine(watchesRepositories: false)
+        // Live tiles hold their repository, so its base is resolved once for all of them.
+        _ = await engine.retain(containing: repo.url("a file.txt"))
         _ = await engine.resolvedBase(for: repo.url("a file.txt"), base: .mergeBase)
         let diffs = await withTaskGroup(of: FileDiff.self) { group in
             for name in ["a", "b", "c"] { group.addTask { await engine.diff(file: repo.url("\(name) file.txt"), base: .mergeBase) } }
@@ -249,5 +270,100 @@ struct GitDiffTests {
         }
         #expect(diffs.allSatisfy { $0.mappings == [LineRangeMapping(original: 4..<4, modified: 4..<5)] })
         #expect(await engine.diffRuns == 1)
+    }
+
+    @Test func groupedDeletionsAreMentionedOnTheOldSide() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("f.txt", numbered(1...30))
+        try await repo.commit("base")
+        var lines = (1...30).map { "line \($0)" }
+        lines.remove(at: 13)
+        lines.remove(at: 9)
+        try await repo.write("f.txt", lines.joined(separator: "\n") + "\n")
+        let diff = await GitDiffEngine(watchesRepositories: false).diff(file: repo.url("f.txt"), base: .head)
+        let hunk = try #require(diff.hunks.first)
+        #expect(diff.hunks.count == 1 && hunk.mappings.count == 2)
+        #expect(hunk.mentionLines.side == .old && hunk.mentionLines.lines == LineRange(start: 10, end: 14))
+    }
+
+    @Test func crlfLinesAndMissingFinalNewlinesRoundTrip() async throws {
+        let repo = try await TempRepo()
+        try await repo.git("config", "core.autocrlf", "false")
+        let base = "keep\r\nold one\r\nold two\r\nkeep\r\nlast"
+        try await repo.writeData("crlf.txt", Data(base.utf8))
+        try await repo.writeData("eof.txt", Data("a\nb".utf8))
+        try await repo.commit("base")
+        try await repo.writeData("crlf.txt", Data("keep\r\nnew one\r\nkeep\r\nlast".utf8))
+        try await repo.writeData("eof.txt", Data("a\nb\n".utf8))
+        let engine = GitDiffEngine(watchesRepositories: false)
+
+        let crlf = await engine.diff(file: repo.url("crlf.txt"), base: .head)
+        #expect(crlf.mappings == [LineRangeMapping(original: 2..<4, modified: 2..<3)])
+        #expect(crlf.old.text == base, "removed CRLF lines keep their CR and stay separate records")
+        #expect(crlf.old.line(3) == "old two")
+
+        let eof = await engine.diff(file: repo.url("eof.txt"), base: .head)
+        #expect(eof.state == .modified)
+        #expect(eof.old.text == "a\nb", "the base's missing final newline is preserved")
+    }
+
+    @Test func userInterHunkContextConfigDoesNotInventChanges() async throws {
+        let repo = try await TempRepo()
+        try await repo.git("config", "diff.interHunkContext", "10")
+        try await repo.write("f.txt", numbered(1...20))
+        try await repo.commit("base")
+        var lines = (1...20).map { "line \($0)" }
+        lines[2] = "three"
+        lines[7] = "eight"
+        try await repo.write("f.txt", lines.joined(separator: "\n") + "\n")
+        let diff = await GitDiffEngine(watchesRepositories: false).diff(file: repo.url("f.txt"), base: .head)
+        #expect(diff.mappings == [LineRangeMapping(original: 3..<4, modified: 3..<4), LineRangeMapping(original: 8..<9, modified: 8..<9)])
+        #expect(diff.old.text == numbered(1...20))
+    }
+
+    @Test func modeOnlyChangesAndQuotedNamesAreNotMisread() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("tool.sh", "echo hi\n")
+        try await repo.write("a\"b\tc.txt", numbered(1...3))
+        try await repo.commit("base")
+        try await repo.git("update-index", "--chmod=+x", "tool.sh")
+        _ = chmod(repo.url("tool.sh").path, 0o755)
+        try await repo.write("a\"b\tc.txt", numbered(1...4))
+        let engine = GitDiffEngine(watchesRepositories: false)
+        #expect(await engine.diff(file: repo.url("tool.sh"), base: .head).state == .unchanged, "an exec-bit change is not a new file")
+        let quoted = await engine.diff(file: repo.url("a\"b\tc.txt"), base: .head)
+        #expect(quoted.state == .modified)
+        #expect(quoted.mappings == [LineRangeMapping(original: 4..<4, modified: 4..<5)])
+    }
+
+    @Test func submodulesAndOversizedBasesGetExplicitStates() async throws {
+        let inner = try await TempRepo()
+        try await inner.write("x.txt", "x\n")
+        try await inner.commit("inner")
+        let repo = try await TempRepo()
+        try await repo.write("big.txt", String(repeating: "0123456789abcdef\n", count: (GitDiffEngine.maxFileSize / 17) + 10))
+        try await repo.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", inner.root.path, "sub")
+        try await repo.commit("base")
+        try await inner.write("x.txt", "y\n")
+        let moved = try await inner.commit("moved")
+        try await TempRepo.run(["-c", "protocol.file.allow=always", "fetch", "-q", "origin"], in: repo.url("sub"))
+        try await TempRepo.run(["checkout", "-q", moved], in: repo.url("sub"))
+        try FileManager.default.removeItem(at: repo.url("big.txt"))
+
+        let engine = GitDiffEngine(watchesRepositories: false)
+        #expect(await engine.diff(file: repo.url("sub"), base: .head).state == .submodule)
+        try FileManager.default.removeItem(at: repo.url("sub"))
+        #expect(await engine.diff(file: repo.url("sub"), base: .head).state == .submodule, "a gitlink in the base is not text even when absent on disk")
+        #expect(await engine.diff(file: repo.url("big.txt"), base: .head).state == .tooLarge, "a deleted file larger than the limit is never loaded")
+    }
+
+    @Test func patchesThatDontDescribeTheCapturedTextAreRejected() throws {
+        let new = SideText("one\n")
+        // A patch taken after the file grew to three lines.
+        let patch = Data("@@ -1,0 +2,2 @@\n+two\n+three\n".utf8)
+        #expect(UnifiedDiff.reconstructOld(new: new, parsed: UnifiedDiff.parse(patch)) == nil)
+        // A gitlink's short diff against an empty working-tree view.
+        let gitlink = Data("@@ -1 +1 @@\n-Subproject commit 1111111111111111111111111111111111111111\n+Subproject commit 2222222222222222222222222222222222222222\n".utf8)
+        #expect(UnifiedDiff.reconstructOld(new: SideText(""), parsed: UnifiedDiff.parse(gitlink)) == nil)
     }
 }

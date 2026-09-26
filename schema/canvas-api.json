@@ -201,8 +201,9 @@
             "object": { "$ref": "#/definitions/Id" },
             "path": { "type": "string" },
             "lines": { "$ref": "#/definitions/LineRange" },
-            "side": { "enum": ["old", "new"], "default": "new" },
-            "symbol": { "type": "string" }
+            "side": { "enum": ["old", "new"], "description": "diff side of the lines; absent outside a diff" },
+            "symbol": { "type": "string" },
+            "commit": { "type": "string", "description": "with side old or absent: the commit whose version of path holds the lines (deleted diff rows, pinned excerpts); with side new: the diff base. Absent: the working tree" }
           },
           "additionalProperties": false
         },

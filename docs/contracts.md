@@ -41,32 +41,21 @@ zmx session names: `canvas-<tileId>`, labelled `canvas.board=<boardId> canvas.ti
 
 ## Swift tile protocol
 
-Every tile view conforms to this (sketch of the contract, not final code):
+Every tile's content view conforms to `TileContent` (`Sources/CanvasApp/TileContent.swift`); `TileFrameView` supplies the shared chrome (title bar, drag, resize, lifecycle badge, zoomed-out card) and `TileFactory` maps an object type to its content view.
 
 ```swift
 @MainActor
-protocol TileView: NSView {
-    var objectID: ObjectID { get }
-
-    /// Live = visible at readable zoom. Not live = detach heavy resources
-    /// (Ghostty occlusion, WebKit detach/suspend) and show `snapshot()`.
-    func setLive(_ live: Bool)
-
-    /// Cheap image for zoomed-out cards. Nil means draw a title card.
-    func snapshot() -> CGImage?
-
-    /// What a Hyper-click at `point` (in this view's coordinates) would mention.
-    /// Used for hover outlines and staging.
-    func mentionTarget(at point: NSPoint) -> MentionTarget?
-
-    /// Outline rect for a target, in this view's coordinates, for hover highlight.
-    func outline(for target: MentionTarget) -> NSRect?
-
-    /// Whether clicking into the tile should take keyboard focus.
-    /// Terminal and browser: true. Code, note, HTML: false (focus stays in the target terminal).
-    var takesKeyboardFocus: Bool { get }
+protocol TileContent: NSView {
+    func setLive(_ live: Bool)                                  // false: detach heavy resources, show snapshot()
+    func snapshot() -> NSImage?                                  // cheap image for zoomed-out cards; nil draws a title card
+    func mentionTarget(at point: NSPoint) -> MentionTarget?      // what a Hyper-click here mentions (element level)
+    func outline(for target: MentionTarget) -> NSRect?           // hover highlight, in this view's coordinates
+    var takesKeyboardFocus: Bool { get }                         // terminal, browser: true; code, note, HTML: false
+    func update(_ object: CanvasObject)                          // a new revision of the backing object
 }
 ```
+
+Arrows, shapes, and groups have no tile; the canvas draws them.
 
 Tiles never read or write the board store directly; they go through the board model on the main actor, which persists and broadcasts events.
 

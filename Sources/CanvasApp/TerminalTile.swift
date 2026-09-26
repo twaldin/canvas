@@ -19,11 +19,12 @@ final class TerminalTile: NSView, TileContent {
         terminal = TerminalView(frame: NSRect(x: 0, y: 0, width: object.frame.w, height: object.frame.h))
         super.init(frame: terminal.frame)
         terminal.autoresizingMask = [.width, .height]
+        let environment = Self.environment(tile: object.id, board: board)
         terminal.configuration = TerminalSurfaceOptions(
             backend: .exec,
             workingDirectory: object.props["cwd"]?.string ?? board.root.path,
-            envVars: Self.environment(tile: object.id, board: board),
-            command: Self.command(session: sessionName, object: object, board: board)
+            envVars: environment,
+            command: Self.command(session: sessionName, object: object, board: board, keep: Set(environment.keys))
         )
         terminal.controller = TerminalController.shared
         handler.tile = self
@@ -63,12 +64,14 @@ final class TerminalTile: NSView, TileContent {
 
     /// Shell-quoted command string (Ghostty takes a string, not argv). zmx ignores the trailing
     /// command when the session already exists, so it only runs for a new session.
-    static func command(session: String, object: CanvasObject, board: Board) -> String {
+    /// `keep`: the tile's own variables. `env -u` runs after Ghostty applied them, so an inherited
+    /// variable of the same name (a dev instance launched with CANVAS_SOCKET set) must not unset them.
+    static func command(session: String, object: CanvasObject, board: Board, keep: Set<String>) -> String {
         let shell = AppPaths.userShell
         let start = initialCommand(object).map { [shell, "-l", "-c", "\($0); exec \(quote([shell])) -l"] } ?? [shell, "-l"]
         guard let zmx = AppPaths.zmx else { return quote(start) }
         let strip = ProcessInfo.processInfo.environment.keys
-            .filter { key in strippedPrefixes.contains { key.hasPrefix($0) } }
+            .filter { key in !keep.contains(key) && strippedPrefixes.contains { key.hasPrefix($0) } }
             .sorted()
             .flatMap { ["-u", $0] }
         let labels = "canvas.board=\(board.id) canvas.tile=\(object.id)"

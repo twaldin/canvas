@@ -27,6 +27,10 @@ export default function canvas(pi: ExtensionAPI): void {
   const client = new CanvasClient({ timeoutMs: 1500 });
   let seq = Date.now() * 1000;
   let active = false;
+  // omp runs subagents in this process with this extension rebound to each, headless (no UI).
+  // They share our tile, but only the session with a UI is the tile's agent: a subagent's
+  // agent_end is not the tile going idle, and its session id is not the one to resume.
+  let reporting = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   const blockers = new Map<string, string>();
   const calls = new Map<string, ToolCall>();
@@ -35,6 +39,7 @@ export default function canvas(pi: ExtensionAPI): void {
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
   function publish(): void {
+    if (!reporting) return;
     clearTimeout(idleTimer);
     const firstBlocker = blockers.values().next().value;
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
@@ -45,6 +50,7 @@ export default function canvas(pi: ExtensionAPI): void {
   }
 
   function reportSession(ctx: ExtensionContext): void {
+    if (!reporting) return;
     void quietly(client.api.agent.report_session({ tile: tile!, kind: "omp", sessionId: ctx.sessionManager.getSessionId(), sessionPath: ctx.sessionManager.getSessionFile() }));
   }
 
@@ -55,6 +61,7 @@ export default function canvas(pi: ExtensionAPI): void {
   }
 
   pi.on("session_start", (_event, ctx) => {
+    reporting = ctx.hasUI;
     active = !ctx.isIdle();
     blockers.clear();
     staged = undefined;
@@ -63,12 +70,14 @@ export default function canvas(pi: ExtensionAPI): void {
   });
 
   pi.on("session_switch", (_event, ctx) => {
+    // A new or switched-to session starts settled; the old one's pending continuation is gone.
+    active = !ctx.isIdle();
     reportSession(ctx);
     publish();
   });
 
   pi.on("session_shutdown", () => {
-    void quietly(client.api.agent.release({ tile, kind: "omp", source: SOURCE }));
+    if (reporting) void quietly(client.api.agent.release({ tile, kind: "omp", source: SOURCE }));
   });
 
   pi.on("agent_start", () => {
@@ -77,8 +86,10 @@ export default function canvas(pi: ExtensionAPI): void {
     publish();
   });
 
-  pi.on("agent_end", () => {
-    active = false;
+  // willContinue: omp already scheduled the next run (retry, compaction, todo or session_stop
+  // continuation, or background jobs whose results will resume it), so this is not a settle.
+  pi.on("agent_end", (event) => {
+    active = event.willContinue === true;
     publish();
   });
 

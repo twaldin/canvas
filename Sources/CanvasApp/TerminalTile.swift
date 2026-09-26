@@ -74,7 +74,10 @@ final class TerminalTile: NSView, TileContent {
             .filter { key in !keep.contains(key) && strippedPrefixes.contains { key.hasPrefix($0) } }
             .sorted()
             .flatMap { ["-u", $0] }
-        let labels = "canvas.board=\(board.id) canvas.tile=\(object.id)"
+        // `canvas.home` names the owning instance: board copies in another home (replicas, dev
+        // instances) carry the same board and tile ids, so ids alone can't tell whose session it is.
+        let home = AppPaths.support.path.replacingOccurrences(of: "%", with: "%25").replacingOccurrences(of: " ", with: "%20")
+        let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(home)"
         return quote(["/usr/bin/env"] + strip + [zmx, "attach", "--labels", labels, session] + start)
     }
 

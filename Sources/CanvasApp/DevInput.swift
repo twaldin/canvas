@@ -104,7 +104,9 @@ enum DevInput {
             if !window.performKeyEquivalent(with: event) { _ = NSApp.mainMenu?.performKeyEquivalent(with: event) }
         case "scroll":
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(number("dy")), wheel2: Int32(number("dx")), wheel3: 0) else { return }
-            cg.location = window.convertPoint(toScreen: point("x", "y"))
+            // CGEvent locations are global with a top-left origin (primary display), not Cocoa's.
+            let screen = window.convertPoint(toScreen: point("x", "y"))
+            cg.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
             cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
             if let event = NSEvent(cgEvent: cg) { window.sendEvent(event) }
         default:

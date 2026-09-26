@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var server: SocketServer?
     private var controllers: [BoardID: CanvasWindowController] = [:]
     private var terminationSignal: DispatchSourceSignal?
+    private let notifier = AgentNotifier()
     private lazy var hyper = HyperMonitor { [weak self] window in
         self?.controllers.values.first { $0.window === window }?.canvas
     }
@@ -23,12 +24,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DevInput.install()
         registry.onEvent = { [weak self] board, event in
             self?.controllers[board.id]?.apply(event)
+            self?.notifier.observe(event, on: board)
         }
+        notifier.onOpen = { [weak self] board, tile in
+            guard let controller = self?.controllers[board] else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            controller.showWindow(nil)
+            controller.canvas.focus(tile: tile)
+        }
+        notifier.install()
         router.submitToTerminal = { [weak self] board, tile, text in
             guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return false }
             return terminal.paste(text, submit: true)
         }
         router.snapshotBoard = { [weak self] board in self?.controllers[board.id]?.snapshotPNG() }
+        router.readTerminal = { _, tile in
+            await Task.detached { TerminalTile.history(session: TerminalTile.sessionName(tile)) }.value
+        }
         router.objectImage = { [weak self] board, id in
             guard let image = self?.controllers[board.id]?.canvas.tiles[id]?.content.snapshot(),
                   let tiff = image.tiffRepresentation else { return nil }
@@ -89,6 +101,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
     @objc func closeSelected(_ sender: Any?) { keyController?.closeSelected(sender) }
 
+    /// One canvas per directory: choosing a folder opens (or brings forward) its board.
+    @objc func openBoard(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "Open Board"
+        panel.directoryURL = keyController?.board.root
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        open(root: url)
+    }
+
     static func makeMenu() -> NSMenu {
         let main = NSMenu()
         func submenu(_ title: String, _ items: [NSMenuItem]) {
@@ -106,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("Canvas", [item("Quit Canvas", #selector(NSApplication.terminate(_:)), "q")])
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
+            item("Open Board…", #selector(openBoard(_:)), "o", [.command, .shift]),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
             item("Close Selected Tiles", #selector(closeSelected(_:)), "w", [.command, .shift]),
         ])

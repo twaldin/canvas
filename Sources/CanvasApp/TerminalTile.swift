@@ -15,7 +15,7 @@ final class TerminalTile: NSView, TileContent {
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
-        sessionName = "canvas-\(object.id)"
+        sessionName = Self.sessionName(object.id)
         terminal = TerminalView(frame: NSRect(x: 0, y: 0, width: object.frame.w, height: object.frame.h))
         super.init(frame: terminal.frame)
         terminal.autoresizingMask = [.width, .height]
@@ -93,6 +93,26 @@ final class TerminalTile: NSView, TileContent {
         try? process.run()
     }
 
+    /// zmx session names stay short: socket paths under the GUI app's TMPDIR are capped (docs/contracts.md).
+    nonisolated static func sessionName(_ tile: ObjectID) -> String { "canvas-\(tile)" }
+
+    /// The session's scrollback as plain text; nil when zmx is missing or the session doesn't exist.
+    /// Blocks until zmx exits.
+    nonisolated static func history(session: String) -> String? {
+        guard let zmx = AppPaths.zmx else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: zmx)
+        process.arguments = ["history", session]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
     // MARK: Input
 
     /// Paste text honoring bracketed-paste mode; optionally press Enter.
@@ -124,20 +144,11 @@ final class TerminalTile: NSView, TileContent {
     /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so snapshots (LOD cards,
     /// `view.snapshot`, `object.get --as image`) render the tail of the zmx session's text instead.
     func snapshot() -> NSImage? {
-        guard let zmx = AppPaths.zmx, bounds.width > 0, bounds.height > 0 else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = ["history", sessionName]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        guard bounds.width > 0, bounds.height > 0, let text = Self.history(session: sessionName) else { return nil }
         let font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         let lineHeight = ceil(font.ascender - font.descender + font.leading) + 2
         let rows = max(1, Int((bounds.height - 12) / lineHeight))
-        var lines = String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false)
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         while lines.last?.allSatisfy(\.isWhitespace) == true { lines.removeLast() }
         let visible = lines.suffix(rows)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor(white: 0.85, alpha: 1)]

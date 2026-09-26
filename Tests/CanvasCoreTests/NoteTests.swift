@@ -363,20 +363,31 @@ struct NoteSourceTests {
         try (lines.joined(separator: "\n") + "\n").write(to: root.appendingPathComponent(path), atomically: true, encoding: .utf8)
     }
 
+    /// git on a GCD thread: blocking inside a test task would park a cooperative-pool thread.
     @discardableResult
-    func git(_ args: String...) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"] + args
-        process.currentDirectoryURL = root
-        let out = Pipe()
-        process.standardOutput = out
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        #expect(process.terminationStatus == 0, "git \(args.joined(separator: " "))")
-        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    func git(_ args: String...) async throws -> String {
+        let root = root
+        let (status, output) = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(Int32, String), Error>) in
+            DispatchQueue.global().async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+                process.arguments = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"] + args
+                process.currentDirectoryURL = root
+                let out = Pipe()
+                process.standardOutput = out
+                process.standardError = FileHandle.nullDevice
+                do {
+                    try process.run()
+                } catch {
+                    return continuation.resume(throwing: error)
+                }
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                continuation.resume(returning: (process.terminationStatus, String(decoding: data, as: UTF8.self)))
+            }
+        }
+        #expect(status == 0, "git \(args.joined(separator: " "))")
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     @Test func excerptFollowsEditsOnDisk() async throws {
@@ -413,20 +424,20 @@ struct NoteSourceTests {
     }
 
     @Test func optionLikeRevisionsAreRejected() async throws {
-        try git("init", "-q")
+        try await git("init", "-q")
         try write("src/a.ts", ["one"])
-        try git("add", ".")
-        try git("commit", "-q", "-m", "subject line")
+        try await git("add", ".")
+        try await git("commit", "-q", "-m", "subject line")
         let excerpt = await NoteSource.excerpt(for: NoteFence(info: "ts file=src/a.ts#L1 commit=--format=%s"), root: root, captured: nil)
         #expect(excerpt.isStale)
         #expect(excerpt.lines.isEmpty, "never git's option output as file text")
     }
 
     @Test func aHugeGitDiagnosticDoesNotWedgeTheRunner() async throws {
-        try git("init", "-q")
+        try await git("init", "-q")
         try write("src/a.ts", ["one"])
-        try git("add", ".")
-        try git("commit", "-q", "-m", "one")
+        try await git("add", ".")
+        try await git("commit", "-q", "-m", "one")
         // git's fatal message repeats the revision: far more than a pipe buffer on stderr.
         let revision = String(repeating: "a", count: 200_000)
         let failed = await NoteSource.excerpt(for: NoteFence(info: "ts file=src/a.ts@\(revision)#L1"), root: root, captured: nil)
@@ -436,10 +447,10 @@ struct NoteSourceTests {
     }
 
     @Test func cancelledRequestsGiveBackTheirGitPermits() async throws {
-        try git("init", "-q")
+        try await git("init", "-q")
         try write("src/a.ts", ["one"])
-        try git("add", ".")
-        try git("commit", "-q", "-m", "one")
+        try await git("add", ".")
+        try await git("commit", "-q", "-m", "one")
         let fence = NoteFence(info: "ts file=src/a.ts@HEAD#L1")
         let root = root
         let abandoned = (0..<12).map { _ in Task { await NoteSource.excerpt(for: fence, root: root, captured: nil) } }
@@ -451,13 +462,13 @@ struct NoteSourceTests {
     }
 
     @Test func pinnedCommitReadsThroughGitShow() async throws {
-        try git("init", "-q")
+        try await git("init", "-q")
         try write("src/a.ts", ["old 1", "old 2", "old 3"])
-        try git("add", ".")
-        try git("commit", "-q", "-m", "one")
-        let sha = try git("rev-parse", "--short", "HEAD")
+        try await git("add", ".")
+        try await git("commit", "-q", "-m", "one")
+        let sha = try await git("rev-parse", "--short", "HEAD")
         try write("src/a.ts", ["new 1", "new 2"])
-        try git("commit", "-q", "-am", "two")
+        try await git("commit", "-q", "-am", "two")
 
         let pinned = await NoteSource.excerpt(for: NoteFence(info: "ts file=src/a.ts@\(sha)#L2-3"), root: root, captured: nil)
         #expect(pinned.lines == ["old 2", "old 3"])
@@ -469,10 +480,10 @@ struct NoteSourceTests {
     }
 
     @Test func workspaceSymbolSearchFindsTheDeclaringFile() async throws {
-        try git("init", "-q")
+        try await git("init", "-q")
         try write("src/use.ts", ["import { restoreSnapshot } from './snap'", "restoreSnapshot(1)"])
         try write("src/snap.ts", ["// snapshots", "export function restoreSnapshot(id: number) {", "  return id", "}"])
-        try git("add", ".")
+        try await git("add", ".")
         let excerpt = await NoteSource.excerpt(for: NoteFence(info: "ts symbol=restoreSnapshot"), root: root, captured: nil)
         #expect(excerpt.path == "src/snap.ts")
         #expect(excerpt.range == LineRange(start: 2, end: 4))

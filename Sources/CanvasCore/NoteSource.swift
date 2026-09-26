@@ -74,7 +74,7 @@ public enum NoteSource {
     /// relative to the board root rather than the repository root.
     static func read(_ path: String, commit: String?, root: URL) async throws -> String {
         let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
-        guard let commit else { return try String(contentsOf: url, encoding: .utf8) }
+        guard let commit else { return try await blocking { try String(contentsOf: url, encoding: .utf8) } }
         let data = try await NoteGit.run(try showArguments(path, commit: commit, root: root), in: root)
         guard let text = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         return text
@@ -104,11 +104,21 @@ public enum NoteSource {
         let pattern = "(^|[^[:alnum:]_.$])(\(NoteAnchor.declarationKeywords)|const|let|var)[[:space:]]+([(][^)]*[)][[:space:]]*)?\(name.replacingOccurrences(of: "$", with: "\\$"))([^[:alnum:]_$]|$)"
         guard let data = try? await NoteGit.run(["grep", "-l", "-I", "-E", "-e", pattern], in: root, allowedStatus: [0, 1]),
               let output = String(data: data, encoding: .utf8) else { return nil }
-        for candidate in output.split(separator: "\n").map(String.init) {
-            guard let text = try? String(contentsOf: root.appendingPathComponent(candidate), encoding: .utf8) else { continue }
-            if NoteAnchor.symbolRange(symbol, in: lines(of: text)) != nil { return candidate }
+        let candidates = output.split(separator: "\n").map(String.init)
+        return try? await blocking {
+            candidates.first { candidate in
+                guard let text = try? String(contentsOf: root.appendingPathComponent(candidate), encoding: .utf8) else { return false }
+                return NoteAnchor.symbolRange(symbol, in: lines(of: text)) != nil
+            }
         }
-        return nil
+    }
+
+    /// Runs blocking file work on a GCD thread: a blocked cooperative-pool thread starves every
+    /// other task in the app, the socket servers' included.
+    static func blocking<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { continuation.resume(with: Result(catching: work)) }
+        }
     }
 
     /// Lines without the empty string after a trailing newline.

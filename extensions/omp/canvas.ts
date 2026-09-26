@@ -173,6 +173,8 @@ export default function canvas(pi: ExtensionAPI): void {
   });
 
   function follow(path: string, start: unknown, end: unknown, action: "read" | "edit" | "lsp"): void {
+    // Subagents' reads (background scouts) would drag the tile's follow view around.
+    if (!reporting) return;
     const absolute = isAbsolute(path) ? path : resolve(process.cwd(), path.replace(/:[\d+\-,]+$/, ""));
     const range = typeof start === "number" && start > 0 ? { start, end: typeof end === "number" && end >= start ? end : start } : undefined;
     void quietly(client.api.follow.report({ tile: tile!, path: absolute, range, action }));

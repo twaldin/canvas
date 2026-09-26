@@ -41,7 +41,7 @@ public enum MentionContext {
             lines.append(contentsOf: excerpt(board.absoluteURL(path), range))
         case .dom(let object, let url, let selector, let text):
             let textPart = text.map { " \"\(clip($0, 80))\"" } ?? ""
-            lines.append("[\(index)] dom \(url) · \(selector)\(textPart) · browser tile \(object)\(edited)")
+            lines.append("[\(index)] dom \(url) · \(selector)\(textPart) · \(board.objects[object]?.type.rawValue ?? "browser") tile \(object)\(edited)")
         case .terminal(let object, let text):
             lines.append("[\(index)] terminal tile \(object)\(edited)")
             lines.append(contentsOf: text.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })

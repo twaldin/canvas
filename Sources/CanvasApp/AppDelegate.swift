@@ -148,6 +148,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BrowserTile.promptForNew(on: controller.board, in: window)
     }
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
+    @objc func newHtmlTile(_ sender: Any?) {
+        keyController?.board.create(type: .html, props: .object(["html": .string(HtmlKit.emptyTemplate), "title": .string("HTML")]))
+    }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
@@ -201,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("New Browser Tile…", #selector(newBrowserTile(_:)), "b", [.command, .shift]),
             item("Open Board…", #selector(openBoard(_:)), "o", [.command, .shift]),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
+            item("New HTML Tile", #selector(newHtmlTile(_:)), "h", [.command, .shift]),
         ])
         submenu("Edit", [
             item("Undo", #selector(undoCanvas(_:)), "z"),

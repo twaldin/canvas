@@ -132,6 +132,8 @@ Command Line Tools ship no Instruments, so the spike measured with `footprint`, 
 | 12 tiles zoomed out and back in: card images held | 126 MB | 13 MB while zoomed out, <1 MB after |
 | Zoom-out with N terminals: main-thread `zmx history` calls | N × ~40 ms | 0 |
 
+Code tiles (astra-skyblock replica, 205 objects with 62 code tiles; every code tile visited at 100% and back to fit, then a fixed pan/zoom sequence with three ⌘9↔⌘0 transitions): the TextKit 2 tile left the app at 559 MB footprint (+267 MB over the fresh board, ~4.3 MB per code tile) and spent 5.19 s CPU on the sequence; drawing only visible rows from a compact model (no NSScrollView, nothing in the window while not live) leaves it at 319 MB (+19 MB, ~0.3 MB per tile) and 2.93 s CPU.
+
 Standing costs, measured: empty board 46 MB and ~0% idle CPU. The first Ghostty surface adds ~224 MB of GPU memory (28 × 8 MiB Metal allocations, independent of size; Ghostty.app shows the identical pattern), each further terminal ~12 MB plus ~23 MB of triple-buffered IOSurfaces while it renders (860×560 pt), released when not live. Code tile +20 MB (1,000-line Swift file), note +6 MB, HTML tile +13 MB in-app plus ~23 MB WebContent, browser tile ~18 MB WebContent. Heavy terminal output costs zmx (the session relay) far more CPU than Canvas: a 9M-line burst took 2.6–4.5 s of zmx CPU and ≤0.14 s of Canvas CPU.
 
 ## v0 acceptance

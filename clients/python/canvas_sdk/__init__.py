@@ -8,6 +8,11 @@ Recommended surface for agents with a persistent REPL:
 
 Every method mirrors schema/canvas-api.json. `caller` and `board` are filled
 from CANVAS_TILE_ID / CANVAS_BOARD_ID when the call runs inside a terminal tile.
+
+Reusable helpers live in compositions directories and load on first use:
+
+    canvas.compositions.grid.arrange(["obj_…", "obj_…"])
+    canvas.compositions.available()   # name -> summary
 """
 
 from __future__ import annotations
@@ -19,10 +24,11 @@ import threading
 from typing import Any
 
 from ._generated import METHODS, SCHEMA_VERSION, GeneratedApi
+from .compositions import Compositions
 
 DEFAULT_SOCKET = os.path.expanduser("~/Library/Application Support/Canvas/canvas.sock")
 
-__all__ = ["Canvas", "CanvasError", "canvas", "METHODS", "SCHEMA_VERSION", "DEFAULT_SOCKET"]
+__all__ = ["Canvas", "CanvasError", "Compositions", "canvas", "METHODS", "SCHEMA_VERSION", "DEFAULT_SOCKET"]
 
 
 class CanvasError(Exception):
@@ -35,7 +41,7 @@ class CanvasError(Exception):
 class Canvas(GeneratedApi):
     """One persistent, thread-safe connection to the Canvas API socket."""
 
-    def __init__(self, socket_path: str | None = None, timeout: float | None = None) -> None:
+    def __init__(self, socket_path: str | None = None, timeout: float | None = None, compositions_dirs: list[str | os.PathLike[str]] | None = None) -> None:
         self.socket_path = socket_path or os.environ.get("CANVAS_SOCKET") or DEFAULT_SOCKET
         self.timeout = timeout
         self._sock: socket.socket | None = None
@@ -43,6 +49,7 @@ class Canvas(GeneratedApi):
         self._lock = threading.Lock()
         self._next_id = 0
         super().__init__(self.call)
+        self.compositions = Compositions(self, compositions_dirs)
 
     def call(self, method: str, params: dict[str, Any]) -> Any:
         with self._lock:

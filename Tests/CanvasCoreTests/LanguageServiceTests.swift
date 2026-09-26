@@ -1,0 +1,250 @@
+import Darwin
+import Foundation
+import Testing
+import CanvasCore
+
+struct LSPFramerTests {
+    func framed(_ json: String) -> Data { LSPFramer.frame(Data(json.utf8)) }
+
+    @Test func messagesSplitAcrossReadsAreReassembled() throws {
+        var framer = LSPFramer()
+        let message = framed(#"{"jsonrpc":"2.0","id":1,"result":"héllo"}"#)
+        var bodies: [Data] = []
+        for byte in message { bodies += try framer.append(Data([byte])) }
+        #expect(bodies.map { String(decoding: $0, as: UTF8.self) } == [#"{"jsonrpc":"2.0","id":1,"result":"héllo"}"#])
+    }
+
+    @Test func concatenatedMessagesComeOutInOrderAndAPartialTailWaits() throws {
+        var framer = LSPFramer()
+        let third = framed(#"{"id":3}"#)
+        var chunk = framed(#"{"id":1}"#) + framed(#"{"id":2}"#)
+        chunk.append(third.prefix(10))
+        #expect(try framer.append(chunk).map { String(decoding: $0, as: UTF8.self) } == [#"{"id":1}"#, #"{"id":2}"#])
+        #expect(try framer.append(third.dropFirst(10)).map { String(decoding: $0, as: UTF8.self) } == [#"{"id":3}"#])
+    }
+
+    @Test func contentLengthCountsBytesAndExtraHeadersAreIgnored() throws {
+        var framer = LSPFramer()
+        let body = #"{"s":"→✓"}"#
+        let wire = "content-length: \(body.utf8.count)\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n\(body)"
+        #expect(try framer.append(Data(wire.utf8)).map { String(decoding: $0, as: UTF8.self) } == [body])
+    }
+
+    @Test func aHeaderWithoutContentLengthIsAnError() {
+        var framer = LSPFramer()
+        #expect(throws: LSPFramer.FramingError.self) { try framer.append(Data("Content-Type: x\r\n\r\n{}".utf8)) }
+    }
+}
+
+struct HoverMarkdownTests {
+    @Test func fencesHeadingsRulesAndParagraphsBecomeBlocks() {
+        let markdown = "## Multiple results\n\n```swift\npublic struct Model\n```\n\n---\n\nThe *area*\nin points.\n\nSecond paragraph.\n~~~\nunterminated"
+        #expect(HoverMarkdown.blocks(markdown) == [
+            .heading("Multiple results"),
+            .code(language: "swift", text: "public struct Model"),
+            .rule,
+            .prose("The *area*\nin points."),
+            .prose("Second paragraph."),
+            .code(language: nil, text: "unterminated"),
+        ])
+    }
+}
+
+/// Temp projects driven through the real language servers installed on this machine.
+@MainActor
+final class LanguageServiceTests {
+    let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("cv-lsp-\(UUID().uuidString.prefix(8))")
+
+    init() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @discardableResult
+    func write(_ relative: String, _ text: String) throws -> URL {
+        let url = dir.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func pid(_ service: LanguageService, _ file: URL) async -> Int32? {
+        guard case .running(let pid)? = await service.existingServer(for: file, boardRoot: dir)?.status else { return nil }
+        return pid
+    }
+
+    static func isAlive(_ pid: Int32) -> Bool { kill(pid, 0) == 0 }
+
+    /// Polls a condition that depends on another process (exit, indexing) with a deadline.
+    func eventually(_ seconds: Double, _ condition: () async throws -> Bool) async rethrows -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if try await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return try await condition()
+    }
+
+    func lines(_ locations: [LSPLocation]) -> [String] {
+        locations.map { "\($0.url.resolvingSymlinksInPath().lastPathComponent):\($0.range.start.line)" }.sorted()
+    }
+
+    // MARK: sourcekit-lsp
+
+    @Test func swiftPackageHoverDefinitionReferencesAndSymbols() async throws {
+        try write("Package.swift", """
+        // swift-tools-version: 5.9
+        import PackageDescription
+        let package = Package(name: "Lib", targets: [.target(name: "Lib")])
+        """)
+        let model = try write("Sources/Lib/Model.swift", """
+        public struct Model {
+            public var width: Int
+            public var height: Int
+
+            public func area() -> Int {
+                width * height
+            }
+        }
+        """)
+        let use = try write("Sources/Lib/Use.swift", """
+        func makeModel() -> Model {
+            let model = Model(width: 2, height: 3)
+            _ = model.area()
+            return model
+        }
+
+        func total(_ models: [Model]) -> Int {
+            models.map { $0.area() }.reduce(0, +)
+        }
+        """)
+        let service = LanguageService()
+        let area = LSPPosition(line: 2, character: 14)
+
+        // Until SwiftPM has produced build settings, sourcekit-lsp answers from fallback settings
+        // that can't see other files, so cross-file answers appear once the package is loaded.
+        var hover: LSPHover?
+        _ = try await eventually(180) {
+            hover = try await service.hover(file: use, boardRoot: dir, at: area)
+            return hover != nil
+        }
+        #expect(hover?.markdown.contains("func area() -> Int") == true)
+        #expect(hover?.range?.contains(area) == true)
+
+        let definition = try await service.definition(file: use, boardRoot: dir, at: area)
+        #expect(lines(definition) == ["Model.swift:4"])
+
+        // References come from sourcekit-lsp's background index, which builds the package first.
+        var references: [LSPLocation] = []
+        _ = try await eventually(180) {
+            references = try await service.references(file: use, boardRoot: dir, at: area)
+            return !references.isEmpty
+        }
+        #expect(lines(references) == ["Model.swift:4", "Use.swift:2", "Use.swift:7"])
+
+        let symbols = try await service.documentSymbols(file: model, boardRoot: dir)
+        #expect(symbols.map(\.name) == ["Model"])
+        #expect(symbols.first?.children.map(\.name) == ["width", "height", "area()"])
+
+        // The file changes on disk; the next request re-syncs it before asking.
+        try write("Sources/Lib/Use.swift", "func buildModel() -> Model { Model(width: 1, height: 1) }\n")
+        #expect(try await service.documentSymbols(file: use, boardRoot: dir).map(\.name) == ["buildModel()"])
+        await service.stopAll()
+    }
+
+    /// A loose Swift file (no package) gets sourcekit-lsp's fallback settings: cheap, no indexing.
+    func looseSwiftFile() throws -> URL {
+        try write("loose/Shapes.swift", "struct Circle {\n    var radius: Double\n}\n\nfunc unit() -> Circle { Circle(radius: 1) }\n")
+    }
+
+    @Test func idleServerIsShutDown() async throws {
+        let file = try looseSwiftFile()
+        let service = LanguageService(idleTimeout: .seconds(1))
+        #expect(try await service.documentSymbols(file: file, boardRoot: dir).map(\.name) == ["Circle", "unit()"])
+        let pid = try #require(await pid(service, file))
+        #expect(Self.isAlive(pid))
+        #expect(await eventually(10) { !Self.isAlive(pid) })
+        #expect(await service.existingServer(for: file, boardRoot: dir) == nil)
+        // The next request starts a fresh server.
+        #expect(try await service.documentSymbols(file: file, boardRoot: dir).map(\.name) == ["Circle", "unit()"])
+        await service.stopAll()
+    }
+
+    @Test func crashedServerReportsItAndRestartsOnTheNextRequest() async throws {
+        let file = try looseSwiftFile()
+        let service = LanguageService()
+        _ = try await service.documentSymbols(file: file, boardRoot: dir)
+        let first = try #require(await pid(service, file))
+        kill(first, SIGKILL)
+        let crashed = await eventually(10) {
+            if case .crashed(let reason)? = await service.existingServer(for: file, boardRoot: dir)?.status { return reason.contains("sourcekit-lsp exited") }
+            return false
+        }
+        #expect(crashed)
+        #expect(try await service.documentSymbols(file: file, boardRoot: dir).map(\.name) == ["Circle", "unit()"])
+        let second = try #require(await pid(service, file))
+        #expect(second != first)
+        await service.stopAll()
+        #expect(!Self.isAlive(second))
+    }
+
+    @Test func cancelledRequestThrowsAndTheServerKeepsAnswering() async throws {
+        let file = try looseSwiftFile()
+        let service = LanguageService()
+        let superseded = Task { try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 4, character: 25)) }
+        superseded.cancel()
+        await #expect(throws: CancellationError.self) { try await superseded.value }
+        let hover = try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 4, character: 25))
+        #expect(hover?.markdown.contains("Circle") == true)
+        await service.stopAll()
+    }
+
+    @Test func missingServerBinaryIsReportedUnavailable() async throws {
+        let file = try write("main.swift", "let x = 1\n")
+        let config = LanguageServerConfig(language: "swift", command: "canvas-no-such-language-server", languageIDs: ["swift": "swift"], rootMarkers: [])
+        let service = LanguageService(configs: [config])
+        await #expect(throws: LSPError.unavailable("canvas-no-such-language-server is not installed (not found on the login shell's PATH)")) {
+            try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 4))
+        }
+        await #expect(throws: LSPError.unsupportedLanguage(".txt files")) {
+            try await service.hover(file: dir.appendingPathComponent("notes.txt"), boardRoot: dir, at: LSPPosition(line: 0, character: 0))
+        }
+    }
+
+    // MARK: pyright
+
+    nonisolated static let hasPyright = LoginShell.shared.resolve("pyright-langserver") != nil
+
+    func pythonProject() throws -> (shapes: URL, use: URL) {
+        try write("py/pyproject.toml", "[project]\nname = \"shapes\"\n")
+        let shapes = try write("py/shapes.py", "class Shape:\n    def area(self) -> int:\n        return 1\n")
+        let use = try write("py/use.py", "from shapes import Shape\n\ndef total(items: list[Shape]) -> int:\n    s = Shape()\n    return s.area() + sum(i.area() for i in items)\n")
+        return (shapes, use)
+    }
+
+    @Test(.enabled(if: hasPyright)) func pythonHoverDefinitionReferencesAndSymbols() async throws {
+        let (_, use) = try pythonProject()
+        let service = LanguageService()
+        let shape = LSPPosition(line: 3, character: 9)
+        #expect(try await service.hover(file: use, boardRoot: dir, at: shape)?.markdown.contains("class Shape") == true)
+        #expect(lines(try await service.definition(file: use, boardRoot: dir, at: shape)) == ["shapes.py:0"])
+        #expect(lines(try await service.references(file: use, boardRoot: dir, at: shape)) == ["shapes.py:0", "use.py:0", "use.py:2", "use.py:3"])
+        #expect(try await service.documentSymbols(file: use, boardRoot: dir).map(\.name) == ["total"])
+        await service.stopAll()
+    }
+
+    @Test(.enabled(if: hasPyright)) func startingAServerBeyondTheCapStopsTheLeastRecentlyUsed() async throws {
+        let swift = try looseSwiftFile()
+        let (_, use) = try pythonProject()
+        let service = LanguageService(maxRunning: 1)
+        _ = try await service.documentSymbols(file: swift, boardRoot: dir)
+        let swiftPid = try #require(await pid(service, swift))
+        #expect(try await service.documentSymbols(file: use, boardRoot: dir).map(\.name) == ["total"])
+        #expect(await service.existingServer(for: swift, boardRoot: dir) == nil)
+        #expect(await eventually(10) { !Self.isAlive(swiftPid) })
+        await service.stopAll()
+    }
+}

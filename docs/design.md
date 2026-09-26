@@ -117,9 +117,22 @@ flowchart TB
 ## Performance
 
 - Git: one invocation per canvas root for all visible files, merge-base resolved once and re-resolved on HEAD/branch change, triggered by debounced FSEvents, only for live tiles, cached by (base SHA, content hash), at most two concurrent git processes app-wide.
-- Terminals: offscreen surfaces set occluded (Ghostty frees GPU buffers). Browsers: detach and snapshot when not visible, with a capped snapshot pixel budget.
+- Terminals: a surface renders only while its tile is live and its window visible; offscreen, zoomed-out, covered, minimized, and other-Space windows all stop Ghostty drawing, and the zmx session keeps running. Browsers: detach and snapshot when not visible, with a capped snapshot pixel budget; a page an agent is driving stays visible to WebKit for 60 s after its last command.
+- Cards (below 30% zoom) are 0.6 px/pt bitmaps, dropped as soon as the tile is live again; terminal cards read `zmx history` on GCD, not the main thread.
+- Blocking work (subprocess pipes, `waitUntilExit`, file reads) never runs inside a Swift task: parked cooperative threads starve the socket servers' request tasks. Use GCD plus a continuation.
 - Language servers: lazy start, idle shutdown.
-- A dedicated optimization spike closes the build: allocations, memory, threads, CPU, GPU, measured with Instruments/`sample`.
+
+### Optimization spike (measured)
+
+Command Line Tools ship no Instruments, so the spike measured with `footprint`, `top`, `ps` CPU time, and A/B builds on a dev instance.
+
+| What | Before | After |
+| --- | --- | --- |
+| Agent-like status line (20 redraws/s, 20 s) in a live terminal, window on another Space | 0.93 s CPU | 0.04 s CPU |
+| 12 tiles zoomed out and back in: card images held | 126 MB | 13 MB while zoomed out, <1 MB after |
+| Zoom-out with N terminals: main-thread `zmx history` calls | N × ~40 ms | 0 |
+
+Standing costs, measured: empty board 46 MB and ~0% idle CPU. The first Ghostty surface adds ~224 MB of GPU memory (28 × 8 MiB Metal allocations, independent of size; Ghostty.app shows the identical pattern), each further terminal ~12 MB plus ~23 MB of triple-buffered IOSurfaces while it renders (860×560 pt), released when not live. Code tile +20 MB (1,000-line Swift file), note +6 MB, HTML tile +13 MB in-app plus ~23 MB WebContent, browser tile ~18 MB WebContent. Heavy terminal output costs zmx (the session relay) far more CPU than Canvas: a 9M-line burst took 2.6–4.5 s of zmx CPU and ≤0.14 s of Canvas CPU.
 
 ## v0 acceptance
 
@@ -152,3 +165,13 @@ Question cards (`canvas_ask`), MCP server, `canvas lsp-proxy`, multi-agent overv
 - libghostty-spm builds and links with Command Line Tools only. Ghostty renders through Metal, which `cacheDisplay` can't capture; terminal snapshots are drawn from the zmx session text.
 - A window on an unviewed space (or fully covered) stops redrawing, so window-server captures go stale. `view.snapshot` renders the window in-process instead, which also lets agents see the canvas as the user does.
 - TextKit 2 text views draw their text into per-fragment layers, which `cacheDisplay` (and so `view.snapshot`) never captures, and on an unviewed Space the fragment views aren't even created until `textViewportLayoutController.layoutViewport()` runs. Code tiles draw their visible fragments into an image for `showSnapshot`/`snapshot()` (`CodeTextView.renderVisible`).
+
+## Acceptance findings
+
+Run on a clone of `3d-game` with Tim's omp 18.3: omp added an FPS/position HUD, followed by a mention-driven follow-up and an HTML explainer. Fixed along the way:
+
+- Follow tiles re-aimed at scratch files (a `/tmp` screenshot the agent read). `follow.report` now ignores paths outside the board root and the terminal's cwd.
+- omp's browser check saw `document.hidden` and a stopped `requestAnimationFrame` (the tile was offscreen or the window on another Space). Agent-driven pages now stay visible to WebKit (window occlusion detection off, offscreen web views parked in a clipped stage view) for 60 s after the last command.
+- Hyper-clicking a HUD with `pointer-events: none` mentioned the canvas beneath it. The hit test now retries with pointer events forced on and takes a text-bearing overlay.
+- A box drawn over a browser tile said nothing about what it marked. Shape mentions now name the topmost object under them that contains them, with the region in its local units (`· over browser obj_… at (240, 200) 125×120`).
+- Rebuild and reboot resume held: after killing the zmx session and relaunching, the tile ran `omp --resume=<id>` and omp still knew the session's changes.

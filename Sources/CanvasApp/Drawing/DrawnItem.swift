@@ -7,7 +7,8 @@ import CanvasCore
 struct DrawnItem {
     enum Kind {
         case shape(ShapeSpec)
-        case arrow(ArrowSpec, start: CGPoint, end: CGPoint)
+        /// The routed polyline, at least two points.
+        case arrow(ArrowSpec, path: [CGPoint])
     }
 
     let object: CanvasObject
@@ -29,7 +30,7 @@ struct DrawnItem {
     private var colorName: String? {
         switch kind {
         case .shape(let shape): shape.color
-        case .arrow(let arrow, _, _): arrow.color
+        case .arrow(let arrow, _): arrow.color
         }
     }
 
@@ -38,8 +39,8 @@ struct DrawnItem {
         return nil
     }
 
-    var arrow: (spec: ArrowSpec, start: CGPoint, end: CGPoint)? {
-        if case .arrow(let spec, let start, let end) = kind { return (spec, start, end) }
+    var arrow: (spec: ArrowSpec, path: [CGPoint], start: CGPoint, end: CGPoint)? {
+        if case .arrow(let spec, let path) = kind { return (spec, path, path[0], path[path.count - 1]) }
         return nil
     }
 
@@ -87,12 +88,16 @@ struct DrawnItem {
                          label: label, labelRect: labelRect, inkOutline: inkOutline)
     }
 
-    static func arrow(_ object: CanvasObject, _ spec: ArrowSpec, start: CGPoint, end: CGPoint) -> DrawnItem {
+    /// An arrow along a routed polyline. The label sits beside the route, on the `labelSide`
+    /// first (the sign of its parallel offset), clear of `obstacles` where it can be.
+    static func arrow(_ object: CanvasObject, _ spec: ArrowSpec, path points: [CGPoint], labelSide: CGFloat = 0, obstacles: [CGRect] = []) -> DrawnItem {
         var random = DrawingRough.Random(seed: DrawingRough.seed(object.id))
-        let (left, right) = DrawingGeometry.arrowhead(start: start, end: end)
-        let strokes = DrawingRough.line(from: start, to: end, random: &random)
-            + DrawingRough.line(from: end, to: left, random: &random)
-            + DrawingRough.line(from: end, to: right, random: &random)
+        let points = points.count >= 2 ? points : [points.first ?? .zero, points.first ?? .zero]
+        let end = points[points.count - 1]
+        let (left, right) = DrawingGeometry.arrowhead(start: points[points.count - 2], end: end)
+        var strokes: [DrawingRough.Stroke] = []
+        for (a, b) in zip(points, points.dropFirst()) { strokes += DrawingRough.line(from: a, to: b, random: &random) }
+        strokes += DrawingRough.line(from: end, to: left, random: &random) + DrawingRough.line(from: end, to: right, random: &random)
         let stroke = path(strokes)
         var label: NSAttributedString?
         var labelRect: NSRect?
@@ -102,23 +107,14 @@ struct DrawnItem {
             let attributed = DrawingStyle.text(caption, size: DrawingStyle.arrowLabelSize, color: color, alignment: .center)
             let size = attributed.boundingRect(with: NSSize(width: 240, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
             label = attributed
-            let width = ceil(size.width) + 8
-            let height = ceil(size.height)
-            var center = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
-            // A caption wider than a short arrow would hide it: set it beside the shaft instead.
-            let length = hypot(end.x - start.x, end.y - start.y)
-            if length < width + 32, length > 0 {
-                var normal = CGPoint(x: (start.y - end.y) / length, y: (end.x - start.x) / length)
-                if normal.y > 0 { normal = CGPoint(x: -normal.x, y: -normal.y) }
-                let lift = abs(normal.x) * width / 2 + abs(normal.y) * height / 2 + 4
-                center = CGPoint(x: center.x + normal.x * lift, y: center.y + normal.y * lift)
-            }
-            labelRect = NSRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
+            labelRect = DrawingGeometry.labelRect(along: points, size: CGSize(width: ceil(size.width) + 8, height: ceil(size.height)), side: labelSide, obstacles: obstacles)
         }
-        let frame = NSRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
+        let xs = points.map(\.x)
+        let ys = points.map(\.y)
+        let frame = NSRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
         var bounds = stroke.boundingBoxOfPath.union(frame).insetBy(dx: -6, dy: -6)
         if let labelRect { bounds = bounds.union(labelRect.insetBy(dx: -2, dy: -2)) }
-        return DrawnItem(object: object, kind: .arrow(spec, start: start, end: end), frame: frame, bounds: bounds, stroke: stroke, fill: nil, fillAlpha: 0, label: label, labelRect: labelRect)
+        return DrawnItem(object: object, kind: .arrow(spec, path: points), frame: frame, bounds: bounds, stroke: stroke, fill: nil, fillAlpha: 0, label: label, labelRect: labelRect)
     }
 
     static func path(_ strokes: [DrawingRough.Stroke]) -> CGPath {
@@ -162,7 +158,7 @@ struct DrawnItem {
         }
         if let label, let labelRect {
             if arrow != nil {
-                // Arrow captions sit on a chip of canvas color so the shaft doesn't cross the text.
+                // Arrow captions sit on a chip of canvas color so strokes passing by don't cross the text.
                 context.setFillColor(NSColor.underPageBackgroundColor.cgColor)
                 context.addPath(CGPath(roundedRect: labelRect, cornerWidth: 4, cornerHeight: 4, transform: nil))
                 context.fillPath()
@@ -175,9 +171,9 @@ struct DrawnItem {
         switch kind {
         case .shape(let spec):
             return DrawingGeometry.hits(spec, frame: frame, at: point, tolerance: tolerance, labelRect: spec.kind == .text ? nil : labelRect, inkOutline: inkOutline)
-        case .arrow(_, let start, let end):
+        case .arrow(_, let path):
             if let labelRect, labelRect.contains(point) { return true }
-            return DrawingGeometry.hitsArrow(start: start, end: end, at: point, tolerance: tolerance)
+            return DrawingGeometry.hitsArrow(path: path, at: point, tolerance: tolerance)
         }
     }
 

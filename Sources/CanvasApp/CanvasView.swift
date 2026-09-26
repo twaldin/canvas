@@ -18,18 +18,37 @@ final class CanvasDocumentView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.underPageBackgroundColor.setFill()
         dirtyRect.fill()
-        // Dot grid every 40 points.
-        let spacing: CGFloat = 40
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.35).setFill()
-        var x = (dirtyRect.minX / spacing).rounded(.down) * spacing
-        while x < dirtyRect.maxX {
-            var y = (dirtyRect.minY / spacing).rounded(.down) * spacing
-            while y < dirtyRect.maxY {
-                NSRect(x: x - 1, y: y - 1, width: 2, height: 2).fill()
-                y += spacing
-            }
-            x += spacing
-        }
+        // Dot grid: 2-point dots at least 16 points apart on screen, whatever the zoom, drawn as one
+        // tiled image. A rect fill per dot left ~100k display-list entries at 10% zoom, and one path
+        // of all dots made Core Animation union every rect on each frame of a pan.
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let scale = max(convert(NSSize(width: 1, height: 0), to: nil).width, 0.01)
+        var spacing: CGFloat = 40
+        while spacing * scale < 16 { spacing *= 2 }
+        let backing = window?.backingScaleFactor ?? 2
+        let color = NSColor.tertiaryLabelColor.withAlphaComponent(0.35).cgColor
+        guard let tile = Self.dotTile(pixels: Int((spacing * scale * backing).rounded()), dot: 2 * backing, color: color) else { return }
+        context.saveGState()
+        context.clip(to: dirtyRect)
+        context.draw(tile, in: CGRect(x: -spacing / 2, y: -spacing / 2, width: spacing, height: spacing), byTiling: true)
+        context.restoreGState()
+    }
+
+    private static var dotTileCache: (key: String, image: CGImage)?
+
+    /// A transparent square tile with one dot in its center (the last one is reused while zoom and
+    /// appearance stay put).
+    private static func dotTile(pixels: Int, dot: CGFloat, color: CGColor) -> CGImage? {
+        let key = "\(pixels) \(dot) \(color.components ?? [])"
+        if let cached = dotTileCache, cached.key == key { return cached.image }
+        guard pixels > 0, let bitmap = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+                                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let center = CGFloat(pixels) / 2
+        bitmap.setFillColor(color)
+        bitmap.fill(CGRect(x: center - dot / 2, y: center - dot / 2, width: dot, height: dot))
+        guard let image = bitmap.makeImage() else { return nil }
+        dotTileCache = (key, image)
+        return image
     }
 
     override func mouseDown(with event: NSEvent) { canvas?.emptyMouseDown(event) }
@@ -202,7 +221,7 @@ final class CanvasView: NSScrollView {
     /// Where an object is on screen right now, in document coordinates, including an in-flight drag.
     func docFrame(_ id: ObjectID) -> NSRect? {
         if let tile = tiles[id] { return tile.frame }
-        if let group = groups[id] { return group.isHidden ? nil : group.frame }
+        if let group = groups[id] { return group.isHidden ? nil : group.region }
         if let start = move?.drawn[id], let delta = move?.delta { return start.offsetBy(dx: delta.width, dy: delta.height) }
         guard let object = board.objects[id] else { return nil }
         return shapeOutline?(id) ?? Self.drawnRect(object.frame)
@@ -272,9 +291,8 @@ final class CanvasView: NSScrollView {
     }
 
     private func addGroup(_ object: CanvasObject) {
-        guard groups[object.id] == nil else { return }
+        guard groups[object.id] == nil, let view = GroupView(object: object) else { return }
         let id = object.id
-        let view = GroupView(object: object)
         view.scale = magnification
         view.onPress = { [weak self] event in self?.beginMove(event, pressing: id) }
         view.onDrag = { [weak self] event in self?.dragMove(event) }
@@ -523,7 +541,7 @@ final class CanvasView: NSScrollView {
         objectsMoved()
     }
 
-    /// One board update per moved object, as one undo step; groups keep their stored bounds.
+    /// One board update per moved object, as one undo step; groups re-bound themselves.
     private func endMove(_ event: NSEvent) {
         guard let gesture = move else { return }
         move = nil
@@ -542,30 +560,22 @@ final class CanvasView: NSScrollView {
                 frame.y += dy
                 _ = try? board.update(id, frame: frame, props: tiles[id] == nil ? moveProps?(object, dx, dy) : nil)
             }
-            for group in groups.values where !moved.isDisjoint(with: group.members) {
-                if let bounds = memberBounds(group.members) { _ = try? board.update(group.objectID, frame: bounds) }
-            }
         }
     }
 
     // MARK: Groups
 
-    /// Canvas-space union of the members' frames (what a group object stores as its frame).
-    private func memberBounds(_ members: [ObjectID]) -> Frame? {
-        let frames = members.compactMap { board.objects[$0]?.frame }
-        guard let first = frames.first else { return nil }
-        let minX = frames.map(\.x).min() ?? first.x, minY = frames.map(\.y).min() ?? first.y
-        let maxX = frames.map(\.maxX).max() ?? first.maxX, maxY = frames.map(\.maxY).max() ?? first.maxY
-        // Tiles draw their title bar above the frame's content height.
-        let titled = members.contains { tiles[$0] != nil }
-        return Frame(x: minX, y: minY, w: maxX - minX, h: maxY - minY + (titled ? Double(TileFrameView.titleHeight) : 0))
-    }
-
+    /// Group regions follow their members live (mid-drag too), the same way the board fits
+    /// their frames on commit; nested groups count with their committed frames.
     private func refreshGroups() {
         for group in groups.values {
-            let rects = group.members.compactMap { groups[$0] == nil ? docFrame($0) : nil }
-            if let region = GroupView.region(around: rects, scale: group.scale) {
-                if group.frame != region { group.frame = region }
+            let rects = group.members.compactMap { id -> NSRect? in
+                guard board.objects[id]?.type != .arrow else { return nil }
+                if groups[id] != nil { return board.objects[id].map { Self.docRect($0.frame) } }
+                return docFrame(id)
+            }
+            if let region = group.spec.frame(around: rects) {
+                group.show(region: region)
                 group.isHidden = false
             } else {
                 group.isHidden = true
@@ -592,10 +602,10 @@ final class CanvasView: NSScrollView {
     }
 
     func createGroup(_ members: [ObjectID], name: String) {
-        guard members.count >= 2, let bounds = memberBounds(members) else { return }
+        guard members.count >= 2 else { return }
         var props: [String: JSONValue] = ["members": .array(members.map(JSONValue.string))]
-        if !name.isEmpty { props["name"] = .string(name) }
-        let group = board.create(type: .group, props: .object(props), frame: bounds)
+        if !name.isEmpty { props["title"] = .string(name) }
+        let group = board.create(type: .group, props: .object(props))
         setSelection([group.id])
     }
 
@@ -936,6 +946,8 @@ final class CanvasView: NSScrollView {
             }
             if scale != appliedScale {
                 appliedScale = scale
+                // Grid spacing and dot size depend on the zoom.
+                document.needsDisplay = true
                 overlay.scale = scale
                 for group in groups.values { group.scale = scale }
                 for marker in markers.values { marker.scale = scale }

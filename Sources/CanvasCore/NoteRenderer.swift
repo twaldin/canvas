@@ -1,21 +1,20 @@
 import AppKit
-import CanvasCore
 import Markdown
 
 /// Markdown → attributed text for the note display (TextKit 2). Prose is styled as authored;
 /// anchored fences render what `NoteSource` resolved from disk, keyed by their info string.
 @MainActor
-final class NoteRenderer {
-    static let bodyFont = NSFont.systemFont(ofSize: 13)
-    static let codeFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
-    static let captionFont = NSFont.systemFont(ofSize: 10.5, weight: .medium)
+public final class NoteRenderer {
+    public static let bodyFont = NSFont.systemFont(ofSize: 13)
+    public static let codeFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    public static let captionFont = NSFont.systemFont(ofSize: 10.5, weight: .medium)
     /// Rows past this in one excerpt are summarized; a whole-file excerpt stays cheap to lay out.
     static let maxRows = 400
 
     private let excerpts: [String: NoteExcerpt]
     private let out = NSMutableAttributedString()
 
-    init(excerpts: [String: NoteExcerpt]) {
+    public init(excerpts: [String: NoteExcerpt]) {
         self.excerpts = excerpts
     }
 
@@ -28,7 +27,7 @@ final class NoteRenderer {
         var markerWidth: CGFloat = 0
     }
 
-    func render(_ document: Document, placeholder: String) -> NSAttributedString {
+    public func render(_ document: Document, placeholder: String) -> NSAttributedString {
         if document.childCount == 0 {
             let style = NSMutableParagraphStyle()
             style.alignment = .center
@@ -188,7 +187,7 @@ final class NoteRenderer {
         }
     }
 
-    static func font(_ font: NSFont, adding trait: NSFontDescriptor.SymbolicTraits) -> NSFont {
+    public static func font(_ font: NSFont, adding trait: NSFontDescriptor.SymbolicTraits) -> NSFont {
         NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(font.fontDescriptor.symbolicTraits.union(trait)), size: font.pointSize) ?? font
     }
 

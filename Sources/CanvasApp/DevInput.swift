@@ -45,6 +45,33 @@ enum DevInput {
 
     static func replay(_ fields: [String: String]) {
         guard fields["pid"] == String(getpid()) else { return }
+        // `--repeat N --interval ms`: a burst like a trackpad's event stream. The log line reports
+        // how late the main thread ran the steps: the worst lateness is the longest stall a person
+        // would see as a dropped frame run.
+        if let count = Int(fields["repeat"] ?? ""), count > 1 {
+            var single = fields
+            single["repeat"] = nil
+            let interval = (Double(fields["interval"] ?? "") ?? 8) / 1000
+            let start = Date()
+            @MainActor final class Lateness { var worst = 0.0, total = 0.0 }
+            let lateness = Lateness()
+            for step in 0..<count {
+                DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(step)) {
+                    MainActor.assumeIsolated {
+                        let late = max(0, Date().timeIntervalSince(start) - interval * Double(step)) * 1000
+                        lateness.worst = max(lateness.worst, late)
+                        lateness.total += late
+                        replay(single)
+                        if step == count - 1 {
+                            NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms), step lateness worst %.1f ms mean %.1f ms",
+                                  count, fields["kind"] ?? "", Date().timeIntervalSince(start) * 1000, interval * 1000 * Double(count - 1),
+                                  lateness.worst, lateness.total / Double(count))
+                        }
+                    }
+                }
+            }
+            return
+        }
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.windowController is CanvasWindowController }),
               let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])
@@ -105,13 +132,16 @@ enum DevInput {
         case "scroll":
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(number("dy")), wheel2: Int32(number("dx")), wheel3: 0) else { return }
             // CGEvent locations are global with a top-left origin (primary display), not Cocoa's.
-            let screen = window.convertPoint(toScreen: point("x", "y"))
+            let at = point("x", "y")
+            let screen = window.convertPoint(toScreen: at)
             cg.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
             cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
-            // NSWindow routes a windowless scroll by its screen location, which misses windows on
-            // a secondary display: deliver it to the view under the point, as routing would.
-            guard let event = NSEvent(cgEvent: cg), let frame = content.superview else { return }
-            (content.hitTest(frame.convert(point("x", "y"), from: nil)) ?? content).scrollWheel(with: event)
+            // A window-less event's locationInWindow is its screen location, which only matches the
+            // window near the primary display's origin; hand it to the view under the point instead
+            // of relying on sendEvent's hit test (windows on other displays got nothing).
+            guard let event = NSEvent(cgEvent: cg), let frame = content.superview,
+                  let hit = content.hitTest(frame.convert(at, from: nil)) else { return }
+            hit.scrollWheel(with: event)
         default:
             NSLog("DevInput: unknown kind \(fields["kind"] ?? "nil")")
         }

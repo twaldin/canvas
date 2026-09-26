@@ -39,6 +39,16 @@ public final class UndoHistory {
         depth += 1
     }
 
+    /// Changes recorded so far in the open step.
+    var openCount: Int { open.count }
+
+    /// Drops the open step's changes after the first `mark` and returns them, oldest first.
+    func discard(from mark: Int) -> [Change] {
+        let dropped = Array(open[mark...])
+        open.removeSubrange(mark...)
+        return dropped
+    }
+
     func end() {
         depth -= 1
         if depth == 0 { close() }
@@ -102,6 +112,13 @@ extension Board {
     @discardableResult
     public func undo() -> Bool {
         guard let step = history.popUndo() else { return false }
+        history.pushRedo(revert(step))
+        return true
+    }
+
+    /// Reverts recorded changes, newest first; returns them as a redo step (oldest first).
+    @discardableResult
+    func revert(_ step: [UndoHistory.Change]) -> [UndoHistory.Change] {
         var replayed: [UndoHistory.Change] = []
         replay {
             for change in step.reversed() {
@@ -117,8 +134,7 @@ extension Board {
                 }
             }
         }
-        history.pushRedo(replayed.reversed())
-        return true
+        return replayed.reversed()
     }
 
     /// Re-applies the latest undone step. False when there is nothing to redo.

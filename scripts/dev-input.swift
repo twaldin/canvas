@@ -9,6 +9,7 @@
 //   dev-input <pid> command <selector>               e.g. insertNewline: deleteBackward: cancelOperation:
 //   dev-input <pid> shortcut <key> [--mods cmd]      key equivalent, e.g. shortcut z --mods cmd
 //   dev-input <pid> scroll <x> <y> <dx> <dy>         pan by pixels
+//   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the lag
 import Foundation
 
 var args = Array(CommandLine.arguments.dropFirst())
@@ -20,6 +21,8 @@ func option(_ name: String) -> String? {
 }
 let mods = option("--mods")
 let clicks = option("--clicks")
+let repeatCount = option("--repeat")
+let interval = option("--interval")
 guard args.count >= 2 else {
     FileHandle.standardError.write(Data("usage: dev-input <pid> <kind> …  (see header of scripts/dev-input.swift)\n".utf8))
     exit(2)
@@ -48,6 +51,8 @@ default:
 }
 if let mods { info["mods"] = mods }
 if let clicks { info["clicks"] = clicks }
+if let repeatCount { info["repeat"] = repeatCount }
+if let interval { info["interval"] = interval }
 DistributedNotificationCenter.default().postNotificationName(Notification.Name("canvas.dev.input"), object: nil, userInfo: info, deliverImmediately: true)
 // Replayed events are queued; give the app a moment before the caller inspects state.
 usleep(150_000)

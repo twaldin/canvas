@@ -50,7 +50,7 @@ To see the canvas as the user does: `canvas view.snapshot --out /tmp/canvas.png`
 
 Create objects when a visual helps the user more than terminal text: a plan they will come back to, code they should look at, a comparison, a diagram. Don't mirror your whole transcript onto the canvas.
 
-Omit `frame` and the canvas places new objects beside your terminal without covering anything. Pass a frame only when you are deliberately laying things out (`canvas.compositions.grid.arrange(ids)` does it for you).
+Omit `frame` and the canvas places new objects beside your terminal without covering anything. When you lay things out deliberately, let the canvas do the geometry: `size: "fit"` sizes a tile to its content, `layout.place`/`layout.stack` position objects (groups move whole), `object.batch` applies a whole layout as one ⌘Z step with `"$0"` references to objects it creates, and `layout.check` reports overlaps, arrows through tiles, and content that doesn't fit. Details and an example: `references/api.md` "Layout".
 
 | Want | Create |
 | --- | --- |
@@ -86,9 +86,9 @@ Ground every code claim with `<canvas-code>`/`<canvas-link>` instead of pasting 
 
 ### Shapes and arrows
 
-- `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "…"}` with a `frame`. A rect drawn around tiles *encloses* them.
-- `arrow`: `{"from": {"object": "obj_…"}, "to": {"object": "obj_…", "lines": {"start": 41, "end": 48}}, "relation": "calls", "label": "…"}`. Endpoints bind to objects (optionally a line range or a DOM `selector`) or to a `{"point": [x, y]}`. `relation` is the machine-readable edge (`calls`, `depends_on`, `hypothesis_about`, …); `label` is what the user reads.
-- `group`: `{"members": [ids], "name": "…"}`.
+- `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "…", "fill": "none" | "semi" | "solid"}` with a `frame`. Colors: `black`, `grey`, `blue`, `green`, `orange`, `red`, `violet`, or `#rrggbb`. A rect drawn around tiles *encloses* them.
+- `arrow`: `{"from": {"object": "obj_…"}, "to": {"object": "obj_…", "lines": {"start": 41, "end": 48}}, "relation": "calls", "label": "…", "route": "avoid"}`. Endpoints bind to objects (optionally a line range or a DOM `selector`) or to a `{"point": [x, y]}`. `relation` is the machine-readable edge (`calls`, `depends_on`, `hypothesis_about`, …); `label` is what the user reads. `route`: `straight` (default), `orthogonal`, or `avoid` (goes around tiles in the way). Arrows between the same two objects are drawn apart automatically, both directions.
+- `group`: `{"members": [ids], "title": "…", "color": "blue", "padding": 24}` is a titled, tinted region whose frame always wraps its members (plus padding and a title band) as they move; use one per lane or cluster instead of a rect plus a text label.
 
 `canvas get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
 

@@ -28,7 +28,8 @@ public enum DrawingGeometry {
         case point(CGPoint)
         case bound(Outline)
 
-        var aim: CGRect {
+        /// What the other end aims at: the outline's bounds, or the point.
+        public var aim: CGRect {
             switch self {
             case .point(let point): CGRect(origin: point, size: .zero)
             case .bound(let outline): outline.bounds
@@ -41,31 +42,43 @@ public enum DrawingGeometry {
     /// Straight route between two ends. A bound end leaves from the side of its outline that faces
     /// the other end: when the two sit side by side (or stacked) with overlapping extents the arrow
     /// runs orthogonally through the middle of the overlap, otherwise it aims center to center.
-    public static func route(from: ArrowEnd, to: ArrowEnd, gap: CGFloat = arrowGap) -> (start: CGPoint, end: CGPoint) {
-        (attach(from, toward: to.aim, gap: gap), attach(to, toward: from.aim, gap: gap))
+    /// `offset` moves the whole route sideways (positive: left of travel), staying within the
+    /// overlap for orthogonal runs.
+    public static func route(from: ArrowEnd, to: ArrowEnd, gap: CGFloat = arrowGap, offset: CGFloat = 0) -> (start: CGPoint, end: CGPoint) {
+        var shift = CGPoint.zero
+        if offset != 0 {
+            let a = from.aim
+            let b = to.aim
+            let d = CGPoint(x: b.midX - a.midX, y: b.midY - a.midY)
+            let length = hypot(d.x, d.y)
+            if length > 0 { shift = CGPoint(x: d.y / length * offset, y: -d.x / length * offset) }
+        }
+        return (attach(from, toward: to.aim, gap: gap, shift: shift), attach(to, toward: from.aim, gap: gap, shift: shift))
     }
 
-    static func attach(_ end: ArrowEnd, toward other: CGRect, gap: CGFloat) -> CGPoint {
+    static func attach(_ end: ArrowEnd, toward other: CGRect, gap: CGFloat, shift: CGPoint = .zero) -> CGPoint {
         let outline: Outline
         switch end {
         case .point(let point): return point
         case .bound(let bound): outline = bound
         }
         let rect = outline.bounds
-        let yOverlap = overlap(rect.minY, rect.maxY, other.minY, other.maxY)
-        let xOverlap = overlap(rect.minX, rect.maxX, other.minX, other.maxX)
-        if let y = yOverlap, other.minX >= rect.maxX || other.maxX <= rect.minX {
+        let yRange = (max(rect.minY, other.minY), min(rect.maxY, other.maxY))
+        let xRange = (max(rect.minX, other.minX), min(rect.maxX, other.maxX))
+        if yRange.0 <= yRange.1, other.minX >= rect.maxX || other.maxX <= rect.minX {
             let right = other.minX >= rect.maxX
+            let y = clamp((yRange.0 + yRange.1) / 2 + shift.y, yRange.0 + 2, yRange.1 - 2)
             let edge = boundary(outline, from: CGPoint(x: rect.midX, y: y), direction: CGPoint(x: right ? 1 : -1, y: 0))
             return CGPoint(x: edge.x + (right ? gap : -gap), y: y)
         }
-        if let x = xOverlap, other.minY >= rect.maxY || other.maxY <= rect.minY {
+        if xRange.0 <= xRange.1, other.minY >= rect.maxY || other.maxY <= rect.minY {
             let down = other.minY >= rect.maxY
+            let x = clamp((xRange.0 + xRange.1) / 2 + shift.x, xRange.0 + 2, xRange.1 - 2)
             let edge = boundary(outline, from: CGPoint(x: x, y: rect.midY), direction: CGPoint(x: 0, y: down ? 1 : -1))
             return CGPoint(x: x, y: edge.y + (down ? gap : -gap))
         }
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        var direction = CGPoint(x: other.midX - center.x, y: other.midY - center.y)
+        let center = CGPoint(x: clamp(rect.midX + shift.x, rect.minX + 2, rect.maxX - 2), y: clamp(rect.midY + shift.y, rect.minY + 2, rect.maxY - 2))
+        var direction = CGPoint(x: other.midX + shift.x - center.x, y: other.midY + shift.y - center.y)
         let length = hypot(direction.x, direction.y)
         direction = length > 0 ? CGPoint(x: direction.x / length, y: direction.y / length) : CGPoint(x: 0, y: -1)
         let edge = boundary(outline, from: center, direction: direction)
@@ -159,10 +172,6 @@ public enum DrawingGeometry {
             a = b
         }
         return best
-    }
-
-    public static func hitsArrow(start: CGPoint, end: CGPoint, at point: CGPoint, tolerance: CGFloat) -> Bool {
-        distanceToSegment(point, start, end) <= tolerance + strokeWidth / 2 + jitterAllowance
     }
 
     public static func distanceToSegment(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {

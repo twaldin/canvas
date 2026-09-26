@@ -103,9 +103,14 @@ struct DrawingHitTests {
     }
 
     @Test func arrowsHitAlongTheShaft() {
-        #expect(G.hitsArrow(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 100, y: 0), at: CGPoint(x: 50, y: 5), tolerance: 4))
-        #expect(!G.hitsArrow(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 100, y: 0), at: CGPoint(x: 50, y: 20), tolerance: 4))
-        #expect(!G.hitsArrow(start: CGPoint(x: 0, y: 0), end: CGPoint(x: 100, y: 0), at: CGPoint(x: 120, y: 0), tolerance: 4))
+        let shaft = [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)]
+        #expect(G.hitsArrow(path: shaft, at: CGPoint(x: 50, y: 5), tolerance: 4))
+        #expect(!G.hitsArrow(path: shaft, at: CGPoint(x: 50, y: 20), tolerance: 4))
+        #expect(!G.hitsArrow(path: shaft, at: CGPoint(x: 120, y: 0), tolerance: 4))
+        // A routed arrow hits along its bends, not along the chord between its ends.
+        let bent = [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 100)]
+        #expect(G.hitsArrow(path: bent, at: CGPoint(x: 103, y: 60), tolerance: 4))
+        #expect(!G.hitsArrow(path: bent, at: CGPoint(x: 50, y: 50), tolerance: 4))
     }
 }
 

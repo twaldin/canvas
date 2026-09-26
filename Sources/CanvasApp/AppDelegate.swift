@@ -56,7 +56,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controllers[board.id]?.canvas.raiseAttention(id, message: message)
         }
         router.readTerminal = { _, tile, lines in
-            await Task.detached { TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines) }.value
+            // A blocking subprocess read: keep it on GCD so it can't park Swift's cooperative
+            // threads, which the socket servers' request tasks need.
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(returning: TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines))
+                }
+            }
         }
         router.objectImage = { [weak self] board, id in
             guard let canvas = self?.controllers[board.id]?.canvas else { return nil }

@@ -628,61 +628,54 @@ export interface CanvasApi {
   };
 }
 
+/** Params a client fills from its tile (`caller`) and board when the call omits them, with the env var each defaults from. */
 export const ENV_DEFAULTS: Record<string, string> = {"caller":"CANVAS_TILE_ID","board":"CANVAS_BOARD_ID"};
 
-export function withEnv<T extends object>(params: T, keys: string[]): T {
-  const filled: Record<string, unknown> = { ...params };
-  for (const k of keys) {
-    const v = process.env[ENV_DEFAULTS[k]];
-    if (filled[k] === undefined && v) filled[k] = v;
-  }
-  return filled as T;
-}
-
-export function bindMethods(call: (method: string, params: object) => Promise<unknown>): CanvasApi {
+/** `call` receives the method's auto-filled param names (keys of ENV_DEFAULTS it accepts). */
+export function bindMethods(call: (method: string, params: object, envKeys: string[]) => Promise<unknown>): CanvasApi {
   return {
     system: {
-      ping: (params?: SystemPingParams) => call("system.ping", withEnv(params ?? {}, [])) as Promise<SystemPingResult>,
+      ping: (params?: SystemPingParams) => call("system.ping", params ?? {}, []) as Promise<SystemPingResult>,
     },
     board: {
-      get: (params?: BoardGetParams) => call("board.get", withEnv(params ?? {}, ["board"])) as Promise<BoardGetResult>,
-      history: (params?: BoardHistoryParams) => call("board.history", withEnv(params ?? {}, ["board"])) as Promise<BoardHistoryResult>,
-      list: (params?: BoardListParams) => call("board.list", withEnv(params ?? {}, [])) as Promise<BoardListResult>,
-      export: (params?: BoardExportParams) => call("board.export", withEnv(params ?? {}, ["board"])) as Promise<BoardExportResult>,
+      get: (params?: BoardGetParams) => call("board.get", params ?? {}, ["board"]) as Promise<BoardGetResult>,
+      history: (params?: BoardHistoryParams) => call("board.history", params ?? {}, ["board"]) as Promise<BoardHistoryResult>,
+      list: (params?: BoardListParams) => call("board.list", params ?? {}, []) as Promise<BoardListResult>,
+      export: (params?: BoardExportParams) => call("board.export", params ?? {}, ["board"]) as Promise<BoardExportResult>,
     },
     object: {
-      get: (params: ObjectGetParams) => call("object.get", withEnv(params ?? {}, [])) as Promise<ObjectGetResult>,
-      create: (params: ObjectCreateParams) => call("object.create", withEnv(params ?? {}, ["board","caller"])) as Promise<ObjectCreateResult>,
-      update: (params: ObjectUpdateParams) => call("object.update", withEnv(params ?? {}, ["caller"])) as Promise<ObjectUpdateResult>,
-      delete: (params: ObjectDeleteParams) => call("object.delete", withEnv(params ?? {}, ["caller"])) as Promise<ObjectDeleteResult>,
+      get: (params: ObjectGetParams) => call("object.get", params ?? {}, []) as Promise<ObjectGetResult>,
+      create: (params: ObjectCreateParams) => call("object.create", params ?? {}, ["board","caller"]) as Promise<ObjectCreateResult>,
+      update: (params: ObjectUpdateParams) => call("object.update", params ?? {}, ["caller"]) as Promise<ObjectUpdateResult>,
+      delete: (params: ObjectDeleteParams) => call("object.delete", params ?? {}, ["caller"]) as Promise<ObjectDeleteResult>,
     },
     tray: {
-      list: (params?: TrayListParams) => call("tray.list", withEnv(params ?? {}, ["board"])) as Promise<TrayListResult>,
-      stage: (params: TrayStageParams) => call("tray.stage", withEnv(params ?? {}, ["board"])) as Promise<TrayStageResult>,
-      unstage: (params: TrayUnstageParams) => call("tray.unstage", withEnv(params ?? {}, [])) as Promise<TrayUnstageResult>,
-      drain: (params?: TrayDrainParams) => call("tray.drain", withEnv(params ?? {}, ["board","caller"])) as Promise<TrayDrainResult>,
-      commit: (params: TrayCommitParams) => call("tray.commit", withEnv(params ?? {}, ["board"])) as Promise<TrayCommitResult>,
+      list: (params?: TrayListParams) => call("tray.list", params ?? {}, ["board"]) as Promise<TrayListResult>,
+      stage: (params: TrayStageParams) => call("tray.stage", params ?? {}, ["board"]) as Promise<TrayStageResult>,
+      unstage: (params: TrayUnstageParams) => call("tray.unstage", params ?? {}, []) as Promise<TrayUnstageResult>,
+      drain: (params?: TrayDrainParams) => call("tray.drain", params ?? {}, ["board","caller"]) as Promise<TrayDrainResult>,
+      commit: (params: TrayCommitParams) => call("tray.commit", params ?? {}, ["board"]) as Promise<TrayCommitResult>,
     },
     agent: {
-      report: (params: AgentReportParams) => call("agent.report", withEnv(params ?? {}, [])) as Promise<AgentReportResult>,
-      report_session: (params: AgentReportSessionParams) => call("agent.report_session", withEnv(params ?? {}, [])) as Promise<AgentReportSessionResult>,
-      release: (params: AgentReleaseParams) => call("agent.release", withEnv(params ?? {}, [])) as Promise<AgentReleaseResult>,
-      list: (params?: AgentListParams) => call("agent.list", withEnv(params ?? {}, [])) as Promise<AgentListResult>,
-      prompt: (params: AgentPromptParams) => call("agent.prompt", withEnv(params ?? {}, [])) as Promise<AgentPromptResult>,
-      wait: (params: AgentWaitParams) => call("agent.wait", withEnv(params ?? {}, [])) as Promise<AgentWaitResult>,
-      read: (params: AgentReadParams) => call("agent.read", withEnv(params ?? {}, [])) as Promise<AgentReadResult>,
+      report: (params: AgentReportParams) => call("agent.report", params ?? {}, []) as Promise<AgentReportResult>,
+      report_session: (params: AgentReportSessionParams) => call("agent.report_session", params ?? {}, []) as Promise<AgentReportSessionResult>,
+      release: (params: AgentReleaseParams) => call("agent.release", params ?? {}, []) as Promise<AgentReleaseResult>,
+      list: (params?: AgentListParams) => call("agent.list", params ?? {}, []) as Promise<AgentListResult>,
+      prompt: (params: AgentPromptParams) => call("agent.prompt", params ?? {}, []) as Promise<AgentPromptResult>,
+      wait: (params: AgentWaitParams) => call("agent.wait", params ?? {}, []) as Promise<AgentWaitResult>,
+      read: (params: AgentReadParams) => call("agent.read", params ?? {}, []) as Promise<AgentReadResult>,
     },
     follow: {
-      report: (params: FollowReportParams) => call("follow.report", withEnv(params ?? {}, [])) as Promise<FollowReportResult>,
+      report: (params: FollowReportParams) => call("follow.report", params ?? {}, []) as Promise<FollowReportResult>,
     },
     view: {
-      attention: (params: ViewAttentionParams) => call("view.attention", withEnv(params ?? {}, [])) as Promise<ViewAttentionResult>,
-      get: (params?: ViewGetParams) => call("view.get", withEnv(params ?? {}, ["board"])) as Promise<ViewGetResult>,
-      render: (params: ViewRenderParams) => call("view.render", withEnv(params ?? {}, ["board"])) as Promise<ViewRenderResult>,
-      snapshot: (params?: ViewSnapshotParams) => call("view.snapshot", withEnv(params ?? {}, ["board"])) as Promise<ViewSnapshotResult>,
+      attention: (params: ViewAttentionParams) => call("view.attention", params ?? {}, []) as Promise<ViewAttentionResult>,
+      get: (params?: ViewGetParams) => call("view.get", params ?? {}, ["board"]) as Promise<ViewGetResult>,
+      render: (params: ViewRenderParams) => call("view.render", params ?? {}, ["board"]) as Promise<ViewRenderResult>,
+      snapshot: (params?: ViewSnapshotParams) => call("view.snapshot", params ?? {}, ["board"]) as Promise<ViewSnapshotResult>,
     },
     events: {
-      subscribe: (params?: EventsSubscribeParams) => call("events.subscribe", withEnv(params ?? {}, ["board"])) as Promise<EventsSubscribeResult>,
+      subscribe: (params?: EventsSubscribeParams) => call("events.subscribe", params ?? {}, ["board"]) as Promise<EventsSubscribeResult>,
     },
   };
 }

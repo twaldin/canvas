@@ -6,8 +6,21 @@ Recommended surface for agents with a persistent REPL:
     board = canvas.board.get()
     canvas.object.create(type="note", props={"markdown": "# Hypothesis"})
 
-Every method mirrors schema/canvas-api.json. `caller` and `board` are filled
-from CANVAS_TILE_ID / CANVAS_BOARD_ID when the call runs inside a terminal tile.
+The connection comes from CANVAS_SOCKET / CANVAS_TILE_ID / CANVAS_BOARD_ID, which every
+Canvas terminal tile sets. A process that did not inherit them (e.g. a REPL kernel started
+with a filtered environment) connects explicitly; `canvas` then uses that connection:
+
+    from canvas_sdk import connect
+    canvas = connect(socket="/…/canvas.sock", tile="obj_…", board="brd_…")
+
+Every method mirrors schema/canvas-api.json. `caller` and `board` are filled from the
+client's tile and board. Params that are Python keywords take a trailing underscore:
+`canvas.object.get(id="obj_…", as_="graph")`. Image methods take `out=` (relative paths
+resolve against this process's cwd; the app writes the file).
+
+After an app restart the next call reconnects on its own. Connection failures raise
+`CanvasError` with code `unavailable`; when the request was already sent, the message says
+it may have applied, so re-read before retrying.
 
 Reusable helpers live in compositions directories and load on first use:
 
@@ -19,16 +32,20 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import socket
 import threading
+import time
 from typing import Any
 
-from ._generated import METHODS, SCHEMA_VERSION, GeneratedApi
+from ._generated import ENV_DEFAULTS, METHODS, SCHEMA_VERSION, GeneratedApi
 from .compositions import Compositions
 
 DEFAULT_SOCKET = os.path.expanduser("~/Library/Application Support/Canvas/canvas.sock")
+# The app takes 5-10 s to restart; a request that never left waits this long for it.
+RECONNECT_TIMEOUT = 15.0
 
-__all__ = ["Canvas", "CanvasError", "Compositions", "canvas", "METHODS", "SCHEMA_VERSION", "DEFAULT_SOCKET"]
+__all__ = ["Canvas", "CanvasError", "Compositions", "canvas", "connect", "METHODS", "SCHEMA_VERSION", "DEFAULT_SOCKET"]
 
 
 class CanvasError(Exception):
@@ -38,12 +55,50 @@ class CanvasError(Exception):
         self.data = data
 
 
-class Canvas(GeneratedApi):
-    """One persistent, thread-safe connection to the Canvas API socket."""
+def _resolve_socket(explicit: str | os.PathLike[str] | None) -> str:
+    if explicit:
+        return os.fspath(explicit)
+    if os.environ.get("CANVAS_SOCKET"):
+        return os.environ["CANVAS_SOCKET"]
+    if os.path.exists(DEFAULT_SOCKET):
+        return DEFAULT_SOCKET
+    raise CanvasError(
+        "unavailable",
+        f"CANVAS_SOCKET is unset and the default socket {DEFAULT_SOCKET} does not exist, so this process "
+        "has no Canvas connection (it did not inherit the terminal tile's environment). In the Canvas "
+        "terminal run `echo $CANVAS_SOCKET $CANVAS_TILE_ID $CANVAS_BOARD_ID`, then connect with those "
+        "values: `canvas = canvas_sdk.connect(socket=..., tile=..., board=...)`.",
+    )
 
-    def __init__(self, socket_path: str | None = None, timeout: float | None = None, compositions_dirs: list[str | os.PathLike[str]] | None = None) -> None:
-        self.socket_path = socket_path or os.environ.get("CANVAS_SOCKET") or DEFAULT_SOCKET
+
+class _NotSent(Exception):
+    """The request never reached the app, so it is safe to send again."""
+
+
+class Canvas(GeneratedApi):
+    """One persistent, thread-safe connection to the Canvas API socket.
+
+    `socket_path`, `tile`, `board`: explicit values win, then CANVAS_SOCKET / CANVAS_TILE_ID /
+    CANVAS_BOARD_ID, then (socket only) the default path if it exists; otherwise CanvasError.
+    `timeout`: per-call seconds (default none; agent.wait may block for minutes).
+    `reconnect_timeout`: how long a call whose request was not sent waits for the socket to come back.
+    """
+
+    def __init__(
+        self,
+        socket_path: str | os.PathLike[str] | None = None,
+        *,
+        tile: str | None = None,
+        board: str | None = None,
+        timeout: float | None = None,
+        reconnect_timeout: float = RECONNECT_TIMEOUT,
+        compositions_dirs: list[str | os.PathLike[str]] | None = None,
+    ) -> None:
+        self.socket_path = _resolve_socket(socket_path)
+        self.tile_id = tile or os.environ.get(ENV_DEFAULTS["caller"]) or None
+        self.board_id = board or os.environ.get(ENV_DEFAULTS["board"]) or None
         self.timeout = timeout
+        self.reconnect_timeout = reconnect_timeout
         self._sock: socket.socket | None = None
         self._reader: Any = None
         self._lock = threading.Lock()
@@ -51,23 +106,28 @@ class Canvas(GeneratedApi):
         super().__init__(self.call)
         self.compositions = Compositions(self, compositions_dirs)
 
-    def call(self, method: str, params: dict[str, Any]) -> Any:
+    def call(self, method: str, params: dict[str, Any], env_keys: list[str] | tuple[str, ...] = ()) -> Any:
+        """Send one request. `env_keys` (e.g. ["caller", "board"]) are filled from this client when omitted."""
+        params = {k: v for k, v in params.items() if v is not None}
+        defaults = {"caller": self.tile_id, "board": self.board_id}
+        for key in env_keys:
+            if key not in params and defaults.get(key):
+                params[key] = defaults[key]
+        if isinstance(params.get("out"), (str, os.PathLike)):
+            params["out"] = os.path.abspath(os.path.expanduser(os.fspath(params["out"])))
         with self._lock:
-            reader, sock = self._connect()
             self._next_id += 1
             request_id = str(self._next_id)
+            line = (json.dumps({"id": request_id, "method": method, "params": params}) + "\n").encode()
             try:
-                sock.sendall((json.dumps({"id": request_id, "method": method, "params": params}) + "\n").encode())
-                while True:
-                    line = reader.readline()
-                    if not line:
-                        raise CanvasError("closed", "Canvas socket closed")
-                    message = json.loads(line)
-                    if message.get("id") == request_id:
-                        break
-            except (OSError, CanvasError):
-                self.close()
-                raise
+                self._send(line, wait=0)
+            except _NotSent:
+                # Stale connection or the app is restarting: nothing was delivered, so send once more.
+                try:
+                    self._send(line, wait=self.reconnect_timeout)
+                except _NotSent as error:
+                    raise CanvasError("unavailable", f"{error} ({method} was not sent)") from None
+            message = self._receive(request_id, method)
         if message.get("ok"):
             return message.get("result")
         error = message.get("error") or {}
@@ -79,22 +139,68 @@ class Canvas(GeneratedApi):
         self._sock = None
         self._reader = None
 
-    def _connect(self) -> tuple[Any, socket.socket]:
+    def _send(self, line: bytes, wait: float) -> None:
+        if self._sock is not None and not self._alive(self._sock):
+            self.close()
         if self._sock is None:
+            self._open(wait)
+        assert self._sock is not None
+        try:
+            self._sock.sendall(line)
+        except OSError as error:
+            # A partial line is discarded by the app (requests are newline-framed).
+            self.close()
+            raise _NotSent(f"Canvas socket {self.socket_path}: {error}") from error
+
+    def _receive(self, request_id: str, method: str) -> dict[str, Any]:
+        try:
+            while True:
+                line = self._reader.readline()
+                if not line:
+                    raise ConnectionError("closed by the app")
+                message = json.loads(line)
+                if message.get("id") == request_id:
+                    return message
+        except TimeoutError:
+            self.close()
+            raise CanvasError("timeout", f"{method} timed out after {self.timeout}s") from None
+        except OSError as error:
+            self.close()
+            raise CanvasError(
+                "unavailable",
+                f"Canvas connection lost after sending {method} ({error}); it may or may not have applied — re-read before retrying",
+            ) from None
+
+    def _open(self, wait: float) -> None:
+        deadline = time.monotonic() + wait
+        while True:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
             try:
                 sock.connect(self.socket_path)
             except OSError as error:
                 sock.close()
-                raise CanvasError("unavailable", f"Canvas socket {self.socket_path}: {error}") from error
+                if time.monotonic() >= deadline:
+                    waited = f" after waiting {wait:g}s for the app" if wait else ""
+                    raise _NotSent(f"Canvas socket {self.socket_path}: {error.strerror or error}{waited}") from None
+                time.sleep(0.2)
+                continue
             self._sock = sock
             self._reader = sock.makefile("r", encoding="utf-8")
-        return self._reader, self._sock
+            return
+
+    @staticmethod
+    def _alive(sock: socket.socket) -> bool:
+        """False when the app closed this connection (e.g. it restarted) since the last call."""
+        try:
+            readable, _, _ = select.select([sock], [], [], 0)
+            return not readable or sock.recv(1, socket.MSG_PEEK) != b""
+        except (OSError, ValueError):
+            return False
 
 
 class _LazyCanvas:
-    """Module-level `canvas` that connects on first use."""
+    """Module-level `canvas`: the last `connect()` result, else a client that connects on first use."""
 
     _instance: Canvas | None = None
 
@@ -102,6 +208,16 @@ class _LazyCanvas:
         if _LazyCanvas._instance is None:
             _LazyCanvas._instance = Canvas()
         return getattr(_LazyCanvas._instance, name)
+
+
+def connect(socket: str | os.PathLike[str] | None = None, tile: str | None = None, board: str | None = None) -> Canvas:
+    """Connect with explicit values (each falls back to CANVAS_SOCKET / CANVAS_TILE_ID / CANVAS_BOARD_ID).
+    The module-level `canvas` uses this client from now on."""
+    client = Canvas(socket, tile=tile, board=board)
+    previous, _LazyCanvas._instance = _LazyCanvas._instance, client
+    if previous is not None:
+        previous.close()
+    return client
 
 
 canvas: Canvas = _LazyCanvas()  # type: ignore[assignment]

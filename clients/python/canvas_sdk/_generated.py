@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any, Callable, Literal, NotRequired, Required, TypedDict, Union
 
 SCHEMA_VERSION = 1
@@ -149,181 +148,175 @@ class HistoryEntry(TypedDict):
     viewport: NotRequired["Viewport"]
     selection: NotRequired[list["Id"]]
 
-def _with_env(params: dict[str, Any], keys: list[str]) -> dict[str, Any]:
-    for k in keys:
-        if params.get(k) is None and os.environ.get(ENV_DEFAULTS[k]):
-            params[k] = os.environ[ENV_DEFAULTS[k]]
-    return {k: v for k, v in params.items() if v is not None}
-
 class SystemApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def ping(self) -> dict[str, Any]:
         """Liveness and schema version."""
         params = {}
-        return self._call("system.ping", _with_env(params, []))
+        return self._call("system.ping", params, [])
 
 class BoardApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def get(self, *, board: "Id" | None = None, since: int | None = None) -> dict[str, Any]:
         """Board manifest: all objects (props summarized for heavy types) plus a change cursor. Objects created or changed since `since` are flagged."""
         params = {"board": board, "since": since}
-        return self._call("board.get", _with_env(params, ["board"]))
+        return self._call("board.get", params, ["board"])
 
     def history(self, *, board: "Id" | None = None, since: Union[int, str] | None = None, limit: int | None = None, kinds: list[Literal["created", "updated", "deleted", "viewport", "selection", "follow", "restart"]] | None = None) -> dict[str, Any]:
         """Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, and app starts. Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry."""
         params = {"board": board, "since": since, "limit": limit, "kinds": kinds}
-        return self._call("board.history", _with_env(params, ["board"]))
+        return self._call("board.history", params, ["board"])
 
     def list(self) -> dict[str, Any]:
         """Every stored board, open or not, including archived boards whose root directory is gone."""
         params = {}
-        return self._call("board.list", _with_env(params, []))
+        return self._call("board.list", params, [])
 
     def export(self, *, board: "Id" | None = None, path: str | None = None) -> dict[str, Any]:
         """Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller."""
         params = {"board": board, "path": path}
-        return self._call("board.export", _with_env(params, ["board"]))
+        return self._call("board.export", params, ["board"])
 
 class ObjectApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def get(self, *, id: "Id", as_: Literal["raw", "graph"] | None = None) -> dict[str, Any]:
         """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it."""
         params = {"id": id, "as": as_}
-        return self._call("object.get", _with_env(params, []))
+        return self._call("object.get", params, [])
 
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: "Frame" | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
         """Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
         params = {"board": board, "type": type, "props": props, "frame": frame, "parent": parent, "caller": caller}
-        return self._call("object.create", _with_env(params, ["board","caller"]))
+        return self._call("object.create", params, ["board","caller"])
 
     def update(self, *, id: "Id", rev: int | None = None, frame: "Frame" | None = None, props: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
         """Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency."""
         params = {"id": id, "rev": rev, "frame": frame, "props": props, "caller": caller}
-        return self._call("object.update", _with_env(params, ["caller"]))
+        return self._call("object.update", params, ["caller"])
 
     def delete(self, *, id: "Id", caller: "Id" | None = None) -> dict[str, Any]:
         """Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached."""
         params = {"id": id, "caller": caller}
-        return self._call("object.delete", _with_env(params, ["caller"]))
+        return self._call("object.delete", params, ["caller"])
 
 class TrayApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def list(self, *, board: "Id" | None = None) -> dict[str, Any]:
         """Staged mentions, in staging order."""
         params = {"board": board}
-        return self._call("tray.list", _with_env(params, ["board"]))
+        return self._call("tray.list", params, ["board"])
 
     def stage(self, *, target: "MentionTarget", board: "Id" | None = None) -> dict[str, Any]:
         """Stage a mention (normally done by the user with Hyper-click; exposed for tests and agents)."""
         params = {"target": target, "board": board}
-        return self._call("tray.stage", _with_env(params, ["board"]))
+        return self._call("tray.stage", params, ["board"])
 
     def unstage(self, *, id: "Id") -> dict[str, Any]:
         """Remove one staged mention."""
         params = {"id": id}
-        return self._call("tray.unstage", _with_env(params, []))
+        return self._call("tray.unstage", params, [])
 
     def drain(self, *, board: "Id" | None = None, caller: "Id" | None = None, peek: bool | None = None) -> dict[str, Any]:
         """Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing)."""
         params = {"board": board, "caller": caller, "peek": peek}
-        return self._call("tray.drain", _with_env(params, ["board","caller"]))
+        return self._call("tray.drain", params, ["board","caller"])
 
     def commit(self, *, ids: list["Id"], board: "Id" | None = None) -> dict[str, Any]:
         """Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored."""
         params = {"board": board, "ids": ids}
-        return self._call("tray.commit", _with_env(params, ["board"]))
+        return self._call("tray.commit", params, ["board"])
 
 class AgentApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None) -> dict[str, Any]:
         """Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored."""
         params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source}
-        return self._call("agent.report", _with_env(params, []))
+        return self._call("agent.report", params, [])
 
     def report_session(self, *, tile: "Id", kind: str, session_id: str | None = None, session_path: str | None = None) -> dict[str, Any]:
         """Report the agent's native session identity so the tile can resume it after a reboot."""
         params = {"tile": tile, "kind": kind, "sessionId": session_id, "sessionPath": session_path}
-        return self._call("agent.report_session", _with_env(params, []))
+        return self._call("agent.report_session", params, [])
 
     def release(self, *, tile: "Id", kind: str, source: str | None = None) -> dict[str, Any]:
         """The agent in this tile exited; clear its lifecycle authority."""
         params = {"tile": tile, "kind": kind, "source": source}
-        return self._call("agent.release", _with_env(params, []))
+        return self._call("agent.release", params, [])
 
     def list(self) -> dict[str, Any]:
         """Agents across all open boards."""
         params = {}
-        return self._call("agent.list", _with_env(params, []))
+        return self._call("agent.list", params, [])
 
     def prompt(self, *, target: str, text: str) -> dict[str, Any]:
         """Paste a prompt into another agent's terminal (bracketed paste) and press Enter. Rejected with `conflict` if that agent is blocked."""
         params = {"target": target, "text": text}
-        return self._call("agent.prompt", _with_env(params, []))
+        return self._call("agent.prompt", params, [])
 
     def wait(self, *, target: str, until: list[Literal["working", "blocked", "idle", "done", "unknown"]] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
         """Wait until the target agent reaches one of the given states."""
         params = {"target": target, "until": until, "timeoutMs": timeout_ms}
-        return self._call("agent.wait", _with_env(params, []))
+        return self._call("agent.wait", params, [])
 
     def read(self, *, target: str, lines: int | None = None) -> dict[str, Any]:
         """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed."""
         params = {"target": target, "lines": lines}
-        return self._call("agent.read", _with_env(params, []))
+        return self._call("agent.read", params, [])
 
 class FollowApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def report(self, *, tile: "Id", path: str, action: Literal["read", "edit", "lsp", "search"], range: "LineRange" | None = None) -> dict[str, Any]:
         """Report a file location an agent just read or edited; re-aims that terminal's follow tile. Files outside the board root and the terminal's cwd are ignored."""
         params = {"tile": tile, "path": path, "range": range, "action": action}
-        return self._call("follow.report", _with_env(params, []))
+        return self._call("follow.report", params, [])
 
 class ViewApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def attention(self, *, id: "Id", message: str | None = None, clear: bool | None = None) -> dict[str, Any]:
         """Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. The user seeing the object also clears it. Never moves the user's viewport."""
         params = {"id": id, "message": message, "clear": clear}
-        return self._call("view.attention", _with_env(params, []))
+        return self._call("view.attention", params, [])
 
     def get(self, *, board: "Id" | None = None) -> dict[str, Any]:
         """What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, and whether the window is visible on screen."""
         params = {"board": board}
-        return self._call("view.get", _with_env(params, ["board"]))
+        return self._call("view.get", params, ["board"])
 
     def render(self, *, target: Union["Id", list["Id"], "Frame"], board: "Id" | None = None, scale: float | None = None, full: bool | None = None, exclude: list["ObjectType"] | None = None, padding: float | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
         """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML/code scroll height, code line width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn."""
         params = {"board": board, "target": target, "scale": scale, "full": full, "exclude": exclude, "padding": padding, "out": out, "format": format, "timeoutMs": timeout_ms}
-        return self._call("view.render", _with_env(params, ["board"]))
+        return self._call("view.render", params, ["board"])
 
     def snapshot(self, *, board: "Id" | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None) -> dict[str, Any]:
         """The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render."""
         params = {"board": board, "out": out, "format": format}
-        return self._call("view.snapshot", _with_env(params, ["board"]))
+        return self._call("view.snapshot", params, ["board"])
 
 class EventsApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
     def subscribe(self, *, board: "Id" | None = None, events: list[str] | None = None) -> dict[str, Any]:
         """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated."""
         params = {"board": board, "events": events}
-        return self._call("events.subscribe", _with_env(params, ["board"]))
+        return self._call("events.subscribe", params, ["board"])
 
 class GeneratedApi:
-    def __init__(self, call: Callable[[str, dict[str, Any]], Any]) -> None:
+    def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self.system = SystemApi(call)
         self.board = BoardApi(call)
         self.object = ObjectApi(call)

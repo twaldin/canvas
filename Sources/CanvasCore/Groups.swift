@@ -8,6 +8,8 @@ public struct GroupSpec: Equatable, Sendable {
     public static let defaultPadding = 24.0
     /// Band above the members holding the title (the group's drag handle).
     public static let titleHeight = 32.0
+    /// `cause` of a group's re-fit in the activity log.
+    public static let refitCause = "fit to its members"
 
     public var members: [ObjectID]
     public var title: String?
@@ -44,16 +46,41 @@ extension Board {
     }
 
     /// Re-bounds every group that lists `id`, recursively for nested groups, as part of the
-    /// caller's change (and so its undo step). Undo/redo restore recorded frames instead.
-    func refitGroups(containing id: ObjectID, visited: Set<ObjectID> = []) {
+    /// caller's change (and so its undo step), credited to that change's actor. Undo/redo
+    /// restore recorded frames instead. Inside `deferringRefits` it waits for the scope's end.
+    func refitGroups(containing id: ObjectID, actor: ActivityActor, caller: ObjectID?, visited: Set<ObjectID> = []) {
         guard !history.replaying else { return }
+        if refitDeferral > 0 {
+            pendingRefits.append((id, actor, caller))
+            return
+        }
         let parents = objects.values
             .filter { $0.type == .group && !visited.contains($0.id) && GroupSpec($0.props)?.members.contains(id) == true }
             .sorted { $0.id < $1.id }
         for group in parents {
-            guard let frame = fittedFrame(ofGroup: group), frame != group.frame else { continue }
-            _ = try? write(group.id, rev: nil, frame: frame, z: nil, props: nil, caller: nil, actor: .system, refitting: visited.union([id]))
+            guard let frame = fittedFrame(ofGroup: group), frame != objects[group.id]?.frame else { continue }
+            _ = try? write(group.id, rev: nil, frame: frame, z: nil, props: nil, caller: caller, actor: actor,
+                           cause: GroupSpec.refitCause, refitting: visited.union([id]))
         }
+    }
+
+    /// Runs `body` with group re-fits held back, then re-fits each affected group once: moving
+    /// a group's 20 members writes the group once, not 20 times through intermediate frames.
+    /// Group frames are stale inside `body`; read them after it returns.
+    func deferringRefits<T>(_ body: () throws -> T) rethrows -> T {
+        refitDeferral += 1
+        defer {
+            refitDeferral -= 1
+            if refitDeferral == 0 {
+                let pending = pendingRefits
+                pendingRefits = []
+                var seen: Set<ObjectID> = []
+                for refit in pending where seen.insert(refit.member).inserted {
+                    refitGroups(containing: refit.member, actor: refit.actor, caller: refit.caller)
+                }
+            }
+        }
+        return try body()
     }
 
     /// Groups (transitively) listing `id`.

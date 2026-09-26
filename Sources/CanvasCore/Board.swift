@@ -83,6 +83,14 @@ public final class Board {
     /// "undo"/"redo" while one replays, so its changes are logged as such, credited to `replayActor`.
     var replayVerb: String?
     var replayActor: ActivityActor = .user
+    /// Cascade entries logged in `cascadeRevision`, per object: a later cascade on the same
+    /// object in the same revision amends that entry (see `log`).
+    private var cascades: [ObjectID: (seq: Int, actor: ActivityActor, before: CanvasObject)] = [:]
+    private var cascadeRevision = -1
+    /// While positive, group re-fits wait in `pendingRefits` for the end of the outermost
+    /// `deferringRefits` (see Groups.swift).
+    var refitDeferral = 0
+    var pendingRefits: [(member: ObjectID, actor: ActivityActor, caller: ObjectID?)] = []
     /// Called after any persisted change; BoardStore debounces saves.
     public var onChange: (() -> Void)?
     /// Viewport center in canvas coordinates, for user-created objects without a frame.
@@ -164,8 +172,9 @@ public final class Board {
     }
 
     /// `update`, re-bounding the groups that contain the object in the same undo step.
-    /// `refitting` holds the groups already being re-bounded (nested groups, cycles).
-    func write(_ id: ObjectID, rev: Int?, frame: Frame?, z: Double?, props: JSONValue?, caller: ObjectID?, actor: ActivityActor? = nil, refitting: Set<ObjectID>) throws -> CanvasObject {
+    /// `refitting` holds the groups already being re-bounded (nested groups, cycles). `cause`
+    /// marks a cascade of another change (credited to that change's actor) and says why.
+    func write(_ id: ObjectID, rev: Int?, frame: Frame?, z: Double?, props: JSONValue?, caller: ObjectID?, actor: ActivityActor? = nil, cause: String? = nil, refitting: Set<ObjectID>) throws -> CanvasObject {
         let before = try object(id)
         if let rev, rev != before.rev { throw BoardError.conflict("object \(id) is at rev \(before.rev), not \(rev)") }
         var object = before
@@ -176,42 +185,70 @@ public final class Board {
         object.rev += 1
         object.updatedAt = Date()
         object.updatedBy = Actor(caller: caller)
+        let credited = actor ?? ActivityActor(caller: caller)
         history.begin()
         defer { history.end() }
         commit(object)
         history.record(.updated(before: before, after: object))
         if let changes = ActivityLog.changes(from: before, to: object) {
-            log(.updated, object, actor: actor ?? ActivityActor(caller: caller), "\(ActivityLog.describe(object)): \(changes)")
+            log(.updated, object, actor: credited, "\(ActivityLog.describe(object)): \(changes)", cause: cause, before: before)
         }
         markMentionsEdited(for: id)
         onEvent?(.objectUpdated(object))
-        if before.frame != object.frame { refitGroups(containing: id, visited: refitting) }
+        if before.frame != object.frame { refitGroups(containing: id, actor: credited, caller: caller, visited: refitting) }
         return object
     }
 
     public func delete(_ id: ObjectID, caller: ObjectID? = nil) throws {
         guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
+        let actor = ActivityActor(caller: caller)
         // Arrows bound to it detach within the same undo step, so one ⌘Z restores both.
         history.begin()
         defer { history.end() }
-        detachArrows(from: id)
+        detachArrows(from: id, actor: actor, caller: caller)
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         bumpRevision()
         history.record(.deleted(removed))
-        log(.deleted, removed, actor: ActivityActor(caller: caller), "deleted \(ActivityLog.describe(removed))")
+        log(.deleted, removed, actor: actor, "deleted \(ActivityLog.describe(removed))")
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
         onChange?()
         onEvent?(.objectDeleted(id))
         if tray.count != before { trayChanged() }
-        refitGroups(containing: id)
+        refitGroups(containing: id, actor: actor, caller: caller)
     }
 
-    private func log(_ kind: ActivityEntry.Kind, _ object: CanvasObject, actor: ActivityActor, _ summary: String) {
+    /// Logs a change. A cascade (`cause` set, with the object's state `before` it) that hits an
+    /// object already cascaded in this revision by the same actor amends that entry to the net
+    /// change, or drops it when the changes cancel out: one entry per group per batch, however
+    /// many of its members the batch moved or deleted.
+    private func log(_ kind: ActivityEntry.Kind, _ object: CanvasObject, actor: ActivityActor, _ summary: String, cause: String? = nil, before: CanvasObject? = nil) {
         guard !activityMuted else { return }
-        let text = replayVerb.map { "\($0): \(summary)" } ?? summary
-        activity.record(kind, actor: replayVerb == nil ? actor : replayActor, rev: revision, id: object.id, type: object.type, summary: text)
+        guard replayVerb == nil else {
+            activity.record(kind, actor: replayActor, rev: revision, id: object.id, type: object.type, summary: "\(replayVerb!): \(summary)")
+            return
+        }
+        guard let cause, let before, kind == .updated else {
+            activity.record(kind, actor: actor, rev: revision, id: object.id, type: object.type, summary: summary)
+            return
+        }
+        if cascadeRevision != revision {
+            cascades = [:]
+            cascadeRevision = revision
+        }
+        var first = before
+        if let earlier = cascades[object.id], earlier.actor == actor {
+            guard let changes = ActivityLog.changes(from: earlier.before, to: object) else {
+                activity.remove(seq: earlier.seq)
+                cascades.removeValue(forKey: object.id)
+                return
+            }
+            if activity.amend(seq: earlier.seq, summary: "\(ActivityLog.describe(object)): \(changes)") { return }
+            first = earlier.before
+        }
+        activity.record(kind, actor: actor, rev: revision, id: object.id, type: object.type, summary: summary, cause: cause)
+        cascades[object.id] = (activity.cursor, actor, first)
     }
 
     /// Undo/redo: puts an object state back verbatim (same id and z), announced as a normal change.
@@ -251,7 +288,7 @@ public final class Board {
         let outermost = pinnedRevision == nil
         if outermost { pinnedRevision = revision + 1 }
         history.begin()
-        let mark = history.openCount
+        let mark = history.mark()
         defer {
             history.end()
             if outermost { pinnedRevision = nil }

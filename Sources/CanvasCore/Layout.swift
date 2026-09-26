@@ -67,6 +67,63 @@ public enum Layout {
         }
         return origins
     }
+
+    /// A grid cell: the box at `row`, `col` (any non-negative numbers; unused numbers take no space).
+    public struct GridCell: Equatable, Sendable {
+        public var row: Int
+        public var col: Int
+        public var size: CGSize
+
+        public init(row: Int, col: Int, size: CGSize) {
+            self.row = row
+            self.col = col
+            self.size = size
+        }
+    }
+
+    /// One column (x, width) or row (y, height) of a grid.
+    public struct Track: Equatable, Sendable {
+        public var index: Int
+        public var start: CGFloat
+        public var length: CGFloat
+    }
+
+    public struct Grid: Equatable, Sendable {
+        /// Each cell's origin, in the order the cells were given.
+        public var origins: [CGPoint]
+        /// Used columns and rows, ascending.
+        public var columns: [Track]
+        public var rows: [Track]
+    }
+
+    /// Cells in shared columns and rows from `origin`: a column is as wide as its widest cell and
+    /// a row as tall as its tallest, `colGap`/`rowGap` apart, so a column lines up across every
+    /// row whatever else sits in them. `colAlign` places a cell across its column's width (start:
+    /// left edges), `rowAlign` down its row's height (start: top edges).
+    public static func grid(_ cells: [GridCell], origin: CGPoint, colGap: CGFloat, rowGap: CGFloat, colAlign: Align = .start, rowAlign: Align = .start) -> Grid {
+        func tracks(_ index: (GridCell) -> Int, _ extent: (GridCell) -> CGFloat, from start: CGFloat, gap: CGFloat) -> [Track] {
+            var lengths: [Int: CGFloat] = [:]
+            for cell in cells { lengths[index(cell)] = max(lengths[index(cell)] ?? 0, extent(cell)) }
+            var position = start
+            return lengths.keys.sorted().map { key in
+                defer { position += lengths[key]! + gap }
+                return Track(index: key, start: position, length: lengths[key]!)
+            }
+        }
+        func offset(_ slack: CGFloat, _ align: Align) -> CGFloat {
+            align == .start ? 0 : align == .center ? slack / 2 : slack
+        }
+        let columns = tracks(\.col, \.size.width, from: origin.x, gap: colGap)
+        let rows = tracks(\.row, \.size.height, from: origin.y, gap: rowGap)
+        let columnAt = Dictionary(uniqueKeysWithValues: columns.map { ($0.index, $0) })
+        let rowAt = Dictionary(uniqueKeysWithValues: rows.map { ($0.index, $0) })
+        let origins = cells.map { cell -> CGPoint in
+            let column = columnAt[cell.col]!, row = rowAt[cell.row]!
+            return CGPoint(x: column.start + offset(column.length - cell.size.width, colAlign),
+                           y: row.start + offset(row.length - cell.size.height, rowAlign))
+        }
+        return Grid(origins: origins, columns: columns, rows: rows)
+    }
 }
 
 extension Board {
@@ -77,10 +134,7 @@ extension Board {
         let target = try object(anchor)
         guard id != anchor else { throw BoardError.invalidParams("an object can't be placed beside itself") }
         let origin = Layout.place(moving.frame.rect.size, near: target.frame.rect, side: side, gap: CGFloat(gap), align: align)
-        return try atomically {
-            try move(id, to: origin, caller: caller)
-            return [id: try object(id).frame]
-        }
+        return try shift([(id, origin.x - moving.frame.x, origin.y - moving.frame.y)], caller: caller)
     }
 
     /// Lays `ids` out in a row or column starting where the first one is (or at `origin`); one
@@ -92,37 +146,71 @@ extension Board {
         let frames = try ids.map { try object($0).frame.rect }
         let start = origin ?? frames[0].origin
         let origins = Layout.stack(frames.map(\.size), from: start, direction: direction, gap: CGFloat(gap), wrapAt: wrapAt.map { CGFloat($0) }, align: align)
-        return try atomically {
-            for (id, origin) in zip(ids, origins) { try move(id, to: origin, caller: caller) }
-            return try Dictionary(uniqueKeysWithValues: ids.map { ($0, try object($0).frame) })
+        return try shift(zip(ids, zip(frames, origins)).map { (id: $0, dx: Double($1.1.x - $1.0.minX), dy: Double($1.1.y - $1.0.minY)) }, caller: caller)
+    }
+
+    /// Moves `ids` by (dx, dy) in one undo step. Groups move their members (a member listed
+    /// beside its group moves once); arrows carry their free ends, and bound ends follow.
+    @discardableResult
+    public func translate(_ ids: [ObjectID], dx: Double, dy: Double, caller: ObjectID? = nil) throws -> [ObjectID: Frame] {
+        guard !ids.isEmpty else { return [:] }
+        return try shift(ids.map { ($0, dx, dy) }, caller: caller)
+    }
+
+    /// Places `cells` in shared columns and rows (`Layout.grid`, sized by the cells' current
+    /// frames) from `origin`, default the cells' current top-left; one undo step. Groups move
+    /// their members.
+    public func grid(_ cells: [(id: ObjectID, row: Int, col: Int)], colGap: Double = Layout.defaultGap, rowGap: Double = Layout.defaultGap, colAlign: Layout.Align = .start,
+                     rowAlign: Layout.Align = .start, origin: CGPoint? = nil, caller: ObjectID? = nil) throws -> (frames: [ObjectID: Frame], grid: Layout.Grid) {
+        guard !cells.isEmpty else { throw BoardError.invalidParams("cells must not be empty") }
+        guard Set(cells.map(\.id)).count == cells.count else { throw BoardError.invalidParams("cell ids repeat") }
+        var taken: Set<[Int]> = []
+        for cell in cells {
+            guard cell.row >= 0, cell.col >= 0 else { throw BoardError.invalidParams("cell \(cell.id): row and col must be non-negative") }
+            guard taken.insert([cell.row, cell.col]).inserted else { throw BoardError.invalidParams("two cells at row \(cell.row), col \(cell.col)") }
         }
+        let frames = try cells.map { try object($0.id).frame.rect }
+        let start = origin ?? CGPoint(x: frames.map(\.minX).min()!, y: frames.map(\.minY).min()!)
+        let grid = Layout.grid(zip(cells, frames).map { Layout.GridCell(row: $0.row, col: $0.col, size: $1.size) }, origin: start,
+                               colGap: CGFloat(colGap), rowGap: CGFloat(rowGap), colAlign: colAlign, rowAlign: rowAlign)
+        let moves = zip(cells, zip(frames, grid.origins)).map { (id: $0.id, dx: Double($1.1.x - $1.0.minX), dy: Double($1.1.y - $1.0.minY)) }
+        return (try shift(moves, caller: caller), grid)
     }
 
-    /// Moves an object's frame origin to `origin`: a group moves its members (its frame
-    /// follows), an arrow carries its free ends.
-    public func move(_ id: ObjectID, to origin: CGPoint, caller: ObjectID? = nil) throws {
-        let current = try object(id)
-        try translate(id, dx: origin.x - current.frame.x, dy: origin.y - current.frame.y, caller: caller)
-    }
-
-    public func translate(_ id: ObjectID, dx: Double, dy: Double, caller: ObjectID? = nil) throws {
-        guard dx != 0 || dy != 0 else { return }
-        let current = try object(id)
-        switch current.type {
-        case .group:
-            try transaction {
-                for member in leafMembers(of: id) { try translate(member, dx: dx, dy: dy, caller: caller) }
+    /// Moves each object by its offset as one undo step and one revision, then returns the
+    /// objects' frames. A group moves its members (nested groups' too) and is re-fit once, after
+    /// every member moved; an object reached twice with the same offset (a member listed beside
+    /// its group) moves once, with different offsets it is an error. Arrows carry free ends.
+    private func shift(_ moves: [(id: ObjectID, dx: Double, dy: Double)], caller: ObjectID?) throws -> [ObjectID: Frame] {
+        var offsets: [ObjectID: (dx: Double, dy: Double)] = [:]
+        var order: [ObjectID] = []
+        for move in moves {
+            let object = try object(move.id)
+            for target in object.type == .group ? leafMembers(of: move.id) : [move.id] {
+                if let earlier = offsets[target] {
+                    guard earlier == (move.dx, move.dy) else {
+                        throw BoardError.invalidParams("\(target) would move twice: \(move.id) and a group containing it are both listed")
+                    }
+                    continue
+                }
+                offsets[target] = (move.dx, move.dy)
+                order.append(target)
             }
-        case .arrow:
-            var frame = current.frame
-            frame.x += dx
-            frame.y += dy
-            try update(id, frame: frame, props: ArrowSpec(current.props)?.translated(dx: dx, dy: dy).props, caller: caller)
-        default:
-            var frame = current.frame
-            frame.x += dx
-            frame.y += dy
-            try update(id, frame: frame, caller: caller)
+        }
+        return try atomically {
+            try deferringRefits {
+                for target in order {
+                    let (dx, dy) = offsets[target]!
+                    guard dx != 0 || dy != 0 else { continue }
+                    let current = try object(target)
+                    var frame = current.frame
+                    frame.x += dx
+                    frame.y += dy
+                    let props = current.type == .arrow ? ArrowSpec(current.props)?.translated(dx: dx, dy: dy).props : nil
+                    try update(target, frame: frame, props: props, caller: caller)
+                }
+            }
+            return try Dictionary(moves.map { ($0.id, try object($0.id).frame) }, uniquingKeysWith: { first, _ in first })
         }
     }
 }

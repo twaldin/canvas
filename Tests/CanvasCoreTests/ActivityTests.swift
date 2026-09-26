@@ -175,4 +175,54 @@ struct ActivityTests {
         #expect(entries.first?.id == shape.id)
         #expect(entries.first?.summary.hasPrefix("undo: deleted shape rect") == true)
     }
+
+    /// B5: an agent's batch deletes tiles that arrows point at and that a group holds. The arrow
+    /// rewrites and the group re-fit are the agent's doing, not the user's, and each object
+    /// gets one entry for the revision however many of the batch's ops touched it.
+    @Test func cascadesOfABatchAreCreditedToItsActorOncePerObject() throws {
+        let board = makeBoard()
+        let agent = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: 5000, y: 5000, w: 800, h: 500))
+        func note(_ x: Double, _ y: Double) -> CanvasObject {
+            board.create(type: .note, props: .object(["markdown": .string("n")]), frame: Frame(x: x, y: y, w: 200, h: 100), caller: agent.id)
+        }
+        func arrow(_ from: CanvasObject, _ to: CanvasObject) -> CanvasObject {
+            board.create(type: .arrow, props: .object(["from": .object(["object": .string(from.id)]), "to": .object(["object": .string(to.id)])]), caller: agent.id)
+        }
+        let a = note(0, 0), b = note(300, 0), d = note(600, 0), c = note(0, 400)
+        let lane = board.create(type: .group, props: .object(["members": .array([.string(a.id), .string(b.id), .string(d.id)])]), caller: agent.id)
+        let toC = arrow(a, c), between = arrow(a, b)
+        let before = board.activity.cursor
+
+        try board.atomically {
+            try board.delete(a.id, caller: agent.id)
+            try board.delete(b.id, caller: agent.id)
+        }
+        let entries = board.activity.query(since: .seq(before), limit: 100).entries
+        #expect(entries.allSatisfy { $0.actor == .agent(agent.id) && $0.rev == board.revision }, "\(entries.map { "\($0.actor.name) \($0.summary)" })")
+        #expect(entries.filter { $0.kind == .deleted }.map(\.id) == [a.id, b.id])
+        let updates = entries.filter { $0.kind == .updated }
+        #expect(updates.map(\.id).sorted() == [toC.id, between.id, lane.id].sorted(), "one entry each, though `between` lost both ends and the lane two members")
+        #expect(updates.first { $0.id == between.id }?.cause == "bound object \(a.id) deleted")
+        let refit = try #require(updates.first { $0.id == lane.id })
+        #expect(refit.cause == GroupSpec.refitCause)
+        #expect(refit.summary.hasSuffix("moved (-24, -56) → (576, -56); resized 848×180 → 248×180"), "the net change: \(refit.summary)")
+
+        #expect(board.undo())
+        #expect(try board.object(lane.id).frame == lane.frame)
+        #expect(try board.object(between.id).props == between.props)
+    }
+
+    /// Moving a lane moves its members one by one; the lane is logged once, at its net move.
+    @Test func aMovedGroupIsLoggedOnceAtItsNetChange() throws {
+        let board = makeBoard()
+        let agent = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: 5000, y: 5000, w: 800, h: 500))
+        let members = (0..<3).map { board.create(type: .note, props: .object(["markdown": .string("n")]), frame: Frame(x: Double($0) * 300, y: 0, w: 200, h: 100)) }
+        let lane = board.create(type: .group, props: .object(["members": .array(members.map { .string($0.id) })]))
+        let before = board.activity.cursor
+        try board.stack([lane.id], direction: .row, origin: CGPoint(x: -24, y: 944), caller: agent.id)
+        let laneEntries = board.activity.query(since: .seq(before), limit: 100).entries.filter { $0.id == lane.id }
+        #expect(laneEntries.count == 1)
+        #expect(laneEntries.first?.summary == "group (3 members): moved (-24, -56) → (-24, 944)")
+        #expect(laneEntries.first?.actor == .agent(agent.id))
+    }
 }

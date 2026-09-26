@@ -232,11 +232,11 @@ struct ArrowBindingLifecycleTests {
         #expect(ArrowSpec(try board.object(arrow.id).props)?.to == .point(CGPoint(x: 294, y: 63)))
     }
 
-    @Test func hugeFreeCoordinatesDescribeWithoutCrashing() throws {
+    @Test func hugeFreeCoordinatesDescribeWithoutCrashing() async throws {
         let board = Board(id: "brd_t", root: root)
         let arrow = board.create(type: .arrow, props: ArrowSpec(from: .point(CGPoint(x: 1e20, y: -1e20)), to: .point(CGPoint(x: 0, y: 0))).props)
         try board.stage(.object(arrow.id))
-        #expect(board.drain().context.contains("(100000000000000000000, -100000000000000000000) → (0, 0)"))
+        #expect(await board.drain().context.contains("(100000000000000000000, -100000000000000000000) → (0, 0)"))
     }
 
     @Test func oneUndoRestoresTheDeletedObjectAndTheArrowBinding() throws {

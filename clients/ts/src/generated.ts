@@ -61,6 +61,14 @@ export type CodeProps = {
   diffBase?: string;
   /** terminal tile this follow tile tracks */
   followOf?: Id;
+  /** follow tiles: what the agent last did at this location */
+  lastAction?: "read" | "edit" | "lsp" | "search";
+  /** follow tiles: recent locations, newest first, without repeats */
+  history?: ({
+    path: string;
+    range?: LineRange;
+    action: "read" | "edit" | "lsp" | "search";
+  })[];
   pinnedCommit?: string;
 };
 
@@ -136,8 +144,11 @@ export type MentionTarget = {
   object: Id;
   path: string;
   lines: LineRange;
+  /** diff side of the lines; absent outside a diff */
   side?: "old" | "new";
   symbol?: string;
+  /** with side old or absent: the commit whose version of path holds the lines (deleted diff rows, pinned excerpts); with side new: the diff base. Absent: the working tree */
+  commit?: string;
 } | {
   kind: "dom";
   object: Id;

@@ -233,8 +233,12 @@ public final class Board {
 
     /// Resolve every staged mention at its current revision and return the prompt context.
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids.
-    public func drain(peek: Bool = false) -> (mentions: [MentionContext.Resolved], context: String) {
-        let resolved = tray.enumerated().map { MentionContext.resolve($0.element, index: $0.offset + 1, on: self) }
+    /// Old-side and pinned code excerpts are read from git, hence async.
+    public func drain(peek: Bool = false) async -> (mentions: [MentionContext.Resolved], context: String) {
+        var resolved: [MentionContext.Resolved] = []
+        for (index, mention) in tray.enumerated() {
+            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self))
+        }
         let context = MentionContext.render(resolved, board: self)
         if !peek { commit(resolved.map(\.id)) }
         return (resolved, context)
@@ -312,15 +316,26 @@ public final class Board {
 
     // MARK: Follow mode
 
-    /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use.
+    /// Recent locations kept on a follow tile (`CodeProps.history`), newest first.
+    public static let followHistoryLimit = 8
+
+    /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use, and
+    /// record the location at the front of the tile's history.
     @discardableResult
     public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject {
         _ = try object(tile)
         let relative = relativePath(path)
-        var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action)]
-        props["range"] = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
+        let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
+        var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action), "range": rangeValue]
+        let existing = objects.values.first { $0.type == .code && $0.props["followOf"]?.string == tile }
+        var entry: [String: JSONValue] = ["path": .string(relative), "action": .string(action)]
+        if range != nil { entry["range"] = rangeValue }
+        var history = existing?.props["history"]?.array ?? []
+        history.removeAll { $0["path"] == entry["path"] && $0["range"] == entry["range"] }
+        history.insert(.object(entry), at: 0)
+        props["history"] = .array(Array(history.prefix(Self.followHistoryLimit)))
         let follow: CanvasObject
-        if let existing = objects.values.first(where: { $0.type == .code && $0.props["followOf"]?.string == tile }) {
+        if let existing {
             follow = try update(existing.id, props: .object(props), caller: tile)
         } else {
             props["mode"] = .string("diff")

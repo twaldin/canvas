@@ -148,6 +148,12 @@ Read more with the canvas SDK or CLI: canvas get <id> --as graph|image
 
 Rules: numbered in staging order; each entry is one location line plus an optional short excerpt (at most 12 lines: mentioned lines marked `>`, with up to 3 unmarked lines of surrounding context while it fits); edited-since-staging entries are marked `(edited)`; the block is omitted entirely when the tray is empty.
 
+Code mentions carry the commit their lines are read against (`MentionTarget.code.commit`, schema `MentionTarget`): with `side: old` or no side, the commit whose version of `path` holds the lines (deleted diff rows, pinned excerpts); with `side: new`, the base the working-tree lines were diffed against; absent, the working tree. The context line names it from the mention alone, never from what the tile shows at drain time: `· diff vs merge-base 1a2b3c4` (the kind word comes from the tile's `diffBase`), `· diff vs merge-base 1a2b3c4, old side` for deleted rows with the excerpt read by `git cat-file blob <commit>:<path>`, and `· at 1a2b3c4` for a pinned excerpt without a side. `tray.drain` is therefore asynchronous.
+
+## Git
+
+All git in the app runs through `GitRunner.shared` (CanvasCore), which caps concurrent git processes at two, can cap stdout (`maxOutput`), and sets `GIT_OPTIONAL_LOCKS=0` so reads never contend with agents for the index lock. Git, file reads, and parsing run on GCD (`offPool`), never blocking a Swift concurrency thread. Code tiles diff through `GitDiffEngine.shared`: live tiles `retain(containing:)` their repository and `release` it when they go offscreen or away; held repositories keep resolved bases and an FSEvents stream that posts `Notification.Name.gitDiffBaseChanged` (object: the repository's top-level path) when a commit, checkout, rebase, or fetch moves a base.
+
 ## HTML tiles
 
 - Each tile's page is `canvas-kit://html/<tileId>`, served by the tile's own scheme handler: the kit head (`resources/kit/canvas-kit.css`, `canvas-kit.js`, `vendor/tailwindcss-browser.js`) followed by `props.html`. `/kit/…` serves `resources/kit` (Mermaid loads from there only when a page has diagrams). DOM mentions of HTML tiles use that URL.

@@ -47,6 +47,8 @@ class CodeProps(TypedDict):
     mode: NotRequired[Literal["diff", "source"]]
     diffBase: NotRequired[str]
     followOf: NotRequired["Id"]
+    lastAction: NotRequired[Literal["read", "edit", "lsp", "search"]]
+    history: NotRequired[list[dict[str, Any]]]
     pinnedCommit: NotRequired[str]
 
 class NoteProps(TypedDict):

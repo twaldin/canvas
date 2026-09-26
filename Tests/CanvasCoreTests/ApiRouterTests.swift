@@ -154,7 +154,7 @@ final class ApiRouterTests {
 
         // The prompt context says the same thing in one line.
         try board.stage(.object(box.id))
-        let context = board.drain().context
+        let context = await board.drain().context
         #expect(context.contains("encloses \([a.id, b.id].sorted().joined(separator: ", "))"))
         #expect(context.contains("inner arrow \(a.id) → \(b.id) (calls)"))
         #expect(context.contains("arrow → \(outside.id) (hypothesis_about)"))

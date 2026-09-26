@@ -87,6 +87,22 @@
         "mode": { "enum": ["diff", "source"], "default": "diff" },
         "diffBase": { "type": "string", "default": "merge-base", "description": "merge-base | head | <sha>" },
         "followOf": { "$ref": "#/definitions/Id", "description": "terminal tile this follow tile tracks" },
+        "lastAction": { "enum": ["read", "edit", "lsp", "search"], "description": "follow tiles: what the agent last did at this location" },
+        "history": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "follow tiles: recent locations, newest first, without repeats",
+          "items": {
+            "type": "object",
+            "required": ["path", "action"],
+            "properties": {
+              "path": { "type": "string" },
+              "range": { "$ref": "#/definitions/LineRange" },
+              "action": { "enum": ["read", "edit", "lsp", "search"] }
+            },
+            "additionalProperties": false
+          }
+        },
         "pinnedCommit": { "type": "string" }
       },
       "additionalProperties": false
@@ -188,8 +204,9 @@
             "object": { "$ref": "#/definitions/Id" },
             "path": { "type": "string" },
             "lines": { "$ref": "#/definitions/LineRange" },
-            "side": { "enum": ["old", "new"], "default": "new" },
-            "symbol": { "type": "string" }
+            "side": { "enum": ["old", "new"], "description": "diff side of the lines; absent outside a diff" },
+            "symbol": { "type": "string" },
+            "commit": { "type": "string", "description": "with side old or absent: the commit whose version of path holds the lines (deleted diff rows, pinned excerpts); with side new: the diff base. Absent: the working tree" }
           },
           "additionalProperties": false
         },

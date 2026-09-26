@@ -11,12 +11,12 @@ struct BoardTests {
         return Board(id: "brd_test", root: root)
     }
 
-    @Test func peekDrainKeepsTrayUntilCommit() throws {
+    @Test func peekDrainKeepsTrayUntilCommit() async throws {
         let board = makeBoard()
         let note = board.create(type: .note, props: .object(["markdown": .string("hypothesis")]))
         let mention = try board.stage(.object(note.id))
 
-        let peeked = board.drain(peek: true)
+        let peeked = await board.drain(peek: true)
         #expect(peeked.mentions.map(\.id) == [mention.id])
         #expect(peeked.context.contains("hypothesis"))
         #expect(board.tray.count == 1, "a peek must not lose the mention if the prompt is cancelled")
@@ -28,12 +28,12 @@ struct BoardTests {
         #expect(board.tray.map(\.id) == [late.id])
     }
 
-    @Test func emptyTrayDrainsToEmptyContext() {
+    @Test func emptyTrayDrainsToEmptyContext() async {
         let board = makeBoard()
-        #expect(board.drain().context == "")
+        #expect(await board.drain().context == "")
     }
 
-    @Test func stagedMentionsSurviveSaveAndReload() throws {
+    @Test func stagedMentionsSurviveSaveAndReload() async throws {
         let store = BoardStore(directory: root.appendingPathComponent("boards"))
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let board = store.load(root: root)
@@ -43,7 +43,7 @@ struct BoardTests {
 
         let reloaded = store.load(root: root)
         #expect(reloaded.tray.map(\.id) == [mention.id])
-        #expect(reloaded.drain().context.contains("keep me staged"))
+        #expect(await reloaded.drain().context.contains("keep me staged"))
     }
 
     @Test func deletingAnObjectRemovesItsMentions() throws {
@@ -58,14 +58,14 @@ struct BoardTests {
         #expect(board.tray.first?.target == .object(b.id))
     }
 
-    @Test func editingAStagedObjectMarksItEditedButKeepsIt() throws {
+    @Test func editingAStagedObjectMarksItEditedButKeepsIt() async throws {
         let board = makeBoard()
         let note = board.create(type: .note, props: .object(["markdown": .string("v1")]))
         try board.stage(.object(note.id))
         try board.update(note.id, props: .object(["markdown": .string("v2")]))
         #expect(board.tray.count == 1)
         #expect(board.tray[0].edited)
-        #expect(board.drain().context.contains("(edited)"))
+        #expect(await board.drain().context.contains("(edited)"))
     }
 
     @Test func updateWithStaleRevConflicts() throws {
@@ -125,13 +125,13 @@ struct BoardTests {
         #expect(first.props["path"]?.string == "src/a.ts", "absolute paths under the root are stored relative")
     }
 
-    @Test func codeMentionContextIncludesTheRealExcerpt() throws {
+    @Test func codeMentionContextIncludesTheRealExcerpt() async throws {
         let board = makeBoard()
         let file = root.appendingPathComponent("restore.ts")
         try "line one\nexport function restoreSnapshot() {\n  return 1\n}\n".write(to: file, atomically: true, encoding: .utf8)
         let code = board.create(type: .code, props: .object(["path": .string("restore.ts")]))
         try board.stage(.code(object: code.id, path: "restore.ts", lines: LineRange(start: 2, end: 3), side: nil, symbol: "restoreSnapshot"))
-        let context = board.drain().context
+        let context = await board.drain().context
         #expect(context.contains("restore.ts:2-3 (symbol restoreSnapshot)"))
         #expect(context.contains("  > 2    export function restoreSnapshot() {"))
         #expect(context.contains("  > 3      return 1"))
@@ -141,18 +141,18 @@ struct BoardTests {
         try (1...40).map { "row \($0)" }.joined(separator: "\n").write(to: long, atomically: true, encoding: .utf8)
         let tile = board.create(type: .code, props: .object(["path": .string("long.txt")]))
         try board.stage(.code(object: tile.id, path: "long.txt", lines: LineRange(start: 5, end: 30), side: nil, symbol: nil))
-        let capped = board.drain().context
+        let capped = await board.drain().context
         #expect(capped.contains("  > 16   row 16"))
         #expect(!capped.contains("row 17") && !capped.contains("row 4\n"), "long ranges cap at 12 lines with no extra context")
         #expect(capped.contains("    …"))
     }
 
-    @Test func drawnShapeMentionDescribesWhatItEncloses() throws {
+    @Test func drawnShapeMentionDescribesWhatItEncloses() async throws {
         let board = makeBoard()
         let inner = board.create(type: .note, props: .object(["markdown": .string("inside")]), frame: Frame(x: 20, y: 20, w: 50, h: 50))
         let box = board.create(type: .shape, props: .object(["kind": .string("rect"), "text": .string("auth path?")]), frame: Frame(x: 0, y: 0, w: 200, h: 200))
         try board.stage(.object(box.id))
-        let context = board.drain().context
+        let context = await board.drain().context
         #expect(context.contains("drawn by user"))
         #expect(context.contains("encloses \(inner.id)"))
     }

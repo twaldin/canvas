@@ -119,6 +119,10 @@ public final class ApiRouter {
             }
             if method == "agent.wait" { return try wait(id, params, connection) }
             if method == "agent.read" { return Self.ok(id, try await read(params)) }
+            if method == "tray.drain" {
+                let drained = try await board(params).drain(peek: params["peek"]?.bool ?? false)
+                return Self.ok(id, .object(["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)]))
+            }
             return Self.ok(id, try dispatch(method, params))
         } catch let failure as Failure {
             return Self.error(id, failure)
@@ -341,10 +345,6 @@ public final class ApiRouter {
             guard let board = registry.boards.values.first(where: { $0.tray.contains { $0.id == id } }) else { throw BoardError.notFound("mention \(id)") }
             try board.unstage(id)
             return .object([:])
-
-        case "tray.drain":
-            let drained = try board(p).drain(peek: p["peek"]?.bool ?? false)
-            return .object(["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)])
 
         case "tray.commit":
             try board(p).commit(p["ids"]?.array?.compactMap(\.string) ?? [])

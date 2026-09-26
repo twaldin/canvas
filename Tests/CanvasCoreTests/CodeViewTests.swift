@@ -236,3 +236,29 @@ struct CodeTileBoardTests {
         #expect(!pinned.frame.intersects(follow.frame), "the pin opens beside the follow tile")
     }
 }
+
+/// What `view.render` reports for a code tile: the range it is aimed at, as `size: "fit"` sizes it.
+@MainActor
+struct CodeContentTests {
+    @Test func renderContentIsTheRangeMeasureFitsNotTheWholeFile() async throws {
+        let repo = try await TempRepo()
+        var lines = (1...300).map { "line \($0)" }
+        lines[11] = "\t" + String(repeating: "x", count: 60)
+        lines[199] = String(repeating: "y", count: 400)
+        try await repo.write("f.txt", lines.joined(separator: "\n") + "\n")
+        _ = try await repo.commit("base")
+        let document = CodeDocument(path: "f.txt", diff: await GitDiffEngine(watchesRepositories: false).diff(file: repo.url("f.txt"), base: .head))
+        let rows = CodeRows(lineCount: document.text.lineCount, signs: document.signs)
+        let header = CodeMetrics.headerHeight
+
+        let range = LineRange(start: 10, end: 19)
+        let content = document.content(range: range, rows: rows, headerHeight: header)
+        let props: JSONValue = .object(["path": "f.txt", "range": .object(["start": 10, "end": 19])])
+        let measured = try await ObjectMeasure.size(type: .code, props: props, width: nil, root: repo.root)
+        #expect(content.width == measured.width && content.height + CodeMetrics.titleHeight == measured.height, "a fit tile's body has no overflow")
+
+        let whole = document.content(range: nil, rows: rows, headerHeight: header)
+        #expect(whole.height == header + 2 * CodeMetrics.verticalPadding + 300 * CodeMetrics.rowHeight && whole.width > 400 * CodeMetrics.charAdvance)
+        #expect(content.height < whole.height / 20 && content.width < whole.width / 4, "the range, not the file's 300 rows and 400-column line 200")
+    }
+}

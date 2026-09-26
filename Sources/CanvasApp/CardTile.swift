@@ -11,7 +11,7 @@ final class CardTile: NSView, TileContent {
 
     init(object: CanvasObject) {
         self.object = object
-        super.init(frame: NSRect(x: 0, y: 0, width: object.frame.w, height: object.frame.h))
+        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(object.frame)))
         wantsLayer = true
         label.font = .systemFont(ofSize: 13)
         label.isSelectable = false

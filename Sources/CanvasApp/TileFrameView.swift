@@ -229,7 +229,7 @@ final class TileFrameView: NSView {
         let scale = superview.convert(NSSize(width: 1, height: 1), from: nil).width
         let dx = (event.locationInWindow.x - start.mouse.x) * scale
         let dy = (event.locationInWindow.y - start.mouse.y) * scale
-        setFrameSize(NSSize(width: max(160, start.frame.width + dx), height: max(80, start.frame.height - dy)))
+        setFrameSize(NSSize(width: max(160, start.frame.width + dx), height: max(80 + Self.titleHeight, start.frame.height - dy)))
         onResizing?()
     }
 

@@ -8,11 +8,6 @@ struct RenderMathTests {
         CanvasObject(id: "obj_x", type: type, frame: frame, z: 1, createdBy: .user, createdAt: Date(), props: .object([:]))
     }
 
-    @Test func tilesIncludeTheirTitleBarDrawnObjectsDoNot() {
-        #expect(RenderMath.outline(object(.note, Frame(x: 10, y: 20, w: 280, h: 240))) == Frame(x: 10, y: 20, w: 280, h: 266))
-        #expect(RenderMath.outline(object(.shape, Frame(x: 10, y: 20, w: 100, h: 50))) == Frame(x: 10, y: 20, w: 100, h: 50))
-    }
-
     @Test func pixelRectsScaleFromTheCanvasRectOrigin() {
         let canvas = Frame(x: 100, y: 200, w: 400, h: 300)
         let size = RenderMath.pixelSize(canvas, scale: 2)

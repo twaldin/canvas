@@ -87,7 +87,7 @@ struct CodePainter {
     var flash: (lines: [Range<Int>], strength: CGFloat)?
     var selection: (start: CodePosition, end: CodePosition)?
 
-    var gutterWidth: CGFloat { CodeMetrics.gutterWidth(lineCount: max(document.text.lineCount, document.diff.old.lineCount)) }
+    var gutterWidth: CGFloat { document.gutterWidth }
 
     var contentSize: CGSize {
         CGSize(width: gutterWidth + CGFloat(document.longestLine) * CodeMetrics.charAdvance + CodeMetrics.trailingPadding,
@@ -182,7 +182,9 @@ struct CodePainter {
     // MARK: Drawing
 
     /// Draws the rows crossing `rect` (document coordinates). The gutter is pinned at
-    /// `gutterX` (the visible left edge) so it stays put while the text scrolls sideways.
+    /// `gutterX` (the visible left edge) so it stays put while the text scrolls sideways. Rows
+    /// never paint into the `verticalPadding` bands at the top and bottom of `rect`, so a tile
+    /// scrolled to its range shows none of the lines around it (a fit tile shows exactly it).
     func draw(in context: CGContext, rect: CGRect, gutterX: CGFloat, cache: CodeLineCache?) {
         NSColor.textBackgroundColor.setFill()
         rect.fill()
@@ -190,6 +192,9 @@ struct CodePainter {
             drawNotice(notice, in: rect)
             return
         }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.clip(to: rect.insetBy(dx: 0, dy: min(CodeMetrics.verticalPadding, rect.height / 2)))
         let visible = visibleRows(rect)
         let width = rect.maxX
         let selection = self.selection.flatMap { $0.start < $0.end ? $0 : nil }

@@ -194,6 +194,63 @@ final class LayoutApiTests {
         let scoped = try await result("layout.check", .object(["ids": .array([.string(c.id)])]))
         #expect(scoped["overlaps"] == .array([]) && scoped["arrowCrossings"] == .array([]))
     }
+
+    @Test func fitTilesAreExactlyTheirMeasuredBoxAndGroupsPadThatBox() async throws {
+        let created = try await result("object.create", .object(["type": "code", "props": Self.code(10, 19, caption: "why"), "frame": .object(["x": 0, "y": 0]), "size": "fit"]))
+        let code = try board.object(try #require(created["object"]?["id"]?.string))
+        let measured = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: "why")])))
+        #expect(code.frame.w == Double(measured.width) && code.frame.h == Double(measured.height))
+        // The body under the title bar holds the header, the caption strip, and the range's ten rows: nothing more.
+        #expect(RenderMath.body(code.frame).height == CodeMetrics.headerHeight + CodeMetrics.captionHeight + 2 * CodeMetrics.verticalPadding + 10 * CodeMetrics.rowHeight)
+        let createdNote = try await result("object.create", .object(["type": "note", "props": .object(["markdown": "# Title\n\nBody"]), "frame": .object(["x": 0, "y": 400, "w": 300]), "size": "fit"]))
+        let note = try board.object(try #require(createdNote["object"]?["id"]?.string))
+        let noteSize = Self.size(try await result("object.measure", .object(["type": "note", "props": .object(["markdown": "# Title\n\nBody"]), "width": 300])))
+        #expect(note.frame.h == Double(noteSize.height))
+        let lane = board.create(type: .group, props: .object(["members": .array([.string(code.id)]), "padding": 24]))
+        #expect(lane.frame.maxY == code.frame.maxY + 24, "the padding starts where the tile's drawn box ends")
+    }
+
+    @Test func captionsWidenMeasureAndTruncatedCaptionsAreReported() async throws {
+        let rows = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19)])))
+        let short = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: "why")])))
+        #expect(short.width == rows.width, "a caption that fits doesn't widen the tile")
+        let long = String(repeating: "The JSON is a spec, not the `runtime` config. ", count: 6)
+        let wide = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: long)])))
+        #expect(wide.width == ObjectMeasure.captionWidth(long) && wide.width > rows.width + 400)
+
+        let cut = board.create(type: .code, props: Self.code(10, 19, caption: long), frame: Frame(x: 0, y: 0, w: Double(rows.width), h: Double(wide.height)))
+        let report = try await result("layout.check", .object(["ids": .array([.string(cut.id)])]))
+        #expect(report["truncated"] == .array([.object(["id": .string(cut.id), "what": "caption", "x": .number(Double(wide.width - rows.width))])]))
+        #expect(report["overflow"] == .array([]), "the rows fit; only the caption is cut")
+        _ = try board.update(cut.id, frame: Frame(x: 0, y: 0, w: Double(wide.width), h: Double(wide.height)))
+        #expect(try await result("layout.check", .object(["ids": .array([.string(cut.id)])]))["truncated"] == .array([]))
+    }
+
+    @Test func labelsOnTilesOrOnEachOtherAreReported() async throws {
+        let a = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        let b = board.create(type: .note, props: .object(["markdown": "b"]), frame: Frame(x: 230, y: 0, w: 200, h: 100))
+        let squeezed = board.create(type: .arrow, props: .object(["from": .object(["object": .string(a.id)]), "to": .object(["object": .string(b.id)]), "label": "this.forward() → bridgeFetch()"]))
+        let one = board.create(type: .arrow, props: .object(["from": .object(["point": [1000, 0]]), "to": .object(["point": [1400, 0]]), "label": "BridgeConfig.load()"]))
+        let two = board.create(type: .arrow, props: .object(["from": .object(["point": [1000, 8]]), "to": .object(["point": [1400, 8]]), "label": "start() writes"]))
+        let clear = board.create(type: .arrow, props: .object(["from": .object(["point": [1000, 400]]), "to": .object(["point": [1400, 400]]), "label": "alone"]))
+        let report = try await result("layout.check", .object([:]))
+        let entries = report["labelOverlaps"]?.array ?? []
+        func under(_ arrow: CanvasObject) -> Set<String> {
+            Set(entries.first { $0["arrow"] == .string(arrow.id) }?["overlaps"]?.array?.compactMap(\.string) ?? [])
+        }
+        #expect(under(squeezed) == [a.id, b.id], "a 30 pt gap has no room beside the route: the label sits on both ends")
+        #expect(under(one) == [two.id] && under(two) == [one.id], "labels touching read as one")
+        #expect(under(clear).isEmpty)
+    }
+
+    @Test func followTilesAreFixedViewersThatNeverOverflow() async throws {
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(board.root.path), "command": []]))
+        let follow = try #require(try board.follow(tile: terminal.id, path: "src.txt", range: LineRange(start: 1, end: 80), action: "read"))
+        let plain = board.create(type: .code, props: Self.code(1, 80), frame: follow.frame)
+        let report = try await result("layout.check", .object(["ids": .array([.string(follow.id), .string(plain.id)])]))
+        let overflowing = Set(report["overflow"]?.array?.compactMap { $0["id"]?.string } ?? [])
+        #expect(overflowing == [plain.id], "80 rows don't fit either frame; only the ordinary tile is a layout problem")
+    }
 }
 
 /// Board-level layout: place/stack math and steps, groups as regions, and arrow routing.
@@ -340,5 +397,71 @@ struct LayoutBoardTests {
         // An arrow shifted right of its travel (negative offset) labels that outer side.
         let other = G.labelRect(along: path, size: size, side: -1, obstacles: [])
         #expect(other.minY >= 100)
+    }
+
+    // MARK: Line-bound arrows
+
+    @Test func lineAnchorsFollowTheRangeScrollRuleAndClampToTheRows() {
+        let range: JSONValue = .object(["path": "src.txt", "range": .object(["start": 10, "end": 19])])
+        let rowsTop = CodeMetrics.titleHeight + CodeMetrics.headerHeight
+        func middle(ofRow row: Int, scroll: CGFloat) -> CGFloat { rowsTop + CodeMetrics.verticalPadding + CGFloat(row) * CodeMetrics.rowHeight - scroll + CodeMetrics.rowHeight / 2 }
+        // Fit to its range: no context rows, line 10 is the first row.
+        let fit = Frame(x: 0, y: 100, w: 400, h: Double(rowsTop + 2 * CodeMetrics.verticalPadding + 10 * CodeMetrics.rowHeight))
+        #expect(CodeMetrics.lineY(line: 10, frame: fit, props: range, rows: nil) == 100 + middle(ofRow: 0, scroll: 0))
+        #expect(CodeMetrics.lineY(line: 12, frame: fit, props: range, rows: nil) == 100 + middle(ofRow: 2, scroll: 0))
+        // Room for 30 rows: three rows of context above the range.
+        let tall = Frame(x: 0, y: 0, w: 400, h: Double(rowsTop + 2 * CodeMetrics.verticalPadding + 30 * CodeMetrics.rowHeight))
+        #expect(CodeMetrics.lineY(line: 10, frame: tall, props: range, rows: nil) == middle(ofRow: 3, scroll: 0))
+        // Lines scrolled out of view pin to the top of the rows or the bottom of the tile.
+        #expect(CodeMetrics.lineY(line: 1, frame: tall, props: range, rows: nil) == rowsTop)
+        #expect(CodeMetrics.lineY(line: 99, frame: tall, props: range, rows: nil) == CGFloat(tall.h))
+        // Near the end of the file the scroll stops at the last row, which shifts the range down.
+        let end: JSONValue = .object(["path": "src.txt", "range": .object(["start": 95, "end": 100])])
+        #expect(CodeMetrics.lineY(line: 95, frame: tall, props: end, rows: CodeRows(lineCount: 100)) == middle(ofRow: 30 - 6, scroll: 0))
+        #expect(CodeMetrics.lineY(line: 95, frame: tall, props: end, rows: nil) == middle(ofRow: 3, scroll: 0), "without the file's length: context above, unclamped")
+        // A caption strip moves the rows down.
+        let captioned: JSONValue = .object(["path": "src.txt", "caption": "why", "range": .object(["start": 10, "end": 19])])
+        #expect(CodeMetrics.lineY(line: 10, frame: fit, props: captioned, rows: nil) == 100 + middle(ofRow: 0, scroll: 0) + CodeMetrics.captionHeight)
+    }
+
+    func code(_ x: Double, _ y: Double, lines: ClosedRange<Int>) -> CanvasObject {
+        let props: JSONValue = .object(["path": "src.txt", "range": .object(["start": .number(Double(lines.lowerBound)), "end": .number(Double(lines.upperBound))])])
+        let h = Double(CodeMetrics.titleHeight + CodeMetrics.headerHeight + 2 * CodeMetrics.verticalPadding) + Double(lines.count) * Double(CodeMetrics.rowHeight)
+        return board.create(type: .code, props: props, frame: Frame(x: x, y: y, w: 400, h: h))
+    }
+
+    func arrow(_ from: CanvasObject, _ fromLine: Int, _ to: CanvasObject, _ toLine: Int, route: String) -> CanvasObject {
+        func end(_ object: CanvasObject, _ line: Int) -> JSONValue { .object(["object": .string(object.id), "lines": .object(["start": .number(Double(line)), "end": .number(Double(line))])]) }
+        return board.create(type: .arrow, props: .object(["from": end(from, fromLine), "to": end(to, toLine), "route": .string(route)]))
+    }
+
+    func y(_ object: CanvasObject, _ line: Int) -> CGFloat { CodeMetrics.lineY(line: line, frame: object.frame, props: object.props, rows: nil) }
+
+    @Test func lineBoundArrowsLandOnTheirLinesForEveryRoute() {
+        let a = code(0, 0, lines: 10...19)
+        let b = code(600, 100, lines: 40...49)
+        _ = board.create(type: .note, props: .object(["markdown": "wall"]), frame: Frame(x: 450, y: -50, w: 100, h: 500))
+        for route in ["straight", "orthogonal", "avoid"] {
+            let forward = arrow(a, 12, b, 45, route: route)
+            let back = arrow(b, 41, a, 18, route: route)
+            let routes = board.routes()
+            let there = try! #require(routes[forward.id]), home = try! #require(routes[back.id])
+            #expect(there[0] == CGPoint(x: 400 + G.arrowGap, y: y(a, 12)) && there[there.count - 1] == CGPoint(x: 600 - G.arrowGap, y: y(b, 45)), "\(route): \(there)")
+            #expect(home[0] == CGPoint(x: 600 - G.arrowGap, y: y(b, 41)) && home[home.count - 1] == CGPoint(x: 400 + G.arrowGap, y: y(a, 18)), "\(route): \(home)")
+            if route != "straight" { for (p, q) in zip(there, there.dropFirst()) { #expect(p.x == q.x || p.y == q.y) } }
+            try! board.delete(forward.id)
+            try! board.delete(back.id)
+        }
+        #expect(y(a, 12) != y(a, 18) && y(b, 45) != y(b, 41), "distinct lines, distinct rows")
+    }
+
+    @Test func stackedLineBoundTilesLoopAroundTheirRightEdges() {
+        let a = code(0, 0, lines: 10...19)
+        let c = code(0, 400, lines: 10...19)
+        let loop = arrow(a, 12, c, 15, route: "orthogonal")
+        let path = try! #require(board.routes()[loop.id])
+        #expect(path.first == CGPoint(x: 400 + G.arrowGap, y: y(a, 12)) && path.last == CGPoint(x: 400 + G.arrowGap, y: y(c, 15)))
+        #expect(path.allSatisfy { $0.x >= 400 }, "never through either tile: \(path)")
+        #expect(!G.path(path, crosses: a.frame.rect) && !G.path(path, crosses: c.frame.rect))
     }
 }

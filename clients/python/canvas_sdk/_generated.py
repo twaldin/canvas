@@ -224,7 +224,7 @@ class ObjectApi:
         return self._call("object.delete", params, ["caller"])
 
     def measure(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, width: float | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Intrinsic size: the whole frame (tile title bar included) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`."""
+        """Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), with the caption strip when `caption` is set, and at least as wide as the whole caption; note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`."""
         params = {"board": board, "type": type, "props": props, "width": width, "caller": caller}
         return self._call("object.measure", params, ["board","caller"])
 
@@ -248,7 +248,7 @@ class LayoutApi:
         return self._call("layout.stack", params, ["caller"])
 
     def check(self, *, board: "Id" | None = None, ids: list["Id"] | None = None, rect: "Frame" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Layout problems for `ids`, for what intersects `rect`, or for the whole board: overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, and code/note/text whose content doesn't fit its frame (points missing in x and y)."""
+        """Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text whose content doesn't fit its frame (points missing in x and y; code: its range's rows), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated."""
         params = {"board": board, "ids": ids, "rect": rect, "caller": caller}
         return self._call("layout.check", params, ["board","caller"])
 
@@ -344,7 +344,7 @@ class ViewApi:
         return self._call("view.get", params, ["board"])
 
     def render(self, *, target: Union["Id", list["Id"], "Frame"], board: "Id" | None = None, scale: float | None = None, full: bool | None = None, exclude: list["ObjectType"] | None = None, padding: float | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
-        """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML/code scroll height, code line width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn."""
+        """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn."""
         params = {"board": board, "target": target, "scale": scale, "full": full, "exclude": exclude, "padding": padding, "out": out, "format": format, "timeoutMs": timeout_ms}
         return self._call("view.render", params, ["board"])
 

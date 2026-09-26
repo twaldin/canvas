@@ -27,14 +27,39 @@ public enum DrawingGeometry {
     public enum ArrowEnd: Equatable, Sendable {
         case point(CGPoint)
         case bound(Outline)
+        /// Bound to one row of a tile (a code line, `Binding.lines`): attaches to the tile's left
+        /// or right edge at `y`, whichever faces the other end (the right edge when the two
+        /// overlap horizontally), and never moves along the edge for parallel offsets.
+        case row(CGRect, y: CGFloat)
 
-        /// What the other end aims at: the outline's bounds, or the point.
+        /// What the other end aims at: the outline's bounds, the row (zero height), or the point.
         public var aim: CGRect {
             switch self {
             case .point(let point): CGRect(origin: point, size: .zero)
             case .bound(let outline): outline.bounds
+            case .row(let rect, let y): CGRect(x: rect.minX, y: y, width: rect.width, height: 0)
             }
         }
+
+        /// The bound object's box; nil for a free point.
+        var box: CGRect? {
+            switch self {
+            case .point: nil
+            case .bound(let outline): outline.bounds
+            case .row(let rect, _): rect
+            }
+        }
+
+        var isRow: Bool {
+            if case .row = self { return true }
+            return false
+        }
+    }
+
+    /// Whether a row end on `rect` attaches on its right edge to reach `other`: yes unless
+    /// `other` lies wholly to its left.
+    static func rowSideIsRight(_ rect: CGRect, toward other: CGRect) -> Bool {
+        other.maxX > rect.minX
     }
 
     // MARK: Arrow routing
@@ -61,6 +86,8 @@ public enum DrawingGeometry {
         switch end {
         case .point(let point): return point
         case .bound(let bound): outline = bound
+        case .row(let rect, let y):
+            return rowSideIsRight(rect, toward: other) ? CGPoint(x: rect.maxX + gap, y: y) : CGPoint(x: rect.minX - gap, y: y)
         }
         let rect = outline.bounds
         let yRange = (max(rect.minY, other.minY), min(rect.maxY, other.maxY))

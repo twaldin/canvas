@@ -38,6 +38,10 @@ final class CodeHeaderBar: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        // Unclipped (the macOS 14 default), AppKit backs this view with a layer spanning the
+        // whole tile and passes dirty rects outside it, so the fill below covered the title bar
+        // and the code beneath.
+        clipsToBounds = true
         mode.controlSize = .small
         mode.segmentStyle = .rounded
         mode.target = self
@@ -123,7 +127,7 @@ final class CodeHeaderBar: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.windowBackgroundColor.setFill()
-        dirtyRect.fill()
+        bounds.intersection(dirtyRect).fill()
         NSColor.separatorColor.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }

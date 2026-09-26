@@ -46,30 +46,46 @@ enum DevInput {
     static func replay(_ fields: [String: String]) {
         guard fields["pid"] == String(getpid()) else { return }
         // `--repeat N --interval ms`: a burst like a trackpad's event stream. The log line reports
-        // how late the main thread ran the steps: the worst lateness is the longest stall a person
-        // would see as a dropped frame run.
+        // the longest gap between consecutive steps (the longest stall a person sees as frozen
+        // frames) and the mean lateness against the schedule. Steps come from one strict repeating
+        // timer: separate `asyncAfter` calls get leeway proportional to their delay, which showed
+        // up as stalls growing through the burst while the main thread sat idle.
         if let count = Int(fields["repeat"] ?? ""), count > 1 {
             var single = fields
             single["repeat"] = nil
             let interval = (Double(fields["interval"] ?? "") ?? 8) / 1000
-            let start = Date()
-            @MainActor final class Lateness { var worst = 0.0, total = 0.0 }
-            let lateness = Lateness()
-            for step in 0..<count {
-                DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(step)) {
-                    MainActor.assumeIsolated {
-                        let late = max(0, Date().timeIntervalSince(start) - interval * Double(step)) * 1000
-                        lateness.worst = max(lateness.worst, late)
-                        lateness.total += late
-                        replay(single)
-                        if step == count - 1 {
-                            NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms), step lateness worst %.1f ms mean %.1f ms",
-                                  count, fields["kind"] ?? "", Date().timeIntervalSince(start) * 1000, interval * 1000 * Double(count - 1),
-                                  lateness.worst, lateness.total / Double(count))
-                        }
+            @MainActor final class Burst {
+                let start = Date()
+                var step = 0, last: Date?, gap = 0.0, gapStep = 0, lateness = 0.0
+                var timer: DispatchSourceTimer?
+            }
+            let burst = Burst()
+            let timer = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
+            burst.timer = timer
+            timer.schedule(deadline: .now(), repeating: interval, leeway: .nanoseconds(0))
+            timer.setEventHandler {
+                MainActor.assumeIsolated {
+                    let now = Date(), step = burst.step
+                    burst.step += 1
+                    burst.lateness += max(0, now.timeIntervalSince(burst.start) - interval * Double(step)) * 1000
+                    if let last = burst.last, now.timeIntervalSince(last) * 1000 > burst.gap {
+                        burst.gap = now.timeIntervalSince(last) * 1000
+                        burst.gapStep = step
                     }
+                    burst.last = now
+                    // A scroll burst is one trackpad gesture: began, changed…, ended.
+                    var event = single
+                    event["phase"] = step == 0 ? "began" : step == count - 1 ? "ended" : "changed"
+                    replay(event)
+                    guard step == count - 1 else { return }
+                    burst.timer?.cancel()
+                    burst.timer = nil
+                    NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms), longest gap %.1f ms before step %d, mean lateness %.1f ms",
+                          count, fields["kind"] ?? "", Date().timeIntervalSince(burst.start) * 1000, interval * 1000 * Double(count - 1),
+                          burst.gap, burst.gapStep, burst.lateness / Double(count))
                 }
             }
+            timer.resume()
             return
         }
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.windowController is CanvasWindowController }),
@@ -136,6 +152,13 @@ enum DevInput {
             let screen = window.convertPoint(toScreen: at)
             cg.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
             cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
+            // A phased, continuous event is a trackpad gesture step; a phaseless one is a mouse
+            // wheel notch, which AppKit animates as a smooth scroll.
+            let phases: [String: Int64] = ["began": 1, "changed": 2, "ended": 4]
+            if let phase = fields["phase"].flatMap({ phases[$0] }) {
+                cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+            }
             // A window-less event's locationInWindow is its screen location, which only matches the
             // window near the primary display's origin; hand it to the view under the point instead
             // of relying on sendEvent's hit test (windows on other displays got nothing).

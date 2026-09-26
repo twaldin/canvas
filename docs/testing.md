@@ -53,6 +53,8 @@ scripts/dev.sh input scroll <x> <y> <dx> <dy>
 
 Coordinates are window-content points from the top-left. Prefer Hyper clicks and API calls: a plain click on a window of an inactive app is how macOS decides to activate it, and `CANVAS_NO_ACTIVATE` is the only thing standing between that and Tim's screen.
 
+`text`, `command`, and `shortcut` go to an open sheet (e.g. the ⌘G group-name prompt) when the window has one, so `input text "Auth"` then `input shortcut $'\r'` confirms it. Esc/Delete on the canvas: `input command cancelOperation:` / `input command deleteBackward:` (the canvas has keyboard focus unless a terminal does).
+
 ### Terminals and agents
 
 - Terminal text: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) zmx history canvas-<tileId> | tail -n 40` (zmx keys its socket directory off `TMPDIR`; the GUI app's differs from a herdr pane's).

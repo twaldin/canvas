@@ -125,10 +125,16 @@ enum DevInput {
         case "scroll":
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(number("dy")), wheel2: Int32(number("dx")), wheel3: 0) else { return }
             // CGEvent locations are global with a top-left origin (primary display), not Cocoa's.
-            let screen = window.convertPoint(toScreen: point("x", "y"))
+            let at = point("x", "y")
+            let screen = window.convertPoint(toScreen: at)
             cg.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
             cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
-            if let event = NSEvent(cgEvent: cg) { window.sendEvent(event) }
+            // A window-less event's locationInWindow is its screen location, which only matches the
+            // window near the primary display's origin; hand it to the view under the point instead
+            // of relying on sendEvent's hit test (windows on other displays got nothing).
+            guard let event = NSEvent(cgEvent: cg), let frame = content.superview,
+                  let hit = content.hitTest(frame.convert(at, from: nil)) else { return }
+            hit.scrollWheel(with: event)
         default:
             NSLog("DevInput: unknown kind \(fields["kind"] ?? "nil")")
         }

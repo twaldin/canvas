@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { canvasGuidance } from "../guidance";
-import { absolute, editLocation, type Location, patchLocation, readLocation } from "./follow";
+import { absolute, editLocation, type Location, patchLocation, readLocation, structuredPatchChanges } from "./follow";
 import { thread } from "./threads";
 
 type Kind = "claude" | "codex" | "gemini" | "opencode";
@@ -125,7 +125,7 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       const location = subagent || event === "PostToolUseFailure" ? undefined : kind === "claude" ? claudeLocation(input) : kind === "codex" ? codexLocation(input) : geminiLocation(input);
       await Promise.all([
         report("working", undefined, kind === "gemini" ? geminiToolCall(input) : toolCall(input)),
-        location ? quietly(client.api.follow.report({ tile, path: location.path, range: location.range, action: location.action })) : undefined,
+        location ? quietly(client.api.follow.report({ tile, path: location.path, range: location.range, changes: location.changes, action: location.action })) : undefined,
       ]);
       return undefined;
     }
@@ -180,21 +180,11 @@ function claudeLocation(input: Json): Location | undefined {
   if (tool === "Edit" || tool === "MultiEdit" || tool === "Write" || tool === "NotebookEdit") {
     const path = str(args.file_path) ?? str(args.notebook_path);
     if (!path) return undefined;
-    const line = firstChangedLine(response.structuredPatch);
+    const changes = structuredPatchChanges(response.structuredPatch);
     const created = tool === "Write" && str(response.type) === "create";
-    return { path: absolute(path, cwd), range: line ? { start: line, end: line } : undefined, action: tool === "Write" && (created || !line) ? "write" : "edit" };
+    return { path: absolute(path, cwd), changes: changes.length ? changes : undefined, action: tool === "Write" && (created || !changes.length) ? "write" : "edit" };
   }
   return undefined;
-}
-
-/** First added or removed line of Claude Code's `structuredPatch` hunks, in the new file. */
-function firstChangedLine(patch: unknown): number | undefined {
-  const hunk = Array.isArray(patch) ? obj(patch[0]) : undefined;
-  const start = num(hunk?.newStart);
-  const lines = hunk?.lines;
-  if (!start || !Array.isArray(lines)) return undefined;
-  const offset = lines.findIndex((line) => typeof line === "string" && (line.startsWith("+") || line.startsWith("-")));
-  return start + Math.max(0, offset);
 }
 
 function codexLocation(input: Json): Location | undefined {

@@ -100,6 +100,10 @@ public final class ApiRouter {
     /// A terminal tile's live title (OSC 0/2), foreground program (`TerminalName.program`) and
     /// last finished command, as its tile knows them now; nil without the app UI.
     public var terminalStatus: ((Board, ObjectID) -> TerminalStatus)?
+    /// Inside tmux, what the active pane of a terminal tile's tmux client runs
+    /// (`TerminalName.program`; its shell at that pane's prompt); nil when the tile's foreground
+    /// program isn't tmux or tmux doesn't say.
+    public var tmuxPane: ((Board, ObjectID) async -> String?)?
     /// What a browser tile's page reported since it loaded (`PageLog`); nil when its page isn't
     /// loaded (never shown or rendered, or released while out of view).
     public var readPageLog: ((Board, ObjectID) async -> PageLog?)?
@@ -422,11 +426,18 @@ public final class ApiRouter {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
         }
-        // An agent reporting from inside tmux (or an editor it started) isn't what the typing reaches.
-        if PromptTarget.runsAgent(terminal), p["force"]?.bool != true,
-           let program = PromptTarget.foreignProgram(kind: terminal.props["agent"]?["kind"]?.string, program: terminalStatus?(board, terminal.id).program) {
-            let kind = terminal.props["agent"]?["kind"]?.string ?? "the agent"
-            throw Failure("conflict", "\(terminal.id)'s foreground program is \(program), not \(kind): the text would go to it (in tmux, to whichever pane is active); force: true sends it anyway")
+        // An agent reporting from inside tmux (or an editor it started) isn't what the typing
+        // reaches, unless it runs in tmux's active pane.
+        if PromptTarget.runsAgent(terminal), p["force"]?.bool != true {
+            let kind = terminal.props["agent"]?["kind"]?.string
+            if let program = PromptTarget.foreignProgram(kind: kind, program: terminalStatus?(board, terminal.id).program) {
+                let pane = await tmuxPane?(board, terminal.id)
+                if let pane, let other = PromptTarget.foreignProgram(kind: kind, program: pane) {
+                    throw Failure("conflict", "\(terminal.id)'s foreground program is \(program), whose active pane runs \(other), not \(kind ?? "the agent"): the text would go to \(other). Leave it to the user, or once the agent's pane is active send again; force: true sends it anyway")
+                } else if pane == nil {
+                    throw Failure("conflict", "\(terminal.id)'s foreground program is \(program), not \(kind ?? "the agent"): the text would go to it (in tmux, to whichever pane is active); force: true sends it anyway")
+                }
+            }
         }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
         let mentions = try (p["mentions"]?.array ?? []).map { try HandoffMention(json: $0).target(on: board) }
@@ -822,7 +833,8 @@ public final class ApiRouter {
         case "follow.report":
             let tile = try string(p, "tile")
             let range = try p["range"].map { try $0.decode(LineRange.self) }
-            try board(forObject: tile).follow(tile: tile, path: try string(p, "path"), range: range, action: try string(p, "action"))
+            let changes = try p["changes"].map { try $0.decode([LineRange].self) } ?? []
+            try board(forObject: tile).follow(tile: tile, path: try string(p, "path"), range: range, changes: changes, action: try string(p, "action"))
             return .object([:])
 
         case "view.attention":

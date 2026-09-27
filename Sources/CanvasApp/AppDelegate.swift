@@ -66,6 +66,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Gemini CLI pads its title to a fixed width.
             return TerminalStatus(title: terminal.oscTitle?.trimmingCharacters(in: .whitespaces), program: terminal.program, lastCommand: terminal.lastCommand)
         }
+        router.tmuxPane = { [weak self] board, tile in
+            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return nil }
+            return await terminal.tmuxPane()
+        }
         router.readTerminalBlock = { [weak self] board, tile in
             guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else {
                 throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window")

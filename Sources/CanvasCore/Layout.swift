@@ -225,18 +225,20 @@ public enum Layout {
     }
 
     /// The least pan that brings `rect` (with `padding`) into view clear of the chrome, from a
-    /// viewport at `jump`; along an axis where it doesn't fit, its left or top edge shows. The
-    /// same `jump` when the rect is already in view.
-    public static func reveal(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat) -> Jump {
+    /// viewport at `jump`; along an axis where it doesn't fit, its left or top edge shows, or
+    /// with `bottomFirst` its bottom edge (a terminal's question sits there), not moving while
+    /// that edge is in view. The same `jump` when the rect is already in view.
+    public static func reveal(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat, bottomFirst: Bool = false) -> Jump {
         let zoom = jump.zoom
         let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
         let target = rect.insetBy(dx: -padding, dy: -padding)
-        func shift(_ min: CGFloat, _ max: CGFloat, shownMin: CGFloat, shownMax: CGFloat) -> CGFloat {
+        func shift(_ min: CGFloat, _ max: CGFloat, shownMin: CGFloat, shownMax: CGFloat, endFirst: Bool = false) -> CGFloat {
+            if max - min > shownMax - shownMin, endFirst { return (shownMin...shownMax).contains(max) ? 0 : max - shownMax }
             if max - min > shownMax - shownMin || min < shownMin { return min - shownMin }
             return max > shownMax ? max - shownMax : 0
         }
         return Jump(zoom: zoom, origin: CGPoint(x: jump.origin.x + shift(target.minX, target.maxX, shownMin: shown.minX, shownMax: shown.maxX),
-                                                y: jump.origin.y + shift(target.minY, target.maxY, shownMin: shown.minY, shownMax: shown.maxY)))
+                                                y: jump.origin.y + shift(target.minY, target.maxY, shownMin: shown.minY, shownMax: shown.maxY, endFirst: bottomFirst)))
     }
 
     /// `reveal`, keeping what shows of `kept` (the tile something was opened from) in view too

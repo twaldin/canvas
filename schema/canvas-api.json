@@ -104,6 +104,7 @@
         "diffBase": { "type": "string", "default": "merge-base", "description": "gutter signs show changes against this: merge-base | head | <sha>" },
         "followOf": { "$ref": "#/definitions/Id", "description": "terminal tile this follow tile tracks" },
         "lastAction": { "enum": ["read", "edit", "write", "lsp", "search"], "description": "follow tiles: what the agent last did at this location" },
+        "lastChanges": { "type": "array", "items": { "$ref": "#/definitions/LineRange" }, "description": "follow tiles: the hunks the agent's last edit here changed (`follow.report` `changes`), which the tile flashes" },
         "history": {
           "type": "array",
           "maxItems": 8,
@@ -1023,7 +1024,7 @@
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a target whose agent reports from behind another foreground program (`program` tmux, nvim, less: the text would go to that program, in tmux to whichever pane is active). `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`.",
+      "description": "Paste a prompt into another agent's terminal (bracketed paste; a one-line command into a shell at its prompt is typed) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`.",
       "params": {
         "type": "object",
         "required": ["target", "text"],
@@ -1063,7 +1064,7 @@
       "result": { "type": "object", "required": ["agent"], "properties": { "agent": { "$ref": "#/definitions/Agent" } } }
     },
     "agent.read": {
-      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line (a row that fills the terminal's width and ends in text joins the next). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block: \"last\"`: the output of the last command the terminal's shell finished (from Ghostty's shell-integration prompt marks), with `command` saying what ran. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory).",
+      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line (a row that fills the terminal's width and ends in text joins the next, unless it is a separator padded to the width, such as pytest's `==== FAILURES ====`). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block: \"last\"`: the output of the last command the terminal's shell finished (from Ghostty's shell-integration prompt marks), with `command` saying what ran. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory).",
       "params": {
         "type": "object",
         "required": ["target"],
@@ -1097,7 +1098,8 @@
         "properties": {
           "tile": { "$ref": "#/definitions/Id" },
           "path": { "type": "string", "description": "absolute path or path relative to the board root" },
-          "range": { "$ref": "#/definitions/LineRange" },
+          "range": { "$ref": "#/definitions/LineRange", "description": "where to aim; omitted with `changes`, the hunk spanning the most lines (the last of equals)" },
+          "changes": { "type": "array", "items": { "$ref": "#/definitions/LineRange" }, "description": "an edit's hunks as lines of the file now (a deletion: the line after it); the tile flashes them all" },
           "action": { "enum": ["read", "edit", "write", "lsp", "search"] }
         },
         "additionalProperties": false

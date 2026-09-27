@@ -19,7 +19,7 @@ public final class UndoHistory {
     /// Props a terminal's integrations keep current on their own.
     static let terminalBookkeeping: Set<String> = ["lifecycle", "agent", "title"]
     /// Props a follow tile's agent keeps current with every report (`Board.follow`).
-    static let followBookkeeping: Set<String> = ["path", "range", "lastAction", "history"]
+    static let followBookkeeping: Set<String> = ["path", "range", "lastAction", "lastChanges", "history"]
 
     /// The props of `object` nobody sets on purpose: a terminal's lifecycle, session and title;
     /// a browser page's own title (`props.pageTitle`, the app's write-back; `title` is the

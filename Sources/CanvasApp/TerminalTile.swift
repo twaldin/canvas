@@ -198,9 +198,16 @@ final class TerminalTile: NSView, TileContent {
     /// one within 30 ms into Shift+Enter, a newline), so the prompt would sit unsent.
     static let submitDelay: Duration = .milliseconds(80)
 
-    /// Pastes `text` and presses Enter once the paste has landed (`submitDelay`).
+    /// Pastes `text` and presses Enter once the paste has landed (`submitDelay`). Into a shell at
+    /// its prompt a one-line command is typed instead (`ShellTyping`), so no bracketed-paste
+    /// marker can reach its line editor in pieces.
     func submit(_ text: String) async -> Bool {
-        guard terminal.paste(text: text) else { return false }
+        refreshProgram()
+        if shell != nil, program == nil, let typing = ShellTyping.action(text) {
+            guard terminal.performBindingAction(typing) else { return false }
+        } else {
+            guard terminal.paste(text: text) else { return false }
+        }
         try? await Task.sleep(for: Self.submitDelay)
         terminal.sendKey(.enter)
         return true
@@ -250,8 +257,9 @@ final class TerminalTile: NSView, TileContent {
     private(set) var oscTitle: String?
     /// What runs in the foreground (`TerminalName.program`: `gemini`, `cargo test`); nil at the prompt.
     private(set) var program: String?
-    /// The session's shell (`ForegroundProgram.shellPid`), looked up once.
+    /// The session's shell (`ForegroundProgram.shellPid`), looked up once, and its name (`zsh`).
     private var shell: pid_t?
+    private var shellName: String?
     private var shellLookup: Date?
 
     /// Reads the foreground program again (a few syscalls once the session's shell is known).
@@ -267,6 +275,12 @@ final class TerminalTile: NSView, TileContent {
         guard program != self.program else { return }
         self.program = program
         publishLabel()
+    }
+
+    /// Inside tmux, what its active pane runs (`ForegroundProgram.tmuxPane`); nil otherwise.
+    func tmuxPane() async -> String? {
+        guard let shell else { return nil }
+        return await offPool { ForegroundProgram.tmuxPane(shell: shell) }
     }
 
     /// What closing this terminal ends, for the close sheet (`SessionProcesses`); nil until the
@@ -285,6 +299,7 @@ final class TerminalTile: NSView, TileContent {
             let pid = await offPool { ForegroundProgram.shellPid(session: session) }
             guard let self, let pid else { return }
             self.shell = pid
+            self.shellName = ForegroundProgram.name(pid)
             self.refreshProgram()
         }
     }
@@ -315,6 +330,12 @@ final class TerminalTile: NSView, TileContent {
         if board.raiseTerminalNotice(objectID, message: message, bell: bell) {
             NSLog("Canvas: terminal %@ %@: %@", objectID, bell ? "rang the bell" : "sent a notification", message)
         }
+    }
+
+    /// BEL: a marker naming what rang it (`TerminalCommand.bellMessage`).
+    fileprivate func bell() {
+        refreshProgram()
+        notice(TerminalCommand.bellMessage(program: program, shell: shellName, last: lastCommand, at: Date()), bell: true)
     }
 
     // MARK: Commands
@@ -809,7 +830,7 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
     }
 
     func terminalDidRingBell() {
-        tile?.notice("Bell", bell: true)
+        tile?.bell()
     }
 
     func terminalDidRequestDesktopNotification(title: String, body: String) {

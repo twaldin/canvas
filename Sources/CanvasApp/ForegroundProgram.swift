@@ -39,11 +39,22 @@ enum ForegroundProgram {
     /// foreground process group. While that is the shell itself, the command a `-c` shell runs
     /// without job control (a tile's `zsh -l -c '<command>; exec zsh -l'`: its child in the same
     /// group), else its prompt (an interactive shell's own children, like a prompt's `git`
-    /// status, aren't jobs). A few syscalls; fine on the main actor.
+    /// status, aren't jobs). A process that isn't a shell (a tmux pane's program started
+    /// without one) is its own job. A few syscalls; fine on the main actor.
     static func state(shell: pid_t) -> State {
         guard let leader = leader(shell: shell) else { return .gone }
         return leader.flatMap(arguments).map(State.running) ?? .prompt
     }
+
+    /// What process `pid` runs, as a person names it (`TerminalName.program`; a login shell's
+    /// `-zsh` is `zsh`).
+    static func name(_ pid: pid_t) -> String? {
+        guard var argv = arguments(pid), let first = argv.first else { return nil }
+        if first.hasPrefix("-") { argv[0] = String(first.dropFirst()) }
+        return TerminalName.program(argv: argv)
+    }
+
+    private static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "fish", "ksh", "tcsh", "csh", "nu", "elvish", "xonsh"]
 
     /// The foreground job's leader (`state`): nil when the shell is gone, `.some(nil)` at its prompt.
     private static func leader(shell: pid_t) -> pid_t?? {
@@ -52,7 +63,11 @@ enum ForegroundProgram {
         guard group > 0 else { return .some(nil) }
         var leader = group
         if leader == shell {
-            guard arguments(shell)?.contains("-c") == true else { return .some(nil) }
+            let argv = arguments(shell) ?? []
+            if let first = argv.first, !shells.contains(String(first.split(separator: "/").last ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "-"))) {
+                return .some(shell)
+            }
+            guard argv.contains("-c") else { return .some(nil) }
             let child = members(of: group).filter { $0 != shell }.compactMap { pid in bsdInfo(pid).map { (pid, $0) } }
                 .filter { $0.1.pbi_ppid == UInt32(shell) }
                 .max { ($0.1.pbi_start_tvsec, $0.1.pbi_start_tvusec) < ($1.1.pbi_start_tvsec, $1.1.pbi_start_tvusec) }
@@ -93,8 +108,63 @@ enum ForegroundProgram {
         return bytes > 0 ? Array(pids.prefix(Int(bytes) / MemoryLayout<pid_t>.size).filter { $0 > 0 }) : []
     }
 
-    /// `KERN_PROCARGS2`: argc, the executable path, padding, then argc NUL-terminated arguments.
+    /// Inside tmux, what typing into the session reaches: the program the active pane of the
+    /// session's tmux client runs (`name`: `omp`, `vim`; at that pane's prompt, its shell), asked
+    /// of the client's own server (its `-L`/`-S`, `TMUX_TMPDIR`, binary) for the pane shown on
+    /// the client's terminal. Nil when the foreground program isn't tmux or tmux doesn't say.
+    /// Runs tmux and waits for it: call it off the main actor.
+    nonisolated static func tmuxPane(shell: pid_t) -> String? {
+        guard let found = leader(shell: shell), let client = found, let running = process(client),
+              running.argv.first?.split(separator: "/").last == "tmux", let info = bsdInfo(client),
+              let tty = devname(dev_t(bitPattern: info.e_tdev), S_IFCHR) else { return nil }
+        let argv = running.argv
+        var path = [UInt8](repeating: 0, count: Int(MAXPATHLEN))
+        guard proc_pidpath(client, &path, UInt32(path.count)) > 0 else { return nil }
+        // The server's socket, as the client chose it: `-S path`, `-L name`, else `default`.
+        var server: [String] = []
+        var index = 1
+        while index < argv.count, argv[index].hasPrefix("-") {
+            let option = argv[index]
+            if option == "--" { break }
+            if ["-L", "-S"].contains(option), index + 1 < argv.count {
+                server = [option, argv[index + 1]]
+                index += 1
+            } else if option.hasPrefix("-L") || option.hasPrefix("-S"), option.count > 2 {
+                server = [String(option.prefix(2)), String(option.dropFirst(2))]
+            } else if ["-c", "-f", "-T"].contains(option) {
+                index += 1
+            }
+            index += 1
+        }
+        let tmux = Process()
+        tmux.executableURL = URL(fileURLWithPath: String(decoding: path.prefix { $0 != 0 }, as: UTF8.self))
+        tmux.arguments = server + ["display-message", "-p", "-c", "/dev/" + String(cString: tty), "#{pane_pid}"]
+        var env = ProcessInfo.processInfo.environment
+        env["TMUX"] = nil
+        env["TMUX_TMPDIR"] = running.environment.first { $0.hasPrefix("TMUX_TMPDIR=") }.map { String($0.dropFirst("TMUX_TMPDIR=".count)) }
+        tmux.environment = env
+        let output = Pipe()
+        tmux.standardOutput = output
+        tmux.standardError = FileHandle.nullDevice
+        guard (try? tmux.run()) != nil else { return nil }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        tmux.waitUntilExit()
+        guard tmux.terminationStatus == 0,
+              let pane = pid_t(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        return switch state(shell: pane) {
+        case .running(let argv): TerminalName.program(argv: argv)
+        case .prompt: name(pane)
+        case .gone: nil
+        }
+    }
+
     private static func arguments(_ pid: pid_t) -> [String]? {
+        process(pid)?.argv
+    }
+
+    /// `KERN_PROCARGS2`: argc, the executable path, padding, argc NUL-terminated arguments, then
+    /// the environment's `NAME=value` strings up to an empty one.
+    private static func process(_ pid: pid_t) -> (argv: [String], environment: [String])? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
@@ -110,6 +180,12 @@ enum ForegroundProgram {
             argv.append(String(decoding: buffer[index..<end], as: UTF8.self))
             index = end + 1
         }
-        return argv.isEmpty ? nil : argv
+        var environment: [String] = []
+        while index < size, buffer[index] != 0 {
+            let end = buffer[index..<size].firstIndex(of: 0) ?? size
+            environment.append(String(decoding: buffer[index..<end], as: UTF8.self))
+            index = end + 1
+        }
+        return argv.isEmpty ? nil : (argv, environment)
     }
 }

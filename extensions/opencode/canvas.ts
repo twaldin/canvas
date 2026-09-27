@@ -55,7 +55,7 @@ export const CanvasPlugin = async ({ directory }: Input) => {
 
 
   function follow(location: Location | undefined): void {
-    if (location) void quietly(client.api.follow.report({ tile: tile!, path: location.path, range: location.range, action: location.action }));
+    if (location) void quietly(client.api.follow.report({ tile: tile!, path: location.path, range: location.range, changes: location.changes, action: location.action }));
   }
 
   // The tile runs opencode from now on; the session id comes with the first prompt.

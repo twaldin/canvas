@@ -43,6 +43,20 @@ public struct TerminalCommand: Codable, Equatable, Sendable {
         return ([ "\(name) \(outcome)" ] + (durationMs.map { [Self.duration($0)] } ?? [])).joined(separator: " · ")
     }
 
+    /// A bell this soon after a command finished is taken as that command's.
+    public static let bellAfterCommand: TimeInterval = 5
+
+    /// A bell's marker text, naming what rang it: the foreground program (`pytest rang the
+    /// bell`); at the prompt, the command that just finished (`Bell after \`make test\``), else
+    /// the shell itself (`zsh rang the bell`: its line editor beeps at a key it has no use for).
+    public static func bellMessage(program: String?, shell: String?, last: (command: TerminalCommand, finishedAt: Date)?, at date: Date) -> String {
+        if let program { return "\(TerminalExcerpt.clip(program, 60)) rang the bell" }
+        if let last, let command = last.command.command, date.timeIntervalSince(last.finishedAt) <= bellAfterCommand {
+            return "Bell after `\(TerminalExcerpt.clip(command, 60))`"
+        }
+        return "\(shell ?? "The shell") rang the bell"
+    }
+
     /// `0.4 s`, `42 s`, `3 min 2 s`, `1 h 5 min`.
     public static func duration(_ ms: Int) -> String {
         if ms < 10_000 { return String(format: "%.1f s", Double(ms) / 1000) }
@@ -130,6 +144,18 @@ public struct TerminalCommandTracker: Sendable {
     }
 }
 
+/// How `agent.prompt` puts text into a shell at its prompt.
+public enum ShellTyping {
+    /// Ghostty's `text:` binding action that types `text` as keys, one write with no
+    /// bracketed-paste markers: nil unless it is one line of printable text (a newline would run
+    /// what came before it, a control character is a key). A paste's `ESC [200~` read in two
+    /// parts leaves zsh `[200~…~` to run, which a typed command can't.
+    public static func action(_ text: String) -> String? {
+        guard !text.isEmpty, text.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value != 0x7F && !(0x80...0x9F).contains($0.value) }) else { return nil }
+        return "text:" + text.replacingOccurrences(of: "\\", with: "\\\\")
+    }
+}
+
 /// Terminal text as mentions and `agent.read` hand it to an agent.
 public enum TerminalExcerpt {
     /// Lines of terminal text: trailing blanks trimmed off each line (terminals pad rows), blank
@@ -143,14 +169,72 @@ public enum TerminalExcerpt {
         return lines
     }
 
-    /// `lines` whole when they fit in `head + tail` lines (one more would only replace the
-    /// marker), else the first `head`, a line saying how many were left out, and the last `tail`:
-    /// a test run's failures are at its end, what it ran at its start.
+    /// `lines` whole when they fit in `head + tail` lines (one more would only replace a marker).
+    /// Else what matters, in order: progress-only rows (pytest's `....F... [ 40%]`, unittest's
+    /// dots, a progress bar at some percent) go first; of the rest, the first few lines (what
+    /// ran) and the last ones (how it ended: a test run's summary) stay, then failure lines
+    /// (`isFailure`: pytest's `E` and `>` lines and section headers, `FAILED`, errors,
+    /// traceback frames) in the order they came, then the rest of the first `head` lines, then
+    /// lines back from the end, `head + tail` in all. Each gap reads `… N lines omitted …`
+    /// (`progress lines` when that is all it left out); a gap of one line shows the line.
     public static func trim(_ lines: [String], head: Int, tail: Int) -> [String] {
         guard lines.count > head + tail + 1 else { return lines }
-        let omitted = lines.count - head - tail
-        return Array(lines.prefix(head)) + ["… \(omitted) lines omitted …"] + Array(lines.suffix(tail))
+        let progress = Set(lines.indices.filter { isProgress(lines[$0]) })
+        let kept = lines.indices.filter { !progress.contains($0) }
+        let budget = head + tail
+        var chosen = Set<Int>()
+        if kept.count <= budget + 1 {
+            chosen = Set(kept)
+        } else {
+            chosen.formUnion(kept.prefix(min(head, 3)))
+            chosen.formUnion(kept.suffix(min(tail, 10)))
+            for index in kept where chosen.count < budget && isFailure(lines[index]) { chosen.insert(index) }
+            for index in kept.prefix(head) where chosen.count < budget { chosen.insert(index) }
+            for index in kept.reversed() where chosen.count < budget { chosen.insert(index) }
+        }
+        var trimmed: [String] = []
+        var next = 0
+        func gap(to end: Int) {
+            let left = next..<end
+            if left.count == 1, !progress.contains(next) {
+                trimmed.append(lines[next])
+            } else if !left.isEmpty {
+                let kind = left.allSatisfy(progress.contains) ? "progress " : ""
+                trimmed.append("… \(left.count) \(kind)line\(left.count == 1 ? "" : "s") omitted …")
+            }
+        }
+        for index in chosen.sorted() {
+            gap(to: index)
+            trimmed.append(lines[index])
+            next = index + 1
+        }
+        gap(to: lines.count)
+        return trimmed
     }
+
+    /// A test runner's progress row (`tests/test_x.py ....F.. [ 42%]`, unittest's `.....F..`)
+    /// or a progress bar at a percent (`━━━━━━━━━━ 45%`): nothing an agent reads there that
+    /// the summary doesn't say.
+    static func isProgress(_ line: String) -> Bool {
+        let range = NSRange(location: 0, length: (line as NSString).length)
+        if let match = outcomes.firstMatch(in: line, range: range) {
+            let marks = (line as NSString).substring(with: match.range(at: 1))
+            return match.range(at: 2).location != NSNotFound || (marks.count >= 3 && marks.contains("."))
+        }
+        return bar.firstMatch(in: line, range: range) != nil
+    }
+
+    /// A line that says what failed and where: pytest's `E` (the assertion) and `>` (the failing
+    /// line) lines and `___ test ___` / `=== FAILURES ===` headers, `FAILED`/`ERROR` lines, an
+    /// error or exception, a compiler's `error:`, a Python traceback, a Rust panic.
+    static func isFailure(_ line: String) -> Bool {
+        failure.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
+    }
+
+    private static let outcomes = try! NSRegularExpression(pattern: #"^\s*(?:\S+\.py\s+)?([.FEsxX]+)\s*(\[\s*\d{1,3}%\])?$"#)
+    private static let bar = try! NSRegularExpression(pattern: #"[█▉▊▋▌▍▎▏━■░▒▓#]{4,}.*\b\d{1,3}(?:\.\d+)?%"#)
+    private static let failure = try! NSRegularExpression(pattern:
+        #"^E(?:\s|$)|^>\s|^_{3,} .+ _{3,}$|^={3,} .+ ={3,}$|\b(?:FAILED|FAIL|ERROR)\b|(?:Error|Exception)\b|\berror(?:\[\w+\])?:|Traceback \(most recent call last\)|^\s*File ".+", line \d+|panicked at"#)
 
     /// The rows around row `index` of `rows` (a terminal's screen): up to `before` rows above and
     /// `after` below, blank rows at either end dropped, the clicked row marked `>` and the others

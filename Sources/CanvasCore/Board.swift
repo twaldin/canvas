@@ -779,9 +779,17 @@ public final class Board {
     /// Whether a follow report or history entry's `action` changed the file.
     public static func isEdit(_ action: String?) -> Bool { action == "edit" || action == "write" }
 
+    /// Where a follow tile aims among an edit's hunks: the one spanning the most lines, the last
+    /// of equals (an edit's substance tends to come after the imports it needed); nil for none.
+    public nonisolated static func followAim(_ changes: [LineRange]) -> LineRange? {
+        changes.enumerated().max { ($0.element.end - $0.element.start, $0.offset) < ($1.element.end - $1.element.start, $1.offset) }?.element
+    }
+
     /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use, and
-    /// record the location at the front of the tile's history with its `action`. A location
-    /// already there moves to the front and stays an edit once edited. Past
+    /// record the location at the front of the tile's history with its `action`. An edit's
+    /// `changes` (its hunks, as lines of the file now) are kept on the tile (`lastChanges`) for it
+    /// to flash; without a `range` the tile aims at the hunk that matters most (`followAim`). A
+    /// location already there moves to the front and stays an edit once edited. Past
     /// `followHistoryLimit`, the oldest reads go first, so every edit of a burst (an agent's
     /// parallel edits land within milliseconds) stays listed. Ignored (returns nil) while the
     /// terminal doesn't follow (`props.follow` false) and for files `FollowFilter` rejects:
@@ -790,14 +798,18 @@ public final class Board {
     /// tile's size limit, images, and other binaries. The tile keeps its last real file. A file
     /// outside the root keeps its absolute path, so the tile diffs it in its own worktree.
     @discardableResult
-    public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject? {
+    public func follow(tile: ObjectID, path: String, range: LineRange?, changes: [LineRange] = [], action: String) throws -> CanvasObject? {
         let terminal = try object(tile)
         guard terminal.props["follow"]?.bool != false else { return nil }
         let projects = [root.path] + [terminal.props["cwd"]?.string].compactMap { $0 }
         guard FollowFilter.follows(absoluteURL(path).path, projects: projects) else { return nil }
         let relative = relativePath(path)
-        let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
-        var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action), "range": rangeValue]
+        func json(_ range: LineRange) -> JSONValue { .object(["start": .number(Double(range.start)), "end": .number(Double(range.end))]) }
+        let changes = changes.filter { $0.start >= 1 }.map { LineRange(start: $0.start, end: max($0.start, $0.end)) }
+        let range = range ?? Self.followAim(changes)
+        let rangeValue: JSONValue = range.map(json) ?? .null
+        var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action), "range": rangeValue,
+                                          "lastChanges": changes.isEmpty ? .null : .array(changes.map(json))]
         let existing = followTiles(of: tile).first
         var entry: [String: JSONValue] = ["path": .string(relative), "action": .string(action)]
         if range != nil { entry["range"] = rangeValue }
@@ -877,7 +889,7 @@ public final class Board {
             activity.record(.deleted, actor: .system, rev: revision, id: id, type: .code, summary: "closed \(ActivityLog.describe(tile)): \(path) was deleted")
             return .closed
         }
-        let props: JSONValue = .object(["path": .string(backPath), "range": back["range"] ?? .null,
+        let props: JSONValue = .object(["path": .string(backPath), "range": back["range"] ?? .null, "lastChanges": .null,
                                         "lastAction": back["action"] ?? .string("read"), "history": .array(remaining)])
         _ = try? update(id, props: props, actor: .system)
         activity.record(.follow, actor: .system, rev: revision, id: id, type: .code, summary: "follow tile stepped back to \(backPath): \(path) was deleted")

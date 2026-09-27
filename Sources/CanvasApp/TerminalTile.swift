@@ -260,7 +260,8 @@ final class TerminalTile: NSView, TileContent {
     fileprivate var reportedCwd: String?
 
     /// The `path:line` reference drawn at `point` (terminal view coordinates) that names an
-    /// existing file: relative to the reported cwd, then `props.cwd`, then the board root.
+    /// existing file: relative to the reported cwd, then `props.cwd`, then the board root, then
+    /// by name among the board root's files (`BoardFiles`), nearest the cwd.
     private func link(at point: NSPoint) -> TerminalLinkHit? {
         guard let surface, let grid else { return nil }
         let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
@@ -275,7 +276,9 @@ final class TerminalTile: NSView, TileContent {
               let reference = TerminalReferences.reference(in: rows.text, at: offset) else { return nil }
         let cwd = board.objects[objectID]?.props["cwd"]?.string
         let directories = [reportedCwd, cwd, board.root.path].compactMap { $0 }
-        guard let file = TerminalReferences.resolve(reference.path, directories: directories, home: NSHomeDirectory(), isFile: TerminalReferences.isFile) else { return nil }
+        let files = BoardFiles.of(board.root)
+        guard let file = TerminalReferences.resolve(reference.path, directories: directories, home: NSHomeDirectory(), isFile: TerminalReferences.isFile,
+                                                    listed: (files.root.path, files.current()), near: reportedCwd ?? cwd ?? board.root.path) else { return nil }
         return TerminalLinkHit(file: file, lines: reference.lines, runs: rows.runs(reference.range))
     }
 

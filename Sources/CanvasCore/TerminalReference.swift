@@ -54,8 +54,13 @@ public enum TerminalReferences {
 
     /// The existing file `path` names: absolute and `~/` paths as they are, relative ones against
     /// `directories` in order (the terminal's reported cwd, its `props.cwd`, the board root).
-    /// Diff prefixes (`a/`, `b/`) are tried without the prefix too. Nil when no candidate is a file.
-    public static func resolve(_ path: String, directories: [String], home: String, isFile: (String) -> Bool) -> String? {
+    /// Diff prefixes (`a/`, `b/`) are tried without the prefix too. When no directory has it, a
+    /// relative path is looked up among the board root's `listed` files as a file name or a
+    /// trailing part of a path (`core.py`, `click/core.py:10`, as agents write before they know
+    /// better): one match is it; of several, the one nearest `cwd` (fewest directories up and
+    /// down), unless two are equally near. Nil when nothing resolves.
+    public static func resolve(_ path: String, directories: [String], home: String, isFile: (String) -> Bool,
+                               listed: (root: String, files: FileIndex)? = nil, near cwd: String? = nil) -> String? {
         func standard(_ path: String) -> String { URL(fileURLWithPath: path).standardizedFileURL.path }
         if path.hasPrefix("~/") {
             let candidate = standard(home + path.dropFirst())
@@ -73,7 +78,30 @@ public enum TerminalReferences {
                 if isFile(candidate) { return candidate }
             }
         }
-        return nil
+        guard let listed else { return nil }
+        var matches: [String] = []
+        // A diff's `a/` or `b/` prefix is dropped only when the path as written matches nothing.
+        for relative in relatives where matches.isEmpty {
+            var suffix = Substring(relative)
+            while suffix.hasPrefix("./") { suffix = suffix.dropFirst(2) }
+            guard !suffix.split(separator: "/").contains("..") else { continue }
+            for match in listed.files.paths(endingWith: String(suffix)) {
+                let candidate = standard((listed.root as NSString).appendingPathComponent(match))
+                if !matches.contains(candidate), isFile(candidate) { matches.append(candidate) }
+            }
+        }
+        guard matches.count > 1 else { return matches.first }
+        guard let cwd else { return nil }
+        // /tmp and /private/tmp are one directory; a shell may report either.
+        func real(_ path: String) -> [Substring] { URL(fileURLWithPath: path).resolvingSymlinksInPath().path.split(separator: "/") }
+        let here = real(cwd)
+        func distance(_ file: String) -> Int {
+            let folder = real(file).dropLast()
+            let shared = zip(here, folder).prefix { $0 == $1 }.count
+            return (here.count - shared) + (folder.count - shared)
+        }
+        let ranked = matches.map { ($0, distance($0)) }.sorted { $0.1 < $1.1 }
+        return ranked[0].1 < ranked[1].1 ? ranked[0].0 : nil
     }
 
     /// True for an existing regular file (or a symlink to one).

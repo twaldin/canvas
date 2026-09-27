@@ -45,6 +45,27 @@ struct KeyboardNavigationTests {
         #expect(Layout.neighbor(of: from, among: [from], toward: .right) == nil, "not itself")
     }
 
+    /// Study geometry: ⌥⌘↓ from an omp terminal went to a code tile off to the right (just past
+    /// the terminal's right edge, starting above its bottom) instead of the review tile below it.
+    @Test func arrowNeighborPrefersTilesInLineOverNearerOnesBeside() {
+        let terminal = CGRect(x: 0, y: 0, width: 1000, height: 620)
+        let beside = CGRect(x: 1020, y: 470, width: 640, height: 446)
+        let below = CGRect(x: -10, y: 690, width: 740, height: 600)
+        #expect(Layout.neighbor(of: terminal, among: [beside, below], toward: .down) == 1, "the tile sharing the terminal's column")
+        // A sliver of shared span is not in line: 10 pt of a 640 pt tile.
+        let sliver = CGRect(x: 990, y: 470, width: 640, height: 446)
+        #expect(Layout.neighbor(of: terminal, among: [sliver, below], toward: .down) == 1)
+        // Far below but in line still beats near and off to the side.
+        let farBelow = CGRect(x: 200, y: 3000, width: 400, height: 300)
+        #expect(Layout.neighbor(of: terminal, among: [beside, farBelow], toward: .down) == 1)
+        // With nothing in line, the diagonal one is still reachable.
+        #expect(Layout.neighbor(of: terminal, among: [beside], toward: .down) == 0)
+        // Across the other axis the same way: → picks the tile sharing the row.
+        let right = CGRect(x: 1400, y: 100, width: 400, height: 400)
+        let rightLow = CGRect(x: 1030, y: 600, width: 400, height: 400)
+        #expect(Layout.neighbor(of: terminal, among: [rightLow, right], toward: .right) == 1)
+    }
+
     @Test func fileSearchRanksFileNamesOverScatteredPathMatches() {
         let index = FileIndex(paths: [
             "docs/maintenance.md",
@@ -67,6 +88,23 @@ struct KeyboardNavigationTests {
         // Word starts beat letters buried inside words.
         let words = FileIndex(paths: ["abc/xyzfoobar.swift", "abc/foo_bar.swift"])
         #expect(words.search("fb", limit: 2).first == "abc/foo_bar.swift")
+    }
+
+    @Test func goToQueriesTakeALineOrASymbol() {
+        func parse(_ query: String) -> GoToQuery { GoToQuery.parse(query) }
+        #expect(parse("core.py:1428") == GoToQuery(text: "core.py", lines: LineRange(start: 1428, end: 1428)))
+        #expect(parse(" src/click/core.py:10-20 ") == GoToQuery(text: "src/click/core.py", lines: LineRange(start: 10, end: 20)))
+        #expect(parse("core.py:12:7") == GoToQuery(text: "core.py", lines: LineRange(start: 12, end: 12)), "a column is ignored")
+        #expect(parse("core.py#L10-L20") == GoToQuery(text: "core.py", lines: LineRange(start: 10, end: 20)))
+        #expect(parse("core.py#L7") == GoToQuery(text: "core.py", lines: LineRange(start: 7, end: 7)))
+        #expect(parse("core.py:30-10") == GoToQuery(text: "core.py", lines: LineRange(start: 30, end: 30)), "a reversed range is its start")
+        #expect(parse("core.py:") == GoToQuery(text: "core.py"), "half-typed: the file alone, still listed")
+        #expect(parse("core.py#L") == GoToQuery(text: "core.py"))
+        #expect(parse("core.py") == GoToQuery(text: "core.py"))
+        #expect(parse(":42") == GoToQuery(text: ":42"), "a line needs a file")
+        #expect(parse("@resolve_command") == GoToQuery(text: "resolve_command", symbol: true))
+        #expect(parse("@ Group ") == GoToQuery(text: "Group", symbol: true))
+        #expect(parse("tstopts") == GoToQuery(text: "tstopts"))
     }
 
     private func terminal(_ id: ObjectID, agent: String? = nil, running: Bool = false, name: String? = nil) -> CanvasObject {

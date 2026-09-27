@@ -566,8 +566,14 @@ public final class Board {
     /// Recent locations kept on a follow tile (`CodeProps.history`), newest first.
     public static let followHistoryLimit = 8
 
+    /// Whether a follow report or history entry's `action` changed the file.
+    public static func isEdit(_ action: String?) -> Bool { action == "edit" || action == "write" }
+
     /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use, and
-    /// record the location at the front of the tile's history. Ignored (returns nil) while the
+    /// record the location at the front of the tile's history with its `action`. A location
+    /// already there moves to the front and stays an edit once edited. Past
+    /// `followHistoryLimit`, the oldest reads go first, so every edit of a burst (an agent's
+    /// parallel edits land within milliseconds) stays listed. Ignored (returns nil) while the
     /// terminal doesn't follow (`props.follow` false) and for files `FollowFilter` rejects:
     /// outside the board root, the terminal's cwd, and every other worktree of their
     /// repositories, scratch files in the temp directory, missing files, images, and other
@@ -586,9 +592,15 @@ public final class Board {
         var entry: [String: JSONValue] = ["path": .string(relative), "action": .string(action)]
         if range != nil { entry["range"] = rangeValue }
         var history = existing?.props["history"]?.array ?? []
-        history.removeAll { $0["path"] == entry["path"] && $0["range"] == entry["range"] }
+        let same = { (other: JSONValue) in other["path"] == entry["path"] && other["range"] == entry["range"] }
+        if !Self.isEdit(action), let earlier = history.first(where: same)?["action"], Self.isEdit(earlier.string) { entry["action"] = earlier }
+        history.removeAll(where: same)
         history.insert(.object(entry), at: 0)
-        props["history"] = .array(Array(history.prefix(Self.followHistoryLimit)))
+        // The newest entry is the current location: never the one to go.
+        while history.count > Self.followHistoryLimit {
+            history.remove(at: history[1...].lastIndex { !Self.isEdit($0["action"]?.string) } ?? history.count - 1)
+        }
+        props["history"] = .array(history)
         let follow: CanvasObject
         activityMuted = true
         defer { activityMuted = false }

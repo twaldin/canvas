@@ -12,6 +12,8 @@ public struct FileIndex: Sendable {
     }
 
     let entries: [Entry]
+    /// Entry indices by file name (case-sensitive, as a reference spells it).
+    private let byName: [Substring: [Int]]
 
     public init(paths: [String]) {
         entries = paths.map { path in
@@ -19,9 +21,29 @@ public struct FileIndex: Sendable {
             let slash = lower.lastIndex(of: UInt8(ascii: "/")).map { $0 + 1 } ?? 0
             return Entry(path: path, lower: lower, nameStart: slash)
         }
+        var byName: [Substring: [Int]] = [:]
+        for (index, path) in paths.enumerated() {
+            byName[Self.name(path), default: []].append(index)
+        }
+        self.byName = byName
+    }
+
+    private static func name(_ path: String) -> Substring {
+        path[(path.lastIndex(of: "/").map(path.index(after:)) ?? path.startIndex)...]
     }
 
     public var count: Int { entries.count }
+
+    /// Every listed path, in listing order.
+    public var paths: some Sequence<String> { entries.lazy.map(\.path) }
+
+    /// Paths that are `suffix` or end with `/` + `suffix` (whole path components: `core.py`,
+    /// `click/core.py`), in listing order.
+    public func paths(endingWith suffix: String) -> [String] {
+        let name = Self.name(suffix)
+        guard !name.isEmpty, let indices = byName[name] else { return [] }
+        return indices.map { entries[$0].path }.filter { $0 == suffix || $0.hasSuffix("/" + suffix) }
+    }
 
     /// Paths `query` matches (whitespace ignored), best first, at most `limit`. An empty query
     /// matches nothing.
@@ -98,5 +120,46 @@ public struct FileIndex: Sendable {
             if name.count > positions.count, name[entry.nameStart + positions.count] == UInt8(ascii: ".") { score += 15 }
         }
         return score
+    }
+}
+
+/// What a Go to (⌘P) query asks for: text matched against objects and files, optionally with a
+/// line (`core.py:1428`, `src/click/core.py:10-20`, `:10:5`, `core.py#L10-L20`, the forms
+/// terminal references take), or a workspace symbol (`@resolve_command`).
+public struct GoToQuery: Equatable, Sendable {
+    /// The query without its line or `@`, whitespace trimmed.
+    public var text: String
+    public var lines: LineRange?
+    /// `@name`: search the language servers' workspace symbols for `text`.
+    public var symbol: Bool
+
+    public init(text: String, lines: LineRange? = nil, symbol: Bool = false) {
+        self.text = text
+        self.lines = lines
+        self.symbol = symbol
+    }
+
+    private static let linePattern = try! NSRegularExpression(pattern: #"^(.*?\S)\s*(?::(\d+)(?:-(\d+)|:\d+)?|#L(\d+)(?:-L?(\d+))?):?$"#)
+
+    public static func parse(_ query: String) -> GoToQuery {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("@") {
+            return GoToQuery(text: trimmed.dropFirst().trimmingCharacters(in: .whitespaces), symbol: true)
+        }
+        let ns = trimmed as NSString
+        guard let match = linePattern.firstMatch(in: trimmed, range: NSRange(location: 0, length: ns.length)) else {
+            // Half-typed (`core.py:`, `core.py#L`): the file part alone.
+            var text = Substring(trimmed)
+            while text.hasSuffix(":") { text = text.dropLast() }
+            if text.hasSuffix("#L") { text = text.dropLast(2) } else if text.hasSuffix("#") { text = text.dropLast() }
+            return GoToQuery(text: text.trimmingCharacters(in: .whitespaces))
+        }
+        func number(_ group: Int) -> Int? {
+            let range = match.range(at: group)
+            return range.location == NSNotFound ? nil : Int(ns.substring(with: range))
+        }
+        guard let start = number(2) ?? number(4), start >= 1 else { return GoToQuery(text: trimmed) }
+        let end = max(start, number(3) ?? number(5) ?? start)
+        return GoToQuery(text: ns.substring(with: match.range(at: 1)), lines: LineRange(start: start, end: end))
     }
 }

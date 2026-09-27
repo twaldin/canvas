@@ -122,7 +122,10 @@ public struct LSPSymbol: Sendable, Hashable {
         children = (json["children"]?.array ?? []).compactMap(LSPSymbol.init)
     }
 
-    public var kindName: String {
+    public var kindName: String { Self.kindName(kind) }
+
+    /// LSP SymbolKind as a word ("class", "method", "enum member").
+    public static func kindName(_ kind: Int) -> String {
         let names = ["file", "module", "namespace", "package", "class", "method", "property", "field", "constructor", "enum",
                      "interface", "function", "variable", "constant", "string", "number", "boolean", "array", "object", "key",
                      "null", "enum member", "struct", "event", "operator", "type parameter"]
@@ -135,6 +138,51 @@ public struct LSPSymbol: Sendable, Hashable {
         symbols.sorted { ($0.selectionRange.start.line, $0.selectionRange.start.character) < ($1.selectionRange.start.line, $1.selectionRange.start.character) }
             .flatMap { [($0, depth)] + flatten($0.children, depth: depth + 1) }
     }
+
+    /// Kinds whose members are part of a file's shape: module, namespace, package, class, enum,
+    /// interface, struct, object.
+    static let containerKinds: Set<Int> = [2, 3, 4, 5, 10, 11, 19, 23]
+
+    /// What an outline lists, flattened like `flatten`: every top-level symbol and the members of
+    /// types and modules (methods, fields, nested types), never what lives inside a function or
+    /// method (its locals, parameters, nested helpers' variables).
+    public static func outline(_ symbols: [LSPSymbol]) -> [(symbol: LSPSymbol, depth: Int)] {
+        func pruned(_ symbols: [LSPSymbol]) -> [LSPSymbol] {
+            symbols.map { symbol in
+                var symbol = symbol
+                symbol.children = containerKinds.contains(symbol.kind) ? pruned(symbol.children) : []
+                return symbol
+            }
+        }
+        return flatten(pruned(symbols))
+    }
+}
+
+/// A `workspace/symbol` answer: a symbol anywhere in the server's project.
+public struct LSPWorkspaceSymbol: Sendable, Hashable {
+    public var name: String
+    public var kind: Int
+    /// The enclosing symbol's name ("Group" for a method of Group), when the server says.
+    public var container: String?
+    /// Where it is; servers answering with a bare file URI point at the file's first line.
+    public var location: LSPLocation
+
+    public init(name: String, kind: Int, container: String?, location: LSPLocation) {
+        self.name = name
+        self.kind = kind
+        self.container = container
+        self.location = location
+    }
+
+    /// SymbolInformation or WorkspaceSymbol.
+    init?(_ json: JSONValue) {
+        guard let name = json["name"]?.string, let kind = json["kind"]?.int, let place = json["location"] else { return nil }
+        let zero = LSPRange(start: LSPPosition(line: 0, character: 0), end: LSPPosition(line: 0, character: 0))
+        guard let location = LSPLocation(place) ?? place["uri"]?.string.flatMap(URL.init(string:)).flatMap({ $0.isFileURL ? LSPLocation(url: $0, range: zero) : nil }) else { return nil }
+        self.init(name: name, kind: kind, container: json["containerName"]?.string.flatMap { $0.isEmpty ? nil : $0 }, location: location)
+    }
+
+    public var kindName: String { LSPSymbol.kindName(kind) }
 }
 
 public enum LanguageServerStatus: Sendable, Equatable {

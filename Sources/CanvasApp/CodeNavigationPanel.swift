@@ -122,13 +122,16 @@ final class NavigationPanel: NSView {
         var action: @MainActor () -> Void
     }
 
-    static func list(title: String, rows: [Row]) -> NavigationPanel {
+    /// A list of rows under a title; `headerAction` adds a button at the title's trailing end
+    /// (the references list's Open All).
+    static func list(title: String, rows: [Row], headerAction: (title: String, run: @MainActor () -> Void)? = nil) -> NavigationPanel {
         let rowHeight: CGFloat = 20
         let header = NSTextField(labelWithString: title)
         header.font = .systemFont(ofSize: 11, weight: .semibold)
         header.textColor = .secondaryLabelColor
         let document = FlippedView()
-        var width = header.fittingSize.width
+        let action = headerAction.map { PanelAction(title: $0.title, run: $0.run) }
+        var width = header.fittingSize.width + (action.map { $0.fittingSize.width + 16 } ?? 0)
         var buttons: [NSButton] = []
         for row in rows {
             let button = PanelRow(row: row)
@@ -138,12 +141,31 @@ final class NavigationPanel: NSView {
         width = min(max(width, 200), maxSize.width)
         header.frame = NSRect(x: 4, y: 0, width: width, height: 16)
         document.addSubview(header)
+        if let action {
+            let size = action.fittingSize
+            action.frame = NSRect(x: width - size.width - 2, y: 0, width: size.width, height: 16)
+            action.autoresizingMask = [.minXMargin]
+            document.addSubview(action)
+        }
         for (index, button) in buttons.enumerated() {
             button.frame = NSRect(x: 0, y: 20 + CGFloat(index) * rowHeight, width: width, height: rowHeight)
             button.autoresizingMask = [.width]
             document.addSubview(button)
         }
         return NavigationPanel(kind: .list, content: document, contentSize: NSSize(width: width, height: 20 + CGFloat(rows.count) * rowHeight))
+    }
+
+    /// A list with a filter field that takes the keyboard while the panel is up (the user
+    /// asked for it: Outline) and gives it back when the panel goes: typing narrows the rows to
+    /// titles containing the text, ↑/↓ move the highlight, Return picks it, Esc closes.
+    static func filterList(title: String, rows: [Row]) -> NavigationPanel {
+        let content = FilterList(title: title, rows: rows)
+        return NavigationPanel(kind: .list, content: content, contentSize: content.frame.size)
+    }
+
+    /// Puts the keyboard in the panel's filter field, if it has one.
+    func focusFilter() {
+        (subviews.first as? FilterList)?.focus()
     }
 }
 
@@ -154,7 +176,7 @@ private final class FlippedView: NSView {
 /// One clickable list row. Accepts the first click so a row works even when the window isn't
 /// key, and never takes keyboard focus (code tiles leave focus with the prompt terminal).
 private final class PanelRow: NSButton {
-    private let row: NavigationPanel.Row
+    let row: NavigationPanel.Row
 
     init(row: NavigationPanel.Row) {
         self.row = row
@@ -162,6 +184,8 @@ private final class PanelRow: NSButton {
         isBordered = false
         refusesFirstResponder = true
         alignment = .left
+        wantsLayer = true
+        layer?.cornerRadius = 4
         let title = NSMutableAttributedString(string: String(repeating: "    ", count: row.indent) + row.title,
                                               attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor])
         if !row.detail.isEmpty {
@@ -177,8 +201,132 @@ private final class PanelRow: NSButton {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    @objc private func chosen() {
+    /// The row Return would pick in a filter list.
+    var isCurrent = false {
+        didSet { layer?.backgroundColor = isCurrent ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.25).cgColor : nil }
+    }
+
+    @objc func chosen() {
         row.action()
+    }
+}
+
+/// A small link-styled button in a list's title row.
+private final class PanelAction: NSButton {
+    private let run: @MainActor () -> Void
+
+    init(title: String, run: @escaping @MainActor () -> Void) {
+        self.run = run
+        super.init(frame: .zero)
+        isBordered = false
+        refusesFirstResponder = true
+        attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.linkColor])
+        target = self
+        action = #selector(clicked)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    @objc private func clicked() {
+        run()
+    }
+}
+
+/// The filter field and rows of `NavigationPanel.filterList`.
+private final class FilterList: NSView, NSTextFieldDelegate {
+    private static let rowHeight: CGFloat = 20
+    private static let fieldHeight: CGFloat = 22
+    private static let headerHeight: CGFloat = 20
+
+    private let field = NSTextField()
+    private let scroll = NSScrollView()
+    private let document = FlippedView()
+    private let buttons: [PanelRow]
+    private var shown: [PanelRow] = []
+    private var current = 0
+    private weak var previousResponder: NSResponder?
+
+    init(title: String, rows: [NavigationPanel.Row]) {
+        buttons = rows.map(PanelRow.init)
+        let header = NSTextField(labelWithString: title)
+        header.font = .systemFont(ofSize: 11, weight: .semibold)
+        header.textColor = .secondaryLabelColor
+        let width = min(max(buttons.map(\.fittingSize.width).max() ?? 0, header.fittingSize.width, 240), NavigationPanel.maxSize.width)
+        let listHeight = min(CGFloat(rows.count) * Self.rowHeight, NavigationPanel.maxSize.height - Self.headerHeight - Self.fieldHeight - 6)
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: Self.headerHeight + Self.fieldHeight + 6 + listHeight))
+        header.frame = NSRect(x: 4, y: 0, width: width - 8, height: 16)
+        addSubview(header)
+        field.placeholderString = "Filter"
+        field.font = .systemFont(ofSize: 12)
+        field.bezelStyle = .roundedBezel
+        field.focusRingType = .none
+        field.delegate = self
+        field.frame = NSRect(x: 0, y: Self.headerHeight, width: width, height: Self.fieldHeight)
+        addSubview(field)
+        scroll.frame = NSRect(x: 0, y: Self.headerHeight + Self.fieldHeight + 6, width: width, height: listHeight)
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.documentView = document
+        addSubview(scroll)
+        refilter()
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    nonisolated override var isFlipped: Bool { true }
+
+    func focus() {
+        guard let window else { return }
+        previousResponder = window.firstResponder
+        window.makeFirstResponder(field)
+    }
+
+    /// The panel is going: the keyboard goes back to whoever had it, unless something else took it.
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil, let window, let editor = window.firstResponder as? NSText, editor.delegate === field {
+            let previous = previousResponder as? NSView
+            window.makeFirstResponder(previous?.window === window ? previous : nil)
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    private func refilter() {
+        let query = field.stringValue.trimmingCharacters(in: .whitespaces)
+        for button in shown { button.removeFromSuperview() }
+        shown = buttons.filter { query.isEmpty || $0.row.title.localizedCaseInsensitiveContains(query) }
+        let width = scroll.contentSize.width
+        for (index, button) in shown.enumerated() {
+            button.frame = NSRect(x: 0, y: CGFloat(index) * Self.rowHeight, width: width, height: Self.rowHeight)
+            document.addSubview(button)
+        }
+        document.frame = NSRect(x: 0, y: 0, width: width, height: max(scroll.contentSize.height, CGFloat(shown.count) * Self.rowHeight))
+        select(0)
+    }
+
+    private func select(_ index: Int) {
+        for button in shown { button.isCurrent = false }
+        guard !shown.isEmpty else { return }
+        current = min(max(0, index), shown.count - 1)
+        shown[current].isCurrent = true
+        document.scrollToVisible(shown[current].frame)
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        refilter()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.moveUp(_:)): select(current - 1)
+        case #selector(NSResponder.moveDown(_:)): select(current + 1)
+        case #selector(NSResponder.insertNewline(_:)): if shown.indices.contains(current) { shown[current].chosen() }
+        case #selector(NSResponder.cancelOperation(_:)): (superview as? NavigationPanel)?.dismiss()
+        default: return false
+        }
+        return true
     }
 }
 

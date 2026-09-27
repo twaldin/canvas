@@ -85,6 +85,16 @@ public actor LanguageServer {
         return (result.array ?? []).compactMap(LSPSymbol.init)
     }
 
+    /// Symbols matching `query` anywhere in the server's project (`workspace/symbol`).
+    public func workspaceSymbols(_ query: String) async throws -> [LSPWorkspaceSymbol] {
+        inFlight += 1
+        defer { inFlight -= 1 }
+        let connection = try await connected()
+        await refreshOpenDocuments(on: connection)
+        let result = try await connection.request("workspace/symbol", .object(["query": .string(query)]), timeout: Self.requestTimeout)
+        return (result.array ?? []).compactMap(LSPWorkspaceSymbol.init)
+    }
+
     private func request(_ method: String, _ file: URL, _ params: (String) -> JSONValue) async throws -> JSONValue {
         inFlight += 1
         defer { inFlight -= 1 }
@@ -269,7 +279,7 @@ public actor LanguageServer {
             "capabilities": .object([
                 "general": .object(["positionEncodings": .array([.string("utf-16")])]),
                 "window": .object(["workDoneProgress": .bool(true)]),
-                "workspace": .object(["configuration": .bool(true), "workspaceFolders": .bool(true)]),
+                "workspace": .object(["configuration": .bool(true), "workspaceFolders": .bool(true), "symbol": .object([:])]),
                 "textDocument": .object([
                     "synchronization": .object(["dynamicRegistration": .bool(false), "didSave": .bool(false)]),
                     "hover": .object(["contentFormat": .array([.string("markdown"), .string("plaintext")])]),

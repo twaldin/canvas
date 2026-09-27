@@ -44,6 +44,33 @@ struct TerminalReferencesTests {
         #expect(resolve("missing.ts") == nil)
         #expect(resolve("/abs/missing.swift") == nil)
     }
+
+    /// Agents write `core.py:2535` for `src/click/core.py:2535` before they read the skill.
+    @Test func resolvesFileNamesAmongTheRootsFilesNearestTheCwd() {
+        let listed = [
+            "src/click/core.py", "src/click/parser.py", "tests/test_core.py", "lib/helpers.py", "app/helpers.py",
+            "pkg/a/util.py", "pkg/b/util.py", "docs/util.py", "src/click/README.md", "gone.py",
+        ]
+        let files = Set(listed.filter { $0 != "gone.py" }.map { "/root/" + $0 } + ["/cwd/parser.py"])
+        func resolve(_ path: String, cwd: String = "/root") -> String? {
+            TerminalReferences.resolve(path, directories: [cwd, "/root"], home: "/home/me", isFile: files.contains,
+                                       listed: ("/root", FileIndex(paths: listed)), near: cwd)
+        }
+        #expect(resolve("core.py") == "/root/src/click/core.py", "a unique name")
+        #expect(resolve("click/core.py") == "/root/src/click/core.py", "a trailing part of the path")
+        #expect(resolve("./click/core.py") == "/root/src/click/core.py")
+        #expect(resolve("lick/core.py") == nil, "whole path components only")
+        #expect(resolve("parser.py", cwd: "/cwd") == "/cwd/parser.py", "a directory hit comes before the listing")
+        #expect(resolve("gone.py") == nil, "listed but no longer on disk")
+        #expect(resolve("helpers.py") == nil, "lib/ and app/ are equally near the root: ambiguous, no underline")
+        #expect(resolve("util.py") == "/root/docs/util.py", "one directory down beats two")
+        #expect(resolve("util.py", cwd: "/root/pkg/a") == "/root/pkg/a/util.py", "the one in the cwd")
+        #expect(resolve("util.py", cwd: "/root/pkg/b/sub") == "/root/pkg/b/util.py", "the nearest one up")
+        #expect(resolve("util.py", cwd: "/root/pkg") == nil, "pkg/a and pkg/b tie")
+        #expect(resolve("a/util.py") == "/root/pkg/a/util.py", "a longer suffix narrows it")
+        #expect(resolve("../core.py") == nil, "never climbs out")
+        #expect(TerminalReferences.resolve("core.py", directories: ["/root"], home: "/home/me", isFile: files.contains) == nil, "no listing, no lookup")
+    }
 }
 
 @MainActor

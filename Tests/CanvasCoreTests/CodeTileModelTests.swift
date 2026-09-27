@@ -81,6 +81,32 @@ struct CodeBoardTests {
         #expect(board.objects[follow.id]?.props["history"]?.array?.count == Board.followHistoryLimit)
     }
 
+    /// omp made three edits within 50 ms, then kept reading: every edit stays in the history,
+    /// marked, while older reads make room.
+    @Test func followHistoryKeepsEveryEditOfABurstMarked() throws {
+        let board = Board(id: "brd_test", root: root)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for name in ["core.py", "test_options.py", "CHANGES.md", "parser.py"] { FileManager.default.createFile(atPath: root.appendingPathComponent(name).path, contents: Data("x\n".utf8)) }
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/"), "command": .array([])]))
+        func report(_ path: String, _ line: Int?, _ action: String) throws {
+            try board.follow(tile: terminal.id, path: path, range: line.map { LineRange(start: $0, end: $0) }, action: action)
+        }
+        for line in 1...4 { try report("parser.py", line * 10, "read") }
+        try report("core.py", 2535, "edit")
+        try report("test_options.py", 83, "edit")
+        try report("CHANGES.md", nil, "write")
+        for line in 1...10 { try report("parser.py", 100 + line, "read") }
+        try report("core.py", 2535, "read")
+        let history = try #require(board.followTiles(of: terminal.id).first?.props["history"]?.array)
+        #expect(history.count == Board.followHistoryLimit)
+        let edits = history.filter { Board.isEdit($0["action"]?.string) }.compactMap { $0["path"]?.string }
+        #expect(edits == ["core.py", "CHANGES.md", "test_options.py"], "every edit of the burst, newest first, after ten more reads")
+        #expect(history.first?["path"]?.string == "core.py" && history.first?["action"]?.string == "edit",
+                "re-reading an edited location keeps it an edit, at the front")
+        #expect(history.filter { $0["path"]?.string == "parser.py" }.compactMap { $0["range"]?["start"]?.int } == [110, 109, 108, 107, 106],
+                "the newest reads fill the rest")
+    }
+
     @Test func stagedCodeMentionsResolveFromTheirOwnCommitNotTheTile() async throws {
         let repo = try await TempRepo()
         try await repo.write("lib.rs", "fn old()\nfn gone()\n")

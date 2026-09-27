@@ -131,7 +131,7 @@ enum DevInput {
             guard let frame = content.superview, let hit = content.hitTest(frame.convert(at, from: nil)),
                   let event = NSEvent.mouseEvent(with: .rightMouseDown, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
-            var menu = sequence(first: hit, next: \.superview).lazy.compactMap { $0.menu(for: event) }.first
+            var menu = CodeNavigation.menu(for: event) ?? sequence(first: hit, next: \.superview).lazy.compactMap { $0.menu(for: event) }.first
             var titles = (fields["path"] ?? "").split(separator: "/").map(String.init)
             while let current = menu, !titles.isEmpty {
                 let title = titles.removeFirst()

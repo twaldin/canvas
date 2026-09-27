@@ -192,6 +192,9 @@ final class CodeTile: NSView, TileContent {
         displayed = aim
         navigation?.contentChanged()
         if aim.path != previous.path {
+            // The load may install the very file already there (re-aimed away and back before
+            // the other file loaded), which keeps the scroll: it must still show this range.
+            rangePending = true
             load()
         } else if aim.range != previous.range {
             refreshPainter(keepSelection: true)
@@ -294,8 +297,13 @@ final class CodeTile: NSView, TileContent {
         return document
     }
 
+    /// A re-aim to another file is waiting for its load to scroll to the range.
+    private var rangePending = false
+
     private func install(_ document: CodeDocument, source: Source) {
         let previous = self.document
+        let revealRange = rangePending && document.path == displayed.path
+        if revealRange { rangePending = false }
         let sameSource = loadedSource == source
         self.document = document
         loadedSource = source
@@ -308,13 +316,16 @@ final class CodeTile: NSView, TileContent {
             peeked = []
             refreshPainter(keepSelection: false)
             startFlash(edit.lines)
-            if followOf != nil, !lock.isHeld(at: Self.now) {
+            if revealRange {
+                showRange()
+            } else if followOf != nil, !lock.isHeld(at: Self.now) {
                 scroll(toRow: rowsView.painter?.rows.index(ofLine: edit.first) ?? 0)
             }
         } else if sameFile, let previous {
             let sameSigns = previous.signs == document.signs
             if !sameSigns { peeked = [] }
             refreshPainter(keepSelection: sameSigns)
+            if revealRange { showRange() }
         } else {
             peeked = []
             refreshPainter(keepSelection: false)
@@ -495,15 +506,17 @@ extension CodeTile {
         header.show(diffBase: pinnedCommit == nil ? diffBaseProp : nil, status: document?.status ?? "loading…", warning: document?.warning,
                     changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
         let before = header.height
-        header.show(history: followOf == nil ? [] : history, current: displayed)
+        let history = followOf == nil ? [] : self.history
+        header.show(history: history.map(\.aim), edited: history.map(\.edited), current: displayed)
         if header.height != before { resizeSubviews(withOldSize: bounds.size) }
     }
 
-    private var history: [Aim] {
-        (object.props["history"]?.array ?? []).compactMap { entry -> Aim? in
+    /// The follow history, newest first, each location with whether the agent edited it there.
+    private var history: [(aim: Aim, edited: Bool)] {
+        (object.props["history"]?.array ?? []).compactMap { entry in
             guard let path = entry["path"]?.string else { return nil }
             let start = entry["range"]?["start"]?.int
-            return Aim(path: path, range: start.map { LineRange(start: $0, end: entry["range"]?["end"]?.int ?? $0) })
+            return (Aim(path: path, range: start.map { LineRange(start: $0, end: entry["range"]?["end"]?.int ?? $0) }), Board.isEdit(entry["action"]?.string))
         }
     }
 

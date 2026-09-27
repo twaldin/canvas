@@ -28,6 +28,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         window.tabbingIdentifier = "net.waldin.canvas.board"
         super.init(window: window)
         window.delegate = self
+        // Terminal references by file name (`core.py:10`) resolve through the listing.
+        BoardFiles.of(board.root).refresh()
 
         let container = NSView()
         canvas.translatesAutoresizingMaskIntoConstraints = false
@@ -82,9 +84,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             switch target {
             case .allContent: self?.canvas.zoomToFit()
             case .object(let id): self?.canvas.go(to: id)
-            case .file(let path): self?.canvas.openForUser(.code, props: .object(["path": .string(path)]))
+            case .file(let path, let lines):
+                var props: [String: JSONValue] = ["path": .string(path)]
+                if let lines { props["range"] = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))]) }
+                self?.canvas.openForUser(.code, props: .object(props))
+            case .status: break
             }
         }
+        navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? [] }
         nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
@@ -258,31 +265,59 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         if navigator.isOpen {
             navigator.close()
         } else {
-            navigator.open(rows: canvas.navigatorRows(), files: files)
-            listFiles()
+            let files = BoardFiles.of(board.root)
+            navigator.open(rows: canvas.navigatorRows(), files: files.index)
+            files.refresh { [weak self] index in self?.navigator.update(files: index) }
         }
     }
 
-    private var files = FileIndex(paths: [])
-    private var fileListing: Task<Void, Never>?
-    /// Paths past this are left out of Go to (a monorepo's generated trees).
-    nonisolated static let maxListedFiles = 200_000
+    /// When the language servers last answered a Go to symbol search with symbols (they are warm).
+    private var symbolsAnswered: Date?
 
-    /// The board root's files for Go to: tracked plus untracked files git doesn't ignore.
-    private func listFiles() {
-        fileListing?.cancel()
+    /// Go to's symbol rows for `name`: the workspace symbols of the projects this board's code
+    /// tiles show (else of the language most of the board root's files are in), from the app's
+    /// language servers, started if needed. Files outside the board root are left out.
+    private func workspaceSymbols(named name: String) async -> [NavigatorRow] {
         let root = board.root
-        fileListing = Task { [weak self] in
-            guard let data = try? await GitRunner.shared.run(["ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z"],
-                                                                in: root, maxOutput: 64 << 20, timeout: 10),
-                  !Task.isCancelled else { return }
-            let index = await offPool {
-                FileIndex(paths: data.split(separator: 0).prefix(Self.maxListedFiles).map { String(decoding: $0, as: UTF8.self) })
+        var files = board.objects.values.filter { $0.type == .code }.compactMap { $0.props["path"]?.string }.map(board.absoluteURL)
+        if files.isEmpty {
+            let configs = LanguageServerConfig.defaults
+            var counts: [String: Int] = [:]
+            var first: [String: String] = [:]
+            for path in BoardFiles.of(root).index.paths.prefix(20_000) {
+                let url = URL(fileURLWithPath: path)
+                guard let language = configs.first(where: { $0.languageID(for: url) != nil })?.language else { continue }
+                counts[language, default: 0] += 1
+                if first[language] == nil { first[language] = path }
             }
-            guard let self, !Task.isCancelled else { return }
-            self.files = index
-            self.navigator.update(files: index)
+            if let most = counts.max(by: { $0.value < $1.value })?.key, let path = first[most] { files = [root.appendingPathComponent(path)] }
         }
+        guard !files.isEmpty else { return [] }
+        var symbols = try? await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)
+        // A server that just started answers before it has read the project (pyright: nothing at
+        // all), so until one has answered with symbols lately, an empty answer is asked again
+        // for a while; the panel says "Searching symbols…" meanwhile.
+        let warm = symbolsAnswered.map { Date().timeIntervalSince($0) < 240 } ?? false
+        var retries = warm ? 0 : 10
+        while symbols?.isEmpty == true, retries > 0, !Task.isCancelled {
+            retries -= 1
+            try? await Task.sleep(for: .seconds(1))
+            symbols = try? await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)
+        }
+        guard let symbols else { return [] }
+        if !symbols.isEmpty { symbolsAnswered = Date() }
+        let rootPath = root.resolvingSymlinksInPath().path + "/"
+        var rows: [NavigatorRow] = []
+        for symbol in symbols {
+            let file = symbol.location.url.resolvingSymlinksInPath().path
+            guard file.hasPrefix(rootPath) else { continue }
+            let path = String(file.dropFirst(rootPath.count))
+            let line = symbol.location.range.start.line + 1
+            rows.append(NavigatorRow(target: .file(path, lines: LineRange(start: line, end: line)), title: symbol.name, kind: symbol.kindName.capitalized, dot: nil,
+                                     subtitle: [symbol.container, "\(path):\(line)"].compactMap { $0 }.joined(separator: " · "), toolTip: "\(path):\(line)"))
+            if rows.count == NavigatorPanel.maxFileRows { break }
+        }
+        return rows
     }
 
     @objc func zoomToFit(_ sender: Any?) {

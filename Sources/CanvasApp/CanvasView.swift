@@ -729,7 +729,9 @@ final class CanvasView: NSScrollView {
         guard let window else { return }
         let alert = NSAlert()
         alert.messageText = terminals.count == 1 ? "Close this terminal?" : "Close \(terminals.count) terminals?"
-        alert.informativeText = "Their zmx sessions (and anything running in them) will be ended."
+        alert.informativeText = terminals.count == 1
+            ? "Closing ends the terminal's session and anything running in it."
+            : "Closing ends their sessions and anything running in them."
         alert.addButton(withTitle: "Close")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in

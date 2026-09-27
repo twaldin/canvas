@@ -119,15 +119,20 @@ public final class LoginShell: @unchecked Sendable {
 
     /// The editor the user's shell names: `$VISUAL`, else `$EDITOR`; nil when neither is set.
     /// Read once from an interactive login shell, since editors are often exported only in
-    /// interactive rc files (.zshrc). Blocking: call it off the main thread and out of Swift tasks.
+    /// interactive rc files (.zshrc), started with only the basic session variables, so what the
+    /// app inherited from whatever launched it doesn't mask the user's setup. Blocking: call it
+    /// off the main thread and out of Swift tasks.
     public var editor: String? {
         if let cached = lock.withLock({ cachedEditor }) { return cached }
-        let output = run("printf '\\n__CANVAS_EDITOR__%s' \"${VISUAL:-$EDITOR}\"", interactive: true)
+        let output = run("printf '\\n__CANVAS_EDITOR__%s' \"${VISUAL:-$EDITOR}\"", interactive: true, freshEnvironment: true)
         let value = output.components(separatedBy: "__CANVAS_EDITOR__").dropFirst().last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let editor = value.isEmpty ? nil : value
         lock.withLock { cachedEditor = .some(editor) }
         return editor
     }
+
+    /// What a fresh login session starts with, before rc files run.
+    private static let sessionVariables = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"]
 
     private static func quote(_ word: String) -> String {
         "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -136,7 +141,8 @@ public final class LoginShell: @unchecked Sendable {
     /// Runs `$SHELL -lc script` (`-lic` when `interactive`) in its own process group and reads
     /// its output until EOF or the deadline. At the deadline the whole group is killed and the read
     /// abandoned: rc files can start children that outlive the shell and keep the output pipe open.
-    private func run(_ script: String, interactive: Bool = false) -> String {
+    /// `freshEnvironment`: only the session variables and a system PATH, not the app's environment.
+    private func run(_ script: String, interactive: Bool = false, freshEnvironment: Bool = false) -> String {
         var fds: [Int32] = [-1, -1]
         guard pipe(&fds) == 0 else { return "" }
         let (readEnd, writeEnd) = (fds[0], fds[1])
@@ -158,7 +164,11 @@ public final class LoginShell: @unchecked Sendable {
         let argv: [UnsafeMutablePointer<CChar>?] = words.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         var pid: pid_t = 0
-        let spawned = posix_spawn(&pid, shell, &actions, &attributes, argv, environ)
+        let inherited = ProcessInfo.processInfo.environment
+        let variables = Self.sessionVariables.compactMap { name in inherited[name].map { "\(name)=\($0)" } } + ["PATH=/usr/bin:/bin:/usr/sbin:/sbin"]
+        let fresh: [UnsafeMutablePointer<CChar>?] = variables.map { strdup($0) } + [nil]
+        defer { fresh.forEach { free($0) } }
+        let spawned = freshEnvironment ? posix_spawn(&pid, shell, &actions, &attributes, argv, fresh) : posix_spawn(&pid, shell, &actions, &attributes, argv, environ)
         close(writeEnd)
         guard spawned == 0 else { return "" }
 

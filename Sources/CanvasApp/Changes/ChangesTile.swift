@@ -518,7 +518,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         let point = convert(event.locationInWindow, from: nil)
         pressed = nil
         dragged = false
-        if let lead = painter.headerLayout(width: bounds.width).lead, lead.rect.contains(point) { return showBaseMenu(below: lead.rect) }
+        if let lead = painter.headerLayout(width: bounds.width).lead, lead.rect.contains(point) {
+            baseMenu(below: lead.rect).popUp(positioning: nil, at: NSPoint(x: lead.rect.minX, y: lead.rect.maxY), in: self)
+            return
+        }
         guard let hit = painter.hit(at: point, width: bounds.width, scroll: scroll) else { return }
         switch hit {
         case .button(let action, let file, let hunk):
@@ -561,6 +564,13 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             }
             refreshPainter()
         }
+    }
+
+    /// A right-click on the header's lead is the base picker too; elsewhere, the tile's menu.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        if let lead = painter?.headerLayout(width: bounds.width).lead, lead.rect.contains(point) { return baseMenu(below: lead.rect) }
+        return super.menu(for: event)
     }
 
     /// Dragging over a hunk's lines selects them (within that hunk).
@@ -954,7 +964,7 @@ extension ChangesTile {
     /// The header's base picker: the uncommitted changes, everything the branch changed (against
     /// the merge-base with the default branch), the commit or ref typed in before, or another one
     /// typed into a small field. A pick is `props.base`, one ⌘Z step.
-    fileprivate func showBaseMenu(below rect: NSRect) {
+    fileprivate func baseMenu(below rect: NSRect) -> NSMenu {
         let current = ChangesBaseChoice(prop: ChangesSpec(object.props).baseProp)
         let directory = ChangesSpec(object.props).directory(boardRoot: board.root)
         let defaultBranch = GitWorktree.containing(directory.path)?.defaultBranch
@@ -966,7 +976,7 @@ extension ChangesTile {
         }
         menu.addItem(.separator())
         menu.addItem(MenuAction.item("Commit or Ref…") { [weak self] in self?.askForBase(below: rect) })
-        menu.popUp(positioning: nil, at: NSPoint(x: rect.minX, y: rect.maxY), in: self)
+        return menu
     }
 
     fileprivate func setBase(_ choice: ChangesBaseChoice) {

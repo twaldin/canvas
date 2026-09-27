@@ -55,7 +55,7 @@ scripts/dev.sh input click <x> <y> [--mods hyper|cmd|shift|opt|ctrl[+…]] [--cl
 scripts/dev.sh input drag <x> <y> <toX> <toY> [--mods …] [--hold]   # --hold keeps the button down: shoot mid-drag, then
 scripts/dev.sh input release <x> <y>                # end the held drag
 scripts/dev.sh input rightclick <x> <y>             # opens the context menu on screen
-scripts/dev.sh input menu <x> <y> "Scale/150%"      # performs that context-menu item without opening the menu (over code: "Find References", "Outline")
+scripts/dev.sh input menu <x> <y> "Scale/150%"      # performs that context-menu item without opening the menu (over code: "Find References", "Outline"; "//" is a slash in a title: "Review Changes/Branch vs origin//main")
 scripts/dev.sh input flags <x> <y> --mods hyper     # hold Hyper over x,y (hover outline); omit --mods to release
 scripts/dev.sh input move <x> <y>                   # pointer move over tracking areas (code navigation hover)
 scripts/dev.sh input text "hello"                   # insert into the first responder

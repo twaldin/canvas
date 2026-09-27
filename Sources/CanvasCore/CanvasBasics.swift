@@ -46,7 +46,7 @@ public enum CanvasBasics {
         Section(title: "Agents' tiles", items: [
             Item(term: "Follow tile", text: "each agent's code tile follows the file and line it last read or edited; the strip under it lists recent places (a pencil marks an edit). Pin keeps a view; turn it off with right-click › Follow Files."),
             Item(term: "Where new tiles land", text: "next to the agent's terminal, clear of other tiles, inside your view when there's room nearby. The view never moves by itself: look for a marker, or press ⌘9. \"by name\" in a title bar says which agent made the tile."),
-            Item(term: "Undo", text: "⌘Z undoes the last change, yours or an agent's, and says so when it was an agent's; ⇧⌘Z redoes it."),
+            Item(term: "Undo", text: "⌘Z undoes the last change, yours or an agent's, and says so when it was an agent's or changed your files or git index (a Stage or Discard); ⇧⌘Z redoes it. In a terminal, ⌘Z is the terminal's."),
         ]),
         Section(title: "Pointing your agent at things", items: [
             Item(term: "Hyper-click", text: "⌃⌥⇧⌘-click (Caps Lock as Hyper) a code line, page element, drawing or tile to stage it as a mention in the tray at the bottom."),

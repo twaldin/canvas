@@ -194,6 +194,31 @@ struct BoardTests {
         #expect(FollowFilter.follows(try file("src/main.rs"), projects: projects, tempDirectories: temp))
     }
 
+    @Test func followSkipsFilesTooLargeForACodeTile() throws {
+        // The data-science study: following a 14 MB CSV left the tile on "file too large to show" for 50 minutes.
+        let board = makeBoard()
+        try "x\n".write(to: root.appendingPathComponent("a.ts"), atomically: true, encoding: .utf8)
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]))
+        let follow = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: nil, action: "read"))
+        // Text up front, the rest a hole: sparse, so the test writes a few KiB, not 4 MiB.
+        func sized(_ name: String, _ size: Int) throws -> URL {
+            let url = root.appendingPathComponent(name)
+            try Data(String(repeating: "year,co2\n", count: 1000).utf8).write(to: url)
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(size))
+            try handle.close()
+            return url
+        }
+        let big = try sized("owid-co2-data.csv", GitDiffEngine.maxFileSize + 1)
+        let limit = try sized("at-limit.csv", GitDiffEngine.maxFileSize)
+        defer { try? FileManager.default.removeItem(at: big); try? FileManager.default.removeItem(at: limit) }
+
+        #expect(try board.follow(tile: terminal.id, path: "owid-co2-data.csv", range: nil, action: "read") == nil)
+        #expect(board.objects[follow.id]?.props["path"]?.string == "a.ts", "the tile keeps its last file")
+        #expect(try board.follow(tile: terminal.id, path: "at-limit.csv", range: nil, action: "read")?.props["path"]?.string == "at-limit.csv",
+                "a file of exactly the limit still shows")
+    }
+
     @Test func closingAFollowTileStopsItsTerminalFollowingUntilTurnedBackOn() throws {
         let board = makeBoard()
         try "x\n".write(to: root.appendingPathComponent("a.ts"), atomically: true, encoding: .utf8)

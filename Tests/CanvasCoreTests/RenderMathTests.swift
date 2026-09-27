@@ -88,4 +88,19 @@ struct RenderMathTests {
         #expect(ImageFormat(path: "/tmp/a.jpg") == .jpeg)
         #expect(ImageFormat(path: "/tmp/a.webp") == nil)
     }
+
+    @Test func excludeTakesTypesAndIdsAndAGroupTakesItsMembers() throws {
+        func make(_ id: ObjectID, _ type: ObjectType, _ props: JSONValue = .object([:])) -> CanvasObject {
+            CanvasObject(id: id, type: type, frame: Frame(x: 0, y: 0, w: 10, h: 10), z: 1, createdBy: .user, createdAt: Date(), props: props)
+        }
+        let objects = Dictionary(uniqueKeysWithValues: [
+            make("obj_report", .html), make("obj_a", .code), make("obj_b", .note), make("obj_c", .code), make("obj_term", .terminal),
+            make("obj_inner", .group, .object(["members": .array([.string("obj_b")])])),
+            make("obj_outer", .group, .object(["members": .array([.string("obj_a"), .string("obj_inner")])])),
+        ].map { ($0.id, $0) })
+        let exclusion = try RenderExclusion([.string("terminal"), .string("obj_report"), .string("obj_outer")], objects: objects)
+        let hidden = Set(objects.values.filter(exclusion.hides).map(\.id))
+        #expect(hidden == ["obj_term", "obj_report", "obj_outer", "obj_a", "obj_inner", "obj_b"], "obj_c is in no excluded group")
+        #expect(throws: ApiRouter.Failure.self) { try RenderExclusion([.string("obj_gone")], objects: objects) }
+    }
 }

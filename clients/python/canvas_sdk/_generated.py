@@ -284,7 +284,7 @@ class ObjectApi:
         return self._call("object.create", params, ["board","caller"])
 
     def update(self, *, id: "Id", rev: int | None = None, frame: "FramePatch" | None = None, size: Literal["fit"] | None = None, props: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w: after changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content."""
+        """Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content."""
         params = {"id": id, "rev": rev, "frame": frame, "size": size, "props": props, "caller": caller}
         return self._call("object.update", params, ["caller"])
 
@@ -428,7 +428,7 @@ class ViewApi:
         params = {"board": board}
         return self._call("view.get", params, ["board"])
 
-    def render(self, *, target: Union["Id", list["Id"], "Frame"], board: "Id" | None = None, scale: float | None = None, full: bool | None = None, exclude: list["ObjectType"] | None = None, padding: float | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
+    def render(self, *, target: Union["Id", list["Id"], "Frame"], board: "Id" | None = None, scale: float | None = None, full: bool | None = None, exclude: list[Any] | None = None, padding: float | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
         """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn."""
         params = {"board": board, "target": target, "scale": scale, "full": full, "exclude": exclude, "padding": padding, "out": out, "format": format, "timeoutMs": timeout_ms}
         return self._call("view.render", params, ["board"])

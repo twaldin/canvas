@@ -512,6 +512,43 @@ final class LayoutApiTests {
         #expect(under(clear).isEmpty)
     }
 
+    /// A tile put down over an arrow's label: checking just that tile reports the label (its
+    /// text and where it is drawn, which the arrow's frame doesn't include) and the route.
+    @Test func checkingATileReportsArrowLabelsLyingOnIt() async throws {
+        let arrow = board.create(type: .arrow, props: .object(["from": .object(["point": [0, 0]]), "to": .object(["point": [400, 0]]), "label": "read back (:656)"]))
+        let report = board.create(type: .html, props: .object(["html": "<p>report</p>"]), frame: Frame(x: 60, y: -150, w: 300, h: 300))
+        let checked = try await result("layout.check", .object(["ids": [.string(report.id)]]))
+        let entry = try #require(checked["labelOverlaps"]?.array?.first)
+        #expect(entry["arrow"] == .string(arrow.id) && entry["label"] == "read back (:656)" && entry["overlaps"] == [.string(report.id)])
+        let label = try #require(entry["frame"].flatMap { try? $0.decode(Frame.self) })
+        #expect(label.w > 0 && label.h > 0 && label.intersects(report.frame) && label.x >= 0 && label.maxX <= 400, "the chip, beside the route")
+        #expect(checked["arrowCrossings"] == [.object(["arrow": .string(arrow.id), "crosses": [.string(report.id)]])])
+
+        _ = try board.update(report.id, frame: Frame(x: 60, y: 200, w: 300, h: 300))
+        let clear = try await result("layout.check", .object(["ids": [.string(report.id)]]))
+        #expect(clear["labelOverlaps"] == [] && clear["arrowCrossings"] == [])
+    }
+
+    /// `size: "fit"` on an update that gives no origin grows away from a tile it would cover;
+    /// boxed in, it grows in place and the result names what it covers.
+    @Test func refitGrowsAwayFromNeighboursOrReportsWhatItCovers() async throws {
+        let long: JSONValue = .string((1...30).map { "Finding \($0): the daemon exits when phase \($0) throws." }.joined(separator: "\n\n"))
+        let tall = Self.size(try await result("object.measure", .object(["type": "note", "props": .object(["markdown": long]), "width": 300])))
+        let note = board.create(type: .note, props: .object(["markdown": "short"]), frame: Frame(x: 0, y: 0, w: 300, h: 100))
+        _ = board.create(type: .note, props: .object(["markdown": "below"]), frame: Frame(x: 0, y: 130, w: 600, h: 400))
+        let grown = try await result("object.update", .object(["id": .string(note.id), "props": .object(["markdown": long]), "size": "fit"]))
+        let frame = try board.object(note.id).frame
+        #expect(frame == Frame(x: 0, y: 100 - Double(tall.height), w: 300, h: Double(tall.height)), "grown up, its bottom edge kept")
+        #expect(grown["overlaps"] == nil)
+
+        let boxed = board.create(type: .note, props: .object(["markdown": "short"]), frame: Frame(x: -5000, y: 0, w: 300, h: 100))
+        _ = board.create(type: .note, props: .object(["markdown": "above"]), frame: Frame(x: -9000, y: -4000, w: 8000, h: 3980))
+        let under = board.create(type: .note, props: .object(["markdown": "under"]), frame: Frame(x: -9000, y: 130, w: 8000, h: 3000))
+        let covering = try await result("object.update", .object(["id": .string(boxed.id), "props": .object(["markdown": long]), "size": "fit"]))
+        #expect(try board.object(boxed.id).frame == Frame(x: -5000, y: 0, w: 300, h: Double(tall.height)), "no room nearby: grown in place")
+        #expect(covering["overlaps"] == [.string(under.id)])
+    }
+
     @Test func followTilesAreFixedViewersThatNeverOverflow() async throws {
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(board.root.path), "command": []]))
         let follow = try #require(try board.follow(tile: terminal.id, path: "src.txt", range: LineRange(start: 1, end: 80), action: "read"))
@@ -544,7 +581,8 @@ final class LayoutApiTests {
 
         let report = try await result("layout.check", .object([:]))
         #expect(report["arrowCrossings"] == .array(expected.crossings.map { .object(["arrow": .string($0.arrow), "crosses": .array($0.crosses.map(JSONValue.string))]) }))
-        #expect(report["labelOverlaps"] == .array(expected.labelOverlaps.map { .object(["arrow": .string($0.arrow), "overlaps": .array($0.overlaps.map(JSONValue.string))]) }))
+        #expect(report["labelOverlaps"]?.array?.map { [$0["arrow"] ?? .null] + ($0["overlaps"]?.array ?? []) }
+            == expected.labelOverlaps.map { [.string($0.arrow)] + $0.overlaps.map(JSONValue.string) })
         #expect(report["overlaps"] == .array(expected.overlaps.map { .array($0.map(JSONValue.string)) }))
     }
 }
@@ -566,6 +604,31 @@ struct LayoutBoardTests {
         #expect(Layout.place(size, near: anchor, side: .left, gap: 10, align: .center) == CGPoint(x: 40, y: 130))
         #expect(Layout.place(size, near: anchor, side: .below, gap: 10, align: .center) == CGPoint(x: 175, y: 210))
         #expect(Layout.place(size, near: anchor, side: .above, gap: 10, align: .end) == CGPoint(x: 250, y: 50))
+    }
+
+    @Test func refitTakesTheFirstCornerThatCoversNothingNew() {
+        let current = Frame(x: 0, y: 0, w: 200, h: 100)
+        let size = CGSize(width: 200, height: 300)
+        let below = Frame(x: 0, y: 130, w: 200, h: 100)
+        let alreadyUnder = Frame(x: 150, y: 50, w: 100, h: 100)
+        #expect(Layout.refit(current, to: size, clearOf: [alreadyUnder]) == Frame(x: 0, y: 0, w: 200, h: 300), "what it covered before doesn't count")
+        #expect(Layout.refit(current, to: size, clearOf: [below]) == Frame(x: 0, y: -200, w: 200, h: 300), "grown up instead of down")
+        let wider = CGSize(width: 400, height: 300)
+        let right = Frame(x: 250, y: -500, w: 100, h: 1000)
+        #expect(Layout.refit(current, to: wider, clearOf: [right]) == Frame(x: -200, y: 0, w: 400, h: 300), "grown left")
+        #expect(Layout.refit(current, to: wider, clearOf: [below, right]) == Frame(x: -200, y: -200, w: 400, h: 300), "grown left and up")
+        let left = Frame(x: -150, y: -500, w: 100, h: 1000)
+        #expect(Layout.refit(current, to: wider, clearOf: [below, right, left]) == nil, "every corner covers something")
+    }
+
+    @Test func refitBoxedInAtEveryCornerMovesToANearbyFreeSlot() throws {
+        let tile = note(0, 0, 200, 100)
+        let below = note(0, 130, 200, 400)
+        let above = note(-300, -400, 800, 380)
+        let frame = try board.refitFrame(tile.id, to: CGSize(width: 200, height: 300))
+        #expect(frame == Frame(x: -224, y: 4, w: 200, h: 300), "beside the tile below (left ties right; top-left first), clear of the one above, the gap kept")
+        _ = try board.update(tile.id, frame: frame)
+        #expect(board.overlaps(of: tile.id).isEmpty && board.overlaps(of: below.id).isEmpty && board.overlaps(of: above.id).isEmpty)
     }
 
     @Test func stackWrapsLinesAndAlignsAcrossThem() {

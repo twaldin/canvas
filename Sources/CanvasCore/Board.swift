@@ -981,11 +981,20 @@ public final class Board {
         return create(type: .code, props: .object(props), frame: place(width: tile.frame.w, height: tile.frame.h, near: follow))
     }
 
-    /// Paths are stored relative to the board root when they live under it.
+    /// Paths are stored relative to the board root when they live under it, also when reached
+    /// through a symlink: git, language servers and shells report resolved paths (/private/tmp
+    /// for a /tmp root), so a path outside the root as written is compared resolved as well.
     public func relativePath(_ path: String) -> String {
+        Self.relativePath(path, root: root)
+    }
+
+    /// `path` (absolute, or relative to `root`) relative to `root` when it lies under it, else absolute.
+    nonisolated public static func relativePath(_ path: String, root: URL) -> String {
         let absolute = path.hasPrefix("/") ? URL(fileURLWithPath: path).standardizedFileURL.path : root.appendingPathComponent(path).standardizedFileURL.path
         let rootPath = root.standardizedFileURL.path
-        return absolute.hasPrefix(rootPath + "/") ? String(absolute.dropFirst(rootPath.count + 1)) : absolute
+        if absolute.hasPrefix(rootPath + "/") { return String(absolute.dropFirst(rootPath.count + 1)) }
+        let real = GitDiffEngine.realPath(URL(fileURLWithPath: absolute)).path, realRoot = GitDiffEngine.realPath(root).path
+        return real.hasPrefix(realRoot + "/") ? String(real.dropFirst(realRoot.count + 1)) : absolute
     }
 
     public func absoluteURL(_ path: String) -> URL {

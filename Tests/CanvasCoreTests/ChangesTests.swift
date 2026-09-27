@@ -319,7 +319,7 @@ struct ChangesReviewTests {
         for root in [worktree.path, "../\(repo.root.lastPathComponent)-wt/fees"] {
             let set = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object(["root": .string(root), "paths": ["src"]])), highlight: false, engine: engine)
             #expect(set.notice == nil)
-            #expect(set.files.map(\.boardPath) == [GitDiffEngine.realPath(file).path], "outside the board root, paths are absolute")
+            #expect(set.files.map(\.boardPath) == [file.standardizedFileURL.path], "outside the board root, paths are absolute, as the board writes them")
             #expect(set.worktree == "fees (feature)")
         }
         #expect(await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object([:])), highlight: false, engine: engine).files.isEmpty, "the board's own checkout is clean")

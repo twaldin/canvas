@@ -479,12 +479,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let lowered = name.lowercased()
         func rank(_ symbol: LSPWorkspaceSymbol) -> Int { symbol.name == name ? 0 : symbol.name.lowercased() == lowered ? 1 : symbol.name.lowercased().hasPrefix(lowered) ? 2 : 3 }
         symbols = symbols.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
-        let rootPath = root.resolvingSymlinksInPath().path + "/"
         var rows: [NavigatorRow] = []
         for symbol in symbols {
-            let file = symbol.location.url.resolvingSymlinksInPath().path
-            guard file.hasPrefix(rootPath) else { continue }
-            let path = String(file.dropFirst(rootPath.count))
+            let path = board.relativePath(symbol.location.url.path)
+            guard !path.hasPrefix("/") else { continue }
             let line = symbol.location.range.start.line + 1
             rows.append(NavigatorRow(target: .file(path, lines: LineRange(start: line, end: line)), title: symbol.name, kind: symbol.kindName.capitalized, dot: nil,
                                      subtitle: [symbol.container, "\(path):\(line)"].compactMap { $0 }.joined(separator: " · "), toolTip: "\(path):\(line)"))

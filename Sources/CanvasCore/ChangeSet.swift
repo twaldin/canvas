@@ -675,11 +675,7 @@ public struct ChangeSet: Sendable {
             change.id = unique
             return change
         } : []
-        func boardPath(_ path: String) -> String {
-            let absolute = GitDiffEngine.realPath(toplevel.appendingPathComponent(path)).path
-            let rootPath = GitDiffEngine.realPath(root).path
-            return absolute.hasPrefix(rootPath + "/") ? String(absolute.dropFirst(rootPath.count + 1)) : absolute
-        }
+        func boardPath(_ path: String) -> String { Board.relativePath(toplevel.appendingPathComponent(path).path, root: root) }
         return ChangedFile(path: entry.path, oldPath: entry.oldPath, boardPath: boardPath(entry.path), oldBoardPath: entry.oldPath.map(boardPath),
                            status: status, old: diff.old, new: diff.new, oldMode: status == .added ? nil : entry.oldMode ?? "100644", newMode: newMode,
                            tracked: entry.tracked, hunks: hunks, notice: notice)

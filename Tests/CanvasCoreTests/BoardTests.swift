@@ -33,6 +33,15 @@ struct BoardTests {
         #expect(await board.drain().context == "")
     }
 
+    /// Servers and shells report resolved paths: /private/var/… under a /var/… root is still the board's.
+    @Test func pathsReachedThroughASymlinkAreBoardRelative() {
+        let board = makeBoard()
+        #expect(root.path.hasPrefix("/var/"), "NSTemporaryDirectory sits behind the /var → /private/var link")
+        #expect(board.relativePath("/private" + root.path + "/src/a.ts") == "src/a.ts")
+        #expect(board.relativePath(root.path + "/src/a.ts") == "src/a.ts")
+        #expect(board.relativePath("/etc/hosts") == "/etc/hosts")
+    }
+
     @Test func stagedMentionsSurviveSaveAndReload() async throws {
         let store = BoardStore(directory: root.appendingPathComponent("boards"))
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

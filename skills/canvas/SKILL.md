@@ -40,6 +40,8 @@ Read these before you build anything; each one cost earlier agents a round trip.
   Keep bound lines inside the rows the tile shows (fit the range, or bind to lines near its top).
 - **Attention markers stay until the user looks, across app restarts.** A marker clears when the user looks at the object in the active window, or when you `--clear` it.
   Your markers belong to your turn: the first one you raise after the user's next prompt clears the ones from your earlier turns (you don't need to), while markers raised in the same turn (approvals included) stay together.
+- **Params are checked.** A param a method doesn't take (a typo, or `board` where the schema has none), or a missing required one, fails with `invalid_params` listing every param the method takes.
+  Objects you create or change on another board (`board`) are credited to your terminal; placement there goes near the view's centre.
 
 ## Pick a client
 
@@ -354,5 +356,5 @@ Then address it with `board: <id>` (from the result) on every call, and start ag
 ⌘J goes to the next thing that needs the user (blocked agents, then marked tiles); ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
 ⌘9 fits everything, ⌘0 is 100%, ⌘=/⌘- zoom; ⌘T opens a terminal; ⌘G groups the selection; ⌘Z undoes the user's last change or an agent's (never follow re-aims or the app's own bookkeeping).
 Hyper-click (⌃⌥⇧⌘-click) stages a mention for the terminal the tray shows; Hyper-V pastes staged mentions into a terminal whose agent has no integration.
-⌘-click a `path:line` in terminal output to open it. Code › Go to Definition ⌃⌘J, Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter).
+⌘-click a `path:line` in terminal output to open it in the terminal's preview tile (⌥⌘-click keeps a separate tile). Code › Go to Definition ⌃⌘J, Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter).
 File › Review Changes ⇧⌘R; right-click empty canvas for New Terminal/Note/Browser Here; right-click a terminal for Follow Files. Every action is also in the menu bar (Help › search).

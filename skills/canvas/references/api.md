@@ -104,5 +104,5 @@ canvas.agent.prompt(target="fees", text="review the diff, read-only")
 canvas.agent.wait(target="fees", timeout_ms=900_000)      # done, idle, or blocked
 reply = canvas.agent.read(target="fees", since="prompt")["text"]
 ```
-On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` fails at once with `unavailable`; poll `agent.read(since="prompt")` instead.
+On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` gives it 15 s to report (an agent you just launched there) and then fails with `unavailable`; for a shell or a CLI without integration, poll `agent.read(since="prompt")` instead.
 `agent.wait` survives an app restart: the SDKs and CLI ask again once the app is back, with `timeoutMs` reduced by the time already waited.

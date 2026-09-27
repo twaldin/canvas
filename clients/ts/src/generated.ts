@@ -631,7 +631,7 @@ export type AgentPromptResult = {
   /** as it was when the prompt was submitted (its lifecycle is still the previous turn's) */
   agent: Agent;
   submittedAt: string;
-  /** the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none and `agent.wait` fails at once, so poll `agent.read` with `since: "prompt"` */
+  /** the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: "prompt"` */
   waitable: boolean;
 };
 
@@ -832,7 +832,7 @@ export interface CanvasApi {
     list(params?: AgentListParams): Promise<AgentListResult>;
     /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. */
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
-    /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` (no reporting agent, or its agent exited) fails at once with `unavailable` unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
+    /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
     /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. */
     read(params: AgentReadParams): Promise<AgentReadResult>;

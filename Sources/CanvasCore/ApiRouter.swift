@@ -114,7 +114,13 @@ public final class ApiRouter {
         let connection: SocketServer.Connection
         let tile: ObjectID
         let until: Set<String>
+        /// Until when a terminal that hasn't reported a lifecycle may still start to.
+        let firstReportDeadline: Date
     }
+
+    /// How long `agent.wait` gives a terminal with no lifecycle to start reporting one: an agent
+    /// launched a moment ago (a tile just created with `omp`) reports within seconds, a shell never.
+    public var firstReportGrace: TimeInterval = 15
 
     public init(registry: BoardRegistry) {
         self.registry = registry
@@ -190,26 +196,32 @@ public final class ApiRouter {
     private func wait(_ id: JSONValue, _ p: JSONValue, _ connection: SocketServer.Connection) throws -> JSONValue? {
         let (board, terminal) = try agentTile(try string(p, "target"))
         let until = Set(p["until"]?.array?.compactMap(\.string) ?? ["idle", "done", "blocked"])
-        let waiter = Waiter(id: id, connection: connection, tile: terminal.id, until: until)
+        let waiter = Waiter(id: id, connection: connection, tile: terminal.id, until: until, firstReportDeadline: Date().addingTimeInterval(firstReportGrace))
         if let reply = reply(to: waiter, on: board) { return reply }
         waiters.append(waiter)
+        let token = waiter.token
         if let timeout = p["timeoutMs"]?.int {
-            let token = waiter.token
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(max(0, timeout))) { [weak self] in
                 MainActor.assumeIsolated { self?.expire(token) }
             }
         }
+        // A terminal still silent when the grace ends has nothing reporting in it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + firstReportGrace) { [weak self] in
+            MainActor.assumeIsolated { self?.recheck(token) }
+        }
         return nil
     }
 
-    /// The response for a satisfied waiter, or nil while it must keep waiting. A terminal whose
-    /// agent reports no lifecycle (or stopped reporting one: it exited) can never satisfy it.
-    private func reply(to waiter: Waiter, on board: Board) -> JSONValue? {
+    /// The response for a satisfied waiter, or nil while it must keep waiting. A terminal with no
+    /// lifecycle gets `firstReportGrace` to start reporting; one whose agent exited (`exited`, a
+    /// release) or that stays silent can never satisfy it.
+    private func reply(to waiter: Waiter, on board: Board, exited: Bool = false) -> JSONValue? {
         guard let terminal = board.objects[waiter.tile] else {
             return Self.error(waiter.id, Failure("not_found", "terminal \(waiter.tile) was closed"))
         }
         let state = Self.state(of: terminal)
         if state == LifecycleState.unknown.rawValue, !waiter.until.contains(state) {
+            guard exited || Date() >= waiter.firstReportDeadline else { return nil }
             return Self.error(waiter.id, Self.lifecycleUnknown(terminal))
         }
         guard !pendingPrompts.contains(waiter.tile), waiter.until.contains(state) else { return nil }
@@ -223,11 +235,13 @@ public final class ApiRouter {
 
     private func observe(_ event: BoardEvent, on board: Board) {
         let tile: ObjectID
+        var exited = false
         switch event {
         case .agentLifecycle(let id, let lifecycle):
             tile = id
+            exited = lifecycle == .null
             let state = lifecycle["state"]?.string
-            if lifecycle == .null || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
+            if exited || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
                 pendingPrompts.remove(id)
             }
         case .objectDeleted(let id):
@@ -239,10 +253,18 @@ public final class ApiRouter {
         }
         waiters.removeAll { waiter in
             guard waiter.connection.isOpen else { return true }
-            guard waiter.tile == tile, let reply = reply(to: waiter, on: board) else { return false }
+            guard waiter.tile == tile, let reply = reply(to: waiter, on: board, exited: exited) else { return false }
             waiter.connection.send(reply)
             return true
         }
+    }
+
+    private func recheck(_ token: UUID) {
+        guard let index = waiters.firstIndex(where: { $0.token == token }) else { return }
+        let waiter = waiters[index]
+        guard let (board, _) = try? agentTile(waiter.tile), let reply = reply(to: waiter, on: board) else { return }
+        waiters.remove(at: index)
+        waiter.connection.send(reply)
     }
 
     private func expire(_ token: UUID) {

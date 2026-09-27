@@ -368,7 +368,7 @@ class AgentApi:
         return self._call("agent.prompt", params, [])
 
     def wait(self, *, target: str, until: list[Literal["working", "blocked", "idle", "done", "unknown"]] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
-        """Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` (no reporting agent, or its agent exited) fails at once with `unavailable` unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited."""
+        """Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited."""
         params = {"target": target, "until": until, "timeoutMs": timeout_ms}
         return self._call("agent.wait", params, [])
 

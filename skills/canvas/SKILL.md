@@ -355,7 +355,7 @@ canvas agent.read --target reviewer --since prompt   # only what came after your
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
 Then `agent.read --since prompt` returns just the reply (`--lines N` gives the plain tail).
 Kind `omp`, `claude` or `codex` reports a lifecycle (a fresh Codex from its first prompt). Kind `unknown` (a shell, aider, another CLI) has none:
-`agent.prompt` works, `agent.wait` fails at once, so poll `agent.read --since prompt`.
+`agent.prompt` works, `agent.wait` fails once 15 s pass without a first report (enough for an agent you just started), so poll `agent.read --since prompt`.
 Claude Code runs no hook when its user presses Esc or denies an approval, so its tile keeps its last state until the next prompt.
 Don't prompt an agent that is `blocked`; it is waiting for its user.
 

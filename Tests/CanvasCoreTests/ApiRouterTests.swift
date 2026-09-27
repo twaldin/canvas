@@ -110,7 +110,9 @@ final class ApiRouterTests {
         #expect(byTile[shell]?["lifecycle"]?["state"] == .string("unknown"))
         #expect(byTile[omp]?["kind"] == .string("omp"))
 
-        // Prompting works; the reply says a wait can't follow it, and a wait fails at once.
+        // Prompting works; the reply says a wait can't follow it, and a wait on a terminal that
+        // stays silent through the first-report grace fails.
+        router.firstReportGrace = 0.3
         let prompted = try await call(client, "agent.prompt", ["target": .string(shell), "text": "make test"])
         #expect(prompted["result"]?["waitable"] == .bool(false))
         let waited = try await call(client, "agent.wait", ["target": .string(shell), "timeoutMs": 60000])
@@ -119,6 +121,18 @@ final class ApiRouterTests {
         // Asking for `unknown` itself is answered.
         let unknown = try await call(client, "agent.wait", ["target": .string(shell), "until": ["unknown"]])
         #expect(unknown["result"]?["agent"]?["tile"] == .string(shell))
+    }
+
+    @Test func aWaitOnAnAgentJustLaunchedWaitsForItsFirstReport() async throws {
+        let fresh = terminal()
+        let client = try connect()
+        client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(fresh)","timeoutMs":60000}}"#)
+        client.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == .string("ping"), "the wait is still open")
+        try board.reportLifecycle(tile: fresh, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp")
+        let reply = try await client.next()
+        #expect(reply["id"] == .string("w"))
+        #expect(reply["result"]?["agent"]?["lifecycle"]?["state"] == .string("idle"))
     }
 
     @Test func aWaitOnAnAgentThatExitsFailsInsteadOfHanging() async throws {

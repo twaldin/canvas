@@ -264,6 +264,20 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.sendToBack()
     }
 
+    /// Hyper-V (Edit ▸ Paste Mentions into Terminal): the tray's context block pasted into the
+    /// prompt-target terminal as one bracketed paste without Enter, for agents with no prompt hook
+    /// to drain it (aider, a bare shell); the pasted mentions leave the tray.
+    @objc func pasteMentions(_ sender: Any?) {
+        guard !board.tray.isEmpty, let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile else { return }
+        let board = board
+        Task { @MainActor [weak terminal] in
+            let drained = await board.drain(peek: true, caller: target)
+            // Ends on its own line, so what the user types next starts below the block.
+            guard !drained.context.isEmpty, let terminal, terminal.paste(drained.context + "\n", submit: false) else { return }
+            board.commit(drained.mentions.map(\.id))
+        }
+    }
+
     /// The View menu's navigation shortcuts, matched on the key's characters: ⌘P, ⌘9, ⌘0, ⌘= (and
     /// ⌘+), ⌘-. Nil for anything else, which stays with the focused view.
     static func navigationAction(for event: NSEvent) -> Selector? {

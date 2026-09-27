@@ -45,7 +45,8 @@ final class TrayBar: NSVisualEffectView {
         for view in stack.arrangedSubviews { view.removeFromSuperview() }
         if mentions.isEmpty { stack.addArrangedSubview(hint) }
         for mention in mentions { stack.addArrangedSubview(chip(for: mention)) }
-        target.stringValue = targetTitle.map { "→ \($0)" } ?? (hasTerminal ? "→ click a terminal to target it" : "→ no terminal yet (⌘T)")
+        // Hyper-V pastes staged mentions into agents that don't drain the tray themselves.
+        target.stringValue = targetTitle.map { mentions.isEmpty ? "→ \($0)" : "→ \($0) · ⌃⌥⇧⌘V pastes" } ?? (hasTerminal ? "→ click a terminal to target it" : "→ no terminal yet (⌘T)")
     }
 
     private func chip(for mention: Mention) -> NSView {

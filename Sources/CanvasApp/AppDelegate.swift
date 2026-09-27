@@ -255,6 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func ungroupSelection(_ sender: Any?) { keyController?.ungroupSelection(sender) }
     @objc func bringToFront(_ sender: Any?) { keyController?.bringToFront(sender) }
     @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
+    @objc func pasteMentions(_ sender: Any?) { keyController?.pasteMentions(sender) }
 
     /// The tab bar's + button: open another board as a tab.
     @objc func newWindowForTab(_ sender: Any?) { openBoard(sender) }
@@ -309,6 +310,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Paste", #selector(NSText.paste(_:)), "v"),
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
             item("Delete Selection", #selector(deleteSelection(_:)), "\u{8}"),
+            .separator(),
+            // Hyper-V: no shell, TUI, or Ghostty default binding uses all four modifiers.
+            item("Paste Mentions into Terminal", #selector(pasteMentions(_:)), "v", [.control, .option, .shift, .command]),
         ])
         submenu("Object", [
             item("Group", #selector(groupSelection(_:)), "g"),

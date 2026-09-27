@@ -13,6 +13,17 @@ enum CodeTheme {
     static var added: NSColor { .systemGreen }
     static var modified: NSColor { .systemBlue }
     static var deleted: NSColor { .systemRed }
+    /// Line numbers and other quiet small text on a code or changes tile: muted, but at least
+    /// 4.5:1 on the tile's background in both appearances (tertiary label read 2.3:1, and
+    /// agents answer in `path:line`), and nearly label color under Increase Contrast.
+    @MainActor static let lineNumber = NSColor(name: "CodeTheme.lineNumber") { appearance in
+        switch appearance.bestMatch(from: [.darkAqua, .aqua, .accessibilityHighContrastDarkAqua, .accessibilityHighContrastAqua]) {
+        case .accessibilityHighContrastDarkAqua?: NSColor(white: 1, alpha: 0.85)
+        case .accessibilityHighContrastAqua?: NSColor(white: 0, alpha: 0.85)
+        case .darkAqua?: NSColor(white: 1, alpha: 0.55)
+        default: NSColor(white: 0, alpha: 0.6)
+        }
+    }
 
     /// Syntax colors for code and diff lines alike: red and green mean removed and added in a
     /// changes tile and beside a code tile's diff gutter, so strings, keywords, and numbers take
@@ -261,7 +272,7 @@ struct CodePainter {
             switch segment.row {
             case .line(let line):
                 number = line
-                color = tinted?.contains(line) == true ? .secondaryLabelColor : .tertiaryLabelColor
+                color = tinted?.contains(line) == true ? .labelColor : CodeTheme.lineNumber
                 if let sign = document.signs.first(where: { $0.lines.contains(line) }) {
                     (sign.kind == .added ? CodeTheme.added : CodeTheme.modified).setFill()
                     CGRect(x: signX, y: top, width: CodeMetrics.signWidth - 1, height: CodeMetrics.rowHeight).fill()

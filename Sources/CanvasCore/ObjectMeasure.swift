@@ -238,6 +238,12 @@ public enum CodeCaption {
         caption.replacingOccurrences(of: "\n", with: " ")
     }
 
+    /// The caption as plain words (Go to's subtitle, a tile's accessibility label): without the
+    /// backticks that set `code` in the tile.
+    public static func plain(_ caption: String) -> String {
+        text(caption).replacingOccurrences(of: "`", with: "")
+    }
+
     /// `inline code` in backticks is set in the code font.
     public static func string(_ caption: String) -> NSAttributedString {
         let out = NSMutableAttributedString()

@@ -106,9 +106,6 @@ extension CanvasView {
 
     private static func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
 
-    /// A caption as a row's plain subtitle: without the backticks that set `code` in the tile.
-    private static func plainCaption(_ caption: String) -> String { CodeCaption.text(caption).replacingOccurrences(of: "`", with: "") }
-
     /// What tells two tiles with the same title apart. A terminal: its name, else the command it
     /// was started with, else its directory. Anything else: its caption, else the title of the
     /// group that lists it directly.
@@ -124,7 +121,7 @@ extension CanvasView {
         if object.type == .browser, let url = Self.nonEmpty(object.props["url"]) {
             return url.replacingOccurrences(of: #"^[a-zA-Z][a-zA-Z0-9+.-]*://"#, with: "", options: .regularExpression)
         }
-        if let caption = Self.nonEmpty(object.props["caption"]) { return Self.plainCaption(caption) }
+        if let caption = Self.nonEmpty(object.props["caption"]) { return CodeCaption.plain(caption) }
         let group = board.objects.values.first { $0.type == .group && GroupSpec($0.props)?.members.contains(id) == true }
         return group.flatMap { Self.nonEmpty($0.props["title"]) }
     }
@@ -144,7 +141,7 @@ extension CanvasView {
             }
             // Excerpts of one file (a references layout, an agent's call sites) differ by caption.
             return NavigatorRow(target: .object(object.id), title: title, kind: "Code", dot: nil,
-                                subtitle: nonEmpty(props["caption"]).map(plainCaption), toolTip: props["path"]?.string)
+                                subtitle: nonEmpty(props["caption"]).map(CodeCaption.plain), toolTip: props["path"]?.string)
         case .note:
             let markdown = props["markdown"]?.string ?? ""
             let line = markdown.split(whereSeparator: \.isNewline).lazy
@@ -176,7 +173,8 @@ extension CanvasView {
 
 /// Go to… (⌘P): a floating search-and-list panel over the board, in the window like the drawing
 /// toolbar (not a separate window, never modal). Typing filters, ↑/↓ move, Return or a click
-/// goes, Esc, ⌘P, or a click anywhere else closes. Keyboard focus returns to whoever had it.
+/// goes, Esc or a click anywhere else closes, and so does the field losing the keyboard, so
+/// typing never goes anywhere else while the panel shows. Keyboard focus returns to whoever had it.
 @MainActor
 final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     static let rowHeight: CGFloat = 28
@@ -312,6 +310,20 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         }
     }
 
+    /// ⌘P while open: the field keeps the keyboard, its text selected to type over. (It always
+    /// has it: losing it closes the panel.)
+    func focusField() {
+        guard isOpen, let window else { return }
+        if field.currentEditor() == nil { window.makeFirstResponder(field) }
+        field.currentEditor()?.selectAll(nil)
+    }
+
+    /// The field lost the keyboard (a terminal or tile took it, Tab moved on): the panel closes
+    /// rather than stay open while typing goes elsewhere.
+    func controlTextDidEndEditing(_ notification: Notification) {
+        close()
+    }
+
     /// Hides the panel and gives the keyboard back to whoever had it before (a terminal through
     /// its own focus path; `CanvasView.returnKeyboard`), unless something else took it meanwhile.
     /// Whether the field had it is read before hiding: hiding the panel takes the focus from its
@@ -386,10 +398,13 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         }
         rows = found
         table.reloadData()
-        if !rows.isEmpty {
-            let row = selected.flatMap { target in rows.firstIndex { $0.target == target } } ?? 0
+        // The first row that goes somewhere is highlighted; a status line ("No matches") never is.
+        let row = selected.flatMap { target in rows.firstIndex { $0.target == target } } ?? rows.firstIndex { $0.target != .status }
+        if let row {
             table.selectRowIndexes([row], byExtendingSelection: false)
             table.scrollRowToVisible(row)
+        } else {
+            table.deselectAll(nil)
         }
         // The inset table style pads above the first row; keep the same room below the last.
         let shown = min(rows.count, Self.visibleRows)
@@ -441,8 +456,10 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
     }
 
     private func moveSelection(_ step: Int) {
-        guard !rows.isEmpty else { return }
-        let row = min(rows.count - 1, max(0, table.selectedRow + step))
+        let goes = rows.indices.filter { rows[$0].target != .status }
+        guard let first = goes.first, let last = goes.last else { return }
+        let current = table.selectedRow
+        let row = step > 0 ? goes.first { $0 > current } ?? last : goes.last { $0 < current } ?? first
         table.selectRowIndexes([row], byExtendingSelection: false)
         table.scrollRowToVisible(row)
     }
@@ -488,7 +505,7 @@ private final class NavigatorCell: NSTableCellView {
         dot.wantsLayer = true
         dot.layer?.cornerRadius = 4
         flag.font = .systemFont(ofSize: 10, weight: .bold)
-        flag.textColor = .white
+        flag.textColor = AttentionStyle.ink
         flag.alignment = .center
         flag.wantsLayer = true
         flag.layer?.cornerRadius = 4
@@ -536,6 +553,7 @@ private final class NavigatorCell: NSTableCellView {
         title.stringValue = row.title
         title.font = row.target == .allContent ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
         detail.stringValue = row.subtitle ?? ""
+        detail.isHidden = detail.stringValue.isEmpty
         toolTip = row.toolTip
         kind.stringValue = row.kind
         dot.layer?.backgroundColor = (row.dot ?? .clear).cgColor

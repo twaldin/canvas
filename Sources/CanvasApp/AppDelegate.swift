@@ -264,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
     @objc func zoomIn(_ sender: Any?) { keyController?.zoomIn(sender) }
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
-    @objc func toggleNavigator(_ sender: Any?) { keyController?.toggleNavigator(sender) }
+    @objc func showNavigator(_ sender: Any?) { keyController?.showNavigator(sender) }
     @objc func toggleBasics(_ sender: Any?) { keyController?.toggleBasics(sender) }
     @objc func toggleCanvasChrome(_ sender: Any?) { keyController?.toggleCanvasChrome(sender) }
     @objc func toggleLassoSelection(_ sender: Any?) { keyController?.toggleLassoSelection(sender) }
@@ -287,6 +287,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func clearAttentionMarkers(_ sender: Any?) { keyController?.clearAttentionMarkers(sender) }
     @objc func toggleFollowFiles(_ sender: Any?) { keyController?.toggleFollowFiles(sender) }
     @objc func scaleSelection(_ sender: Any?) { keyController?.scaleSelection(sender) }
+    @objc func scaleBigger(_ sender: Any?) { keyController?.scaleBigger(sender) }
+    @objc func scaleSmaller(_ sender: Any?) { keyController?.scaleSmaller(sender) }
     @objc func copyObjectIDs(_ sender: Any?) { keyController?.copyObjectIDs(sender) }
     @objc func enterGroup(_ sender: Any?) { keyController?.enterGroup(sender) }
     @objc func goToDefinition(_ sender: Any?) { keyController?.goToDefinition(sender) }
@@ -378,8 +380,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // takes it ahead of a focused terminal (CanvasWindowController.handleKeyEquivalent).
             item("Mention", #selector(mentionCurrent(_:)), "M", [.command, .shift]),
         ])
+        // Scale: the selection, else the tile holding the keyboard (`CanvasView.scaleTargets`).
+        // ⌃⌘ chords: ⌥⌘= / ⌥⌘- are macOS Zoom's (Accessibility), which the people who need
+        // bigger tiles use; Ghostty's ⌃⌘= (equalize splits) has no splits here, and a focused
+        // terminal's menu shortcuts beat its bindings (CanvasWindowController.handleKeyEquivalent).
         let scale = NSMenuItem(title: "Scale", action: nil, keyEquivalent: "")
         scale.submenu = NSMenu(title: "Scale")
+        scale.submenu?.addItem(item("Bigger", #selector(scaleBigger(_:)), "=", [.control, .command]))
+        scale.submenu?.addItem(item("Smaller", #selector(scaleSmaller(_:)), "-", [.control, .command]))
+        scale.submenu?.addItem(.separator())
         for preset in ObjectScale.presets {
             let percent = Int((preset * 100).rounded())
             let item = item("\(percent)%", #selector(scaleSelection(_:)), "")
@@ -387,9 +396,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             scale.submenu?.addItem(item)
         }
         scale.submenu?.addItem(.separator())
-        let reset = item("Reset to 100%", #selector(scaleSelection(_:)), "")
-        reset.tag = 100
-        scale.submenu?.addItem(reset)
+        let actual = item("Actual Size", #selector(scaleSelection(_:)), "0", [.control, .command])
+        actual.tag = 100
+        scale.submenu?.addItem(actual)
         submenu("Object", [
             item("Group", #selector(groupSelection(_:)), "g"),
             item("Ungroup", #selector(ungroupSelection(_:)), "G", [.command, .shift]),
@@ -420,7 +429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lasso.state = CanvasView.lassoSelection ? .on : .off
         submenu("View", [
             // ⌘P, not ⌘K: Ghostty binds ⌘K (clear screen) and terminal tiles take it first.
-            item("Go to…", #selector(toggleNavigator(_:)), "p"),
+            item("Go to…", #selector(showNavigator(_:)), "p"),
             // ⌘J: no shell sees ⌘, and Ghostty binds nothing to it.
             item("Go to Next Needs-You", #selector(goToNextNeedsYou(_:)), "j"),
             // ⌘Esc: Esc belongs to a terminal's program, so this is the way out of one (and of
@@ -441,7 +450,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // ⌥⌘I as in Safari's Develop menu: the focused or selected browser tile's page.
             item("Show Web Inspector", #selector(showWebInspector(_:)), "i", [.option, .command]),
             // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
-            item("Hide Canvas Chrome", #selector(toggleCanvasChrome(_:)), ""),
+            // ⌥⌘T as AppKit's Show/Hide Toolbar; Ghostty binds nothing to it.
+            item("Hide Canvas Chrome", #selector(toggleCanvasChrome(_:)), "t", [.option, .command]),
             lasso,
             item("Exit Group", #selector(exitGroup(_:)), ""),
         ])
@@ -453,9 +463,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), ""),
         ])
         // The Help menu gets AppKit's menu search (⌘?), which finds every item above, and the
-        // legend of what the canvas shows (`BasicsPanel`).
+        // legend of what the canvas shows (`BasicsPanel`), ⌥⌘/ beside that search's ⌘?.
         NSApp.helpMenu = submenu("Help", [
-            item("Canvas Basics", #selector(toggleBasics(_:)), ""),
+            item("Canvas Basics", #selector(toggleBasics(_:)), "/", [.option, .command]),
         ])
         return main
     }

@@ -356,16 +356,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.zoomStep(in: true)
     }
 
-    /// Go to… opens (or closes) the navigator over this board. The board root's files are
-    /// re-listed on every open; the list shown meanwhile is the previous one.
-    @objc func toggleNavigator(_ sender: Any?) {
-        if navigator.isOpen {
-            navigator.close()
-        } else {
-            let files = BoardFiles.of(board.root)
-            navigator.open(rows: canvas.navigatorRows(), files: files.index)
-            files.refresh { [weak self] index in self?.navigator.update(files: index) }
-        }
+    /// Go to… (⌘P) shows the navigator over this board with its field holding the keyboard: never
+    /// a toggle, so a ⌘P can't close a panel the user can't see and send what they type next to
+    /// a terminal (a11y study round 7); Esc, a row, or a click elsewhere closes it. Already open,
+    /// the field takes the keyboard back with its text selected. The board root's files are
+    /// re-listed on every open; the list shown meanwhile is the previous one. Not while a sheet
+    /// is up: the panel would open behind it, and the sheet's Esc would hand the keyboard back
+    /// to the terminal under an open panel.
+    @objc func showNavigator(_ sender: Any?) {
+        guard window?.attachedSheet == nil else { return }
+        if navigator.isOpen { return navigator.focusField() }
+        let files = BoardFiles.of(board.root)
+        navigator.open(rows: canvas.navigatorRows(), files: files.index)
+        files.refresh { [weak self] index in self?.navigator.update(files: index) }
     }
 
     /// View › Hide Canvas Chrome (also in Canvas Basics): toggles presenting (`CanvasView.chromeHidden`);
@@ -624,11 +627,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.toggleFollow()
     }
 
-    /// Object ▸ Scale ▸ a preset (the item's `tag` in percent).
+    /// Object ▸ Scale ▸ a preset or Actual Size (the item's `tag` in percent).
     @objc func scaleSelection(_ sender: Any?) {
         guard let item = sender as? NSMenuItem else { return }
-        canvas.scaleSelection(to: Double(item.tag) / 100)
+        canvas.setScale(Double(item.tag) / 100)
     }
+
+    /// Object ▸ Scale ▸ Bigger (⌃⌘=) and Smaller (⌃⌘-).
+    @objc func scaleBigger(_ sender: Any?) { canvas.stepScale(bigger: true) }
+    @objc func scaleSmaller(_ sender: Any?) { canvas.stepScale(bigger: false) }
 
     @objc func copyObjectIDs(_ sender: Any?) {
         canvas.copyIDs()
@@ -725,13 +732,16 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             item.state = canvas.follows(terminal) ? .on : .off
             return true
         case #selector(scaleSelection(_:)):
-            guard let scales = canvas.selectionScales else {
+            guard let scales = canvas.scaleTargetScales else {
                 item.state = .off
                 return false
             }
             let scale = Double(item.tag) / 100
             item.state = scales == [scale] && item.tag != 100 ? .on : .off
             return item.tag != 100 || scales != [1]
+        case #selector(scaleBigger(_:)): return canvas.canStepScale(bigger: true)
+        case #selector(scaleSmaller(_:)): return canvas.canStepScale(bigger: false)
+        case #selector(showNavigator(_:)): return window?.attachedSheet == nil
         case #selector(goToDefinition(_:)), #selector(openDefinitionInNewTile(_:)), #selector(findReferences(_:)), #selector(showOutline(_:)):
             // With no code tile to act on the command still runs, to say so (`navigateCode`).
             return canvas.keyboardCodeTile?.canNavigate ?? true
@@ -758,7 +768,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         if event.keyCode == 53, modifiers == .command { return #selector(leaveTile(_:)) }
         switch (event.charactersIgnoringModifiers, modifiers) {
-        case ("p", .command): return #selector(toggleNavigator(_:))
+        case ("p", .command): return #selector(showNavigator(_:))
         case ("9", .command): return #selector(zoomToFit(_:))
         case ("0", .command): return #selector(zoomToActual(_:))
         case ("=", .command), ("+", .command), ("+", [.command, .shift]): return #selector(zoomIn(_:))

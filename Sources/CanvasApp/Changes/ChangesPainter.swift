@@ -337,8 +337,9 @@ struct ChangesPainter {
         }
         let layout = headerLayout(width: width)
         if let hint = layout.hint {
+            // The keys in the link blue while the keyboard is here (the accent read 4.2:1).
             drawText(hint.text, at: hint.rect.origin, height: hint.rect.height, width: hint.rect.width + 1,
-                     attributes: [.font: small, .foregroundColor: focused ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor])
+                     attributes: [.font: small, .foregroundColor: focused ? NSColor.linkColor : CodeTheme.lineNumber])
         }
         if let lead = layout.lead {
             drawText(lead.text, at: lead.rect.origin, height: lead.rect.height, width: lead.rect.width + 1, attributes: [.font: small, .foregroundColor: NSColor.labelColor])
@@ -541,7 +542,7 @@ struct ChangesPainter {
         }
         let advance = CodeMetrics.charAdvance
         let columns = CGFloat(digits) * advance
-        let numbers: [NSAttributedString.Key: Any] = [.font: CodeTheme.font, .foregroundColor: NSColor.tertiaryLabelColor.cgColor]
+        let numbers: [NSAttributedString.Key: Any] = [.font: CodeTheme.font, .foregroundColor: CodeTheme.lineNumber.cgColor]
         let oldRight = ChangesMetrics.gutterLeading + columns, newRight = oldRight + ChangesMetrics.numberGap / 2 + columns
         context.saveGState()
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)

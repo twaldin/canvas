@@ -506,6 +506,12 @@ final class TerminalTile: NSView, TileContent {
         return String(decoding: UnsafeRawBufferPointer(start: text, count: Int(out.text_len)), as: UTF8.self)
     }
 
+    /// The screen as VoiceOver's text area, read from Ghostty (`screenText`, as a mention of the
+    /// whole terminal reads it) only when asked, without the blank rows below the last output.
+    private(set) lazy var accessibleText: AccessibleTextElement? = AccessibleTextElement(view: self, label: { "screen" }, read: { [weak self] in
+        self?.screenText().map { AccessibleText($0.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)) }
+    })
+
     /// The terminal's width in cells, once Ghostty laid it out.
     var columns: Int? { grid?.columns }
 

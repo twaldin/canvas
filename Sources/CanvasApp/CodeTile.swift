@@ -508,6 +508,12 @@ final class CodeTile: NSView, TileContent {
         if hadKeyboard, let window { CanvasView.returnKeyboard(to: findPreviousResponder, in: window) }
         findPreviousResponder = nil
     }
+
+    /// The code as VoiceOver's text area: the range's lines (else those in view), each after its
+    /// number, labelled with the lines it holds.
+    private(set) lazy var accessibleText: AccessibleTextElement? = AccessibleTextElement(view: rowsView, label: { [weak self] in
+        self?.rowsView.accessibleLines.map { $0.count == 1 ? "line \($0.lowerBound)" : "lines \($0.lowerBound)–\($0.upperBound)" }
+    }, read: { [weak self] in self?.rowsView.accessibleText() })
 }
 
 // MARK: Presentation

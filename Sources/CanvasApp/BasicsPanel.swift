@@ -112,8 +112,10 @@ final class BasicsPanel: NSVisualEffectView {
         heading.paragraphSpacing = 3
         for (index, section) in CanvasBasics.sections.enumerated() {
             if index > 0 { result.append(NSAttributedString(string: "\n")) }
+            // Headings in the label color, set apart by size, caps and spacing: the secondary
+            // label color read 4.0:1 on the translucent panel.
             result.append(NSAttributedString(string: section.title.uppercased() + "\n", attributes: [
-                .font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: heading, .kern: 0.4,
+                .font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: NSColor.labelColor, .paragraphStyle: heading, .kern: 0.6,
             ]))
             for (itemIndex, item) in section.items.enumerated() {
                 result.append(NSAttributedString(string: item.term, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.labelColor, .paragraphStyle: body]))

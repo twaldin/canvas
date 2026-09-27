@@ -1,7 +1,7 @@
 # What the user sees
 
 The legend behind Help › Canvas Basics, so you can answer "what is this?" without reading Canvas's source.
-Point the user at Help › Canvas Basics for the same text in the app.
+Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
 ## Reading a board
 
@@ -13,7 +13,7 @@ Point the user at Help › Canvas Basics for the same text in the app.
 - **⌘P** finds a tile by title or caption.
 - **Links**: a `path:line` link in a note or page, Go to, a definition and a terminal ⌘-click go to the code tile already showing those lines (exactly, or a captioned tile whose range holds them) wherever it is, else open them beside the source.
 - **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
-- **View › Hide Canvas Chrome** (also a button in Canvas Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
+- **View › Hide Canvas Chrome** (⌥⌘T; also a button in Canvas Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
   Esc on the canvas or the item again brings them back.
 
 ## Agents
@@ -64,8 +64,10 @@ Point the user at Help › Canvas Basics for the same text in the app.
 ## Zoom and keys
 
 - ⌘9 fits everything (or the largest cluster); ⌘0 is 100% (the selection at 100%); ⌘= and ⌘- step 10–100%.
-  Below about 30% (terminals 15%) tiles show as cards; zooming in brings them back live. ⌥-drag a corner scales a tile.
-- ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings); ⌘T new terminal; ⌘W close the selection; ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
+  Below about 30% (terminals 15%) tiles show as cards; zooming in brings them back live.
+- **Bigger text**: zoom stops at 100%, so the user makes a tile bigger instead: ⌃⌘= / ⌃⌘- step the selected tile (else the one with the keyboard) through 50–200% and ⌃⌘0 puts it back (Object › Scale, also Bigger/Smaller/Actual Size in its right-click menu); ⌥-drag a corner scales freely.
+  A tile scaled up grows up or left, or moves nearby, rather than cover its neighbours.
+- ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; ⌘P again selects the query, Esc closes); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
   In a terminal Esc belongs to the program: ⌘Esc (View › Leave Tile) leaves any tile.
 - A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.

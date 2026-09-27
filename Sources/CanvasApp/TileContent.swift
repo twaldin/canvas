@@ -126,6 +126,10 @@ protocol TileContent: NSView {
     /// (a terminal, a code tile's rows, a changes tile, a note's editor, a page). Esc in the
     /// tile hands it back (`CanvasView.leaveTile`). False when nothing in it types.
     func enterKeyboard() -> Bool
+    /// What VoiceOver reads inside the tile while it is live, as a text area (a code tile's
+    /// lines, a terminal's screen), built only when asked; nil when the tile's own views say it
+    /// (notes, pages) or it has no text.
+    var accessibleText: AccessibleTextElement? { get }
     /// Apply a new revision of the backing object.
     func update(_ object: CanvasObject)
 }
@@ -153,6 +157,8 @@ extension TileContent {
     var liveZoom: CGFloat { CanvasView.liveThreshold }
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) { ready() }
+
+    var accessibleText: AccessibleTextElement? { nil }
 
     func enterKeyboard() -> Bool { false }
 

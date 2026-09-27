@@ -494,6 +494,13 @@ final class LayoutApiTests {
         #expect(ObjectScale.rescaled(note.frame, from: 2, to: 0.5) == Frame(x: 0, y: 0, w: 100, h: 75), "the natural size is kept, top-left fixed")
     }
 
+    @Test func biggerAndSmallerStepThroughTheMenusLevelsFromAnyScale() {
+        #expect(ObjectScale.step(from: 1, bigger: true) == 1.25 && ObjectScale.step(from: 1, bigger: false) == 0.75)
+        #expect(ObjectScale.step(from: 2, bigger: true) == nil && ObjectScale.step(from: 0.5, bigger: false) == nil, "the menu's ends")
+        #expect(ObjectScale.step(from: 1.1, bigger: true) == 1.25 && ObjectScale.step(from: 1.1, bigger: false) == 1, "an ⌥-dragged scale steps to the levels either side")
+        #expect(ObjectScale.step(from: 3, bigger: false) == 2 && ObjectScale.step(from: 0.3, bigger: true) == 0.5, "an agent's scale past the menu steps back into it")
+    }
+
     @Test func captionsWidenMeasureAndTruncatedCaptionsAreReported() async throws {
         let rows = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19)])))
         let short = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: "why")])))
@@ -649,6 +656,20 @@ struct LayoutBoardTests {
         #expect(try board.refitFrame(tile.id, to: CGSize(width: 200, height: 300)) == frame)
         _ = try board.update(tile.id, frame: frame)
         #expect(board.overlaps(of: tile.id).isEmpty && board.overlaps(of: below.id).isEmpty && board.overlaps(of: above.id).isEmpty)
+    }
+
+    @Test func scalingATileUpMakesRoomLikeARefit() throws {
+        let tile = note(0, 0, 400, 300)
+        let below = note(0, 340, 400, 300)
+        let doubled = ObjectScale.rescaled(tile.frame, from: 1, to: 2)
+        let frame = try board.scaledFrame(tile.id, to: CGSize(width: doubled.w, height: doubled.h))
+        #expect(frame == Frame(x: 0, y: -300, w: 800, h: 600), "grown up, off the tile below, instead of down over it")
+        _ = try board.update(tile.id, frame: frame, props: .object(["scale": 2]))
+        #expect(board.overlaps(of: tile.id).isEmpty && board.overlaps(of: below.id).isEmpty)
+        #expect(try board.scaledFrame(tile.id, to: CGSize(width: 400, height: 300)) == Frame(x: 0, y: -300, w: 400, h: 300), "shrinking keeps the top-left corner")
+        // A text shape is an annotation, often lying over a tile on purpose: it grows in place.
+        let label = board.create(type: .shape, props: .object(["kind": "text", "text": "look"]), frame: Frame(x: 10, y: 10, w: 100, h: 30))
+        #expect(try board.scaledFrame(label.id, to: CGSize(width: 200, height: 60)) == Frame(x: 10, y: 10, w: 200, h: 60))
     }
 
     @Test func stackWrapsLinesAndAlignsAcrossThem() {

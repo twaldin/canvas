@@ -10,10 +10,13 @@ enum AttentionStyle {
     case marker, blocked
 
     var color: NSColor { self == .blocked ? .systemOrange : .systemPink }
+    /// Text and glyphs on `color` (bubbles, edge pills, Go to's flags): black reads at least
+    /// 5.9:1 on the pink and orange (and the lifecycle green), white read 2.2–3.5:1.
+    static let ink = NSColor.black
     /// The raised hand leading a blocked bubble's or edge pill's text.
     var glyph: NSImage? { self == .blocked ? Self.hand : nil }
     private static let hand = NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "Needs you")?
-        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .bold).applying(NSImage.SymbolConfiguration(paletteColors: [.white])))
+        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .bold).applying(NSImage.SymbolConfiguration(paletteColors: [ink])))
     static let glyphWidth: CGFloat = 18
     func text(_ message: String?) -> NSString {
         (message?.isEmpty == false ? message! : self == .blocked ? "Needs you" : "Look here") as NSString
@@ -80,7 +83,7 @@ final class AttentionMarker: NSView {
     fileprivate static let bubbleAttributes: [NSAttributedString.Key: Any] = {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        return [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
+        return [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: AttentionStyle.ink, .paragraphStyle: paragraph]
     }()
     private static func naturalWidth(_ message: String?, style: AttentionStyle) -> CGFloat {
         (style.text(message).size(withAttributes: bubbleAttributes).width + 24 + (style.glyph == nil ? 0 : AttentionStyle.glyphWidth)).rounded(.up)
@@ -277,7 +280,7 @@ private final class EdgeChevron: NSView {
     private static let attributes: [NSAttributedString.Key: Any] = {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        return [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
+        return [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: AttentionStyle.ink, .paragraphStyle: paragraph]
     }()
     /// The most of its message a pill shows.
     private static let maxTextWidth: CGFloat = 120
@@ -308,7 +311,7 @@ private final class EdgeChevron: NSView {
         arrow.lineWidth = 2.5
         arrow.lineCapStyle = .round
         arrow.lineJoinStyle = .round
-        NSColor.white.setStroke()
+        AttentionStyle.ink.setStroke()
         arrow.stroke()
         var textX: CGFloat = 28
         if let glyph = style.glyph {

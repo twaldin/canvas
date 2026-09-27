@@ -1004,9 +1004,12 @@ public final class ApiRouter {
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
     /// automatically placed) origin; an update that gives no origin re-fits clear of what it
-    /// didn't already cover (`Board.refitFrame`).
+    /// didn't already cover (`Board.refitFrame`). Without `size`, an update that sets
+    /// `props.scale` with a size-only frame (the tile made bigger to be read from further out)
+    /// makes room the same way (`Board.scaledFrame`).
     func fitted(_ method: String, _ p: JSONValue, size: CGSize?) throws -> JSONValue {
-        guard let size, var params = p.object else { return p }
+        guard let size else { return try scaled(method, p) }
+        guard var params = p.object else { return p }
         params.removeValue(forKey: "size")
         let origin: (x: Double, y: Double)
         if method == "object.update" {
@@ -1026,6 +1029,24 @@ public final class ApiRouter {
             origin = (placed.x, placed.y)
         }
         params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
+        return .object(params)
+    }
+
+    /// Whether `p` is an `object.update` that sets `props.scale` with a size-only frame (`w`
+    /// and/or `h`, no origin): its frame is placed by `Board.scaledFrame`.
+    static func rescales(_ method: String, _ p: JSONValue) -> Bool {
+        method == "object.update" && p["props"]?["scale"] != nil && p["frame"] != nil && p["frame"]?["x"]?.number == nil && p["frame"]?["y"]?.number == nil
+    }
+
+    /// A scale update with a size-only frame (`rescales`), its frame placed by
+    /// `Board.scaledFrame` at the size it gives.
+    func scaled(_ method: String, _ p: JSONValue) throws -> JSONValue {
+        guard Self.rescales(method, p), var params = p.object else { return p }
+        let id = try string(p, "id")
+        let board = try board(forObject: id)
+        let current = try board.object(id).frame
+        let size = CGSize(width: p["frame"]?["w"]?.number ?? current.w, height: p["frame"]?["h"]?.number ?? current.h)
+        params["frame"] = try JSONValue.encode(try board.scaledFrame(id, to: size))
         return .object(params)
     }
 
@@ -1106,8 +1127,10 @@ public final class ApiRouter {
                 }
             }
         }
-        // Fitted objects report what they cover once the whole batch has laid them out.
-        for index in results.indices where sizes[index] != nil { results[index] = withOverlaps(results[index]) }
+        // Fitted and rescaled objects report what they cover once the whole batch has laid them out.
+        for index in results.indices where sizes[index] != nil || Self.rescales(ops[index]["method"]?.string ?? "", ops[index]["params"] ?? .null) {
+            results[index] = withOverlaps(results[index])
+        }
         return .object(["results": .array(results), "revision": .number(Double(board.revision))])
     }
 

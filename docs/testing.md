@@ -6,6 +6,7 @@
 swift run -j 4 CanvasCoreTests        # swift-testing suites for CanvasCore
 bun scripts/gen-clients.ts --check    # generated TS/Python clients match schema/canvas-api.json
 (cd clients/python && python3 -m unittest)   # Python SDK: compositions loading, shipped compositions, connection config/reconnect against a fake socket
+bun test extensions/agent-hooks             # hook payload classification: which thread (the tile's session, a subagent, Codex's internal sessions) an event comes from
 ```
 
 `CanvasCoreTests` is an executable target, not a test target: with only the Command Line Tools installed, `swift test` doesn't discover swift-testing suites, so `main.swift` calls the swift-testing entry point. Tests drive real objects (boards, the socket server over a Unix socket), never mocks of our own code.

@@ -119,11 +119,21 @@ final class NoteTile: NSView, TileContent {
     }
 
     var markdown: String { object.props["markdown"]?.string ?? "" }
+    /// Where the note's relative paths resolve (`Board.linkRoot`).
+    private var linkRoot: URL { board.linkRoot(of: object) }
 
     func update(_ object: CanvasObject) {
         let changed = object.props["markdown"] != self.object.props["markdown"]
+        let rerooted = object.props["root"] != self.object.props["root"]
         self.object = object
-        guard changed else { return }
+        guard changed else {
+            if rerooted {
+                excerpts = [:]
+                captured = [:]
+                resolve()
+            }
+            return
+        }
         if let session {
             session.observe(object)
             if session.conflicted { showConflict() }
@@ -182,7 +192,7 @@ final class NoteTile: NSView, TileContent {
         let generation = resolveGeneration
         let jobs = fences
         let captured = captured
-        let root = board.root
+        let root = linkRoot
         resolveTask = Task { [weak self] in
             var results: [String: NoteExcerpt] = [:]
             for job in jobs {
@@ -209,7 +219,8 @@ final class NoteTile: NSView, TileContent {
         let unpinned = fences.filter { $0.fence.commit == nil }
         let files = unpinned.compactMap { results[$0.key]?.path }.filter { !$0.isEmpty }
         let unfound = unpinned.contains { $0.fence.path == nil && results[$0.key]?.path.isEmpty != false }
-        watch(files: Set(files.map { FileEvents.canonical(board.absoluteURL($0).path) } + imageFiles.map { FileEvents.canonical($0.path) }), root: unfound)
+        let root = linkRoot
+        watch(files: Set(files.map { FileEvents.canonical($0.hasPrefix("/") ? $0 : root.appendingPathComponent($0).path) } + imageFiles.map { FileEvents.canonical($0.path) }), root: unfound)
         persistAnchors(results)
     }
 
@@ -238,7 +249,7 @@ final class NoteTile: NSView, TileContent {
     private func watch(files: Set<String>, root: Bool) {
         watchedFiles = files
         watchesRoot = root
-        let rootPath = FileEvents.canonical(board.root.path)
+        let rootPath = FileEvents.canonical(linkRoot.path)
         var directories = Set(files.map(FileEvents.watchableDirectory(for:)))
         if root { directories.insert(rootPath) }
         // A directory inside another watched one adds nothing to a recursive stream.
@@ -358,7 +369,7 @@ final class NoteTile: NSView, TileContent {
     private func open(_ link: NoteLink) {
         switch link {
         case .code(let path, let lines):
-            var props: [String: JSONValue] = ["path": .string(board.relativePath(path))]
+            var props: [String: JSONValue] = ["path": .string(board.boardPath(path, linkRoot: linkRoot))]
             if let lines { props["range"] = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))]) }
             let size = Board.defaultSize(.code)
             board.create(type: .code, props: .object(props), frame: board.place(width: size.w, height: size.h, near: object.id))
@@ -516,7 +527,7 @@ final class NoteTile: NSView, TileContent {
     /// was never live) are resolved first.
     func render(_ request: TileRenderRequest) async -> TileRender {
         var resolved = excerpts
-        let root = board.root
+        let root = linkRoot
         for fence in fences where resolved[fence.key] == nil {
             resolved[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: captured[fence.key], body: fence.body)
         }

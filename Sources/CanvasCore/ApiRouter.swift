@@ -617,8 +617,15 @@ public final class ApiRouter {
         case "object.create":
             let board = try board(p)
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
-            guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
+            guard var props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             let frame = try p["frame"].map { try Self.frame($0, onto: nil) }
+            if type == .note || type == .html {
+                if let root = props["root"]?.string, !root.isEmpty {
+                    try board.checkLinkRoot(root)
+                } else if let root = board.defaultLinkRoot(for: caller(p)) {
+                    props = props.merging(.object(["root": .string(root)]))
+                }
+            }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], type.unknownPropWarnings(props))
 
@@ -626,6 +633,7 @@ public final class ApiRouter {
             let id = try string(p, "id")
             let board = try board(forObject: id)
             let frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
+            if let root = p["props"]?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
@@ -784,7 +792,8 @@ public final class ApiRouter {
     /// `width`). Paths resolve against the caller's (or the given) board.
     private func measure(_ p: JSONValue) async throws -> JSONValue {
         guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
-        let size = try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: p["width"]?.number, root: try board(p).root)
+        let props = p["props"] ?? .object([:])
+        let size = try await ObjectMeasure.size(type: type, props: props, width: p["width"]?.number, root: pathRoot(try board(p), type: type, props: props, caller: caller(p), creating: true))
         return .object(["w": .number(size.width), "h": .number(size.height)])
     }
 
@@ -832,15 +841,15 @@ public final class ApiRouter {
         let root: URL
         if method == "object.create" {
             guard p["type"]?.string == ObjectType.note.rawValue else { return p }
-            root = try board(p).root
+            root = pathRoot(try board(p), type: .note, props: .object(props), caller: caller(p), creating: true)
         } else {
             let id = try string(p, "id")
             if let index = Self.reference(id) {
                 guard let created = pending[index], created["type"]?.string == ObjectType.note.rawValue else { return p }
-                root = try board(created).root
+                root = pathRoot(try board(created), type: .note, props: (created["props"] ?? .object([:])).merging(.object(props)), caller: caller(created), creating: true)
             } else {
-                guard let board = try? board(forObject: id), board.objects[id]?.type == .note else { return p }
-                root = board.root
+                guard let board = try? board(forObject: id), let note = board.objects[id], note.type == .note else { return p }
+                root = pathRoot(board, type: .note, props: note.props.merging(.object(props)), caller: nil, creating: false)
             }
         }
         let text = await NoteMarkdown.anchoringRanges(markdown, root: root)
@@ -863,7 +872,8 @@ public final class ApiRouter {
         let width = p["frame"]?["w"]?.number
         if method == "object.create" {
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
-            return try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: width, root: try board(p).root)
+            return try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: width,
+                                                root: pathRoot(try board(p), type: type, props: p["props"] ?? .object([:]), caller: caller(p), creating: true))
         }
         let id = try string(p, "id")
         let base: (type: ObjectType, props: JSONValue, width: Double?, root: URL)
@@ -871,14 +881,23 @@ public final class ApiRouter {
             guard let created = pending[index], let type = ObjectType(rawValue: try string(created, "type")) else {
                 throw Failure("invalid_params", "\(id) must name an earlier create op")
             }
-            base = (type, created["props"] ?? .object([:]), created["frame"]?["w"]?.number, try board(created).root)
+            let props = p["props"].map { (created["props"] ?? .object([:])).merging($0) } ?? created["props"] ?? .object([:])
+            base = (type, props, created["frame"]?["w"]?.number, pathRoot(try board(created), type: type, props: props, caller: caller(created), creating: true))
         } else {
             let board = try board(forObject: id)
             let object = try board.object(id)
-            base = (object.type, object.props, object.frame.w, board.root)
+            let props = p["props"].map { object.props.merging($0) } ?? object.props
+            base = (object.type, props, object.frame.w, pathRoot(board, type: object.type, props: props, caller: nil, creating: false))
         }
-        let props = p["props"].map { base.props.merging($0) } ?? base.props
-        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? ([.code, .image].contains(base.type) ? nil : base.width), root: base.root)
+        return try await ObjectMeasure.size(type: base.type, props: base.props, width: width ?? ([.code, .image].contains(base.type) ? nil : base.width), root: base.root)
+    }
+
+    /// The directory a create's or update's paths resolve against: a note's or HTML tile's link
+    /// root (`Board.linkRoot`, on a create the caller's checkout by default), else the board root.
+    func pathRoot(_ board: Board, type: ObjectType, props: JSONValue, caller: ObjectID?, creating: Bool) -> URL {
+        guard type == .note || type == .html else { return board.root }
+        if creating, props["root"]?.string?.isEmpty != false, let root = board.defaultLinkRoot(for: caller) { return URL(fileURLWithPath: root) }
+        return board.linkRoot(props: props)
     }
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
@@ -1058,8 +1077,8 @@ public final class ApiRouter {
         // HTML: each page laid out at its frame's width by the app's WebKit, concurrently.
         let htmlSizes = await withTaskGroup(of: (ObjectID, CGSize?).self) { group in
             for object in measurable where object.type == .html {
-                let props = object.props, width = object.frame.w
-                group.addTask { (object.id, try? await ObjectMeasure.htmlExtent(props, width: width, root: root)) }
+                let props = object.props, width = object.frame.w, pageRoot = board.linkRoot(of: object)
+                group.addTask { (object.id, try? await ObjectMeasure.htmlExtent(props, width: width, root: pageRoot)) }
             }
             var sizes: [ObjectID: CGSize] = [:]
             for await (id, size) in group { sizes[id] = size }

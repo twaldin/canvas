@@ -90,11 +90,13 @@ class CodeProps(TypedDict):
 class NoteProps(TypedDict):
     markdown: Required[str]
     title: NotRequired[str]
+    root: NotRequired[str]
     scale: NotRequired["Scale"]
 
 class HtmlProps(TypedDict):
     html: Required[str]
     title: NotRequired[str]
+    root: NotRequired[str]
     allowNetwork: NotRequired[list[str]]
     state: NotRequired[dict[str, Any]]
     scale: NotRequired["Scale"]

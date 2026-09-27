@@ -327,8 +327,9 @@ final class TerminalTile: NSView, TileContent {
 
     // MARK: References
 
-    /// The directory the shell last reported (OSC 7), which relative references resolve against first.
-    fileprivate var reportedCwd: String?
+    /// The directory the shell last reported (OSC 7), which relative references resolve against
+    /// first, and where an agent started in it works (`Board.reportedDirectory`).
+    fileprivate(set) var reportedCwd: String?
 
     /// The `path:line` reference drawn at `point` (terminal view coordinates) that names an
     /// existing file (`TerminalReferences.hit`, which follows it onto neighbouring rows):

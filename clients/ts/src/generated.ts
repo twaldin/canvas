@@ -95,6 +95,8 @@ export type NoteProps = {
   markdown: string;
   /** shown in the tile's title bar (default "Note") and Go to */
   title?: string;
+  /** the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params */
+  root?: string;
   scale?: Scale;
 };
 
@@ -102,6 +104,8 @@ export type HtmlProps = {
   /** page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded */
   html: string;
   title?: string;
+  /** the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root */
+  root?: string;
   allowNetwork?: string[];
   /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
   state?: Record<string, unknown>;

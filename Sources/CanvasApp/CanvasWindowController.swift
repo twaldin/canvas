@@ -99,6 +99,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
             MainActor.assumeIsolated { self?.firstResponderChanged(window.firstResponder) }
         }
+        trayMentions = Set(board.tray.map(\.id))
         settlePromptTarget()
         refreshTray()
         refreshTab()
@@ -111,7 +112,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.apply(event)
         drawing?.apply(event)
         switch event {
-        case .trayChanged: refreshTray()
+        case .trayChanged(let tray):
+            retargetByWorktree(tray)
+            refreshTray()
         case .objectCreated, .objectDeleted:
             settlePromptTarget()
             refreshTray()
@@ -130,7 +133,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         trayTitleWork?.cancel()
         trayTitleWork = nil
         let target = canvas.promptTarget.flatMap { board.objects[$0] }
-        let title = target.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
+        var title = target.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
+        if let affinity, affinity.target == target?.id { title = title.map { "\($0) · works in \(affinity.checkout)" } }
         tray.show(board.tray, targetTitle: title, targetDrains: target.map(PromptTarget.runsAgent) ?? false,
                   hasTerminal: board.objects.values.contains { $0.type == .terminal })
     }
@@ -180,6 +184,31 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         focusOrder.removeAll { board.objects[$0] == nil }
         let target = PromptTarget.choose(focusOrder: focusOrder, objects: board.objects)
         if canvas.promptTarget != target { canvas.promptTarget = target }
+        if affinity?.target != target { affinity = nil }
+    }
+
+    /// The mentions the tray held when last seen, to tell which one was just staged.
+    private var trayMentions: Set<MentionID> = []
+    /// The terminal worktree affinity last made the target, with the checkout it works in; the
+    /// tray line says so while it stays the target.
+    private var affinity: (target: ObjectID, checkout: String)?
+
+    /// Worktree affinity (`PromptTarget.affinity`): a mention just staged from a file in another
+    /// checkout than the target's goes to the one agent working in that checkout, as if that
+    /// terminal had been focused last (the keyboard stays where it is).
+    private func retargetByWorktree(_ tray: [Mention]) {
+        let staged = tray.last { !trayMentions.contains($0.id) }
+        trayMentions = Set(tray.map(\.id))
+        guard let staged, let checkout = PromptTarget.checkout(of: staged.target, on: board) else { return }
+        var checkouts: [ObjectID: GitWorktree] = [:]
+        for terminal in board.objects.values where terminal.type == .terminal {
+            checkouts[terminal.id] = GitWorktree.containing(board.workingDirectory(of: terminal.id))
+        }
+        guard let agent = PromptTarget.affinity(checkout: checkout, current: canvas.promptTarget, checkouts: checkouts, objects: board.objects) else { return }
+        focusOrder.removeAll { $0 == agent }
+        focusOrder.append(agent)
+        settlePromptTarget()
+        affinity = (agent, checkout.name)
     }
 
     /// Keyboard focus inside a terminal tile counts for the prompt target and marks it seen.

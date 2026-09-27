@@ -114,6 +114,9 @@ public final class Board {
     /// The canvas rect the board's window shows (canvas coordinates); nil without a window.
     /// Placement prefers slots inside it.
     public var viewport: () -> Frame? = { nil }
+    /// The directory a terminal's shell last reported (OSC 7), where the program in it (an
+    /// agent) was started; nil when unknown or without a window. Set by the app.
+    public var reportedDirectory: (ObjectID) -> String? = { _ in nil }
     /// An arrow's routed line as currently drawn (canvas coordinates, at least two points), so
     /// deleting what it points at keeps its end exactly where the user saw it and its reported
     /// frame is what is drawn. Without it, routes come from object frames.
@@ -409,14 +412,20 @@ public final class Board {
     public static let followMinimumSize = (w: 400.0, h: 300.0)
     /// How recent an agent's last object must be for its next one to stack beside it (`place`).
     public static let answerStackWindow: TimeInterval = 10 * 60
+    /// How far (gap between the frames) a slot beside a tile may be from it and still win for
+    /// being in view. Further out, the view no longer matters: on a busy board an in-view spot
+    /// 1,600 pt away sits next to someone else's terminal and reads as theirs.
+    public static let nearbyDistance = 600.0
 
     /// Where a new object goes when nobody gave it a frame: the free slot nearest the caller's
     /// tile, touching it at `placementGap` when there's room (right first, then below, left,
-    /// above), else nearest the viewport center. The app also places the user's own new objects
-    /// here, beside the tile they came from (`near`, e.g. Edit Here's terminal) or at the viewport
-    /// center. See `place(_:)` for what counts as free. `shrinkingTo` (a follow tile's minimum
-    /// size): when nothing that size fits wholly in view, a smaller slot that does, down to the
-    /// minimum, beats one partly outside it.
+    /// above), else nearest the viewport center. Beside a tile, a slot in view beats one out of
+    /// it only while it is within `nearbyDistance` of the tile; beyond that the nearest slot
+    /// wins, in view or not (the agent raises a marker when the user should look). The app also
+    /// places the user's own new objects here, beside the tile they came from (`near`, e.g. Edit
+    /// Here's terminal) or at the viewport center. See `place(_:)` for what counts as free.
+    /// `shrinkingTo` (a follow tile's minimum size): when nothing that size fits wholly in view,
+    /// a smaller slot that does, down to the minimum, beats one partly outside it.
     ///
     /// `stacking` (an agent's own create without a frame; `caller` is that agent): its answers
     /// stack instead of going round the terminal. When the caller created a tile within
@@ -486,15 +495,17 @@ public final class Board {
             xs.formUnion([screen.x.rounded(.up), (screen.maxX - w).rounded(.down)])
             ys.formUnion([screen.y.rounded(.up), (screen.maxY - h).rounded(.down)])
         }
-        // In view, cut down to fit in view, partly in view, out of view; then distance to the
-        // anchor, then side (in `order`), then distance from where that side's slot would ideally
-        // start; ties go top-left first.
+        // In view, cut down to fit in view, partly in view, out of view (beside a tile: only
+        // within `nearbyDistance` of it; further slots all rank after those, by distance alone);
+        // then distance to the anchor, then side (in `order`), then distance from where that
+        // side's slot would ideally start; ties go top-left first.
         typealias Cost = (Int, Double, Int, Double, Double, Double)
         func cost(_ slot: Frame, cut: Bool) -> Cost {
             let outside = cut ? 1 : screen.map { $0.contains(slot) ? 0 : $0.intersects(slot) ? 2 : 3 } ?? 0
             guard beside else { return (outside, 0, 0, hypot(slot.x - anchor.x, slot.y - anchor.y), slot.y, slot.x) }
             let dx = max(0, anchor.x - slot.maxX, slot.x - anchor.maxX)
             let dy = max(0, anchor.y - slot.maxY, slot.y - anchor.maxY)
+            let distance = hypot(dx, dy).rounded()
             let side: Layout.Side
             let ideal: (x: Double, y: Double)
             if slot.x >= anchor.maxX {
@@ -506,7 +517,7 @@ public final class Board {
             } else {
                 (side, ideal) = (.above, (anchor.x, anchor.y - h - gap))
             }
-            return (outside, hypot(dx, dy).rounded(), order.firstIndex(of: side) ?? order.count, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
+            return (distance > Self.nearbyDistance ? 4 : outside, distance, order.firstIndex(of: side) ?? order.count, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
         }
         /// A slot partly in view cut down to its part in view, when that is at least `minimum`.
         func cut(_ slot: Frame) -> Frame? {

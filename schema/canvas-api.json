@@ -133,6 +133,7 @@
           "description": "Markdown. Code fence info strings pick a mode: ```ts file=path#L10-40``` (or symbol=Name, optionally with file=) is a live excerpt of the file; add `propose` to render the fence body as a diff against that range; file=path@<sha>#L10-40 pins to a commit; anchor=\"first line text\" re-finds the range when lines move. Any other fence is free-written; path:line references in it are clickable."
         },
         "title": { "type": "string", "description": "shown in the tile's title bar (default \"Note\") and Go to" },
+        "root": { "type": "string", "description": "the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params" },
         "scale": { "$ref": "#/definitions/Scale" }
       },
       "additionalProperties": false
@@ -143,6 +144,7 @@
       "properties": {
         "html": { "type": "string", "description": "page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded" },
         "title": { "type": "string" },
+        "root": { "type": "string", "description": "the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root" },
         "allowNetwork": { "type": "array", "items": { "type": "string", "description": "host, host:port, or *.host; http/https/ws to anything else is blocked" }, "default": [] },
         "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" },
         "scale": { "$ref": "#/definitions/Scale" }

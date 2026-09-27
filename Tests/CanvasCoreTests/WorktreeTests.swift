@@ -85,4 +85,88 @@ struct WorktreeTests {
         let drained = await board.drain(peek: true)
         #expect(drained.context.contains("code \(file):2-2"))
     }
+
+    /// An agent terminal working in `directory` (its `props.cwd`; the app adds the shell's
+    /// reported directory).
+    func agent(on board: Board, in directory: URL, frame: Frame? = nil) -> CanvasObject {
+        board.create(type: .terminal, props: .object([
+            "cwd": .string(directory.path), "command": .array([]),
+            "agent": .object(["kind": .string("omp")]), "lifecycle": .object(["state": .string("idle")]),
+        ]), frame: frame)
+    }
+
+    @Test func aMentionFromAnotherWorktreeTargetsTheOneAgentWorkingThere() async throws {
+        let (repo, worktree) = try await fixture()
+        let second = URL(fileURLWithPath: repo.root.path + "-wt/other")
+        try await repo.git("worktree", "add", "-q", "-b", "other", second.path)
+        let board = Board(id: "brd_test", root: repo.root)
+        let main = agent(on: board, in: repo.root)
+        let fees = agent(on: board, in: worktree.appendingPathComponent("src"))
+        let shell = board.create(type: .terminal, props: .object(["cwd": .string(worktree.path), "command": .array([])]))
+        let review = board.create(type: .changes, props: .object(["root": .string(worktree.path)]))
+        let checkouts = Dictionary(uniqueKeysWithValues: [main, fees, shell].map { ($0.id, GitWorktree.containing(board.workingDirectory(of: $0.id))!) })
+        func target(_ mention: MentionTarget, current: ObjectID?) -> ObjectID? {
+            PromptTarget.checkout(of: mention, on: board).flatMap { PromptTarget.affinity(checkout: $0, current: current, checkouts: checkouts, objects: board.objects) }
+        }
+
+        // The worktree's changes tile, or a line of a file in it (/private/tmp spelling too):
+        // its agent, not the plain shell in the same checkout.
+        #expect(target(.object(review.id), current: main.id) == fees.id)
+        let line = MentionTarget.code(object: review.id, path: "/private" + worktree.appendingPathComponent("src/fees.ts").path, lines: LineRange(start: 2, end: 2))
+        #expect(target(line, current: main.id) == fees.id)
+        #expect(target(line, current: nil) == fees.id, "no target yet")
+        // Already the right agent, or a mention in the target's own checkout: nothing moves.
+        #expect(target(line, current: fees.id) == nil)
+        #expect(target(.code(object: review.id, path: "src/fees.ts", lines: LineRange(start: 1, end: 1)), current: main.id) == nil)
+        // Back in the board's checkout from the worktree agent: the one agent there.
+        #expect(target(.code(object: review.id, path: "src/fees.ts", lines: LineRange(start: 1, end: 1)), current: fees.id) == main.id)
+        // A checkout nobody's agent works in, and one two agents work in: the target stays.
+        let otherReview = board.create(type: .changes, props: .object(["root": .string(second.path)]))
+        #expect(target(.object(otherReview.id), current: main.id) == nil)
+        let twin = agent(on: board, in: worktree)
+        var both = checkouts
+        both[twin.id] = GitWorktree.containing(worktree.path)
+        #expect(PromptTarget.affinity(checkout: GitWorktree.containing(worktree.path)!, current: main.id, checkouts: both, objects: board.objects) == nil)
+        // Pages, terminals and drawings name no checkout.
+        #expect(PromptTarget.checkout(of: .terminal(object: fees.id, text: "x"), on: board) == nil)
+    }
+
+    @Test func aWorktreeAgentsNotesResolveAgainstItsCheckout() async throws {
+        let (repo, worktree) = try await fixture()
+        let board = Board(id: "brd_test", root: repo.root)
+        let main = agent(on: board, in: repo.root)
+        let fees = agent(on: board, in: worktree.appendingPathComponent("src"))
+
+        // The default: the creating agent's checkout when it isn't the board's.
+        #expect(board.defaultLinkRoot(for: fees.id) == worktree.path)
+        #expect(board.defaultLinkRoot(for: main.id) == nil)
+        #expect(board.defaultLinkRoot(for: nil) == nil, "the user's notes resolve against the board root")
+        // The shell's reported directory wins over props.cwd.
+        board.reportedDirectory = { $0 == main.id ? worktree.path : nil }
+        #expect(board.defaultLinkRoot(for: main.id) == worktree.path)
+        board.reportedDirectory = { _ in nil }
+
+        // Links written in the worktree agent's note open its checkout's file; absolute ones stay.
+        let note = board.create(type: .note, props: .object(["markdown": .string("tests/x.ts:16"), "root": .string(worktree.path)]))
+        #expect(board.linkRoot(of: note).path == worktree.path)
+        #expect(board.boardPath("src/fees.ts", linkRoot: board.linkRoot(of: note)) == worktree.appendingPathComponent("src/fees.ts").path)
+        #expect(board.boardPath("src/fees.ts", linkRoot: board.root) == "src/fees.ts")
+        let relative = board.create(type: .html, props: .object(["html": .string(""), "root": .string("../\(repo.root.lastPathComponent)-wt/fees")]))
+        #expect(board.linkRoot(of: relative).path == worktree.path, "board-relative roots resolve against the board root")
+
+        // Only the board's own repository and its worktrees.
+        try board.checkLinkRoot(worktree.path)
+        try board.checkLinkRoot(repo.root.appendingPathComponent("src").path)
+        let stranger = try await TempRepo()
+        #expect(throws: BoardError.self) { try board.checkLinkRoot(stranger.root.path) }
+        #expect(throws: BoardError.self) { try board.checkLinkRoot(worktree.appendingPathComponent("missing").path) }
+        #expect(throws: BoardError.self) { try board.checkLinkRoot(worktree.appendingPathComponent("src/fees.ts").path) }
+    }
+
+    @Test func aBoardRootedInASubdirectoryMapsTheWorktreeToTheSamePlace() async throws {
+        let (repo, worktree) = try await fixture()
+        let board = Board(id: "brd_test", root: repo.root.appendingPathComponent("src"))
+        let fees = agent(on: board, in: worktree)
+        #expect(board.defaultLinkRoot(for: fees.id) == worktree.appendingPathComponent("src").path)
+    }
 }

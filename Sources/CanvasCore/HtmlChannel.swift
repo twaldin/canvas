@@ -6,18 +6,21 @@ import Foundation
 public enum HtmlChannel {
     public static let maxStateBytes = 256 * 1024
 
-    /// `tile` need only be on `board` for state messages: a page measured before its tile exists
-    /// (`HtmlTile.measure`) reads excerpts against the board's root.
+    /// A page's paths resolve against its tile's link root (`Board.linkRoot`). `tile` need only
+    /// be on `board` for state messages: a page measured before its tile exists
+    /// (`HtmlTile.measure`, on a scratch board rooted at the page's link root) reads excerpts
+    /// against the board's root.
     public static func handle(_ message: HtmlMessage, tile: ObjectID, board: Board) async throws -> JSONValue {
+        let root = board.objects[tile].map(board.linkRoot(of:)) ?? board.root
         switch message {
         case .excerpt(let path, let lines, let symbol):
-            let file = try HtmlKit.boardFile(path, root: board.root)
+            let file = try HtmlKit.boardFile(path, root: root)
             let excerpt = await offMain { SourceExcerpt.load(url: file.url, path: file.relative, lines: lines, symbol: symbol) }
             try Task.checkCancellation()
             return try JSONValue.encode(excerpt)
 
         case .openCode(let path, let lines, let symbol):
-            let file = try HtmlKit.boardFile(path, root: board.root)
+            let file = try HtmlKit.boardFile(path, root: root)
             var range = lines
             if range == nil, let symbol {
                 range = await offMain { () -> LineRange? in
@@ -27,7 +30,7 @@ public enum HtmlChannel {
                 try Task.checkCancellation()
             }
             guard FileManager.default.fileExists(atPath: file.url.path) else { throw HtmlError.notFound(file.relative) }
-            return try openCode(path: file.relative, range: range, symbol: symbol, beside: tile, on: board)
+            return try openCode(path: board.boardPath(file.relative, linkRoot: root), range: range, symbol: symbol, beside: tile, on: board)
 
         case .getState(let key):
             return state(try board.object(tile).props, key: key)

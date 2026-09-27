@@ -24,6 +24,7 @@ Error codes: `not_found` (no such object/agent/board; a code tile's file or `pin
 - `object.get --as graph` gives `encloses`, `enclosedBy`, `overlaps`, `arrowsOut`, `arrowsIn`. To look at an object use `view.render` (`canvas render <id> --out file.png`).
 - `tray.list` shows what the user has staged but not yet sent. Don't drain the tray yourself; your harness attaches it to the user's next prompt.
   The tray's mentions are for the terminal it shows (`view.get` `promptTarget`): `tray.drain` from any other terminal returns none (`held` says how many wait) and leaves them staged.
+  A drawn shape's mention quotes its whole text, says `over <type> <id>` (or `partly over`, for a shape mostly on a tile) with the region in that tile's units, and for a shape on a browser or HTML tile lists the page elements under it (`<selector> "<text>"`, as the page is laid out when the prompt is sent). A Hyper-click on a drawing mentions the whole selection or drawing group it belongs to.
 - An arrow's `frame` is the bounds of its routed line as drawn.
 
 ## Objects

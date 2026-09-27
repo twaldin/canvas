@@ -337,10 +337,15 @@ final class TileFrameView: NSView {
 
     // MARK: Move / resize
 
-    /// The bottom-right corner: drag resizes, ⌥-drag scales. 16 canvas points at any tile scale.
+    /// The bottom-right corner: drag resizes, ⌥-drag scales. 16 canvas points in at any tile
+    /// scale (at least the handle's half on screen), and past the corner as far as the handle
+    /// the canvas draws for a selected tile (`TileHandles`) reaches, selected or not, inside a
+    /// group or not: a drag starting just outside the corner still resizes.
     private var resizeGrip: NSRect {
-        let size = 16 / scale
-        return NSRect(x: bounds.width - size, y: bounds.height - size, width: size, height: size)
+        let perScreenPoint = convert(NSSize(width: 1, height: 1), from: nil).width
+        let reach = TileHandles.reach * perScreenPoint
+        let inside = min(max(16 / scale, reach), bounds.width / 2, bounds.height / 2)
+        return NSRect(x: bounds.width - inside, y: bounds.height - inside, width: inside + reach, height: inside + reach)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {

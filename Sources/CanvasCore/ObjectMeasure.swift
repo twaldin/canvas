@@ -185,6 +185,32 @@ public enum ObjectMeasure {
     }
 }
 
+/// How a text shape typed on the canvas is sized as it's typed and committed: one made by a
+/// click grows with its text and wraps at `autoWidth` (times its scale); one made by a drag, or
+/// any other width, wraps at its frame's width and keeps it. The drawing layer wraps at the
+/// frame width, so the frame alone says which: a frame exactly as wide as its grown text grows.
+@MainActor
+public enum TextShapeLayout {
+    /// Where a clicked text shape starts wrapping, at scale 1.
+    public static let autoWidth: CGFloat = 320
+
+    /// The frame size for `text`: `wrapWidth` wide when given, else grown to the text up to
+    /// `autoWidth × scale`. Empty text measures as one line.
+    public static func size(_ text: String, scale: CGFloat, wrapWidth: CGFloat?) -> CGSize {
+        let label = DrawingStyle.text(text.isEmpty ? " " : text, size: DrawingStyle.textSize * scale, color: .labelColor)
+        let bounds = ObjectMeasure.textBounds(label, width: max(1, wrapWidth ?? autoWidth * scale))
+        return CGSize(width: wrapWidth ?? bounds.width, height: bounds.height)
+    }
+
+    /// An existing text shape's wrap width: nil while its frame is its text's grown size (it
+    /// keeps growing as it's edited), else its frame's width.
+    public static func wrapWidth(of object: CanvasObject) -> CGFloat? {
+        guard let spec = ShapeSpec(object.props), spec.kind == .text else { return nil }
+        let grown = size(spec.text ?? "", scale: spec.scale, wrapWidth: nil)
+        return abs(grown.width - CGFloat(object.frame.w)) <= 1 ? nil : CGFloat(object.frame.w)
+    }
+}
+
 /// The one-line caption strip of a code tile, as the header draws it (live and offscreen) and as
 /// `ObjectMeasure` sizes it.
 public enum CodeCaption {

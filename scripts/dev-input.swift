@@ -4,7 +4,8 @@
 //   dev-input <pid> click <x> <y> [--mods hyper|cmd|shift|opt|ctrl[+…]] [--clicks 2]
 //   dev-input <pid> rightclick <x> <y>
 //   dev-input <pid> menu <x> <y> "<item>/<submenu item>"  perform a context-menu item without opening the menu
-//   dev-input <pid> drag <x> <y> <toX> <toY> [--mods …]
+//   dev-input <pid> drag <x> <y> <toX> <toY> [--mods …] [--hold]   --hold: no mouse-up (shoot mid-drag)
+//   dev-input <pid> release <x> <y>                  the mouse-up ending a held drag
 //   dev-input <pid> flags <x> <y> [--mods …]         hold modifiers with the pointer at x,y (hover); no --mods releases
 //   dev-input <pid> move <x> <y>                     move the pointer (tracking-area hover, e.g. code navigation)
 //   dev-input <pid> text "<string>"                  insert text into the first responder
@@ -29,6 +30,8 @@ let mods = option("--mods")
 let clicks = option("--clicks")
 let repeatCount = option("--repeat")
 let interval = option("--interval")
+let hold = args.contains("--hold")
+args.removeAll { $0 == "--hold" }
 guard args.count >= 2 else {
     FileHandle.standardError.write(Data("usage: dev-input <pid> <kind> …  (see header of scripts/dev-input.swift)\n".utf8))
     exit(2)
@@ -36,7 +39,7 @@ guard args.count >= 2 else {
 var info: [String: String] = ["pid": args[0], "kind": args[1]]
 let rest = Array(args.dropFirst(2))
 switch args[1] {
-case "click", "rightclick", "flags", "move":
+case "click", "rightclick", "flags", "move", "release":
     guard rest.count >= 2 else { exit(2) }
     info["x"] = rest[0]; info["y"] = rest[1]
 case "menu":
@@ -65,6 +68,7 @@ default:
 }
 if let mods { info["mods"] = mods }
 if let clicks { info["clicks"] = clicks }
+if hold { info["hold"] = "1" }
 if let repeatCount { info["repeat"] = repeatCount }
 if let interval { info["interval"] = interval }
 DistributedNotificationCenter.default().postNotificationName(Notification.Name("canvas.dev.input"), object: nil, userInfo: info, deliverImmediately: true)

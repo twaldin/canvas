@@ -105,6 +105,12 @@ protocol TileContent: NSView {
     func resolveMention(at point: NSPoint) async -> MentionTarget?
     /// Outline for a target in this view's coordinates, for the hover highlight.
     func outline(for target: MentionTarget) -> NSRect?
+    /// The page elements under `rect` (this view's coordinates), for a mention of a shape drawn
+    /// over the tile; nil for tiles without a page, and while the page isn't there to ask.
+    func pageElements(in rect: NSRect) async -> PageElements?
+    /// Height of the controls strip at the top of the content (a browser's address bar, a code
+    /// tile's header), which attention bubbles keep off, like the title bar above it.
+    var headerHeight: CGFloat { get }
     /// Whether clicking into the tile should take keyboard focus.
     var takesKeyboardFocus: Bool { get }
     /// Apply a new revision of the backing object.
@@ -120,6 +126,10 @@ extension TileContent {
     func resolveMention(at point: NSPoint) async -> MentionTarget? {
         mentionTarget(at: point)
     }
+
+    func pageElements(in rect: NSRect) async -> PageElements? { nil }
+
+    var headerHeight: CGFloat { 0 }
 
     func showSnapshot(_ show: Bool) {}
 

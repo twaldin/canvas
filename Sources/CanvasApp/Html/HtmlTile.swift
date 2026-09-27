@@ -397,6 +397,13 @@ final class HtmlTile: NSView, TileContent {
         return domTarget(element)
     }
 
+    func pageElements(in rect: NSRect) async -> PageElements? {
+        let region = rect.intersection(bounds)
+        guard let web = webView, !region.isNull, region.width > 0, region.height > 0,
+              let found = await WebMentions.elements(in: region, in: web) else { return nil }
+        return PageElements(url: pageURL.absoluteString, elements: found.elements.map { .init(selector: $0.selector, text: $0.text) }, more: found.more)
+    }
+
     func outline(for target: MentionTarget) -> NSRect? {
         guard case .dom(_, _, let selector, _) = target, let hovered, hovered.selector == selector else { return bounds }
         return hovered.rect.intersection(bounds)

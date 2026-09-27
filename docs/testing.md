@@ -51,7 +51,8 @@ Real mouse input can't reach an unviewed Space, and posting system events needs 
 
 ```sh
 scripts/dev.sh input click <x> <y> [--mods hyper|cmd|shift|opt|ctrl[+…]] [--clicks 2]
-scripts/dev.sh input drag <x> <y> <toX> <toY> [--mods …]
+scripts/dev.sh input drag <x> <y> <toX> <toY> [--mods …] [--hold]   # --hold keeps the button down: shoot mid-drag, then
+scripts/dev.sh input release <x> <y>                # end the held drag
 scripts/dev.sh input rightclick <x> <y>             # opens the context menu on screen
 scripts/dev.sh input menu <x> <y> "Scale/150%"      # performs that context-menu item without opening the menu (over code: "Find References", "Outline")
 scripts/dev.sh input flags <x> <y> --mods hyper     # hold Hyper over x,y (hover outline); omit --mods to release

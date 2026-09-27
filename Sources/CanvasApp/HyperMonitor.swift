@@ -49,7 +49,7 @@ final class HyperMonitor {
         case .leftMouseDown where hyper:
             let focus = event.window?.firstResponder
             if let shape = canvas.shape(atWindowPoint: event.locationInWindow) {
-                Self.toggle(.object(shape), on: canvas.board)
+                Self.toggle(MentionContext.drawingTarget(shape, selection: canvas.selection, on: canvas.board), on: canvas.board)
                 Self.keepFocus(focus, in: event.window)
             } else if let (tile, point) = canvas.tile(atWindowPoint: event.locationInWindow) {
                 let content = tile.content
@@ -107,7 +107,10 @@ final class HyperMonitor {
         }
         hoverContext = (canvas, point)
         if let shape = canvas.shape(atWindowPoint: point) {
-            return canvas.showOutline(docRect: canvas.shapeOutline?(shape))
+            // Everything the click would mention: the selection or drawing group it belongs to.
+            let ids = MentionContext.drawingTarget(shape, selection: canvas.selection, on: canvas.board).objectIDs
+            let rects = ids.compactMap { canvas.shapeOutline?($0) ?? canvas.docFrame($0) }
+            return canvas.showOutline(docRect: rects.dropFirst().reduce(rects.first) { $0?.union($1) })
         }
         guard let (tile, local) = canvas.tile(atWindowPoint: point) else { return canvas.showOutline(nil, in: nil) }
         let target = tile.content.mentionTarget(at: local) ?? .object(tile.objectID)

@@ -161,27 +161,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let noActivate = ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] == "1"
         if !isShown(window), let host = tabHost(excluding: window) {
             let front = host.tabGroup?.selectedWindow ?? host
-            host.addTabbedWindow(window, ordered: .above)
+            // `addTabbedWindow` onto a minimized window shows the new one by itself on the
+            // current Space; the group takes it as a hidden tab.
+            if host.isMiniaturized, let group = host.tabGroup { group.addWindow(window) } else { host.addTabbedWindow(window, ordered: .above) }
             if !select { window.tabGroup?.selectedWindow = front }
         } else if !isShown(window) {
             if noActivate { window.orderBack(nil) } else { controller.showWindow(nil) }
             return board
         }
         guard select else { return board }
+        // Selecting a tab of a minimized group also detaches it onto the current Space: bring the
+        // group back first (the user asked to see this board). An instance that never activates
+        // leaves the tab waiting in the minimized group.
+        if let minimized = window.tabGroup?.windows.first(where: \.isMiniaturized) {
+            if noActivate { return board }
+            minimized.deminiaturize(nil)
+        }
         window.tabGroup?.selectedWindow = window
         if !noActivate { window.makeKeyAndOrderFront(nil) }
         return board
     }
 
-    /// A tab that isn't selected is ordered out, so "shown" means visible or in a tab group.
+    /// A tab that isn't selected is ordered out and a minimized window isn't visible, so "shown"
+    /// means visible, minimized, or in a tab group.
     private func isShown(_ window: NSWindow) -> Bool {
-        window.isVisible || (window.tabGroup?.windows.count ?? 0) > 1
+        window.isVisible || window.isMiniaturized || (window.tabGroup?.windows.count ?? 0) > 1
     }
 
-    /// The board window new boards join as tabs: the key one, else any on screen.
+    /// The board window new boards join as tabs: the key one, else any on screen, else a
+    /// minimized one (a board opened while the window is in the Dock joins it there rather than
+    /// opening a window of its own on the user's current Space).
     private func tabHost(excluding window: NSWindow) -> NSWindow? {
-        let windows = controllers.values.compactMap(\.window).filter { $0 !== window && $0.isVisible }
-        return windows.first(where: \.isKeyWindow) ?? windows.first
+        let windows = controllers.values.compactMap(\.window).filter { $0 !== window && ($0.isVisible || $0.isMiniaturized) }
+        return windows.first(where: \.isKeyWindow) ?? windows.first(where: \.isVisible) ?? windows.first
     }
 
     /// Records the shown boards' roots in tab order (AppPaths.openBoards) for the next launch.

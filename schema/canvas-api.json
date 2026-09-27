@@ -424,7 +424,7 @@
       "result": { "type": "object", "required": ["boards"], "properties": { "boards": { "type": "array", "items": { "$ref": "#/definitions/BoardInfo" } } } }
     },
     "board.open": {
-      "description": "Open the board for a directory (creating it if new) as a tab of the frontmost board window. The user's current tab stays in front unless `select` is true. Opening an already-open board only selects it when `select` is true.",
+      "description": "Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true.",
       "params": {
         "type": "object",
         "required": ["root"],

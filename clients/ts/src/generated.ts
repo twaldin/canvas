@@ -761,7 +761,7 @@ export interface CanvasApi {
     history(params?: BoardHistoryParams): Promise<BoardHistoryResult>;
     /** Every stored board, open or not, including archived boards whose root directory is gone. */
     list(params?: BoardListParams): Promise<BoardListResult>;
-    /** Open the board for a directory (creating it if new) as a tab of the frontmost board window. The user's current tab stays in front unless `select` is true. Opening an already-open board only selects it when `select` is true. */
+    /** Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true. */
     open(params: BoardOpenParams): Promise<BoardOpenResult>;
     /** Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller. */
     export(params?: BoardExportParams): Promise<BoardExportResult>;

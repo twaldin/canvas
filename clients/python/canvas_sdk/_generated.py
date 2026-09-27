@@ -233,7 +233,7 @@ class BoardApi:
         return self._call("board.list", params, [])
 
     def open(self, *, root: str, select: bool | None = None) -> dict[str, Any]:
-        """Open the board for a directory (creating it if new) as a tab of the frontmost board window. The user's current tab stays in front unless `select` is true. Opening an already-open board only selects it when `select` is true."""
+        """Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true."""
         params = {"root": root, "select": select}
         return self._call("board.open", params, [])
 

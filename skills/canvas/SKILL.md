@@ -21,13 +21,12 @@ Read these before you build anything; each one cost earlier agents a round trip.
 - **Start small.** A first draft is about one screen: one tile, or a few in a group.
   Split a long explainer into grouped tiles rather than one tall page, and expand when the user asks.
   A 20-object first draft overwhelms; a compact one gets read.
-- **Let the canvas do the geometry.** Omit `frame` and new objects land beside your terminal without covering anything.
+- **Let the canvas do the geometry.** Omit `frame` and a new object lands in the free spot nearest your terminal:
+  clear of every tile and group (other agents' too), inside the user's view when there's room. Read the returned frame to place related objects.
   For deliberate layouts use `size: "fit"` and the layout helpers (`layout.place`/`stack`/`grid`/`translate`, then `layout.check`), not hand-computed coordinates:
   those collided with the follow tile and other agents' tiles.
-- **Write renders under `$TMPDIR`, never inside the repo.**
-  Files you write there show up in `git status`, and your follow tile re-aims at every file you read, your own PNGs included
-  (then says "file not found" once you delete them).
-  Use e.g. `canvas render obj_… --out "$TMPDIR/tile.png"`.
+- **Renders go to a temp file.** `canvas render obj_…` without `--out` writes a new PNG under `$TMPDIR/canvas-renders/` and returns its `path`.
+  Never pass an `--out` inside the repo: it shows up in `git status`.
 - **Code tiles tint their `range` only among other rows.** A `size: "fit"` tile shows exactly its range, untinted.
   To mark a few lines inside more context, give the tile a taller frame instead of fitting it.
 - **Line-bound arrows pin when their line is out of view.** An arrow end bound to `lines` of a code tile attaches at that row only while the tile shows it;
@@ -61,7 +60,7 @@ Read these before you build anything; each one cost earlier agents a round trip.
   canvas board.get
   canvas object.create --type note --json '{"props":{"markdown":"# Plan"}}'
   canvas get obj_… --as graph                      # object.get shorthand
-  canvas render obj_… --out "$TMPDIR/t.png"        # view.render shorthand; also obj_a,obj_b or x,y,w,h
+  canvas render obj_…                              # view.render shorthand (also obj_a,obj_b or x,y,w,h); prints the PNG path
   ```
   Errors print `code: message` and exit 1.
 - TypeScript/Bun: `new CanvasClient({ socketPath?, tile?, board? })` from `clients/ts/src/index.ts`, methods under `client.api.<ns>.<method>({…})`.
@@ -74,7 +73,7 @@ Results are objects, never bare values:
 | `object.batch` | `{results, revision}`: each op's result in order (`results[0]["object"]["id"]`) |
 | `layout.place`/`stack`/`translate` | `{frames: {id: frame}}`; `layout.grid` adds `columns` and `rows` |
 | `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, overflow, truncated}` |
-| `view.render`, `view.snapshot` | `{path or imageBase64, width, height, scale, objects}` plus `canvasRect` (render) or `viewport` (snapshot) |
+| `view.render`, `view.snapshot` | `{path, width, height, scale, objects}` plus `canvasRect` (render) or `viewport` (snapshot) |
 | `agent.prompt`, `agent.wait` | `{agent}`; `agent.read` → `{agent, text, lines}` |
 
 `caller` (you) and `board` are filled from the client's tile and board (explicit, else `CANVAS_TILE_ID`/`CANVAS_BOARD_ID`),
@@ -116,23 +115,23 @@ An `(edited)` marker means the object changed after the user staged it.
 It never moves the user's view and doesn't depend on it, so never put probe objects in the user's view to look at them.
 
 ```sh
-canvas render obj_… --out "$TMPDIR/a.png"                 # one object (the canvas region under it)
-canvas render obj_a,obj_b --scale 2 --out "$TMPDIR/b.png" # the region covering several
-canvas render 0,1200,2400,1600 --exclude '["terminal"]' --out "$TMPDIR/c.png"   # a canvas rect x,y,w,h
-canvas render obj_… --full --out "$TMPDIR/d.png"          # a note/HTML tile's whole content (code: its whole range), below its frame too
+canvas render obj_…                                  # one object (the canvas region under it)
+canvas render obj_a,obj_b --scale 2                  # the region covering several
+canvas render 0,1200,2400,1600 --exclude '["terminal"]'   # a canvas rect x,y,w,h
+canvas render obj_… --full                           # a note/HTML tile's whole content (code: its whole range), below its frame too
 ```
 
-Python: `canvas.view.render(target="obj_…", full=True, out=f"{tempfile.gettempdir()}/note.png")`
+Python: `canvas.view.render(target="obj_…", full=True)["path"]`
 (`target` is an id, a list of ids, or `{"x","y","w","h"}`).
-The app writes `out` (png or jpg by extension; clients resolve relative paths); without `out` the result has `imageBase64`.
+The app writes a new file under `$TMPDIR/canvas-renders/` (or `out` if you pass one: png or jpg by extension; clients resolve relative paths), and `path` in the result is that file.
 The result maps pixels to the canvas: pixel `(px, py)` is canvas `(canvasRect.x + px / scale, canvasRect.y + py / scale)`,
 and `objects` lists every object drawn with its `pixelRect`
 (a tile's is exactly its frame: a tile's `frame` is its whole drawn box, 26 pt title bar included), `state`, and `overflow`:
 
 - `state: rendered` means the content painted.
   `placeholder` means it didn't in time or can't be rendered here (`reason` says why; the image shows an orange "not rendered" tag instead of a silent blank).
-  Browser pages that aren't loaded are not reloaded for a render; they show their last capture as a placeholder.
-  Content waits up to `timeoutMs` (8 s) for HTML pages and file reads to settle.
+  A browser tile that isn't loaded (offscreen, never shown) is loaded for the render.
+  Content waits up to `timeoutMs` (8 s) for HTML and browser pages and file reads to settle.
 - `overflow: {x, y}`: canvas points of content beyond the tile's frame
   (a note taller than its box, a code range longer than the tile; code wraps at the tile's width, so it only overflows downward).
   Absent when the content fits. Resize the frame by that much to fit it, or render with `full`.
@@ -165,7 +164,7 @@ Create objects when a visual helps the user more than terminal text: a plan they
 Don't mirror your whole transcript onto the canvas.
 Keep the first draft to about one screen (see Known surprises) and grow it when the user asks.
 
-Omit `frame` and the canvas places new objects beside your terminal without covering anything.
+Omit `frame` and the canvas places new objects in the free spot nearest your terminal (see Known surprises).
 When you lay things out deliberately, let the canvas do the geometry:
 
 - `size: "fit"` sizes a tile to its content.
@@ -174,6 +173,7 @@ When you lay things out deliberately, let the canvas do the geometry:
 - `object.batch` applies a whole layout as one ⌘Z step with `"$0"` references to objects it creates.
 - `layout.check` reports overlaps, arrows through tiles, arrow labels lying on tiles or on each other, content that doesn't fit, and cut-off captions.
   It judges what is drawn: frames are whole tiles, and arrows route as drawn. When it reports nothing, the picture is clean.
+  Unfilled rects and ellipses are annotations and never count as overlaps.
 
 Details and an example: `references/api.md` "Layout".
 
@@ -184,7 +184,7 @@ Details and an example: `references/api.md` "Layout".
 | Durable notes, plans, findings | `note`: `{"markdown": "…"}` |
 | A rich explainer, comparison, decision | `html` tile, see below |
 | Structure: boxes, labels, relations | `shape` / `arrow`, see below |
-| A web page | `browser`: `{"url": "http://localhost:3000"}` (your native browser tool also drives these) |
+| A web page | `browser`: `{"url": "http://localhost:3000"}` (your browser tool opens its own; see Browser tiles) |
 
 Code paths may point outside the board root (`../other-repo/src/x.ts` or an absolute path); the tile reads git from that file's own repository.
 
@@ -197,7 +197,9 @@ Delete with `object.delete`.
 
 ### Notes
 
-Markdown. Code fences are live when anchored to real code, so prefer anchors over pasted code:
+A note created without a frame height fits its markdown (at `frame.w`, default 280), so `frame` can be just `{x, y, w}`.
+`title` sets its title bar (default "Note").
+Markdown code fences are live when anchored to real code, so prefer anchors over pasted code:
 
 - Excerpt, rendered from disk: ```` ```ts file=src/store.ts#L41-60 ```` or ```` ```ts file=src/store.ts symbol=restore ````
 - Proposed change, rendered as a diff against the real range: add `propose` (```` ```ts file=src/store.ts#L41-48 propose ````) and write the new code in the fence.
@@ -232,6 +234,7 @@ Every tile preloads Tailwind (themed to the app: `bg-background text-foreground 
 Mermaid (`<pre class="mermaid">`), and grounded components:
 
 - `<canvas-code path="src/x.ts" lines="10-40" symbol="Name">` — a live excerpt from the real file; click opens a code tile.
+  Long lines soft-wrap with a hanging indent, so don't widen the tile for them.
 - `<canvas-link path="src/x.ts" line="42">text</canvas-link>` — a file:line link that opens a code tile.
 - `<canvas-decisions key="…" question="…"><canvas-option value="…" label="…">…</canvas-option></canvas-decisions>` —
   the user's pick lands in the tile's `props.state[key]`; read it back with `object.get`.
@@ -258,6 +261,7 @@ Read it before building an explainer.
     It follows the tile's scroll, and a line scrolled out of view pins the end to the top of the code or the bottom of the tile.
     On other tiles `lines` binds the whole tile.
   - `relation` is the machine-readable edge (`calls`, `depends_on`, `hypothesis_about`, …); `label` is what the user reads.
+    Without a label the arrow shows its relation in a secondary color; `label: ""` shows no caption.
   - `route`: `straight` (default), `orthogonal`, or `avoid` (goes around tiles in the way).
     Arrows between the same two objects are drawn apart automatically, both directions.
 - `group`: `{"members": [ids], "title": "…", "color": "blue", "padding": 24}` is a titled, tinted region whose frame always wraps its members
@@ -265,10 +269,34 @@ Read it before building an explainer.
 
 `canvas get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
 
+## Browser tiles
+
+omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens a browser tile beside your terminal for each `browser.open({name})`;
+`close` deletes it.
+
+- The tool doesn't return the tile id. Find it with `canvas board.history --limit 5` (`agent:<your tile> created … browser <url>`)
+  or `canvas board.get` (browser tiles whose `createdBy` is your tile).
+  Tiles made with `object.create` or by the user can't be driven by the tool: change their `props.url` with `object.update` and look with `canvas render`.
+- The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus the 32 pt address bar.
+  The tool's `viewport`/`emulate` options are ignored here. To test a width, resize the tile
+  (`canvas object.update <id> --json '{"frame":{"w":390,"h":844}}'`); the user sees the same tile.
+- `tab.evaluate` must return plain values (omp rejects functions that return a promise on this backend); poll with `waitForFunction` for async state.
+  On strict-CSP pages (e.g. GitHub) pass functions, not code strings: string code runs through the page's `eval`, which CSP blocks.
+- A page you drive or render stays live for 60 s after your last command wherever its tile is (offscreen, window minimized, another Space):
+  `visibilityState` is `visible` and timers and `requestAnimationFrame` run. Don't move tiles into the user's view to make them work.
+- `canvas render <tile>` loads a page that was never shown and waits up to `--timeoutMs` (8 s).
+  `--full` doesn't capture below the fold on browser tiles; make the tile taller instead.
+- All browser tiles share one WebKit profile, separate from the user's own browser and signed out: use `gh` or APIs for logged-in state.
+- The user can click links and buttons in a tile directly; your tiles opening and closing are credited to your terminal in `board.history`.
+
 ## Follow mode
 
-Your terminal has one follow tile: the canvas re-aims it at every file you read, edit, or write, flashes the lines each edit or write changed, and keeps a short history.
+Your terminal has one follow tile: the canvas re-aims it at every source file in the project you read, edit, or write,
+flashes the lines each edit or write changed, and keeps a short history.
+Images, PDFs and other binaries, files under the temp dir, and files that no longer exist never re-aim it.
 While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed ("N new ▸") before following again.
+If the user closes it, your terminal stops following until they turn "Follow Files" back on in your terminal's menu:
+don't re-create it or turn following back on yourself. Closing your terminal closes its follow tile.
 It happens automatically; don't create code tiles just to show what you are reading.
 Create code tiles for code you want the user to keep looking at.
 
@@ -299,7 +327,7 @@ Agents in other terminal tiles (any canvas in the app) are reachable by tile id 
 canvas agent.list                                    # tile, kind, name, lifecycle (working/blocked/idle/done)
 canvas agent.prompt --target reviewer --text "Review the diff in src/store.ts"
 canvas agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `until` narrows it
-canvas agent.read --target reviewer --lines 80       # the tail of its terminal text
+canvas agent.read --target reviewer --lines 80       # the tail of its terminal text (inline images read as [image])
 ```
 
 `agent.wait` after `agent.prompt` waits for the work you just asked for, not the previous idle.

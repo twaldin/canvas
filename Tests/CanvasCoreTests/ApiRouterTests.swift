@@ -106,6 +106,10 @@ final class ApiRouterTests {
 
     @Test func boardGetSummarizesAFollowTilesHistoryAndObjectGetHasItWhole() async throws {
         let tile = terminal()
+        // Follow shows only files that exist in the project.
+        let source = dir.appendingPathComponent("root/src/a.ts")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try (1...100).map { "line \($0)" }.joined(separator: "\n").write(to: source, atomically: true, encoding: .utf8)
         for line in [10, 40, 90] {
             try board.follow(tile: tile, path: "src/a.ts", range: LineRange(start: line, end: line + 5), action: "read")
         }

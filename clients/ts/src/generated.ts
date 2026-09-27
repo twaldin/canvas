@@ -47,6 +47,8 @@ export type Lifecycle = {
   state: "working" | "blocked" | "idle" | "done" | "unknown";
   message?: string;
   seen?: boolean;
+  /** an agent without a lifecycle integration: its terminal notifications (OSC 9/777, a bell) set `done` (`idle` while the user looks), Return typed into it or `agent.prompt` sets `unknown` until the next one; never `working` or `blocked` */
+  via?: "notifications";
 };
 
 export type TerminalProps = {
@@ -423,7 +425,7 @@ export type Agent = {
   /** that board's root directory */
   root: string;
   name?: string;
-  /** the integrated agent that reported (omp, claude, codex, gemini, opencode), else unknown */
+  /** the integrated agent that reported (omp, claude, codex, gemini, opencode), or the program of an agent reporting by notification (aider; lifecycle `via: "notifications"`), else unknown */
   kind: string;
   /** the title the program in the terminal set (OSC 0/2), e.g. Gemini CLI's "✋ Action Required (glow)"; absent when none */
   title?: string;
@@ -720,6 +722,22 @@ export type ObjectMeasureParams = {
 };
 export type ObjectMeasureResult = Size;
 
+export type ObjectReloadParams = {
+  id: Id;
+  /** how long to wait for the page to finish loading; 0 returns as soon as the reload has started */
+  timeoutMs?: number;
+  caller?: Id;
+};
+export type ObjectReloadResult = {
+  id: Id;
+  /** the address the page shows */
+  url: string;
+  /** the page finished loading within `timeoutMs` */
+  loaded: boolean;
+  /** the page couldn't load: why, in a few words ("connection refused"); the tile shows it and retries a local address itself */
+  failed?: string;
+};
+
 export type ObjectBatchParams = {
   board?: Id;
   ops: ({
@@ -943,7 +961,7 @@ export type AgentPromptResult = {
   /** as it was when the prompt was submitted (its lifecycle is still the previous turn's) */
   agent: Agent;
   submittedAt: string;
-  /** the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: "prompt"` */
+  /** the agent reports a lifecycle (an integration, or by notification), so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: "prompt"` */
   waitable: boolean;
   /** present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice) */
   mentions?: Mention[];
@@ -1121,6 +1139,8 @@ export interface CanvasApi {
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
     /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
+    /** Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so a `canvas get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. Only browser tiles reload: code, note and changes tiles follow their files by themselves. */
+    reload(params: ObjectReloadParams): Promise<ObjectReloadResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;
   };
@@ -1149,17 +1169,17 @@ export interface CanvasApi {
     commit(params: TrayCommitParams): Promise<TrayCommitResult>;
   };
   agent: {
-    /** Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. With `serial`, a `blocked` call replaces every earlier wait (agents that ask one approval at a time), so the message always names the request on screen. `working` without `call` (a new prompt) and `idle` end every wait. */
+    /** Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. With `serial`, a `blocked` call replaces every earlier wait (agents that ask one approval at a time), so the message always names the request on screen. `working` without `call` (a new prompt) and `idle` end every wait. `unknown`: an agent without a lifecycle integration runs in the tile (a wrapper such as `bin/aider` reports it as the agent starts): the tile counts as an agent for the tray and `agent.wait`, and its terminal notifications report when it waits (lifecycle `via: "notifications"`). */
     report(params: AgentReportParams): Promise<AgentReportResult>;
     /** Report the agent's native session identity so the tile can resume it after a reboot. */
     report_session(params: AgentReportSessionParams): Promise<AgentReportSessionResult>;
     /** The agent in this tile exited; clear its lifecycle authority and its recorded session (`agent.report_session`), so after a reboot the tile runs its `command` (a plain shell when it has none) instead of resuming that session. */
     release(params: AgentReleaseParams): Promise<AgentReleaseResult>;
-    /** Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, aider, a CLI without Canvas hooks) has kind and lifecycle `unknown`. */
+    /** Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, a CLI without Canvas hooks) has kind and lifecycle `unknown`. An agent without an integration that sends terminal notifications (aider through Canvas's `aider` wrapper, any CLI's OSC 9/777 or bell) is listed with its program as `kind` and a lifecycle `via: "notifications"`: `done` when it last said it waits, `unknown` after a prompt until it says so again, never `working` or `blocked`. */
     list(params?: AgentListParams): Promise<AgentListResult>;
-    /** Paste a prompt into another agent's terminal (bracketed paste; a one-line command into a shell at its prompt is typed) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`. */
+    /** Paste a prompt into another agent's terminal (bracketed paste; a one-line command into a shell at its prompt is typed) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must run an agent with a Canvas integration (its lifecycle not `via: "notifications"`), else `unavailable`. An agent reporting by notification goes `unknown` with this prompt, and `agent.wait` answers at its next notification (none comes when the text needed no model reply, e.g. aider's `/add`: give such waits a `timeoutMs`). */
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
-    /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
+    /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`; an agent reporting by notification (lifecycle `via: "notifications"`) waits for its next notification instead. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
     /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line (a row that fills the terminal's width and ends in text joins the next, unless it is a separator padded to the width, such as pytest's `==== FAILURES ====`). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block: "last"`: the output of the last command the terminal's shell finished (from Ghostty's shell-integration prompt marks), with `command` saying what ran. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory). */
     read(params: AgentReadParams): Promise<AgentReadResult>;
@@ -1206,6 +1226,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       update: (params: ObjectUpdateParams) => call("object.update", params ?? {}, ["caller"]) as Promise<ObjectUpdateResult>,
       delete: (params: ObjectDeleteParams) => call("object.delete", params ?? {}, ["caller"]) as Promise<ObjectDeleteResult>,
       measure: (params: ObjectMeasureParams) => call("object.measure", params ?? {}, ["board","caller"]) as Promise<ObjectMeasureResult>,
+      reload: (params: ObjectReloadParams) => call("object.reload", params ?? {}, ["caller"]) as Promise<ObjectReloadResult>,
       batch: (params: ObjectBatchParams) => call("object.batch", params ?? {}, ["board","caller"]) as Promise<ObjectBatchResult>,
     },
     layout: {
@@ -1246,7 +1267,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

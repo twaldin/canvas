@@ -44,13 +44,13 @@ public enum CanvasBasics {
         Section(title: "Agents", items: [
             Item(term: "Blue dot", text: "working: the agent is busy."),
             Item(term: "Orange dot, ring and ✋ bubble", text: "blocked: it waits for you to approve or answer. Click the bubble to answer in its terminal."),
-            Item(term: "Green dot", text: "done: it finished and you haven't looked yet."),
+            Item(term: "Green dot", text: "done: it finished, or an agent without an integration (aider) said it waits, and you haven't looked yet."),
             Item(term: "Grey dot", text: "idle: waiting for your next prompt. No dot: no agent reporting."),
             Item(term: "Dot on a board's tab", text: "orange: an agent there is blocked; green: one finished unseen."),
             Item(term: "Quit · closing a tab", text: "agents and shells keep running in the background and are back when you open the folder again; closing a terminal tile ends its session."),
         ]),
         Section(title: "Needs you", items: [
-            Item(term: "Pink ring and bubble", text: "an attention marker: an agent (or a bell) says \"look here\". It clears when you select or look at the tile."),
+            Item(term: "Pink ring and bubble", text: "an attention marker: an agent (or a bell) says \"look here\". It clears when you select the tile, type in it, or look at it."),
             Item(term: "Pill at the edge", text: "something that needs you is off screen that way. Click it to go there."),
             Item(term: "⌘J", text: "go to the next thing that needs you: blocked agents first, then markers, then agents that finished while you looked elsewhere."),
         ]),
@@ -69,7 +69,7 @@ public enum CanvasBasics {
         Section(title: "Pointing your agent at things", items: [
             Item(term: "Hyper-click", text: "⌃⌥⇧⌘-click (Caps Lock as Hyper) a code line, page element, drawing or tile to stage it as a mention in the tray at the bottom."),
             Item(term: "⇧⌘M", text: "mention from the keyboard (Edit › Mention): the hunk or lines you're on in a changes tile, the selected text or range of a code tile, a note's block, a page's selection, a terminal's selection or last command; else the selected tiles."),
-            Item(term: "Tray", text: "the chips are staged mentions; \"→ name\" is the terminal they go to with your next prompt. Click it to pick another terminal; ⌃⌥⇧⌘V pastes them into one without an integration."),
+            Item(term: "Tray", text: "the chips are staged mentions; \"→ name\" is the terminal they go to with your next prompt. Click it to pick another terminal; ⌃⌥⇧⌘V pastes them into the terminal you're typing in (else that one), for agents without an integration."),
             Item(term: "Drawing", text: "the toolbar at the top draws boxes (R), ellipses (O), arrows (A), text (T) and ink (P); V selects. Hyper-click a drawing to show the agent what it marks."),
         ]),
         Section(title: "Zoom", items: [

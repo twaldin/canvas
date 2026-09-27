@@ -100,17 +100,24 @@ public struct TerminalCommandTracker: Sendable {
     }
 
     /// The terminal's title changed. `promptTitle`: the title the integration gives a prompt in
-    /// the directory the shell reported (`~/src/app`).
-    public mutating func title(_ title: String, at date: Date, promptTitle: String?) {
+    /// the directory the shell reported (`~/src/app`). True when this title is the command the
+    /// shell just started.
+    @discardableResult
+    public mutating func title(_ title: String, at date: Date, promptTitle: String?) -> Bool {
         let title = title.trimmingCharacters(in: .whitespaces)
-        guard !title.isEmpty else { return }
+        guard !title.isEmpty else { return false }
         if let promptAt, date.timeIntervalSince(promptAt) <= Self.promptWindow {
             promptTitles.insert(title)
-            return
+            return false
         }
-        guard command == nil, title != promptTitle, !promptTitles.contains(title) else { return }
+        guard command == nil, title != promptTitle, !promptTitles.contains(title) else { return false }
         command = title
+        return true
     }
+
+    /// The command line the shell is running, as its integration titled the terminal with it;
+    /// nil at the prompt or before that title came.
+    public var runningCommand: String? { command }
 
     /// The program seen running in the foreground (`TerminalName.program`), for a command whose
     /// title never came (the user turned the integration's `title` feature off).

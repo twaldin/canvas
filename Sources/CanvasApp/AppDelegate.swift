@@ -90,6 +90,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let code = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? CodeTile else { return nil }
             return await code.rangeStatus()
         }
+        router.reloadBrowser = { [weak self] board, tile, caller, timeoutMs in
+            guard let browser = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? BrowserTile else {
+                throw ApiRouter.Failure("unavailable", "browser tile \(tile) is not open in a window")
+            }
+            do {
+                return try await browser.reloadPage(driver: caller, timeoutMs: timeoutMs)
+            } catch let error as CmuxError {
+                throw ApiRouter.Failure(error.code, error.message)
+            }
+        }
         router.snapshotBoard = { [weak self] board, format in await self?.controllers[board.id]?.snapshot(format: format) }
         router.renderView = { [weak self] board, request, format in
             guard let canvas = self?.controllers[board.id]?.canvas else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }

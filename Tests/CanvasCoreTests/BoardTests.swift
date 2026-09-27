@@ -440,6 +440,16 @@ struct BoardTests {
         #expect(board.place(width: 640, height: 446, near: nil) == Frame(x: -320, y: -780, w: 640, h: 446))
     }
 
+    @Test func aPartlyVisibleSlotShowsItsTitleBar() {
+        // The aider study: a terminal created through the API without a frame, on a view mostly
+        // filled by another terminal, landed above it with its title bar under the toolbar.
+        let board = makeBoard()
+        board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: -500, y: -310, w: 1000, h: 620))
+        board.viewport = { Frame(x: -720, y: -435, w: 1440, h: 870) }
+        #expect(board.place(width: 640, height: 446, near: nil) == Frame(x: -320, y: 334, w: 640, h: 446),
+                "below the terminal, its title bar in view, not the as-near slot above with its top cut off")
+    }
+
     @Test func aSpotChosenNearTheViewsEdgeStillLandsWhollyInTheView() {
         // New Terminal Here near the bottom-right of the view: the terminal's top-left at the
         // click would put its bottom under the tray and its right side past the window.

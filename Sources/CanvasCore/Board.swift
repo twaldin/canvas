@@ -94,8 +94,9 @@ public final class Board {
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
-    /// Terminal tiles the user has seen since their agent last reported `working`.
-    private var seenSinceWorking: Set<ObjectID> = []
+    /// Terminal tiles the user has seen since their agent last reported `working` (or, reporting
+    /// by notification, last notified: `NotifyingAgent`).
+    var seenSinceWorking: Set<ObjectID> = []
     /// Highest accepted lifecycle seq per "tile|source".
     private var lifecycleSeq: [String: Int] = [:]
     /// Tool calls each terminal's agent waits on the user to approve, oldest first, with the
@@ -521,7 +522,7 @@ public final class Board {
     /// agents' tiles and groups included). While the ideal spot (or the caller's tile) is on
     /// screen, slots wholly inside the viewport (kept `placementGap` from its edges) win over
     /// nearer ones outside it, and when none fits, slots partly in view win over ones wholly out
-    /// of it. Origins are whole points.
+    /// of it, those whose top edge (a tile's title bar) is in view first. Origins are whole points.
     public func place(_ ideal: Frame) -> Frame {
         freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false, minimum: nil)
     }
@@ -581,13 +582,18 @@ public final class Board {
             xs.formUnion([screen.x.rounded(.up), (screen.maxX - w).rounded(.down)])
             ys.formUnion([screen.y.rounded(.up), (screen.maxY - h).rounded(.down)])
         }
-        // In view, cut down to fit in view, partly in view, out of view (beside a tile: only
-        // within `nearbyDistance` of it; further slots all rank after those, by distance alone);
-        // then distance to the anchor, then side (in `order`), then distance from where that
-        // side's slot would ideally start; ties go top-left first.
+        // In view, cut down to fit in view, partly in view with its top edge (a tile's title
+        // bar, what names it and moves it) in view, partly in view below its top, out of view
+        // (beside a tile: only within `nearbyDistance` of it; further slots all rank after
+        // those, by distance alone); then distance to the anchor, then side (in `order`), then
+        // distance from where that side's slot would ideally start; ties go top-left first.
         typealias Cost = (Int, Double, Int, Double, Double, Double)
         func cost(_ slot: Frame, cut: Bool) -> Cost {
-            let outside = cut ? 1 : screen.map { $0.contains(slot) ? 0 : $0.intersects(slot) ? 2 : 3 } ?? 0
+            let outside = cut ? 1 : screen.map { screen in
+                if screen.contains(slot) { return 0 }
+                guard screen.intersects(slot) else { return 4 }
+                return slot.y >= screen.y && slot.y < screen.maxY ? 2 : 3
+            } ?? 0
             guard beside else { return (outside, 0, 0, hypot(slot.x - anchor.x, slot.y - anchor.y), slot.y, slot.x) }
             let dx = max(0, anchor.x - slot.maxX, slot.x - anchor.maxX)
             let dy = max(0, anchor.y - slot.maxY, slot.y - anchor.maxY)
@@ -603,7 +609,7 @@ public final class Board {
             } else {
                 (side, ideal) = (.above, (anchor.x, anchor.y - h - gap))
             }
-            return (distance > Self.nearbyDistance ? 4 : outside, distance, order.firstIndex(of: side) ?? order.count, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
+            return (distance > Self.nearbyDistance ? 5 : outside, distance, order.firstIndex(of: side) ?? order.count, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
         }
         /// A slot partly in view cut down to its part in view, when that is at least `minimum`.
         func cut(_ slot: Frame) -> Frame? {
@@ -710,7 +716,9 @@ public final class Board {
     /// `final`: with `idle`, the last answer of the turn that just ended (`finalAnswers`), kept
     /// until the next turn starts. `error`: with `idle`, the turn ended on this error (omp: an
     /// API error such as `overloaded_error`, an abort): the tile goes `idle`, never `done`, with
-    /// the error as its message, and the answer is known to be cut off (`turnErrors`).
+    /// the error as its message, and the answer is known to be cut off (`turnErrors`). `unknown`:
+    /// an agent without a lifecycle integration runs here (`bin/aider` says so as aider starts);
+    /// its terminal notifications report when it waits (`NotifyingAgent`, `via: "notifications"`).
     public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil,
                                 serial: Bool = false, error: String? = nil) throws {
         let terminal = try object(tile)
@@ -763,6 +771,7 @@ public final class Board {
         let effective: LifecycleState = state == .idle && failed == nil && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message { lifecycle["message"] = .string(message) }
+        if state == .unknown { lifecycle["via"] = .string(NotifyingAgent.via) }
         let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind)]))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
@@ -785,7 +794,9 @@ public final class Board {
         guard let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }
         seenSinceWorking.insert(tile)
         guard terminal.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue else { return }
-        let lifecycle: JSONValue = .object(["state": .string(LifecycleState.idle.rawValue), "seen": .bool(true)])
+        var seen: [String: JSONValue] = ["state": .string(LifecycleState.idle.rawValue), "seen": .bool(true)]
+        if let via = terminal.props["lifecycle"]?["via"] { seen["via"] = via }
+        let lifecycle: JSONValue = .object(seen)
         _ = try? update(tile, props: .object(["lifecycle": lifecycle]))
         onEvent?(.agentLifecycle(tile: tile, lifecycle: lifecycle))
     }

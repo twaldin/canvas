@@ -1,0 +1,17 @@
+#!/bin/sh
+# Canvas's aider wrapper: in a Canvas terminal tile, runs the real aider with its notifications on
+# and sent to the terminal as an OSC 777 notification, which Canvas reads as "aider waits for you"
+# (NotifyingAgent: the tab's dot, ⌘J, agent.wait), plus Canvas's short guide as a read-only file.
+# The user's own arguments come last, so theirs win (--no-notifications, another
+# --notifications-command). Anywhere else, and with CANVAS_AGENT_HOOKS=0, it is the real aider,
+# untouched.
+here="$(cd "$(dirname "$0")/.." && pwd)"
+. "$here/extensions/agent-hooks/wrap.sh"
+real=$(canvas_agent_real aider) || exit 127
+canvas_integrate || exec "$real" "$@"
+export CANVAS_AGENT=aider
+# The tile counts as an agent from now on (the tray's target, agent.wait), not only after its first wait.
+{ "$here/bin/canvas" agent.report --tile "$CANVAS_TILE_ID" --kind aider --state unknown; } >/dev/null 2>&1 &
+exec "$real" --notifications \
+  --notifications-command "printf '\\033]777;notify;aider;waiting for you\\007' > /dev/tty" \
+  --read "$here/extensions/canvas-guide.md" "$@"

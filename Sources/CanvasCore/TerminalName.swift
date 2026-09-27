@@ -30,10 +30,14 @@ public enum TerminalName {
     }
 
     /// The header text: `name · title`, just the title when it already says the name (Claude
-    /// Code's "✳ Claude Code") or there is no name, just the name when there is no title.
-    public static func label(name: String?, title: String?) -> String? {
+    /// Code's "✳ Claude Code") or there is no name, just the name when there is no title. A title
+    /// that is only the command line the shell titled the terminal with while it runs
+    /// (`command`: `aider --model … --read …`) isn't the program's own and says no more than
+    /// its name: just the name (`aider`).
+    public static func label(name: String?, title: String?, command: String? = nil) -> String? {
         let name = name.flatMap(nonEmpty)
         guard let title = title.flatMap(nonEmpty) else { return name }
+        if let name, let command = command.flatMap(nonEmpty), title == command { return name }
         guard let name, title.range(of: name, options: .caseInsensitive) == nil else { return title }
         return "\(name) · \(title)"
     }

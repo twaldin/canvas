@@ -113,7 +113,10 @@ Mentions arrive only in prompts submitted in the terminal the tray shows (`view.
 `tray.drain` from any other terminal returns nothing but `held` and `target`, so never call it to check the tray: use `tray.list`.
 Excerpts are short; read the real file or `canvas get <id>` for more.
 A drawn shape means nothing by itself: read what it encloses and connects (`canvas get <id> --as graph`) or look at it (`canvas render <id>`).
-A shape `over` a tile marks a region of it, in the tile's local units: look at that part with `canvas render <tile>`.
+A shape `over` a tile lies wholly on it and marks a region, in the tile's local units (a browser page starts 32 pt below the title bar); `partly over` means more than half of it, the region clipped to the tile. Look at that part with `canvas render <tile>`.
+On a browser or HTML tile the mention adds `page elements under it (<url>):` lines (`<selector> "<text>"`), read when the prompt was sent: re-check with the selectors or a render if the page may have changed.
+A `group` mention covers the user's whole selection or a group of drawings; a shape's text is quoted whole (newlines as `\n`).
+Arrows the user draws bind to the tile or shape their end was released on or near, like `{object}` ends from the API.
 An `(edited)` marker means the object changed after the user staged it.
 
 ## See the board

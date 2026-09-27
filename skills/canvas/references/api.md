@@ -74,8 +74,10 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   an update re-measures at the object's current position and width (code and images: at `frame.w` or the 960 pt default, never their current width, so a re-fit can widen them).
   An update without `frame.x`/`y` doesn't grow over what it didn't already cover: it grows up or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its own longer side, else grows in place.
   A fitted result (create, update, or batch op) has `overlaps`, the ids it now covers, when there are any: move it or them.
+  So does an `object.update` whose `frame` (given outright, e.g. a browser tile widened to a desktop viewport) makes it cover an object it didn't before.
   After changing an HTML tile's `html` or a note's `markdown`, refit it in the same call: `canvas.object.update(id=tile, props={"html": page}, size="fit")` (the tile doesn't grow by itself).
   `object.measure` takes `width`, not `frame`.
+- `frame: {w, h}` alone on `object.create` means that size, placed where a create without a frame goes (beside your terminal, clear of other tiles): no `layout.place` call needed afterwards.
 - `canvas.layout.place(id=a, near=b, side="right", gap=40, align="start")` (`side`: right, left, above, below; `align`: start, center, end)
   and `canvas.layout.stack(ids=[a, b, c], direction="row", gap=40, wrap_at=2400, align="start", origin={"x": 0, "y": 0})` (all but `ids` optional) move objects in one undo step and return the new frames.
   Groups move with their members, so `canvas.layout.stack(ids=[lane1, lane2], direction="column")` lays out lanes; bound arrows follow.
@@ -138,5 +140,6 @@ reply = canvas.agent.read(target="fees", final=True)["text"]
 CLI: `canvas agent.prompt --target fees --text "…" --mentions '[{"object":"obj_…"}]'`, then `canvas agent.read --target fees --final`.
 On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` gives it 15 s to report (an agent you just launched there) and then fails with `unavailable`; for a shell or a CLI without integration, poll `agent.read(since="prompt")` instead.
 `agent.prompt` to a `blocked` agent fails with `conflict` naming what it waits on (an approval or a question on its screen would take your text): tell the user, or `agent.wait` for it to move on.
+So does a target whose foreground program isn't its agent (`agent.list` `program` tmux, nvim or less while `kind` is omp): the text would go to that program (in tmux, to whichever pane is active). Tell the user; `force=True` sends it anyway.
 `force=True` sends anyway, e.g. to a Claude Code or Gemini CLI agent that stays `blocked` after the user pressed Esc on or denied an approval. It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to another agent's approval.
 `agent.wait` survives an app restart: the SDKs and CLI ask again once the app is back, with `timeoutMs` reduced by the time already waited.

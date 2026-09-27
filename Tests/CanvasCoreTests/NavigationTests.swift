@@ -229,6 +229,22 @@ struct DeclarationPatternTests {
         ])
     }
 
+    @Test func wordMatchesSearchTrackedAndUntrackedButNotIgnoredFiles() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-grep-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try "export const ogImage = 1\nconst ogImageUrl = 2\n".write(to: root.appendingPathComponent("src/seo.ts"), atomically: true, encoding: .utf8)
+        try "use(ogImage)\n".write(to: root.appendingPathComponent("src/new.ts"), atomically: true, encoding: .utf8)
+        try "ogImage\n".write(to: root.appendingPathComponent("src/built.ts"), atomically: true, encoding: .utf8)
+        try "src/built.ts\n".write(to: root.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+        _ = try await GitRunner.shared.run(["init", "-q"], in: root)
+        _ = try await GitRunner.shared.run(["add", "src/seo.ts", ".gitignore"], in: root)
+        let found = try await TextNavigation.wordMatches("ogImage", in: root)
+        #expect(found.matches.map { "\($0.path):\($0.line):\($0.column)" } == ["src/new.ts:1:5", "src/seo.ts:1:14"])
+        #expect(!found.truncated)
+        let declared = try await TextNavigation.declarations(of: "ogImage", in: root, preferring: "src/new.ts")
+        #expect(declared.map(\.path) == ["src/seo.ts"])
+    }
+
     @Test func outlineWithoutAServerListsTypesMembersAndTopLevelNotLocals() {
         let text = """
         import { x } from './x'

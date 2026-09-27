@@ -62,7 +62,13 @@ extension ShapeLayer {
             let pressured = event.subtype == .tabletPoint
             gesture = .ink(points: [inkPoint(point, event, pressured)], pressured: pressured)
         case .text:
-            beginText(at: point)
+            // Clicking a text shape edits it; a click elsewhere starts a growing text, a drag
+            // one that wraps at the dragged width (on release).
+            if let item = item(at: point), item.shape?.kind == .text {
+                beginEditing(item.object)
+            } else {
+                gesture = .box(tool: .text, start: point, current: point)
+            }
         }
     }
 
@@ -103,6 +109,13 @@ extension ShapeLayer {
         switch finished {
         case .box(let tool, let start, _):
             var rect = Self.rect(start, point)
+            if tool == .text {
+                let dragged = rect.width >= Self.minimumDrag * 2
+                // A click sets where the first line sits, like a text cursor.
+                let size = DrawingStyle.textSize
+                beginText(at: dragged ? rect.origin : NSPoint(x: start.x, y: start.y - size * 0.7), wrapWidth: dragged ? rect.width : nil)
+                return
+            }
             if rect.width < Self.minimumDrag && rect.height < Self.minimumDrag {
                 rect = NSRect(x: start.x - Self.defaultShapeSize.width / 2, y: start.y - Self.defaultShapeSize.height / 2,
                               width: Self.defaultShapeSize.width, height: Self.defaultShapeSize.height)
@@ -173,18 +186,34 @@ extension ShapeLayer {
         return (scaled, NSRect(x: x, y: y, width: size.width, height: size.height))
     }
 
-    /// What an arrow end dropped at a document point binds to: the topmost drawn shape whose
-    /// frame contains it, else the topmost tile, else the point itself.
+    /// How far outside an object an arrow end still binds to it, in screen points: a release
+    /// just short of a box's edge means that box.
+    static let arrowSnap: CGFloat = 16
+
+    /// What an arrow end dropped at a document point binds to, as the API's `{object}` ends: the
+    /// topmost drawn shape under it (within `tolerance`), else the topmost tile, else the
+    /// nearest shape within `arrowSnap`, else the nearest tile within it, else the point itself.
     func binding(at point: NSPoint) -> ArrowBinding {
-        let shape = items.values
-            .filter { $0.shape != nil && $0.frame.insetBy(dx: -tolerance, dy: -tolerance).contains(point) }
-            .max { $0.object.z < $1.object.z }
-        if let shape { return .object(shape.object.id) }
+        let shapes = items.values.filter { $0.shape != nil }
+        if let shape = shapes.filter({ $0.frame.insetBy(dx: -tolerance, dy: -tolerance).contains(point) }).max(by: { $0.object.z < $1.object.z }) {
+            return .object(shape.object.id)
+        }
         let document = canvas.document
-        let tile = canvas.tiles.values.filter { $0.frame.contains(point) }.max { lhs, rhs in
+        let tiles = Array(canvas.tiles.values)
+        let tile = tiles.filter { $0.frame.contains(point) }.max { lhs, rhs in
             (document.subviews.firstIndex(of: lhs) ?? 0) < (document.subviews.firstIndex(of: rhs) ?? 0)
         }
         if let tile { return .object(tile.objectID) }
+        let snap = Self.arrowSnap / max(canvas.magnification, 0.1)
+        func distance(_ rect: NSRect) -> CGFloat {
+            hypot(max(rect.minX - point.x, 0, point.x - rect.maxX), max(rect.minY - point.y, 0, point.y - rect.maxY))
+        }
+        if let shape = shapes.map({ ($0.object.id, distance($0.frame)) }).filter({ $0.1 <= snap }).min(by: { $0.1 < $1.1 }) {
+            return .object(shape.0)
+        }
+        if let near = tiles.map({ ($0.objectID, distance($0.frame)) }).filter({ $0.1 <= snap }).min(by: { $0.1 < $1.1 }) {
+            return .object(near.0)
+        }
         return .point(Self.canvasPoint(point))
     }
 
@@ -229,7 +258,10 @@ extension ShapeLayer {
         case .box(_, let start, let current):
             return Self.rect(start, current).insetBy(dx: -12, dy: -12)
         case .arrow(_, let start, let current):
-            return Self.rect(start, current).insetBy(dx: -20, dy: -20)
+            var bounds = Self.rect(start, current).insetBy(dx: -20, dy: -20)
+            // The highlight around what the end would bind to.
+            if let id = binding(at: current).objectID, let outline = outline(of: id) { bounds = bounds.union(outline.bounds.insetBy(dx: -8, dy: -8)) }
+            return bounds
         case .ink(let points, _):
             let xs = points.map { CGFloat($0.x) }
             let ys = points.map { CGFloat($0.y) }
@@ -247,15 +279,30 @@ extension ShapeLayer {
         switch gesture {
         case .box(let tool, let start, let current):
             let rect = Self.rect(start, current)
+            if tool == .text {
+                // The text's wrap width being dragged out: a dashed box, as the editor will be.
+                context.saveGState()
+                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+                context.setLineWidth(1.5 / max(canvas.magnification, 0.1))
+                context.setLineDash(phase: 0, lengths: [6 / max(canvas.magnification, 0.1), 4 / max(canvas.magnification, 0.1)])
+                context.addRect(rect)
+                context.strokePath()
+                context.restoreGState()
+                return
+            }
             context.setStrokeColor(ink.cgColor)
             if tool == .rect { context.addRect(rect) } else { context.addEllipse(in: rect) }
             context.strokePath()
         case .arrow(_, let start, let current):
             let target = binding(at: current)
             if let id = target.objectID, let outline = outline(of: id) {
-                context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.6).cgColor)
-                context.addRect(outline.bounds.insetBy(dx: -3, dy: -3))
+                // What the end binds to if released here.
+                context.saveGState()
+                context.setStrokeColor(NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor)
+                context.setLineWidth(2.5 / max(canvas.magnification, 0.1))
+                context.addPath(CGPath(roundedRect: outline.bounds.insetBy(dx: -4, dy: -4), cornerWidth: 6, cornerHeight: 6, transform: nil))
                 context.strokePath()
+                context.restoreGState()
             }
             let (left, right) = DrawingGeometry.arrowhead(start: start, end: current)
             context.setStrokeColor(ink.cgColor)
@@ -282,9 +329,10 @@ extension ShapeLayer {
 
     // MARK: Editing
 
-    func beginText(at point: NSPoint) {
+    /// A new text shape whose text starts at `point`; `wrapWidth` from a drag, nil to grow.
+    func beginText(at point: NSPoint, wrapWidth: CGFloat?) {
         editor?.commit()
-        let editor = ShapeTextEditor(layer: self, origin: point, editing: nil, text: "")
+        let editor = ShapeTextEditor(layer: self, origin: point, wrapWidth: wrapWidth, editing: nil, text: "")
         attach(editor)
     }
 

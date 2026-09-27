@@ -1,0 +1,29 @@
+import AppKit
+import CanvasCore
+
+/// Author marks (`AuthorMark`): an agent's tiles and groups name the terminal that made them, and
+/// follow it when the terminal is renamed, runs another program, or goes.
+extension CanvasView {
+    /// The name `object`'s author mark shows, nil for none.
+    func authorName(of object: CanvasObject) -> String? {
+        AuthorMark.name(of: object, in: board.objects) { [tiles] in (tiles[$0]?.content as? TerminalTile)?.program }
+    }
+
+    /// Shows `id`'s author mark as it is now.
+    func syncAuthor(_ id: ObjectID) {
+        guard let object = board.objects[id] else { return }
+        let name = authorName(of: object)
+        if object.type == .group { groups[id]?.author = name } else { tiles[id]?.setAuthor(name) }
+    }
+
+    /// The marks of `terminal`'s agent's objects, when the name they show changed (a rename, a
+    /// new program, the terminal came or went). Cheap when it didn't: called on every retitle.
+    func syncAuthors(of terminal: ObjectID) {
+        let name = board.objects[terminal].flatMap { object in
+            object.type == .terminal ? AuthorMark.name(of: object, program: (tiles[terminal]?.content as? TerminalTile)?.program) : nil
+        }
+        guard name != authorNames[terminal] else { return }
+        authorNames[terminal] = name
+        for object in board.objects.values where object.createdBy == .agent(tile: terminal) { syncAuthor(object.id) }
+    }
+}

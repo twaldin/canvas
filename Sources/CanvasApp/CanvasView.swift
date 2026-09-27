@@ -122,7 +122,9 @@ final class CanvasView: NSScrollView {
     private let handles = TileHandles()
     private let grid = CanvasGrid()
     private(set) var tiles: [ObjectID: TileFrameView] = [:]
-    private var groups: [ObjectID: GroupView] = [:]
+    private(set) var groups: [ObjectID: GroupView] = [:]
+    /// Each terminal's name as the author marks of its agent's objects show it (`AuthorMarks`).
+    var authorNames: [ObjectID: String] = [:]
     private var markers: [ObjectID: AttentionMarker] = [:]
     /// Terminals whose agent is blocked (waiting on the user), each with a ring and a bubble of
     /// its lifecycle message while on screen and an edge pill while offscreen, like a marker's
@@ -305,7 +307,10 @@ final class CanvasView: NSScrollView {
                 tile.update(object)
                 if tile.content.frame.size != body, let code = tile.content as? CodeTile { code.resizedElsewhere() }
                 if restacks { restack() }
-                if object.type == .terminal { lifecycleChanged(object) }
+                if object.type == .terminal {
+                    lifecycleChanged(object)
+                    syncAuthors(of: object.id)
+                }
             } else {
                 add(object)
             }
@@ -321,6 +326,7 @@ final class CanvasView: NSScrollView {
             }
             seenLocally.remove(id)
             if selection.contains(id) { setSelection(selection.subtracting([id])) }
+            syncAuthors(of: id)
             scheduleGeometry()
         case .attentionChanged(let id, let marker):
             if let marker { showMarker(id, message: marker.message) } else { hideMarker(id) }
@@ -337,6 +343,8 @@ final class CanvasView: NSScrollView {
             terminal.onTitle = { [weak self] title in
                 self?.tiles[id]?.setTitle(title)
                 if self?.promptTarget == id { self?.onPromptTargetTitle?() }
+                // The foreground program changed, maybe: it names the terminal's objects.
+                self?.syncAuthors(of: id)
             }
             // A ⌘-clicked reference: user navigation. A tile already on the board (or the
             // re-aimed preview) is selected (keyboard focus stays in the terminal); the view pans
@@ -353,6 +361,10 @@ final class CanvasView: NSScrollView {
         (content as? ChangesTile)?.onOpenedCode = { [weak self] opened, created in
             if !created { self?.setSelection([opened]) }
             self?.reveal(opened, keeping: id)
+        }
+        (content as? ChangesTile)?.onBranch = { [weak self] branch in
+            guard let self, let object = self.board.objects[id] else { return }
+            self.tiles[id]?.setBranch(branch, of: object)
         }
         (content as? BrowserTile)?.onOpenedTile = { [weak self] opened in
             self?.reveal(opened)
@@ -380,6 +392,7 @@ final class CanvasView: NSScrollView {
         tiles[id] = tile
         tile.zoomedOut = magnification * tile.scale < Self.liveThreshold
         if object.type == .terminal { lifecycleChanged(object) }
+        if object.type == .terminal { syncAuthors(of: id) } else { tile.setAuthor(authorName(of: object)) }
         scheduleLiveness()
     }
 
@@ -393,6 +406,7 @@ final class CanvasView: NSScrollView {
         view.onMenu = { [weak self] in self?.groupMenu(for: id) }
         document.addSubview(view, positioned: .below, relativeTo: nil)
         groups[id] = view
+        view.author = authorName(of: object)
     }
 
     /// Orders document subviews: group regions, tiles by `z`, the drawing layer, then the
@@ -1302,23 +1316,24 @@ final class CanvasView: NSScrollView {
     /// What Go to Next Needs-You visited last, as it was then.
     private var lastNeedsYou: NeedsYouItem?
 
-    /// Go to Next Needs-You (⌘J): the next blocked agent's terminal, then the next marked object
-    /// on this board (`NeedsYouItem`), framed like Go to, selected (which acknowledges a marker),
-    /// and given the keyboard (a terminal focuses). Pressed again from there, the one after it,
-    /// around; from anywhere else, the first. False when nothing needs the user.
+    /// Go to Next Needs-You (⌘J): the next blocked agent's terminal, then the next marked object,
+    /// then the next done agent's terminal not seen yet, on this board (`NeedsYouItem`), framed
+    /// like Go to, selected (which acknowledges a marker), and given the keyboard (a terminal
+    /// focuses, which sees a done agent). Pressed again from there, the one after it, around;
+    /// from anywhere else, the first. When nothing needs the user, a notice says so.
     @discardableResult
     func goToNextNeedsYou() -> Bool {
         let items = NeedsYouItem.all(board.objects, attention: board.attention)
         let current = focusedTile ?? (selection.count == 1 ? selection.first : nil)
         let last = lastNeedsYou.flatMap { $0.id == current ? $0 : nil }
-        guard let next = NeedsYouItem.next(after: last, in: items) else { return false }
+        guard let next = NeedsYouItem.next(after: last, in: items) else {
+            showNotice("Nothing needs you")
+            return false
+        }
         lastNeedsYou = next
         go(to: next.id)
         return true
     }
-
-    /// Whether anything on the board needs the user (menu validation).
-    var somethingNeedsYou: Bool { !NeedsYouItem.all(board.objects, attention: board.attention).isEmpty }
 
     /// "Zoom in" on the canvas: this tile at 100%, centered, selected, and focused if it types.
     func focus(tile id: ObjectID) {

@@ -12,6 +12,8 @@ final class TileFrameView: NSView {
     let content: any TileContent
     private let titleBar = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
+    /// The agent terminal that made the object (`AuthorMark`), small and muted at the right.
+    private let authorLabel = NSTextField(labelWithString: "")
     private let badge = NSView()
     private let closeButton = TileCloseButton()
     private let card = NSImageView()
@@ -60,7 +62,7 @@ final class TileFrameView: NSView {
 
         titleBar.wantsLayer = true
         titleBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.font = Self.titleFont
         titleLabel.lineBreakMode = .byTruncatingMiddle
         badge.wantsLayer = true
         badge.layer?.cornerRadius = 5
@@ -69,8 +71,14 @@ final class TileFrameView: NSView {
         closeButton.title = "✕"
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
+        authorLabel.font = Self.authorFont
+        authorLabel.textColor = .secondaryLabelColor
+        authorLabel.lineBreakMode = .byTruncatingTail
+        authorLabel.alignment = .right
+        authorLabel.isHidden = true
         titleBar.addSubview(badge)
         titleBar.addSubview(titleLabel)
+        titleBar.addSubview(authorLabel)
         titleBar.addSubview(closeButton)
         addSubview(titleBar)
         addSubview(content)
@@ -96,7 +104,7 @@ final class TileFrameView: NSView {
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .group }
     override func accessibilityRoleDescription() -> String? { roleDescription }
-    override func accessibilityLabel() -> String? { title }
+    override func accessibilityLabel() -> String? { author.map { "\(title), created by \($0)" } ?? title }
 
     /// Layout happens in `applyScale`, once the bounds match the new frame.
     override func resizeSubviews(withOldSize oldSize: NSSize) {}
@@ -127,7 +135,7 @@ final class TileFrameView: NSView {
         titleBar.frame = NSRect(x: 0, y: 0, width: width, height: Self.titleHeight)
         badge.frame = NSRect(x: 10, y: (Self.titleHeight - 10) / 2, width: 10, height: 10)
         closeButton.frame = NSRect(x: width - 28, y: 3, width: 22, height: 20)
-        titleLabel.frame = NSRect(x: 26, y: 5, width: max(0, width - 60), height: 16)
+        layoutTitle()
         let body = NSRect(x: 0, y: Self.titleHeight, width: width, height: max(0, bounds.height - Self.titleHeight))
         if content.frame != body { content.frame = body }
         card.frame = body
@@ -136,7 +144,7 @@ final class TileFrameView: NSView {
     }
 
     func update(_ object: CanvasObject) {
-        if title.isEmpty || object.type != .terminal { setTitle(Self.title(for: object)) }
+        if title.isEmpty || object.type != .terminal { setTitle(Self.title(for: object, branch: branch)) }
         // A file outside the board root shows a short label; the tooltip has its full path.
         let path = object.type == .code ? object.props["path"]?.string : nil
         titleLabel.toolTip = path.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
@@ -168,9 +176,63 @@ final class TileFrameView: NSView {
         guard titleLabel.stringValue != title else { return }
         titleLabel.stringValue = title
         cardTitle.stringValue = title
+        if author != nil { layoutTitle() }
     }
 
-    static func title(for object: CanvasObject) -> String {
+    // MARK: Author mark
+
+    static let titleFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+    static let authorFont = NSFont.systemFont(ofSize: 11)
+
+    /// The name of the agent terminal that made the object (`AuthorMark`), nil for none.
+    private(set) var author: String?
+
+    func setAuthor(_ author: String?) {
+        guard author != self.author else { return }
+        self.author = author
+        authorLabel.stringValue = author.map(AuthorMark.label) ?? ""
+        authorLabel.toolTip = author.map { "Created by the terminal “\($0)”" }
+        layoutTitle()
+    }
+
+    private func layoutTitle() {
+        let frames = Self.titleFrames(width: bounds.width, title: titleLabel.stringValue, author: author)
+        titleLabel.frame = frames.title
+        authorLabel.isHidden = frames.author == nil
+        if let rect = frames.author { authorLabel.frame = rect }
+    }
+
+    /// Where a title bar `width` wide draws the title and the author mark (nil: none), here and
+    /// in `view.render`: the mark right-aligned before the close button, truncated before the
+    /// title and dropped in a narrow bar (`AuthorMark.width`).
+    static func titleFrames(width: CGFloat, title: String, author: String?) -> (title: NSRect, author: NSRect?) {
+        let space = max(0, width - 60)
+        let whole = NSRect(x: 26, y: 5, width: space, height: 16)
+        guard let author else { return (whole, nil) }
+        // A label's cell pads its text 2 pt on either side.
+        func measure(_ text: String, _ font: NSFont) -> CGFloat { ((text as NSString).size(withAttributes: [.font: font]).width + 5).rounded(.up) }
+        let shown = AuthorMark.width(natural: measure(AuthorMark.label(author), authorFont), title: measure(title, titleFont), space: space)
+        guard shown > 0 else { return (whole, nil) }
+        let mark = NSRect(x: whole.maxX - shown, y: 6, width: shown, height: 15)
+        return (NSRect(x: whole.minX, y: whole.minY, width: max(0, space - shown - AuthorMark.gap), height: whole.height), mark)
+    }
+
+    // MARK: Title
+
+    /// A board-root changes tile's branch, which its title names (`title(for:branch:)`).
+    func setBranch(_ branch: String?, of object: CanvasObject) {
+        guard branch != self.branch else { return }
+        self.branch = branch
+        setTitle(Self.title(for: object, branch: branch))
+    }
+
+    private var branch: String?
+
+    static func title(for object: CanvasObject) -> String { title(for: object, branch: nil) }
+
+    /// The title from the object's props; `branch` is the branch checked out in the board root,
+    /// which a changes tile of the whole board root names (`Changes: main`).
+    static func title(for object: CanvasObject, branch: String?) -> String {
         let props = object.props
         switch object.type {
         case .terminal: return props["title"]?.string ?? props["agent"]?["kind"]?.string ?? "Terminal"
@@ -185,7 +247,7 @@ final class TileFrameView: NSView {
             let spec = ChangesSpec(props)
             if let title = props["title"]?.string { return title }
             let parts = (spec.root.map { [($0 as NSString).lastPathComponent] } ?? []) + spec.paths.map(PathLabel.short)
-            return parts.isEmpty ? "Changes" : "Changes: \(parts.joined(separator: ", "))"
+            return parts.isEmpty ? branch.map { "Changes: \($0)" } ?? "Changes" : "Changes: \(parts.joined(separator: ", "))"
         default: return object.type.rawValue.capitalized
         }
     }

@@ -378,7 +378,9 @@ public final class Board {
 
     /// Where a new object goes when nobody gave it a frame: the free slot nearest the caller's
     /// tile, touching it at `placementGap` when there's room (right first, then below, left,
-    /// above), else nearest the viewport center. See `place(_:)` for what counts as free.
+    /// above), else nearest the viewport center. The app also places the user's own new objects
+    /// here, beside the tile they came from (`near`, e.g. Edit Here's terminal) or at the viewport
+    /// center. See `place(_:)` for what counts as free.
     public func place(width: Double, height: Double, near caller: ObjectID?) -> Frame {
         if let caller, let anchor = objects[caller] { return freeSlot(width: width, height: height, anchor: anchor.frame, beside: true) }
         let view = viewport() ?? Frame(x: 0, y: 0, w: 0, h: 0)
@@ -388,8 +390,9 @@ public final class Board {
     /// The free slot nearest `ideal` (a frame of the object's size, e.g. at a click point). A slot
     /// is free when it keeps `placementGap` from every object but drawings and arrows (other
     /// agents' tiles and groups included). While the ideal spot (or the caller's tile) is on
-    /// screen, slots wholly inside the viewport win over nearer ones outside it. Origins are whole
-    /// points.
+    /// screen, slots wholly inside the viewport (kept `placementGap` from its edges) win over
+    /// nearer ones outside it, and when none fits, slots partly in view win over ones wholly out
+    /// of it. Origins are whole points.
     public func place(_ ideal: Frame) -> Frame {
         freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false)
     }
@@ -414,11 +417,12 @@ public final class Board {
             xs.formUnion([screen.x.rounded(.up), (screen.maxX - w).rounded(.down)])
             ys.formUnion([screen.y.rounded(.up), (screen.maxY - h).rounded(.down)])
         }
-        // Offscreen, then distance to the anchor, then side (right, below, left, above), then
-        // distance from where that side's slot would ideally start; ties go top-left first.
+        // In view, partly in view, out of view; then distance to the anchor, then side (right,
+        // below, left, above), then distance from where that side's slot would ideally start;
+        // ties go top-left first.
         typealias Cost = (Int, Double, Int, Double, Double, Double)
         func cost(_ slot: Frame) -> Cost {
-            let outside = screen.map { $0.contains(slot) ? 0 : 1 } ?? 0
+            let outside = screen.map { $0.contains(slot) ? 0 : $0.intersects(slot) ? 1 : 2 } ?? 0
             guard beside else { return (outside, 0, 0, hypot(slot.x - anchor.x, slot.y - anchor.y), slot.y, slot.x) }
             let dx = max(0, anchor.x - slot.maxX, slot.x - anchor.maxX)
             let dy = max(0, anchor.y - slot.maxY, slot.y - anchor.maxY)

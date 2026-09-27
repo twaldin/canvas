@@ -324,9 +324,10 @@ final class CodeNavigation: NSObject {
             guard let self else { return }
             guard !symbols.isEmpty else { return self.showMessage("No symbols", anchor: anchor) }
             let rows = symbols.map { entry in
-                NavigationPanel.Row(title: entry.symbol.name, detail: entry.symbol.kindName, indent: entry.depth) { [weak self] in
+                let line = entry.symbol.selectionRange.start.line + 1
+                return NavigationPanel.Row(title: entry.symbol.name, detail: "\(entry.symbol.kindName) · L\(line)", indent: entry.depth) { [weak self] in
                     NavigationPanel.current?.dismiss()
-                    self?.host?.reveal(line: entry.symbol.selectionRange.start.line + 1)
+                    self?.host?.reveal(line: line)
                 }
             }
             self.present(NavigationPanel.list(title: "Outline", rows: rows), anchor: anchor)

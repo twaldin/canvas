@@ -137,9 +137,12 @@ final class CanvasView: NSScrollView {
     private var activitySettle: DispatchWorkItem?
     private lazy var seen = SeenTracker { [weak self] id in self?.didSee(id) }
 
-    /// Last terminal that held keyboard focus: where the tray drains and Superwhisper pastes.
+    /// Where the tray drains and Superwhisper pastes (`PromptTarget`; the window controller
+    /// settles it).
     var promptTarget: ObjectID? { didSet { onPromptTargetChange?() } }
     var onPromptTargetChange: (() -> Void)?
+    /// The prompt target retitled itself (an agent's OSC title); the tray names it by that.
+    var onPromptTargetTitle: (() -> Void)?
     var onSelectionChange: (() -> Void)?
 
     // MARK: Drawn objects (installed by the drawing layer)
@@ -201,7 +204,8 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(magnifyEnded), name: NSScrollView.didEndLiveMagnifyNotification, object: self)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
-        board.viewport = { [weak self] in self?.viewport.rect }
+        // Placement aims at what the user can see: the viewport clear of the toolbar and tray.
+        board.viewport = { [weak self] in self?.clearViewport }
         for object in board.snapshot.objects { add(object) }
         // Markers the user hadn't seen when the board was last open.
         for marker in board.attention.values { showMarker(marker.object, message: marker.message) }
@@ -308,7 +312,10 @@ final class CanvasView: NSScrollView {
         let id = object.id
         let content = TileFactory.make(object, board: board)
         if let terminal = content as? TerminalTile {
-            terminal.onTitle = { [weak self] title in self?.tiles[id]?.setTitle(title) }
+            terminal.onTitle = { [weak self] title in
+                self?.tiles[id]?.setTitle(title)
+                if self?.promptTarget == id { self?.onPromptTargetTitle?() }
+            }
         }
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
@@ -722,6 +729,21 @@ final class CanvasView: NSScrollView {
         board.transaction {
             for id in ids.sorted() { try? board.delete(id) }
         }
+        // A closed tile that had the keyboard leaves it with the window: the canvas takes it,
+        // so Esc, Delete, ⌘W and the arrows keep working.
+        if let window, window.firstResponder === window { window.makeFirstResponder(document) }
+    }
+
+    /// ⌘W: closes the selected objects, else the focused terminal (terminals ask first, in the
+    /// close sheet). False with neither, so the window's own close (tab or window) runs.
+    func closeSelectionOrFocused() -> Bool {
+        if !selection.isEmpty {
+            deleteSelection()
+            return true
+        }
+        guard let id = focusedTile, tiles[id]?.content is TerminalTile else { return false }
+        delete([id])
+        return true
     }
 
     func bringToFront() {
@@ -746,15 +768,84 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// A new terminal with keyboard focus: at a document point (its top-left), else at the
-    /// viewport center, either way moved to the nearest free spot on whole points (`Board.place`).
+    /// A new terminal with keyboard focus: at a document point (its top-left), moved to the
+    /// nearest free spot on whole points (`Board.place`), else placed and revealed like any new
+    /// object the user asks for (`openForUser`).
     func createTerminal(at point: NSPoint? = nil) {
+        let props: JSONValue = .object(["cwd": .string(board.root.path), "command": .array([])])
+        guard let point else { return openForUser(.terminal, props: props) }
         let size = Board.defaultSize(.terminal)
-        let frame = point.map { board.place(Frame(x: $0.x - CanvasDocumentView.origin.x, y: $0.y - CanvasDocumentView.origin.y, w: size.w, h: size.h)) }
-        let object = board.create(type: .terminal, props: .object(["cwd": .string(board.root.path), "command": .array([])]), frame: frame)
-        DispatchQueue.main.async { [weak self] in
-            (self?.tiles[object.id]?.content as? TerminalTile)?.focus()
+        let frame = board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h))
+        let object = board.create(type: .terminal, props: props, frame: frame)
+        takeKeyboard(object.id)
+    }
+
+    /// A new object the user asked for without saying where (File › Open File, New Note, New
+    /// Browser Tile, ⌘T, Go to's file rows, Edit Here's terminal `near` its code tile): the free
+    /// spot nearest the viewport center or that tile, in view when there's room (`Board.place`),
+    /// revealed with the least pan otherwise, selected, and given the keyboard.
+    func openForUser(_ type: ObjectType, props: JSONValue, near anchor: ObjectID? = nil) {
+        let size = Board.defaultSize(type)
+        let object = board.create(type: type, props: props, frame: board.place(width: size.w, height: size.h, near: anchor))
+        reveal(object.id)
+        setSelection([object.id])
+        takeKeyboard(object.id)
+    }
+
+    /// Keyboard focus for a tile the keyboard just went to: a terminal takes it itself (on the
+    /// next turn, once a new one's surface exists); anything else leaves it with the canvas, so
+    /// Esc, Delete, ⌘W, ⌘G and the arrows act on the selection.
+    func takeKeyboard(_ id: ObjectID) {
+        guard board.objects[id]?.type == .terminal else {
+            window?.makeFirstResponder(document)
+            return
         }
+        DispatchQueue.main.async { [weak self] in
+            (self?.tiles[id]?.content as? TerminalTile)?.focus()
+        }
+    }
+
+    /// The tile holding keyboard focus (a terminal, a code tile's rows, a page, a note being
+    /// edited, a code tile's find field).
+    var focusedTile: ObjectID? {
+        var responder = window?.firstResponder as? NSView
+        while let view = responder {
+            if let tile = view as? TileFrameView { return tile.objectID }
+            responder = view.superview
+        }
+        return nil
+    }
+
+    /// ⌥⌘-arrow: the nearest tile that way from the focused tile, else the selection, else the
+    /// viewport center (`Layout.neighbor`), shown with the least pan, selected, and given the
+    /// keyboard.
+    func moveToNeighbor(_ heading: Layout.Heading) {
+        let sources = focusedTile.map { [$0] } ?? selection.filter { tiles[$0] != nil }.sorted()
+        let frames = sources.compactMap { tiles[$0]?.frame }
+        let from = frames.dropFirst().reduce(frames.first) { union, frame in union?.union(frame) }
+            ?? NSRect(x: documentVisibleRect.midX, y: documentVisibleRect.midY, width: 0, height: 0)
+        let candidates = tiles.values.filter { !sources.contains($0.objectID) && !$0.isHidden }
+        guard let index = Layout.neighbor(of: from, among: candidates.map(\.frame), toward: heading) else { return }
+        let id = candidates[index].objectID
+        reveal(id)
+        setSelection([id])
+        takeKeyboard(id)
+    }
+
+    /// ⌘F: the find bar of the focused code tile, else of the one selected code tile. False
+    /// when neither (the focused terminal or page keeps ⌘F).
+    func findInCodeTile() -> Bool {
+        let code: CodeTile?
+        if let focused = focusedTile, tiles[focused]?.content is CodeTile {
+            code = tiles[focused]?.content as? CodeTile
+        } else if selection.count == 1, let id = selection.first {
+            code = tiles[id]?.content as? CodeTile
+        } else {
+            code = nil
+        }
+        guard let code, tiles[code.object.id]?.isLive == true else { return false }
+        code.showFind()
+        return true
     }
 
     func createNote(at point: NSPoint) {
@@ -907,6 +998,19 @@ final class CanvasView: NSScrollView {
         scheduleLiveness()
     }
 
+    /// ⌘= / ⌘-: the next browser-like zoom level (`Layout.zoomStep`).
+    func zoomStep(in zoomIn: Bool) {
+        zoom(to: Layout.zoomStep(from: magnification, in: zoomIn, limits: minMagnification...maxMagnification))
+    }
+
+    /// The part of the viewport clear of the toolbar and tray, in canvas coordinates: where new
+    /// objects are placed (`Board.viewport`).
+    var clearViewport: Frame {
+        let clear = clearArea, zoom = magnification, origin = contentView.bounds.origin
+        return Frame(x: origin.x + clear.minX / zoom - CanvasDocumentView.origin.x, y: origin.y + clear.minY / zoom - CanvasDocumentView.origin.y,
+                     w: clear.width / zoom, h: clear.height / zoom)
+    }
+
     /// ⌘0: 100%. With a selection, the selection at 100%, centered clear of the chrome (its top
     /// when taller than the view); without one, around the viewport's center.
     func zoomToActualSize() {
@@ -938,12 +1042,14 @@ final class CanvasView: NSScrollView {
         fit(target)
     }
 
-    /// The navigator's "go to": the object fitted (at most 100%, a tall one by its width) and
-    /// selected; a terminal also takes keyboard focus.
+    /// The navigator's "go to": the object fitted (at most 100%, a tall one by its width),
+    /// selected, and given the keyboard (a terminal focuses; anything else leaves it with the
+    /// canvas, so Delete, Esc and ⌘G act on it).
     func go(to id: ObjectID) {
         guard let rect = docFrame(id) else { return }
         fit(rect, readable: true)
-        select(id, extend: false)
+        setSelection([id])
+        takeKeyboard(id)
     }
 
     /// "Zoom in" on the canvas: this tile at 100%, centered, selected, and focused if it types.
@@ -1112,17 +1218,8 @@ final class CanvasView: NSScrollView {
     }
 
     var viewState: ViewState {
-        var focused: ObjectID?
-        var responder = window?.firstResponder as? NSView
-        while let view = responder {
-            if let tile = view as? TileFrameView {
-                focused = tile.objectID
-                break
-            }
-            responder = view.superview
-        }
-        return ViewState(viewport: viewport, promptTarget: promptTarget, focused: focused, selection: selection.sorted(),
-                         enteredGroup: enteredGroup, visible: window?.occlusionState.contains(.visible) ?? false)
+        ViewState(viewport: viewport, promptTarget: promptTarget, focused: focusedTile, selection: selection.sorted(),
+                  enteredGroup: enteredGroup, visible: window?.occlusionState.contains(.visible) ?? false)
     }
 
     /// Viewport and selection changes are logged once they settle; this makes sure that happens

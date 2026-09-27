@@ -29,7 +29,7 @@ Error codes: `not_found` (no such object/agent/board), `conflict` (stale `rev`: 
 ## Objects
 
 - `frame` is `{x, y, w, h}` in canvas points (100% zoom): the whole box the object draws. A tile's 26 pt title bar is inside its frame, at the top.
-  Omit it on create for automatic placement beside your terminal.
+  Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room). Without a calling terminal (a script outside any tile), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray.
 - `props` on `object.update` merge shallowly: `{"range": …}` replaces `range` and keeps other props. Set a prop to `null` to clear it.
 - A prop the type doesn't define (a typo like `colour` or `markdwon`) is kept, but `object.create`/`object.update` (and each batch op's result) add `warnings`, one per unknown key naming the type's real props. No `warnings` key means every prop is known.
 - Every change bumps `rev`. Pass `rev` on updates to objects the user may be editing.

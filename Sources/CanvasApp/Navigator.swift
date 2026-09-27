@@ -7,6 +7,8 @@ struct NavigatorRow {
         /// Zoom to Fit.
         case allContent
         case object(ObjectID)
+        /// A file under the board root (repo-relative): opens a code tile for it.
+        case file(String)
     }
 
     let target: Target
@@ -15,12 +17,16 @@ struct NavigatorRow {
     let kind: String
     /// A terminal's agent lifecycle color (`TileFrameView.badgeColor`).
     let dot: NSColor?
-    /// Tells rows with the same title apart: the tile's caption, else its group's title.
+    /// Tells rows with the same title apart (terminals: name, command, or directory; code: caption
+    /// or group title).
     var subtitle: String? = nil
+    /// Also matched by typing, shown or not: a code tile's caption, a terminal's name.
+    var terms: [String] = []
+    var toolTip: String? = nil
 
     func matches(_ query: String) -> Bool {
         query.isEmpty || title.localizedCaseInsensitiveContains(query) || kind.localizedCaseInsensitiveContains(query)
-            || subtitle?.localizedCaseInsensitiveContains(query) == true
+            || subtitle?.localizedCaseInsensitiveContains(query) == true || terms.contains { $0.localizedCaseInsensitiveContains(query) }
     }
 }
 
@@ -37,7 +43,9 @@ extension CanvasView {
                 let title = object.props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled group"
                 groups.append((rect, NavigatorRow(target: .object(object.id), title: title, kind: "Group", dot: nil)))
             } else if let tile = self.tiles[object.id] {
-                tiles.append((rect, Self.navigatorRow(for: object, shownTitle: tile.title)))
+                var row = Self.navigatorRow(for: object, shownTitle: tile.title)
+                row.terms = [Self.nonEmpty(object.props["caption"]).map(CodeCaption.text), Self.nonEmpty(object.props["name"])].compactMap { $0 }
+                tiles.append((rect, row))
             }
         }
         func readingOrder(_ lhs: (NSRect, NavigatorRow), _ rhs: (NSRect, NavigatorRow)) -> Bool {
@@ -51,12 +59,22 @@ extension CanvasView {
         return [all] + groups.sorted(by: readingOrder).map(\.1) + tiles.sorted(by: readingOrder).map(\.1)
     }
 
-    /// A tile's caption, else the title of the group that lists it directly.
+    private static func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
+
+    /// What tells two tiles with the same title apart. A terminal: its name, else the command it
+    /// was started with, else its directory. Anything else: its caption, else the title of the
+    /// group that lists it directly.
     private func distinguishing(_ id: ObjectID) -> String? {
-        func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
-        if let caption = nonEmpty(board.objects[id]?.props["caption"]) { return CodeCaption.text(caption) }
+        guard let object = board.objects[id] else { return nil }
+        if object.type == .terminal {
+            if let name = Self.nonEmpty(object.props["name"]) { return name }
+            let command = object.props["command"]?.array?.compactMap(\.string).joined(separator: " ") ?? ""
+            if !command.isEmpty { return command }
+            return Self.nonEmpty(object.props["cwd"]).map { ($0 as NSString).abbreviatingWithTildeInPath }
+        }
+        if let caption = Self.nonEmpty(object.props["caption"]) { return CodeCaption.text(caption) }
         let group = board.objects.values.first { $0.type == .group && GroupSpec($0.props)?.members.contains(id) == true }
-        return group.flatMap { nonEmpty($0.props["title"]) }
+        return group.flatMap { Self.nonEmpty($0.props["title"]) }
     }
 
     private static func navigatorRow(for object: CanvasObject, shownTitle: String) -> NavigatorRow {
@@ -72,7 +90,7 @@ extension CanvasView {
                 let end = props["range"]?["end"]?.int ?? start
                 title += end > start ? " · L\(start)–\(end)" : " · L\(start)"
             }
-            return NavigatorRow(target: .object(object.id), title: title, kind: "Code", dot: nil)
+            return NavigatorRow(target: .object(object.id), title: title, kind: "Code", dot: nil, toolTip: props["path"]?.string)
         case .note:
             let markdown = props["markdown"]?.string ?? ""
             let line = markdown.split(whereSeparator: \.isNewline).lazy
@@ -104,6 +122,9 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
     private var height: NSLayoutConstraint!
     private var allRows: [NavigatorRow] = []
     private var rows: [NavigatorRow] = []
+    private var files = FileIndex(paths: [])
+    /// File rows listed below the object rows at most.
+    static let maxFileRows = 50
     private weak var previousResponder: NSResponder?
     private var clickMonitor: Any?
 
@@ -181,9 +202,11 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
 
     // MARK: Open / close
 
-    func open(rows: [NavigatorRow]) {
+    /// `files`: the board root's files, listed below the objects once something is typed.
+    func open(rows: [NavigatorRow], files: FileIndex) {
         guard let window else { return }
         allRows = rows
+        self.files = files
         field.stringValue = ""
         isHidden = false
         previousResponder = window.firstResponder
@@ -206,6 +229,7 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         clickMonitor = nil
         allRows = []
         rows = []
+        files = FileIndex(paths: [])
         table.reloadData()
         guard let window else { return }
         if let editor = window.firstResponder as? NSText, editor.delegate === field {
@@ -228,13 +252,27 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
 
     // MARK: Filtering and keys
 
-    private func filter() {
+    /// A newer file listing arrived while open: re-filter, keeping the highlighted row.
+    func update(files: FileIndex) {
+        guard isOpen else { return }
+        self.files = files
+        let selected = rows.indices.contains(table.selectedRow) ? rows[table.selectedRow].target : nil
+        filter(keeping: selected)
+    }
+
+    /// Objects whose title, type, subtitle, caption, or name contain the query, then the files
+    /// it fuzzily matches (`FileIndex`).
+    private func filter(keeping selected: NavigatorRow.Target? = nil) {
         let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        rows = allRows.filter { $0.matches(query) }
+        let fileRows = files.search(query, limit: Self.maxFileRows).map { path in
+            NavigatorRow(target: .file(path), title: path, kind: "Open File", dot: nil, toolTip: path)
+        }
+        rows = allRows.filter { $0.matches(query) } + fileRows
         table.reloadData()
         if !rows.isEmpty {
-            table.selectRowIndexes([0], byExtendingSelection: false)
-            table.scrollRowToVisible(0)
+            let row = selected.flatMap { target in rows.firstIndex { $0.target == target } } ?? 0
+            table.selectRowIndexes([row], byExtendingSelection: false)
+            table.scrollRowToVisible(row)
         }
         // The inset table style pads above the first row; keep the same room below the last.
         let shown = min(rows.count, Self.visibleRows)
@@ -337,6 +375,7 @@ private final class NavigatorCell: NSTableCellView {
         title.stringValue = row.title
         title.font = row.target == .allContent ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
         detail.stringValue = row.subtitle ?? ""
+        toolTip = row.toolTip
         kind.stringValue = row.kind
         dot.layer?.backgroundColor = (row.dot ?? .clear).cgColor
     }

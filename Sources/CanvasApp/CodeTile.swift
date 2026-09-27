@@ -42,6 +42,7 @@ final class CodeTile: NSView, TileContent {
     private var watcherSuspended = false
     private var reloadWork: DispatchWorkItem?
     private var navigation: CodeNavigation?
+    private var findBar: CodeFindBar?
 
     static let flashDuration: TimeInterval = 3
 
@@ -103,6 +104,7 @@ final class CodeTile: NSView, TileContent {
         header.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
         rowsView.frame = NSRect(x: 0, y: height, width: bounds.width, height: max(0, bounds.height - height))
         rewrap()
+        layoutFindBar()
         rowsMoved()
     }
 
@@ -347,8 +349,84 @@ final class CodeTile: NSView, TileContent {
         painter.rangeLines = displayed.range.flatMap(document.lines(for:))
         painter.flash = flash.map { ($0.lines, flashStrength($0.start)) }
         painter.selection = keepSelection ? rowsView.painter?.selection : nil
+        if let findBar, !findBar.isHidden {
+            let previous = rowsView.painter?.find?.current
+            var find = CodeFind(query: findBar.field.stringValue, rows: painter.rows) { painter.text(ofEntry: $0) }
+            find.current = find.matches.isEmpty ? nil : min(previous ?? 0, find.matches.count - 1)
+            painter.find = find
+            findBar.show(status: find.status)
+        }
         rowsView.painter = painter
         rowsMoved()
+    }
+
+    // MARK: Find
+
+    /// ⌘F: the find bar over the rows, seeded with a one-line selection, holding the keyboard.
+    func showFind() {
+        let bar = findBar ?? makeFindBar()
+        if let text = rowsView.selectedText, !text.isEmpty, !text.contains("\n") { bar.field.stringValue = text }
+        bar.isHidden = false
+        layoutFindBar()
+        window?.makeFirstResponder(bar.field)
+        bar.field.currentEditor()?.selectAll(nil)
+        findChanged()
+    }
+
+    private func makeFindBar() -> CodeFindBar {
+        let bar = CodeFindBar(frame: NSRect(origin: .zero, size: CodeFindBar.size))
+        bar.onChange = { [weak self] _ in self?.findChanged() }
+        bar.onStep = { [weak self] backward in self?.stepFind(backward: backward) }
+        bar.onClose = { [weak self] in self?.closeFind() }
+        addSubview(bar)
+        findBar = bar
+        return bar
+    }
+
+    private func layoutFindBar() {
+        guard let findBar else { return }
+        let size = CodeFindBar.size
+        findBar.frame = NSRect(x: max(0, bounds.width - size.width - 8), y: header.height + 6, width: min(size.width, bounds.width), height: size.height)
+    }
+
+    /// The query changed: match again, the current match the first at or below the top row.
+    private func findChanged() {
+        guard let findBar, let painter = rowsView.painter else { return }
+        var find = CodeFind(query: findBar.field.stringValue, rows: painter.rows) { painter.text(ofEntry: $0) }
+        let top = painter.rows.segment(CodePainter.row(atY: rowsView.bounds.minY + CodeMetrics.verticalPadding))?.entry ?? 0
+        find.current = find.matches.isEmpty ? nil : (find.matches.firstIndex { $0.entry >= top } ?? 0)
+        rowsView.painter?.find = find
+        findBar.show(status: find.status)
+        revealCurrentMatch()
+    }
+
+    /// Return / ⇧Return: the next or previous match, wrapping around.
+    private func stepFind(backward: Bool) {
+        guard let find = rowsView.painter?.find, !find.matches.isEmpty else { return }
+        let count = find.matches.count
+        let current = find.current.map { backward ? ($0 - 1 + count) % count : ($0 + 1) % count } ?? (backward ? count - 1 : 0)
+        rowsView.painter?.find?.current = current
+        findBar?.show(status: rowsView.painter?.find?.status ?? "")
+        revealCurrentMatch()
+    }
+
+    /// Scrolls the current match's row into view when it isn't (a follow tile then holds still).
+    private func revealCurrentMatch() {
+        guard let painter = rowsView.painter, let find = painter.find, let current = find.current else { return }
+        let match = find.matches[current]
+        let rows = painter.rows.rows(ofEntry: match.entry)
+        let row = rows.first { painter.rows.segment($0)?.end.map { match.start < $0 } ?? true } ?? rows.lowerBound
+        userInteracted()
+        let top = CodePainter.rowTop(row)
+        let visible = rowsView.bounds.insetBy(dx: 0, dy: CodeMetrics.verticalPadding)
+        if top < visible.minY || top + CodeMetrics.rowHeight > visible.maxY { scroll(toRow: row) }
+    }
+
+    /// Esc: the bar goes, the highlights with it, and the keyboard returns to the rows.
+    private func closeFind() {
+        findBar?.isHidden = true
+        rowsView.painter?.find = nil
+        window?.makeFirstResponder(rowsView)
     }
 }
 
@@ -463,16 +541,26 @@ extension CodeTile {
         _ = try? board.pin(object.id, path: displayed.path, range: displayed.range)
     }
 
-    /// Open nvim at the clicked line in a terminal tile beside this one.
+    /// Open the user's editor (`$VISUAL`/`$EDITOR` from the login shell, else nvim or vi) at the
+    /// clicked line in a terminal tile beside this one, in view (`CanvasView.openForUser`).
     private func editHere(at point: NSPoint) {
         guard let document, showsCurrent, document.side == .new, !document.isPinned else { return }
         let line = displayedLine(atY: point.y) ?? displayed.range?.start ?? 1
-        let size = Board.defaultSize(.terminal)
-        let frame = board.place(width: size.w, height: size.h, near: object.id)
-        board.create(type: .terminal, props: .object([
-            "cwd": .string(board.root.path),
-            "command": .array(["nvim", "+\(line)", "--", document.path].map(JSONValue.string)),
-        ]), frame: frame)
+        let path = document.path
+        Task { [weak self] in
+            // The login shell is a blocking subprocess (once, then cached).
+            let argv = await offPool {
+                let shell = LoginShell.shared
+                let editor = shell.editor
+                let fallback = editor == nil && shell.resolve("nvim") == nil ? "vi" : "nvim"
+                return EditorCommand.argv(editor: editor, fallback: fallback, line: line, path: path)
+            }
+            guard let self, let canvas = self.enclosingScrollView as? CanvasView else { return }
+            canvas.openForUser(.terminal, props: .object([
+                "cwd": .string(self.board.root.path),
+                "command": .array(argv.map(JSONValue.string)),
+            ]), near: self.object.id)
+        }
     }
 
     /// Displayed line of a row; peek rows map to the line their change sits at.

@@ -229,16 +229,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func newTerminal(_ sender: Any?) { keyController?.newTerminal(sender) }
     @objc func newBrowserTile(_ sender: Any?) {
         guard let controller = keyController, let window = controller.window else { return }
-        BrowserTile.promptForNew(on: controller.board, in: window)
+        BrowserTile.promptForNew(in: window) { [weak controller] url in
+            controller?.canvas.openForUser(.browser, props: .object(["url": .string(url.absoluteString)]))
+        }
     }
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
-    /// An empty note at the viewport center; it shows a double-click-to-edit placeholder.
+    /// An empty note in view; it shows a double-click-to-edit placeholder.
     @objc func newNote(_ sender: Any?) {
-        keyController?.board.create(type: .note, props: .object(["markdown": .string("")]))
+        keyController?.canvas.openForUser(.note, props: .object(["markdown": .string("")]))
     }
 
     @objc func newHtmlTile(_ sender: Any?) {
-        keyController?.board.create(type: .html, props: .object(["html": .string(HtmlKit.emptyTemplate), "title": .string("HTML")]))
+        keyController?.canvas.openForUser(.html, props: .object(["html": .string(HtmlKit.emptyTemplate), "title": .string("HTML")]))
     }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
@@ -297,10 +299,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
             item("New Note", #selector(newNote(_:)), "n"),
-            item("New Browser Tile…", #selector(newBrowserTile(_:)), "b", [.command, .shift]),
-            item("Open Board…", #selector(openBoard(_:)), "o", [.command, .shift]),
+            // Shifted items use the uppercase key: a lowercase key with a Shift mask also matches
+            // the plain ⌘ key (⌘O opened Open Board, ⌘B New Browser Tile).
+            item("New Browser Tile…", #selector(newBrowserTile(_:)), "B", [.command, .shift]),
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
-            item("New HTML Tile", #selector(newHtmlTile(_:)), "h", [.command, .shift]),
+            item("Open Board…", #selector(openBoard(_:)), "O", [.command, .shift]),
+            item("New HTML Tile", #selector(newHtmlTile(_:)), "H", [.command, .shift]),
+            .separator(),
+            // The board window takes ⌘W first to close the selection or the focused terminal
+            // (CanvasWindowController.handleKeyEquivalent); with neither, the tab or window closes.
+            item("Close", #selector(NSWindow.performClose(_:)), "w"),
         ])
         submenu("Edit", [
             item("Undo", #selector(undoCanvas(_:)), "z"),

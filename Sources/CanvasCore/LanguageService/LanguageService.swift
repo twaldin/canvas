@@ -122,7 +122,8 @@ public actor LanguageService {
             let command = config.command
             let (found, environment) = await offPool { (shell.resolve(command), shell.environment) }
             guard let executable = found else {
-                throw LSPError.unavailable("\(config.command) is not installed (not found on the login shell's PATH)")
+                let missing = "\(config.command) is not installed (not found on the login shell's PATH)"
+                throw LSPError.unavailable(config.installHint.map { "\(missing). \($0)" } ?? missing)
             }
             // Another request may have created the server while the shell ran.
             if let existing = servers[key] {

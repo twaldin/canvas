@@ -172,6 +172,46 @@ final class ApiRouterTests {
         #expect(prompted["submittedAt"]?.string.flatMap { try? Date($0, strategy: .iso8601) } != nil)
     }
 
+    @Test func promptingABlockedAgentIsRefusedUnlessForced() async throws {
+        let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .blocked, message: "Which flag should --pair use?", seq: 1, source: "canvas-omp")
+        let client = try connect()
+        let refused = try await call(client, "agent.prompt", ["target": .string(tile), "text": "use nargs=2"])
+        #expect(refused["error"]?["code"] == .string("conflict"))
+        #expect(refused["error"]?["message"]?.string?.contains("Which flag should --pair use?") == true, "names what it waits on")
+        #expect(submitted.isEmpty, "the text never reached the dialog")
+        let forced = try await call(client, "agent.prompt", ["target": .string(tile), "text": "use nargs=2", "force": .bool(true)])
+        #expect(forced["result"]?["waitable"] == .bool(true))
+        #expect(submitted == ["use nargs=2"])
+    }
+
+    @Test func anUpdateMayGiveAnyPartOfTheFrame() async throws {
+        let note = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 10, y: 20, w: 300, h: 100))
+        let client = try connect()
+        let taller = try await call(client, "object.update", ["id": .string(note.id), "frame": .object(["h": 420])])
+        #expect(try taller["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 10, y: 20, w: 300, h: 420))
+        let moved = try await call(client, "object.update", ["id": .string(note.id), "frame": .object(["x": 50])])
+        #expect(try moved["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 50, y: 20, w: 300, h: 420))
+        let partial = try await call(client, "object.create", ["type": "html", "props": .object(["html": "<p>x</p>"]), "frame": .object(["x": 0, "y": 0, "w": 200])])
+        #expect(partial["error"]?["code"] == .string("invalid_params"))
+        #expect(partial["error"]?["message"]?.string?.contains("frame needs x, y, w, and h (missing h)") == true, "\(partial)")
+    }
+
+    @Test func aNoteIsStoredWithTheAnchorsItsTileWouldWriteBack() async throws {
+        let source = dir.appendingPathComponent("root/src/a.ts")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "import x\n\nexport function load() {\n  return 1\n}\n".write(to: source, atomically: true, encoding: .utf8)
+        let client = try connect()
+        let markdown = "Loading:\n\n```ts file=src/a.ts#L3-5\n```\n"
+        let created = try await call(client, "object.create", ["type": "note", "props": .object(["markdown": .string(markdown)]), "frame": .object(["x": 0, "y": 0, "w": 400])])
+        let object = try #require(created["result"]?["object"])
+        #expect(object["props"]?["markdown"] == .string("Loading:\n\n```ts file=src/a.ts#L3-5 anchor=\"export function load() {\"\n```\n"))
+        // Nothing is left for the tile to rewrite, so the returned rev is the one to update with.
+        let id = try #require(object["id"]?.string)
+        let edited = try await call(client, "object.update", ["id": .string(id), "rev": object["rev"] ?? .null, "props": .object(["markdown": "Loading:\n\n```ts file=src/a.ts#L1-1\n```\n"])])
+        #expect(edited["result"]?["object"]?["props"]?["markdown"] == .string("Loading:\n\n```ts file=src/a.ts#L1-1 anchor=\"import x\"\n```\n"))
+    }
+
     /// The window's state with `target` as the terminal the tray shows.
     func showTray(to target: ObjectID?) {
         router.viewState = { _ in

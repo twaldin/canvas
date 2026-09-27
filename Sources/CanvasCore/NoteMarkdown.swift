@@ -41,6 +41,36 @@ public enum NoteMarkdown {
         return out
     }
 
+    /// A line-range fence the tile anchors: no `anchor=`, `symbol=`, or pinned commit yet.
+    public static func needsAnchor(_ fence: AnchoredFence) -> Bool {
+        fence.fence.lines != nil && fence.fence.anchor == nil && fence.fence.symbol == nil && fence.fence.commit == nil
+    }
+
+    /// `markdown` with each fence that `needsAnchor` anchored at its resolved first line
+    /// (`results` by fence key; exact resolutions only). Fences that can't hold it are skipped.
+    public static func anchoringRanges(_ markdown: String, fences: [AnchoredFence], results: [String: NoteExcerpt]) -> String {
+        var text = markdown
+        for fence in fences where needsAnchor(fence) {
+            guard let excerpt = results[fence.key], excerpt.status == .exact, let first = excerpt.lines.first,
+                  let anchored = anchoring(text, fenceLines: fence.lines, anchor: first) else { continue }
+            text = anchored
+        }
+        return text
+    }
+
+    /// `markdown` with its unanchored line-range fences resolved against `root` and anchored, as
+    /// the note tile would write them back once it shows them. The API stores notes this way, so
+    /// a note an agent just wrote isn't rewritten under it (a new `rev`) a moment later.
+    public static func anchoringRanges(_ markdown: String, root: URL) async -> String {
+        let fences = anchoredFences(in: parse(markdown)).filter(needsAnchor)
+        guard !fences.isEmpty else { return markdown }
+        var results: [String: NoteExcerpt] = [:]
+        for fence in fences {
+            results[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
+        }
+        return anchoringRanges(markdown, fences: fences, results: results)
+    }
+
     /// `markdown` with ` anchor="…"` appended to the opening fence lines `fenceLines` (1-based),
     /// or nil when the anchor can't be written there: a backtick fence can't hold a backtick in
     /// its info string, and a multi-line or blank anchor anchors nothing.

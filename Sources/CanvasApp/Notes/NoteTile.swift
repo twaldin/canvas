@@ -14,7 +14,7 @@ final class NoteTile: NSView, TileContent {
 
     private(set) var object: CanvasObject
     private let board: Board
-    private let displayScroll = NSScrollView()
+    private let displayScroll = OverlayScrollView()
     private let display = NoteDisplayView(usingTextLayoutManager: true)
     private let layoutDelegate = NoteLayoutDelegate()
     private let editorScroll = NSScrollView()
@@ -203,12 +203,7 @@ final class NoteTile: NSView, TileContent {
     /// and agents reading the markdown see what it's anchored to. One update for all fences.
     private func persistAnchors(_ results: [String: NoteExcerpt]) {
         guard session == nil else { return }
-        var text = markdown
-        for fence in fences where fence.fence.lines != nil && fence.fence.anchor == nil && fence.fence.symbol == nil && fence.fence.commit == nil {
-            guard let excerpt = results[fence.key], excerpt.status == .exact, let first = excerpt.lines.first,
-                  let anchored = NoteMarkdown.anchoring(text, fenceLines: fence.lines, anchor: first) else { continue }
-            text = anchored
-        }
+        let text = NoteMarkdown.anchoringRanges(markdown, fences: fences, results: results)
         guard text != markdown else { return }
         _ = try? board.update(object.id, rev: object.rev, props: .object(["markdown": .string(text)]), actor: .system)
     }
@@ -585,6 +580,17 @@ final class NoteDisplayView: NSTextView {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("draw.NoteDisplayView", since: perfStart) }
         super.draw(dirtyRect)
+    }
+}
+
+/// The rendered note's scroll view keeps overlay scrollers whatever the system setting, so the
+/// text always wraps at the width `ObjectMeasure` fits notes at. A legacy scroller (a mouse
+/// attached, or "Show scroll bars: Always") took its width from the text once a note overflowed,
+/// even briefly, and the narrower wrap kept it a line taller than its fitted frame: clipped.
+final class OverlayScrollView: NSScrollView {
+    override var scrollerStyle: NSScroller.Style {
+        get { .overlay }
+        set { super.scrollerStyle = .overlay }
     }
 }
 

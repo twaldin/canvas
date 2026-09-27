@@ -79,6 +79,9 @@ public final class Board {
     private var seenSinceWorking: Set<ObjectID> = []
     /// Highest accepted lifecycle seq per "tile|source".
     private var lifecycleSeq: [String: Int] = [:]
+    /// Tool calls each terminal's agent waits on the user to approve, oldest first, with the
+    /// blocker message each was reported with (`reportLifecycle` `call`).
+    private var pendingApprovals: [ObjectID: [(call: String, message: String?)]] = [:]
     /// Highest `rev` ever issued per object, kept across deletes so an object brought back by
     /// undo/redo never reuses a revision a stale writer might still hold.
     private var revHighWater: [ObjectID: Int] = [:]
@@ -525,13 +528,38 @@ public final class Board {
 
     // MARK: Agents
 
-    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?) throws {
+    /// `call` names the tool call a hook reports on. `blocked` with a call: that call waits for
+    /// approval. `working` with a call: that call finished (its approval was answered). While any
+    /// call waits, the terminal stays `blocked` with the oldest waiting call's message, whatever
+    /// other calls (parallel siblings, subagents) finish meanwhile; finishing one re-raises the
+    /// next. `working` without a call (a new prompt) and `idle` end every wait. A finished call
+    /// reported out of order (lower `seq`) still ends its own wait but changes nothing else.
+    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         let key = "\(tile)|\(source ?? kind)"
         if let seq {
-            if let last = lifecycleSeq[key], seq <= last { return }
+            if let last = lifecycleSeq[key], seq <= last {
+                if state == .working, let call { resolveApproval(tile, call: call) }
+                return
+            }
             lifecycleSeq[key] = seq
+        }
+        var state = state
+        var message = message
+        switch (state, call) {
+        case (.blocked, let call?):
+            pendingApprovals[tile, default: []].append((call, message))
+        case (.working, let call?):
+            resolveApproval(tile, call: call)
+        case (.blocked, nil):
+            break
+        default:
+            pendingApprovals[tile] = nil
+        }
+        if let waiting = pendingApprovals[tile]?.first {
+            state = .blocked
+            message = waiting.message
         }
         if state == .working {
             seenSinceWorking.remove(tile)
@@ -546,6 +574,13 @@ public final class Board {
         let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind)]))
         try update(tile, props: .object(["lifecycle": .object(lifecycle), "agent": agent]), caller: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .object(lifecycle)))
+    }
+
+    /// Ends the wait for one approval of `call` (a finished call that waited on none: nothing).
+    private func resolveApproval(_ tile: ObjectID, call: String) {
+        guard var waiting = pendingApprovals[tile], let index = waiting.firstIndex(where: { $0.call == call }) else { return }
+        waiting.remove(at: index)
+        pendingApprovals[tile] = waiting.isEmpty ? nil : waiting
     }
 
     private func wasWorking(_ terminal: CanvasObject) -> Bool {
@@ -572,9 +607,12 @@ public final class Board {
         try update(tile, props: .object(["agent": .object(agent)]), caller: tile)
     }
 
+    /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the
+    /// recorded session go, so a reboot restores a shell instead of resuming a session the user quit.
     public func releaseAgent(tile: ObjectID) throws {
         _ = try object(tile)
-        try update(tile, props: .object(["lifecycle": .null]), caller: tile)
+        pendingApprovals[tile] = nil
+        try update(tile, props: .object(["lifecycle": .null, "agent": .null]), caller: tile)
         onEvent?(.agentLifecycle(tile: tile, lifecycle: .null))
     }
 

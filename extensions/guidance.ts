@@ -13,8 +13,9 @@ export function canvasGuidance(agent: GuidanceAgent, tile: string): string {
   const socket = process.env.CANVAS_SOCKET ?? "";
   const board = process.env.CANVAS_BOARD_ID ?? "";
   return [
-    `You are running in a Canvas terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>.`,
+    `You are running in a Canvas terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>, with each item's location and excerpt.`,
     ...skillLines(agent),
+    "Write code references as repo-relative `path:line` (`src/app.ts:42`, `src/app.ts:42-60`): the user ⌘-clicks them to open the code beside you.",
     "When your answer is something the user will come back to (a plan, a walkthrough across several files, a comparison), put it on the canvas or offer to; one-off answers stay in the terminal.",
     "To show the user code, a page, or a diagram beside this terminal, use the canvas (skill, `canvas` CLI, SDK). Never drive the Canvas app with GUI automation (Computer Use, AppleScript) and never publish it elsewhere (artifacts, gists) instead.",
     ...connectionLines(agent, socket, tile, board),
@@ -22,9 +23,10 @@ export function canvasGuidance(agent: GuidanceAgent, tile: string): string {
 }
 
 function skillLines(agent: GuidanceAgent): string[] {
+  const when = "before you create, change, arrange, or inspect canvas objects. A plain question, or one about a mentioned item, needs no skill: answer it from the code and the <canvas-mentions> block.";
   if (agent === "claude") {
     // The Claude Code plugin (extensions/claude) ships the skill itself.
-    return ["Before reading or changing the canvas, or when the user refers to things on it, you MUST load the `canvas:canvas` skill."];
+    return [`You MUST load the \`canvas:canvas\` skill ${when}`];
   }
   // omp's skill discovery isn't extensible from an extension and Codex has no per-session skill
   // root, so the skill is announced the way they list skills and read on demand from its path.
@@ -35,7 +37,7 @@ function skillLines(agent: GuidanceAgent): string[] {
     "<skills>",
     `- canvas: ${description}`,
     "</skills>",
-    `Before reading or changing the canvas, or when the user refers to things on it, you MUST read ${SKILL_PATH} ${how}. Its relative references (e.g. references/html-explainers.md) live in ${dirname(SKILL_PATH)}/.`,
+    `You MUST read ${SKILL_PATH} ${how} ${when} Its relative references (e.g. references/html-explainers.md) live in ${dirname(SKILL_PATH)}/.`,
   ];
 }
 
@@ -51,8 +53,12 @@ function connectionLines(agent: GuidanceAgent, socket: string, tile: string, boa
     ];
   }
   if (agent === "codex") {
-    // Codex's workspace-write sandbox denies unix-socket connects (docs/contracts.md).
-    return [`${connection} Shell commands inherit these. The \`canvas\` CLI talks to that unix socket, which Codex's sandbox blocks: run canvas commands with escalated permissions (outside the sandbox) instead of retrying them sandboxed.`];
+    // Codex's workspace-write sandbox denies unix-socket connects (docs/contracts.md). A short
+    // `canvas <method> --json @file` command is what a `canvas` prefix rule can approve once.
+    return [
+      `${connection} Shell commands inherit these. The \`canvas\` CLI talks to that unix socket, which Codex's sandbox blocks: run canvas commands with escalated permissions (outside the sandbox) instead of retrying them sandboxed.`,
+      "Write canvas JSON payloads to a file first (e.g. in $TMPDIR) and pass `--json @<file>`, never inline JSON: the approval the user sees stays one short `canvas …` line, which they can allow for every `canvas` command.",
+    ];
   }
   return [`${connection} Shell commands inherit these.`];
 }

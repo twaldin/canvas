@@ -130,6 +130,13 @@ class FitFrame(TypedDict):
     y: Required[float]
     w: NotRequired[float]
 
+class FramePatch(TypedDict):
+    """any of x, y, w, h; the rest keep their current values (with size: fit, w is the wrap or widest width and h is measured)"""
+    x: NotRequired[float]
+    y: NotRequired[float]
+    w: NotRequired[float]
+    h: NotRequired[float]
+
 class Size(TypedDict):
     w: Required[float]
     h: Required[float]
@@ -261,12 +268,12 @@ class ObjectApi:
         return self._call("object.get", params, [])
 
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, at most 4000 tall). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
+        """Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, at most 4000 tall). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
         params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "caller": caller}
         return self._call("object.create", params, ["board","caller"])
 
-    def update(self, *, id: "Id", rev: int | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, props: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w."""
+    def update(self, *, id: "Id", rev: int | None = None, frame: "FramePatch" | None = None, size: Literal["fit"] | None = None, props: dict[str, Any] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w."""
         params = {"id": id, "rev": rev, "frame": frame, "size": size, "props": props, "caller": caller}
         return self._call("object.update", params, ["caller"])
 
@@ -350,9 +357,9 @@ class AgentApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None) -> dict[str, Any]:
-        """Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored."""
-        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source}
+    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None) -> dict[str, Any]:
+        """Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. `working` without `call` (a new prompt) and `idle` end every wait."""
+        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call}
         return self._call("agent.report", params, [])
 
     def report_session(self, *, tile: "Id", kind: str, session_id: str | None = None, session_path: str | None = None) -> dict[str, Any]:
@@ -361,7 +368,7 @@ class AgentApi:
         return self._call("agent.report_session", params, [])
 
     def release(self, *, tile: "Id", kind: str, source: str | None = None) -> dict[str, Any]:
-        """The agent in this tile exited; clear its lifecycle authority."""
+        """The agent in this tile exited; clear its lifecycle authority and its recorded session (`agent.report_session`), so after a reboot the tile runs its `command` (a plain shell when it has none) instead of resuming that session."""
         params = {"tile": tile, "kind": kind, "source": source}
         return self._call("agent.release", params, [])
 
@@ -370,9 +377,9 @@ class AgentApi:
         params = {}
         return self._call("agent.list", params, [])
 
-    def prompt(self, *, target: str, text: str) -> dict[str, Any]:
-        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first."""
-        params = {"target": target, "text": text}
+    def prompt(self, *, target: str, text: str, force: bool | None = None) -> dict[str, Any]:
+        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true."""
+        params = {"target": target, "text": text, "force": force}
         return self._call("agent.prompt", params, [])
 
     def wait(self, *, target: str, until: list[Literal["working", "blocked", "idle", "done", "unknown"]] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:

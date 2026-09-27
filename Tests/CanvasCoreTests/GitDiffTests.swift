@@ -236,6 +236,20 @@ struct GitDiffTests {
         #expect(changed.mappings == [LineRangeMapping(original: 6..<6, modified: 6..<8)])
     }
 
+    @Test func basesOnTheSameCommitShareTheDiffButNameTheirOwnBase() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("f.txt", numbered(1...5))
+        let head = try await repo.commit("base")
+        try await repo.write("f.txt", numbered(1...6))
+        let engine = GitDiffEngine(watchesRepositories: false)
+        let mergeBase = await engine.diff(file: repo.url("f.txt"), base: .mergeBase)
+        let atHead = await engine.diff(file: repo.url("f.txt"), base: .head)
+        #expect(mergeBase.base == head && atHead.base == head, "on main, HEAD is the merge-base")
+        #expect(mergeBase.baseLabel == "merge-base with main")
+        #expect(atHead.baseLabel == "HEAD", "the header names the base the tile chose")
+        #expect(atHead.hunks == mergeBase.hunks)
+    }
+
     @Test func filesRequestedTogetherShareOneGitDiff() async throws {
         let repo = try await TempRepo()
         for name in ["a", "b", "c"] { try await repo.write("\(name) file.txt", numbered(1...3)) }

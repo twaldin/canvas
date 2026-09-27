@@ -125,20 +125,33 @@ final class TileFrameView: NSView {
     }
 
     func update(_ object: CanvasObject) {
-        titleLabel.stringValue = titleLabel.stringValue.isEmpty || object.type != .terminal ? Self.title(for: object) : titleLabel.stringValue
+        if title.isEmpty || object.type != .terminal { setTitle(Self.title(for: object)) }
         z = object.z
-        lifecycleState = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
-        badge.layer?.backgroundColor = Self.badgeColor(lifecycleState).cgColor
+        let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
         badge.isHidden = object.type != .terminal
-        cardTitle.stringValue = titleLabel.stringValue
-        updateTint()
+        if state != lifecycleState {
+            lifecycleState = state
+            badge.layer?.backgroundColor = Self.badgeColor(state).cgColor
+            updateTint()
+        }
         content.update(object)
     }
 
-    /// The title as shown (terminals report theirs).
-    var title: String { titleLabel.stringValue }
+    /// The title (terminals report theirs). The labels show it only while the window is visible:
+    /// a working agent retitles its terminal ~12 times a second (omp's spinner), and every label
+    /// change costs a layout, text drawing, and a commit to the window server, minimized or not.
+    private(set) var title = ""
+    private var occlusionObserver: NSObjectProtocol?
 
     func setTitle(_ title: String) {
+        guard title != self.title else { return }
+        self.title = title
+        if window?.occlusionState.contains(.visible) == true { syncTitle() }
+    }
+
+    /// Puts the title into the labels (also for `view.snapshot` of a window nobody sees).
+    func syncTitle() {
+        guard titleLabel.stringValue != title else { return }
         titleLabel.stringValue = title
         cardTitle.stringValue = title
     }
@@ -227,7 +240,18 @@ final class TileFrameView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil, startCardDue else { return }
+        occlusionObserver.map(NotificationCenter.default.removeObserver)
+        occlusionObserver = window.map { window in
+            NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.window?.occlusionState.contains(.visible) == true else { return }
+                    self.syncTitle()
+                }
+            }
+        }
+        guard let window else { return }
+        if window.occlusionState.contains(.visible) { syncTitle() }
+        guard startCardDue else { return }
         startCardDue = false
         if !isLive { requestCard() }
     }

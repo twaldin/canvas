@@ -127,6 +127,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         guard let window, let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         let visible = canvas.documentVisibleRect
         let live = canvas.tiles.values.filter { $0.isLive && $0.frame.intersects(visible) }.map(\.content)
+        canvas.tiles.values.forEach { $0.syncTitle() }
         live.forEach { $0.showSnapshot(true) }
         view.cacheDisplay(in: view.bounds, to: rep)
         live.forEach { $0.showSnapshot(false) }

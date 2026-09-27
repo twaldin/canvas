@@ -7,6 +7,8 @@ import Foundation
 final class FileEvents: @unchecked Sendable {
     private final class Handler: @unchecked Sendable {
         let deliver: @MainActor ([String]) -> Void
+        /// The last delivered event's id; only touched on the main queue.
+        var latest: FSEventStreamEventId = 0
         init(_ deliver: @escaping @MainActor ([String]) -> Void) { self.deliver = deliver }
     }
 
@@ -14,14 +16,19 @@ final class FileEvents: @unchecked Sendable {
     private let handler: Handler
     private var stream: FSEventStreamRef?
 
+    /// The id of the last event delivered (during delivery: the batch's last); events up to an id
+    /// taken with `FSEventsGetCurrentEventId` happened before it was taken.
+    var latestEventId: FSEventStreamEventId { handler.latest }
+
     init?(directories: [String], latency: TimeInterval = 0.1, handler: @escaping @MainActor ([String]) -> Void) {
         self.directories = directories
         self.handler = Handler(handler)
         // The stream holds the handler unretained; `deinit` stops the stream before it goes.
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self.handler).toOpaque(), retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, _, ids in
             guard let info else { return }
             let handler = Unmanaged<Handler>.fromOpaque(info).takeUnretainedValue()
+            if count > 0 { handler.latest = ids[count - 1] }
             let changed = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
             MainActor.assumeIsolated { handler.deliver(changed) }
         }

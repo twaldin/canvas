@@ -263,10 +263,18 @@ public actor GitDiffEngine {
         return FileDiff(state: .pinned, base: sha, baseLabel: revision, old: SideText(""), new: text, hunks: [], repository: toplevel.path)
     }
 
-    /// The base a code tile would diff `file` against, resolving it if needed.
+    /// The base `file` diffs against, resolved afresh (a changes listing must match the
+    /// repository as it is now, whatever its watcher has seen yet) and, when it names a commit,
+    /// recorded for the diffs that follow; tiles showing a held repository hear of it when it moved.
     public func resolvedBase(for file: URL, base: DiffBase) async -> ResolvedBase? {
         guard let repository = await repository(containing: file) else { return nil }
-        return await resolve(base, in: repository)
+        let resolved = await Self.resolve(base, in: repository.toplevel)
+        guard resolved.sha != nil else { return resolved }
+        let previous = repository.bases.updateValue(resolved, forKey: base)
+        if let previous, previous != resolved, repositories[repository.toplevel.path] === repository {
+            NotificationCenter.default.post(name: .gitDiffBaseChanged, object: repository.toplevel.path)
+        }
+        return resolved
     }
 
     /// `file` as of `commit` (`git cat-file blob`), for excerpts of old-side and pinned lines.

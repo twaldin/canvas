@@ -91,3 +91,4 @@ turns a dedicated connection into a stream of `object.created`, `object.updated`
 `agent.list` covers every canvas in the app. `lifecycle.state` is `working`, `blocked` (waiting for its user: an approval or a question),
 `idle`, `done` (idle with results the user hasn't looked at yet), or `unknown` (no integration reporting).
 `agent.read` returns up to 2000 lines of the terminal's text, trailing blank lines removed.
+`agent.wait` survives an app restart: the SDKs and CLI ask again once the app is back, with `timeoutMs` reduced by the time already waited.

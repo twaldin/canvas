@@ -367,7 +367,7 @@ class AgentApi:
         return self._call("agent.prompt", params, [])
 
     def wait(self, *, target: str, until: list[Literal["working", "blocked", "idle", "done", "unknown"]] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
-        """Wait until the target agent reaches one of the given states."""
+        """Wait until the target agent reaches one of the given states. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited."""
         params = {"target": target, "until": until, "timeoutMs": timeout_ms}
         return self._call("agent.wait", params, [])
 
@@ -434,3 +434,6 @@ class GeneratedApi:
         self.events = EventsApi(call)
 
 METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"]
+
+# Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
+RESEND_METHODS = ["agent.wait"]

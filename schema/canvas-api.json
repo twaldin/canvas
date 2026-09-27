@@ -786,7 +786,8 @@
       "result": { "type": "object", "required": ["agent"], "properties": { "agent": { "$ref": "#/definitions/Agent" } } }
     },
     "agent.wait": {
-      "description": "Wait until the target agent reaches one of the given states.",
+      "description": "Wait until the target agent reaches one of the given states. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited.",
+      "resend": true,
       "params": {
         "type": "object",
         "required": ["target"],

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { type Compositions, createCompositions } from "./compositions";
-import { bindMethods, type CanvasApi } from "./generated";
+import { bindMethods, type CanvasApi, RESEND_METHODS } from "./generated";
 
 export * from "./compositions";
 export * from "./generated";
@@ -26,6 +26,9 @@ export class CanvasError extends Error {
 
 /** Connecting or writing failed before the request left, so it is safe to send again. */
 class NotSent extends Error {}
+
+/** The request left but the connection closed before its reply: it may have applied. */
+class ReplyLost extends Error {}
 
 /** `end`: the connection's byte count once this request's line (newline last) is queued. */
 type Pending = { method: string; resolve: (value: unknown) => void; reject: (error: unknown) => void; timer?: NodeJS.Timeout; end: number };
@@ -110,20 +113,45 @@ export class CanvasClient {
     return this.#compositions;
   }
 
-  /** Send one request. `envKeys` (e.g. ["caller", "board"]) are filled from this client when omitted; a relative `out` resolves against the cwd. */
+  /**
+   * Send one request. `envKeys` (e.g. ["caller", "board"]) are filled from this client when omitted; a relative `out` resolves against the cwd.
+   * A `RESEND_METHODS` read (agent.wait) whose reply the connection lost is sent again once the app is back, with `timeoutMs` reduced by the time already spent.
+   */
   async call(method: string, params: object, envKeys: readonly string[] = []): Promise<unknown> {
     const filled: Record<string, unknown> = { ...params };
     const defaults: Record<string, string | undefined> = { caller: this.tileId, board: this.boardId };
     for (const key of envKeys) filled[key] ??= defaults[key];
     if (typeof filled.out === "string") filled.out = resolve(filled.out.replace(/^~(?=\/|$)/, homedir()));
+    const resend = RESEND_METHODS.includes(method);
+    const started = Date.now();
+    const budget = resend && typeof filled.timeoutMs === "number" ? filled.timeoutMs : undefined;
+    for (;;) {
+      if (budget !== undefined) filled.timeoutMs = Math.max(0, Math.round(budget - (Date.now() - started)));
+      try {
+        return await this.#deliver(method, filled);
+      } catch (error) {
+        if (!(error instanceof ReplyLost)) throw error;
+        if (!resend) throw new CanvasError("unavailable", error.message);
+      }
+      // A read: the app restarted mid-call. Wait for it, then ask again with the time left.
+      try {
+        await this.#connect(this.#reconnectTimeoutMs);
+      } catch (error) {
+        throw new CanvasError("unavailable", `${(error as Error).message} (${method} was cut off and could not be re-sent)`);
+      }
+    }
+  }
+
+  /** One request; one that was not sent is sent once more on a fresh connection, waiting up to `reconnectTimeoutMs` for the socket. */
+  async #deliver(method: string, params: object): Promise<unknown> {
     try {
-      return await this.#send(method, filled, 0);
+      return await this.#send(method, params, 0);
     } catch (error) {
       if (!(error instanceof NotSent)) throw error;
     }
     // Stale connection or the app is restarting: nothing was delivered, so send once more.
     try {
-      return await this.#send(method, filled, this.#reconnectTimeoutMs);
+      return await this.#send(method, params, this.#reconnectTimeoutMs);
     } catch (error) {
       throw error instanceof NotSent ? new CanvasError("unavailable", `${error.message} (${method} was not sent)`) : error;
     }
@@ -195,7 +223,7 @@ export class CanvasClient {
           id,
           pending.end > flushed
             ? new NotSent(`Canvas socket ${this.socketPath}: connection closed`)
-            : new CanvasError("unavailable", `Canvas connection lost after sending ${pending.method}; it may or may not have applied — re-read before retrying`),
+            : new ReplyLost(`Canvas connection lost after sending ${pending.method}; it may or may not have applied — re-read before retrying`),
         );
       }
     });

@@ -78,7 +78,7 @@ Results are objects, never bare values:
 
 `caller` (you) and `board` are filled from the client's tile and board (explicit, else `CANVAS_TILE_ID`/`CANVAS_BOARD_ID`),
 so objects you create are attributed to you and placed next to your terminal.
-If the app restarts, the next call reconnects on its own (waiting up to 15 s).
+If the app restarts, the next call reconnects on its own (waiting up to 15 s), and an `agent.wait` in progress is asked again with the time it has left.
 `unavailable` with "may or may not have applied" means your request was sent but its reply was lost: re-read (`board.get`) before retrying.
 Method reference with examples: `references/api.md` in this skill's directory.
 

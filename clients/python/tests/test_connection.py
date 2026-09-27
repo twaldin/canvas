@@ -29,6 +29,8 @@ class FakeApp:
         self.path = path
         self.requests: list[tuple[str, dict]] = []
         self.drop_next_request = False
+        # (method, seconds): the first such request restarts the app (socket gone that long) unanswered.
+        self.restart_on: tuple[str, float] | None = None
         self._conns: list[socket.socket] = []
         self._listener: socket.socket | None = None
         self.listen()
@@ -94,6 +96,10 @@ class FakeApp:
                     if self.drop_next_request:
                         self.drop_next_request = False
                         self._hang_up(conn)
+                        return
+                    if self.restart_on is not None and self.restart_on[0] == request["method"]:
+                        after, self.restart_on = self.restart_on[1], None
+                        self.restart(after)
                         return
                     reply = {"id": request["id"], "ok": True, "result": {"method": request["method"], "params": request["params"]}}
                     conn.sendall((json.dumps(reply) + "\n").encode())
@@ -182,6 +188,20 @@ class ConnectionTest(unittest.TestCase):
         self.assertEqual([method for method, _ in app.requests], ["object.create"])
         # The client is not wedged: the next call opens a new connection.
         self.assertEqual(client.board.get()["method"], "board.get")
+
+    def test_a_wait_the_app_restart_cut_off_is_asked_again_with_the_time_left(self) -> None:
+        app = self.serve()
+        client = self.client()
+        app.restart_on = ("agent.wait", 0.5)
+        started = time.monotonic()
+        result = client.agent.wait(target="reviewer", timeout_ms=60000)
+        self.assertEqual(result["method"], "agent.wait")
+        self.assertGreaterEqual(time.monotonic() - started, 0.4)  # it waited for the app to come back
+        (first, sent), (second, resent) = app.requests
+        self.assertEqual((first, second), ("agent.wait", "agent.wait"))
+        self.assertEqual(sent["timeoutMs"], 60000)
+        self.assertLessEqual(resent["timeoutMs"], 60000 - 400)
+        self.assertGreater(resent["timeoutMs"], 50000)
 
     def test_broken_pipe_on_send_retries_on_a_fresh_connection(self) -> None:
         app = self.serve()

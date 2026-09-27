@@ -805,7 +805,7 @@ export interface CanvasApi {
     list(params?: AgentListParams): Promise<AgentListResult>;
     /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter. Rejected with `conflict` if that agent is blocked. */
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
-    /** Wait until the target agent reaches one of the given states. */
+    /** Wait until the target agent reaches one of the given states. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
     /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. */
     read(params: AgentReadParams): Promise<AgentReadResult>;
@@ -893,3 +893,6 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
 }
 
 export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;
+
+/** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
+export const RESEND_METHODS: readonly string[] = ["agent.wait"];

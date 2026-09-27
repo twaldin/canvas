@@ -21,7 +21,8 @@ file under $TMPDIR/canvas-renders/. Either way the result's `path` names it.
 
 After an app restart the next call reconnects on its own. Connection failures raise
 `CanvasError` with code `unavailable`; when the request was already sent, the message says
-it may have applied, so re-read before retrying.
+it may have applied, so re-read before retrying. `agent.wait` is a read: when the app
+restarts mid-wait the client asks again once it is back, keeping the remaining `timeout_ms`.
 
 Reusable helpers live in compositions directories and load on first use:
 
@@ -39,7 +40,7 @@ import threading
 import time
 from typing import Any
 
-from ._generated import ENV_DEFAULTS, METHODS, SCHEMA_VERSION, GeneratedApi
+from ._generated import ENV_DEFAULTS, METHODS, RESEND_METHODS, SCHEMA_VERSION, GeneratedApi
 from .compositions import Compositions
 
 DEFAULT_SOCKET = os.path.expanduser("~/Library/Application Support/Canvas/canvas.sock")
@@ -76,6 +77,10 @@ class _NotSent(Exception):
     """The request never reached the app, so it is safe to send again."""
 
 
+class _ReplyLost(Exception):
+    """The request left but the connection closed before its reply: it may have applied."""
+
+
 class Canvas(GeneratedApi):
     """One persistent, thread-safe connection to the Canvas API socket.
 
@@ -108,7 +113,10 @@ class Canvas(GeneratedApi):
         self.compositions = Compositions(self, compositions_dirs)
 
     def call(self, method: str, params: dict[str, Any], env_keys: list[str] | tuple[str, ...] = ()) -> Any:
-        """Send one request. `env_keys` (e.g. ["caller", "board"]) are filled from this client when omitted."""
+        """Send one request. `env_keys` (e.g. ["caller", "board"]) are filled from this client when omitted.
+
+        A RESEND_METHODS read (agent.wait) whose reply the connection lost is sent again once the
+        app is back, with `timeoutMs` reduced by the time already spent."""
         params = {k: v for k, v in params.items() if v is not None}
         defaults = {"caller": self.tile_id, "board": self.board_id}
         for key in env_keys:
@@ -116,6 +124,32 @@ class Canvas(GeneratedApi):
                 params[key] = defaults[key]
         if isinstance(params.get("out"), (str, os.PathLike)):
             params["out"] = os.path.abspath(os.path.expanduser(os.fspath(params["out"])))
+        resend = method in RESEND_METHODS
+        started = time.monotonic()
+        budget = params.get("timeoutMs") if resend and isinstance(params.get("timeoutMs"), (int, float)) else None
+        while True:
+            if budget is not None:
+                params["timeoutMs"] = max(0, round(budget - (time.monotonic() - started) * 1000))
+            try:
+                message = self._deliver(method, params)
+                break
+            except _ReplyLost as lost:
+                if not resend:
+                    raise CanvasError("unavailable", str(lost)) from None
+            # A read: the app restarted mid-call. Wait for it, then ask again with the time left.
+            with self._lock:
+                try:
+                    if self._sock is None:
+                        self._open(self.reconnect_timeout)
+                except _NotSent as error:
+                    raise CanvasError("unavailable", f"{error} ({method} was cut off and could not be re-sent)") from None
+        if message.get("ok"):
+            return message.get("result")
+        error = message.get("error") or {}
+        raise CanvasError(error.get("code", "internal"), error.get("message", "unknown error"), error.get("data"))
+
+    def _deliver(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        """One request and its reply; one that was not sent is sent once more, waiting up to `reconnect_timeout` for the socket."""
         with self._lock:
             self._next_id += 1
             request_id = str(self._next_id)
@@ -128,11 +162,7 @@ class Canvas(GeneratedApi):
                     self._send(line, wait=self.reconnect_timeout)
                 except _NotSent as error:
                     raise CanvasError("unavailable", f"{error} ({method} was not sent)") from None
-            message = self._receive(request_id, method)
-        if message.get("ok"):
-            return message.get("result")
-        error = message.get("error") or {}
-        raise CanvasError(error.get("code", "internal"), error.get("message", "unknown error"), error.get("data"))
+            return self._receive(request_id, method)
 
     def close(self) -> None:
         if self._sock is not None:
@@ -167,8 +197,7 @@ class Canvas(GeneratedApi):
             raise CanvasError("timeout", f"{method} timed out after {self.timeout}s") from None
         except OSError as error:
             self.close()
-            raise CanvasError(
-                "unavailable",
+            raise _ReplyLost(
                 f"Canvas connection lost after sending {method} ({error}); it may or may not have applied — re-read before retrying",
             ) from None
 

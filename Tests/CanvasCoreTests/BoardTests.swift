@@ -254,6 +254,42 @@ struct BoardTests {
         #expect(board.place(width: 640, height: 446, near: terminal.id) == beside)
     }
 
+    @Test func userObjectsWithoutAFrameLandWhollyInViewWhenThereIsRoom() {
+        let board = makeBoard()
+        // A terminal in the middle of the view; the nearest free spot to the view center is just
+        // above it, past the view's top edge, while there's room left and right of it.
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: -400, y: -250, w: 800, h: 500))
+        let view = Frame(x: -1200, y: -700, w: 2400, h: 1400)
+        board.viewport = { view }
+        let code = board.create(type: .code, props: .object(["path": .string("main.ts")]))
+        let inset = Frame(x: view.x + Board.placementGap, y: view.y + Board.placementGap, w: view.w - 2 * Board.placementGap, h: view.h - 2 * Board.placementGap)
+        #expect(inset.contains(code.frame), "wholly inside the view, clear of its edges")
+        #expect(!code.frame.intersects(terminal.frame))
+        #expect(code.frame == Frame(x: -1064, y: -223, w: 640, h: 446), "the in-view spot nearest the center: left of the terminal, level with the center")
+        #expect(code.createdBy == .user)
+
+        // Beside a tile the user works in (Edit Here's terminal next to its code tile): in view too.
+        let editor = board.place(width: 1000, height: 620, near: code.id)
+        #expect(!editor.intersects(code.frame) && !editor.intersects(terminal.frame))
+        #expect(inset.contains(editor) == false, "no room for a terminal that size in this view")
+        #expect(editor.intersects(view), "partly in view beats wholly out of it when nothing fits")
+    }
+
+    @Test func partlyVisibleSlotsBeatOffscreenOnesOnlyWhenNothingFits() {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: -500, y: -310, w: 1000, h: 620))
+        // A view barely larger than the terminal: no 640×446 slot fits in it.
+        let view = Frame(x: -720, y: -435, w: 1440, h: 870)
+        board.viewport = { view }
+        let code = board.place(width: 640, height: 446, near: nil)
+        #expect(!code.intersects(terminal.frame))
+        #expect(code.intersects(Frame(x: view.x + Board.placementGap, y: view.y + Board.placementGap, w: view.w - 2 * Board.placementGap, h: view.h - 2 * Board.placementGap)),
+                "part of it shows, so the user sees where it went")
+        // Away from the view, the nearest free spot wins as before.
+        board.viewport = { nil }
+        #expect(board.place(width: 640, height: 446, near: nil) == Frame(x: -320, y: -780, w: 640, h: 446))
+    }
+
     @Test func codeMentionContextIncludesTheRealExcerpt() async throws {
         let board = makeBoard()
         let file = root.appendingPathComponent("restore.ts")

@@ -14,9 +14,11 @@ public struct LanguageServerConfig: Sendable, Equatable {
     public var initializationOptions: JSONValue?
     /// Shown with an empty definition/references answer: why the server may not know yet.
     public var emptyResultHint: String?
+    /// How to install the server, shown when its binary isn't on the login PATH.
+    public var installHint: String?
 
     public init(language: String, command: String, arguments: [String] = [], languageIDs: [String: String], rootMarkers: [String],
-                initializationOptions: JSONValue? = nil, emptyResultHint: String? = nil) {
+                initializationOptions: JSONValue? = nil, emptyResultHint: String? = nil, installHint: String? = nil) {
         self.language = language
         self.command = command
         self.arguments = arguments
@@ -24,6 +26,7 @@ public struct LanguageServerConfig: Sendable, Equatable {
         self.rootMarkers = rootMarkers
         self.initializationOptions = initializationOptions
         self.emptyResultHint = emptyResultHint
+        self.installHint = installHint
     }
 
     public static let defaults: [LanguageServerConfig] = [
@@ -32,15 +35,20 @@ public struct LanguageServerConfig: Sendable, Equatable {
         LanguageServerConfig(language: "swift", command: "sourcekit-lsp", languageIDs: ["swift": "swift"],
                              rootMarkers: ["Package.swift", "compile_commands.json", "buildServer.json"],
                              initializationOptions: .object(["backgroundIndexing": .bool(false)]),
-                             emptyResultHint: "Canvas doesn't index Swift projects itself; sourcekit-lsp answers from the index your own builds write (swift build)."),
+                             emptyResultHint: "Canvas doesn't index Swift projects itself; sourcekit-lsp answers from the index your own builds write (swift build).",
+                             installHint: "It comes with Xcode or the Command Line Tools: xcode-select --install"),
         LanguageServerConfig(language: "python", command: "pyright-langserver", arguments: ["--stdio"], languageIDs: ["py": "python", "pyi": "python"],
-                             rootMarkers: ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"]),
+                             rootMarkers: ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
+                             installHint: "Install it with: npm install -g pyright"),
         LanguageServerConfig(language: "typescript", command: "typescript-language-server", arguments: ["--stdio"],
                              languageIDs: ["ts": "typescript", "mts": "typescript", "cts": "typescript", "tsx": "typescriptreact",
                                            "js": "javascript", "mjs": "javascript", "cjs": "javascript", "jsx": "javascriptreact"],
-                             rootMarkers: ["tsconfig.json", "jsconfig.json", "package.json"]),
-        LanguageServerConfig(language: "go", command: "gopls", languageIDs: ["go": "go"], rootMarkers: ["go.work", "go.mod"]),
-        LanguageServerConfig(language: "rust", command: "rust-analyzer", languageIDs: ["rs": "rust"], rootMarkers: ["Cargo.toml"]),
+                             rootMarkers: ["tsconfig.json", "jsconfig.json", "package.json"],
+                             installHint: "Install it with: npm install -g typescript-language-server typescript@5 (TypeScript 7 has no tsserver, which the server needs)"),
+        LanguageServerConfig(language: "go", command: "gopls", languageIDs: ["go": "go"], rootMarkers: ["go.work", "go.mod"],
+                             installHint: "Install it with: go install golang.org/x/tools/gopls@latest"),
+        LanguageServerConfig(language: "rust", command: "rust-analyzer", languageIDs: ["rs": "rust"], rootMarkers: ["Cargo.toml"],
+                             installHint: "Install it with: rustup component add rust-analyzer"),
     ]
 
     public func languageID(for file: URL) -> String? {
@@ -73,6 +81,7 @@ public final class LoginShell: @unchecked Sendable {
     private let lock = NSLock()
     private var resolved: [String: URL?] = [:]
     private var cachedPath: String?
+    private var cachedEditor: String??
 
     public init(shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", timeout: Duration = .seconds(10)) {
         self.shell = shell
@@ -108,14 +117,26 @@ public final class LoginShell: @unchecked Sendable {
         return environment
     }
 
+    /// The editor the user's shell names: `$VISUAL`, else `$EDITOR`; nil when neither is set.
+    /// Read once from an interactive login shell, since editors are often exported only in
+    /// interactive rc files (.zshrc). Blocking: call it off the main thread and out of Swift tasks.
+    public var editor: String? {
+        if let cached = lock.withLock({ cachedEditor }) { return cached }
+        let output = run("printf '\\n__CANVAS_EDITOR__%s' \"${VISUAL:-$EDITOR}\"", interactive: true)
+        let value = output.components(separatedBy: "__CANVAS_EDITOR__").dropFirst().last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let editor = value.isEmpty ? nil : value
+        lock.withLock { cachedEditor = .some(editor) }
+        return editor
+    }
+
     private static func quote(_ word: String) -> String {
         "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Runs `$SHELL -lc script` in its own process group and reads its output until EOF or the
-    /// deadline. At the deadline the whole group is killed and the read abandoned: rc files can
-    /// start children that outlive the shell and keep the output pipe open.
-    private func run(_ script: String) -> String {
+    /// Runs `$SHELL -lc script` (`-lic` when `interactive`) in its own process group and reads
+    /// its output until EOF or the deadline. At the deadline the whole group is killed and the read
+    /// abandoned: rc files can start children that outlive the shell and keep the output pipe open.
+    private func run(_ script: String, interactive: Bool = false) -> String {
         var fds: [Int32] = [-1, -1]
         guard pipe(&fds) == 0 else { return "" }
         let (readEnd, writeEnd) = (fds[0], fds[1])
@@ -133,7 +154,7 @@ public final class LoginShell: @unchecked Sendable {
         defer { posix_spawnattr_destroy(&attributes) }
         posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP))
         posix_spawnattr_setpgroup(&attributes, 0)
-        let words: [String] = [shell, "-lc", script]
+        let words: [String] = [shell, interactive ? "-lic" : "-lc", script]
         let argv: [UnsafeMutablePointer<CChar>?] = words.map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         var pid: pid_t = 0

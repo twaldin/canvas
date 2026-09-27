@@ -129,9 +129,11 @@ public struct LSPSymbol: Sendable, Hashable {
         return (1...names.count).contains(kind) ? names[kind - 1] : "symbol"
     }
 
-    /// Depth-first flattening for outline lists.
+    /// Depth-first flattening for outline lists, each level in source order (servers may answer
+    /// alphabetically, e.g. typescript-language-server).
     public static func flatten(_ symbols: [LSPSymbol], depth: Int = 0) -> [(symbol: LSPSymbol, depth: Int)] {
-        symbols.flatMap { [($0, depth)] + flatten($0.children, depth: depth + 1) }
+        symbols.sorted { ($0.selectionRange.start.line, $0.selectionRange.start.character) < ($1.selectionRange.start.line, $1.selectionRange.start.character) }
+            .flatMap { [($0, depth)] + flatten($0.children, depth: depth + 1) }
     }
 }
 

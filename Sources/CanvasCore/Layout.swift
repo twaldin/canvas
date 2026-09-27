@@ -238,6 +238,53 @@ public enum Layout {
         return Jump(zoom: zoom, origin: CGPoint(x: jump.origin.x + shift(target.minX, target.maxX, shownMin: shown.minX, shownMax: shown.maxX),
                                                 y: jump.origin.y + shift(target.minY, target.maxY, shownMin: shown.minY, shownMax: shown.maxY)))
     }
+
+    /// Keyboard zoom levels (⌘= / ⌘-), browser-like: fine steps near 100%, coarse far out.
+    public static let zoomLevels: [CGFloat] = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 3, 4]
+
+    /// The next keyboard zoom level above (`in`) or below `zoom` within `limits`: the nearest
+    /// level past it (a zoom already within a hair of a level counts as on it), else the limit
+    /// itself; `zoom` clamped when it's at the limit already.
+    public static func zoomStep(from zoom: CGFloat, in zoomIn: Bool, limits: ClosedRange<CGFloat>) -> CGFloat {
+        let tolerance: CGFloat = 0.005
+        let levels = zoomLevels.filter(limits.contains)
+        let next = zoomIn ? levels.first { $0 > zoom + tolerance } : levels.last { $0 < zoom - tolerance }
+        return min(limits.upperBound, max(limits.lowerBound, next ?? (zoomIn ? limits.upperBound : limits.lowerBound)))
+    }
+
+    public enum Heading: String, Sendable, CaseIterable { case left, right, up, down }
+
+    /// The index of the frame nearest `from` toward `heading` (⌥⌘-arrow between tiles): among
+    /// frames whose center lies past `from`'s center that way and that start past its near edge,
+    /// the least gap along the heading plus twice the gap across it (a tile in the same row or
+    /// column wins over a nearer diagonal one), then the nearest center. Nil when none lies that way.
+    public static func neighbor(of from: CGRect, among frames: [CGRect], toward heading: Heading) -> Int? {
+        func key(_ frame: CGRect) -> (CGFloat, CGFloat)? {
+            let along: CGFloat, across: CGFloat, ahead: Bool
+            switch heading {
+            case .right:
+                ahead = frame.midX > from.midX && frame.minX > from.minX
+                along = max(0, frame.minX - from.maxX)
+                across = max(0, frame.minY - from.maxY, from.minY - frame.maxY)
+            case .left:
+                ahead = frame.midX < from.midX && frame.maxX < from.maxX
+                along = max(0, from.minX - frame.maxX)
+                across = max(0, frame.minY - from.maxY, from.minY - frame.maxY)
+            case .down:
+                ahead = frame.midY > from.midY && frame.minY > from.minY
+                along = max(0, frame.minY - from.maxY)
+                across = max(0, frame.minX - from.maxX, from.minX - frame.maxX)
+            case .up:
+                ahead = frame.midY < from.midY && frame.maxY < from.maxY
+                along = max(0, from.minY - frame.maxY)
+                across = max(0, frame.minX - from.maxX, from.minX - frame.maxX)
+            }
+            guard ahead else { return nil }
+            return (along + 2 * across, hypot(frame.midX - from.midX, frame.midY - from.midY))
+        }
+        return frames.indices.compactMap { index in key(frames[index]).map { (index, $0) } }
+            .min { $0.1 < $1.1 }?.0
+    }
 }
 
 extension Board {

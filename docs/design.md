@@ -26,7 +26,7 @@ flowchart TB
     Sock["Canvas socket: API schema, cmux browser subset"]
     Store["Board store (Application Support, repo+branch)"]
   end
-  Ext["omp canvas extension"] -->|"lifecycle, session id, follow, tray drain"| Sock
+  Ext["omp canvas extension, Claude Code / Codex hooks"] -->|"lifecycle, session id, follow, tray drain"| Sock
   SDK["Python SDK / JS client / canvas CLI"] --> Sock
   OmpBrowser["omp browser tool"] -->|"CMUX_SOCKET_PATH"| Sock
   Sock --> Scene
@@ -54,7 +54,7 @@ flowchart TB
 - Hyper is caught by an app-level event monitor before any tile, so native ⌘-click keeps working everywhere (terminal links, browser new-tab, go-to-definition).
 - Mentions work at element level inside tiles: DOM element, code line or symbol, terminal line/selection, any canvas object.
 - **Selection tray**: a fixed window-space bar showing staged mentions as chips and which terminal will receive them: the one that last had keyboard focus, or, until one has, the board's only terminal. Its hint says what Hyper is (⌃⌥⇧⌘). Staging is explicit and never undone automatically: edits keep the chip (with an "edited" badge), deleting the object or closing its tab removes it, the chip's X removes it. A DOM element's chip leads with what a person recognizes and ends with its CSS path, where a long label is cut: `"navigation" · strong · <tile title> · body > main > … > strong`.
-- **Drain**: the omp extension attaches all staged mentions (pinned to their revision at submit time) to the next prompt you actually submit, then clears the tray. Synthetic turns (queued follow-ups, advisor, background-job wakes) never drain. Other agents: a hotkey pastes the tray as tokens, or `canvas tray drain`.
+- **Drain**: the agent integration (omp extension, Claude Code and Codex hooks) attaches all staged mentions (pinned to their revision at submit time) to the next prompt you actually submit in the tray's target terminal, then clears the tray. Synthetic turns (queued follow-ups, advisor, background-job wakes) never drain. Other agents: a hotkey pastes the tray as tokens, or `canvas tray drain`.
 - **Prompting**: keyboard focus stays in the target terminal while the mouse draws and selects; Superwhisper pastes into that terminal. No in-app composer, no in-app voice.
 - **First run**: an empty board shows a quiet centred hint: ⌘T (or right-click → New Terminal Here) for a terminal, then run your agent (omp, claude, codex), and what Hyper-click does. It is transparent to the mouse and disappears once the board has an object.
 - Your ink never means anything by itself. When you mention a drawn object, the canvas resolves what it encloses, overlaps, and connects; the agent reads that as structure (`--as graph`) or a picture (`canvas render <id>`).
@@ -98,7 +98,8 @@ Getting lost on a big board must always have a one-step way back.
 ### Agent layer
 
 - Ours, under the `CANVAS_*` environment namespace (plus `CMUX_*` for the browser only).
-- Lifecycle per terminal tile: `working`, `blocked`, `idle`, `done` (idle, not yet seen), `unknown`. Sources: our omp extension (authoritative); our own hook scripts for Claude Code and Codex (modeled on how herdr does it). No screen scraping in v0.
+- Lifecycle per terminal tile: `working`, `blocked`, `idle`, `done` (idle, not yet seen), `unknown`. Sources: our omp extension (authoritative), and our hook script for Claude Code and Codex (`extensions/agent-hooks`). No screen scraping in v0.
+- Claude Code and Codex get the same integration as omp with zero setup, only inside Canvas: tiles put Canvas's `claude`/`codex` wrappers first on PATH (a zsh `ZDOTDIR` and bash `PROMPT_COMMAND` shell integration re-prepends Canvas's bin after the user's startup files), and each wrapper execs the real binary with this session's integration: Claude Code loads the plugin in `extensions/claude` (`--plugin-dir`: hooks plus the canvas skill), Codex gets its hooks as a `-c` override that also trusts exactly those hooks. Nothing is written to `~/.claude`, `~/.codex`, or the repo; outside a tile, or with `CANVAS_AGENT_HOOKS=0`, the wrappers exec the real binary untouched (docs/contracts.md "Agent integrations").
 - "Seen" means the tile was focused, or visible at readable zoom in the frontmost window for a few seconds.
 - Session memory: each tile records agent kind and session id for resume.
 - Attention markers belong to a turn: an agent's new marker clears the ones it raised before its lifecycle last went to `working` from idle, done, or no state (the user's latest prompt), while markers from the same answer stay together, including those raised before an approval the user answered (blocked → working continues the turn). Unseen markers are stored with the board, so they survive restarts.
@@ -125,7 +126,7 @@ Getting lost on a big board must always have a one-step way back.
   - **TS client**: used by the omp extension and usable from JS eval.
 - MCP later, as another wrapper over the same schema.
 - A shared `~/.canvas/compositions/` folder, auto-imported by both SDKs, holds reusable helpers agents write and improve; each SDK also ships its own built-in compositions, which user ones shadow by name.
-- The shipped default skill (`skills/canvas`): persistent REPL → Python SDK; otherwise → CLI; touch user objects only when the user is collaborating. omp's skill discovery can't be extended by an extension, so the omp extension announces the skill (name, description, absolute path) in the system prompt only when `CANVAS_ENV=1`; nothing is added to the user's global omp config.
+- The shipped default skill (`skills/canvas`): persistent REPL → Python SDK; otherwise → CLI; touch user objects only when the user is collaborating. Every agent integration gives its agent one canvas-awareness block (`extensions/guidance.ts`) only when `CANVAS_ENV=1`: omp's skill discovery can't be extended by an extension and Codex has no per-session skill root, so for them it announces the skill (name, description, absolute path); Claude Code gets it as the plugin's `canvas:canvas` skill. Nothing is added to the user's global agent config.
 
 ### Persistence
 

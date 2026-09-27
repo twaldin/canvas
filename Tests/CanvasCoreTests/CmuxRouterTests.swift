@@ -65,7 +65,7 @@ final class CmuxRouterTests {
     }
 
     @Test func openSplitWithoutACallerUsesTheWorkspaceViewport() async throws {
-        board.viewportCenter = { (1000, 1000) }
+        board.viewport = { Frame(x: 0, y: 0, w: 2000, h: 2000) }
         let client = try connect()
         client.send(#"{"id":1,"method":"browser.open_split","params":{"workspace_id":"\#(board.id)"}}"#)
         let reply = try await client.next()

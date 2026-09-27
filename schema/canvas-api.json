@@ -468,7 +468,7 @@
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). The caller's tile (CANVAS_TILE_ID) becomes createdBy.",
+      "description": "Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). The caller's tile (CANVAS_TILE_ID) becomes createdBy.",
       "params": {
         "type": "object",
         "required": ["type", "props"],

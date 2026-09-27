@@ -201,7 +201,7 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(magnifyEnded), name: NSScrollView.didEndLiveMagnifyNotification, object: self)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
-        board.viewportCenter = { [weak self] in self?.viewportCenter() ?? (0, 0) }
+        board.viewport = { [weak self] in self?.viewport.rect }
         for object in board.snapshot.objects { add(object) }
         restack()
         refreshGroups()
@@ -246,11 +246,6 @@ final class CanvasView: NSScrollView {
 
     static func canvasFrame(_ rect: NSRect) -> Frame {
         Frame(x: rect.minX - CanvasDocumentView.origin.x, y: rect.minY - CanvasDocumentView.origin.y, w: rect.width, h: rect.height)
-    }
-
-    func viewportCenter() -> (x: Double, y: Double) {
-        let visible = documentVisibleRect
-        return (visible.midX - CanvasDocumentView.origin.x, visible.midY - CanvasDocumentView.origin.y)
     }
 
     /// Where an object is on screen right now, in document coordinates, including an in-flight drag.

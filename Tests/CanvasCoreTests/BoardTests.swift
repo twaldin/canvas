@@ -94,6 +94,7 @@ struct BoardTests {
         #expect(!first.frame.intersects(terminal.frame))
         #expect(!second.frame.intersects(first.frame) && !second.frame.intersects(terminal.frame))
         #expect(lasso.frame.contains(first.frame), "a user drawing around the area doesn't push tiles away")
+        #expect(board.place(Frame(x: 5000.4, y: -3000.6, w: 100, h: 100)) == Frame(x: 5000, y: -3001, w: 100, h: 100), "a free spot stays put, on whole points")
     }
 
     @Test func idleAfterUnseenWorkIsDoneUntilSeen() throws {
@@ -130,6 +131,26 @@ struct BoardTests {
         #expect(try board.follow(tile: terminal.id, path: "/tmp/shot.png", range: nil, action: "read") == nil)
         #expect(try board.follow(tile: terminal.id, path: root.path + "-sibling/a.ts", range: nil, action: "read") == nil, "a name prefix is not containment")
         #expect(board.objects[first.id]?.props["path"]?.string == inCwd, "ignored reads leave the follow tile where it was")
+    }
+
+    @Test func placementKeepsClearOfOtherGroupsAndPrefersTheViewport() {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 800, h: 500))
+        // Another agent's group right of the terminal: only its padded region reaches the slot
+        // beside the terminal, its member doesn't.
+        let member = board.create(type: .note, props: .object(["markdown": .string("theirs")]), frame: Frame(x: 1500, y: -100, w: 300, h: 700))
+        let group = board.create(type: .group, props: .object(["members": .array([.string(member.id)]), "padding": .number(60)]))
+        let beside = board.place(width: 640, height: 446, near: terminal.id)
+        #expect(!beside.intersects(group.frame) && !beside.intersects(terminal.frame))
+        #expect(beside == Frame(x: 0, y: 524, w: 640, h: 446), "the next nearest slot: below the terminal")
+
+        // On screen, a slot wholly in view beats a nearer one past the window's edge.
+        board.viewport = { Frame(x: -1000, y: -100, w: 1900, h: 1000) }
+        let inView = board.place(width: 640, height: 446, near: terminal.id)
+        #expect(inView == Frame(x: -664, y: 0, w: 640, h: 446), "left of the terminal, the only side with room on screen")
+        // A terminal the user isn't looking at keeps its tile beside it.
+        board.viewport = { Frame(x: 5000, y: 5000, w: 1000, h: 800) }
+        #expect(board.place(width: 640, height: 446, near: terminal.id) == beside)
     }
 
     @Test func codeMentionContextIncludesTheRealExcerpt() async throws {

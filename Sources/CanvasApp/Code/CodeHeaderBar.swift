@@ -235,7 +235,10 @@ final class CodeHeaderBar: NSView {
 
     override func layout() {
         super.layout()
-        guard let controls else { return }
+        // Stale controls still show an older history and caption than the header's state (the
+        // strip's buttons are indexed by the history they were built for): lay them out once
+        // they are applied, which asks for layout again.
+        guard let controls, !controlsStale else { return }
         let middle = CodeMetrics.headerHeight / 2
         var x: CGFloat = 4
         func place(_ view: NSView, width: CGFloat) {

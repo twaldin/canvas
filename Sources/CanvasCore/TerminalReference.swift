@@ -2,7 +2,9 @@ import Foundation
 
 /// A `path:line` reference in terminal output (an agent's answer, a compiler error, a stack
 /// trace): `src/foo.ts:42`, `src/foo.ts:42:7`, `src/foo.ts:42-50` (also with an en or em dash,
-/// as Gemini writes ranges), `foo.rs#L10-20`, `/abs/path.swift:3`, `~/x.py:9`; or a pytest node id
+/// as Gemini writes ranges), `foo.rs#L10-20`, `/abs/path.swift:3`, `~/x.py:9`; a Python traceback
+/// frame (`File "src/app.py", line 12, in main`) or a pdb frame (`/src/app.py(12)main()`, as
+/// `where` lists them and a stop shows `> …`); or a pytest node id
 /// (`tests/test_x.py::TestA::test_b[1]`), whose line is its `def`'s, found when it opens.
 /// ⌘-click opens it as a code tile beside the terminal.
 public struct TerminalReference: Equatable, Sendable {
@@ -22,12 +24,19 @@ public struct TerminalReference: Equatable, Sendable {
 }
 
 public enum TerminalReferences {
-    // The path: optional `~`/`.`/`..` root, directories, a name. It needs a slash or a file
-    // extension (checked after matching), so `localhost:3000` and `12:30` never match; the
-    // lookbehind keeps `https://example.com:443` out. Then `:line`, `:line:col`, `:start-end`,
-    // or `#Lstart`, `#Lstart-end`, `#Lstart-Lend`; a range's dash may be `-`, `–` or `—`.
+    /// The path: optional `~`/`.`/`..` root, directories, a name. It needs a slash or a file
+    /// extension (checked after matching), so `localhost:3000` and `12:30` never match; the
+    /// lookbehind keeps `https://example.com:443` out.
+    private static let pathPattern = #"(?<![\w./@:~-])((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*)"#
+    /// A path, then `:line`, `:line:col`, `:start-end`, or `#Lstart`, `#Lstart-end`,
+    /// `#Lstart-Lend`; a range's dash may be `-`, `–` or `—`.
     private static let pattern = try! NSRegularExpression(pattern:
-        #"(?<![\w./@:~-])((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*)(?::(\d+)(?:[-–—](\d+)|:\d+)?|#L(\d+)(?:[-–—]L?(\d+))?)(?![\w/])"#)
+        pathPattern + #"(?::(\d+)(?:[-–—](\d+)|:\d+)?|#L(\d+)(?:[-–—]L?(\d+))?)(?![\w/])"#)
+    /// A Python traceback frame: `File "<path>", line <n>`; the quoted path may hold spaces.
+    private static let tracebackPattern = try! NSRegularExpression(pattern: #"File "([^"\n]+)", line (\d+)"#)
+    /// A pdb frame: a path, the line in parentheses, then the function called (`main()`,
+    /// `<module>()`).
+    private static let pdbPattern = try! NSRegularExpression(pattern: pathPattern + #"\((\d+)\)(?:[\w<>]+\(\))?"#)
     /// A pytest node id: a `.py` path, `::` and names, maybe a parameter set in brackets.
     private static let nodePattern = try! NSRegularExpression(pattern:
         #"(?<![\w./@:~-])((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*\.py)((?:::[A-Za-z_]\w*)+)(?:\[[^\]\s]*\])?"#)
@@ -35,22 +44,32 @@ public enum TerminalReferences {
     public static func find(in text: String) -> [TerminalReference] {
         let ns = text as NSString
         let whole = NSRange(location: 0, length: ns.length)
+        func number(_ match: NSTextCheckingResult, _ group: Int) -> Int? {
+            let range = match.range(at: group)
+            return range.location == NSNotFound ? nil : Int(ns.substring(with: range))
+        }
         let located: [TerminalReference] = pattern.matches(in: text, range: whole).compactMap { match in
             let path = ns.substring(with: match.range(at: 1))
             guard path.contains("/") || hasExtension(path) else { return nil }
-            func number(_ group: Int) -> Int? {
-                let range = match.range(at: group)
-                return range.location == NSNotFound ? nil : Int(ns.substring(with: range))
-            }
-            guard let start = number(2) ?? number(4), start >= 1 else { return nil }
-            let end = max(start, number(3) ?? number(5) ?? start)
+            guard let start = number(match, 2) ?? number(match, 4), start >= 1 else { return nil }
+            let end = max(start, number(match, 3) ?? number(match, 5) ?? start)
             return TerminalReference(range: match.range, path: path, lines: LineRange(start: start, end: end))
+        }
+        // The quotes make a traceback's path unambiguous: whether it names a file is `resolve`'s call.
+        let frames: [TerminalReference] = tracebackPattern.matches(in: text, range: whole).compactMap { match in
+            guard let line = number(match, 2), line >= 1 else { return nil }
+            return TerminalReference(range: match.range, path: ns.substring(with: match.range(at: 1)), lines: LineRange(start: line, end: line))
+        }
+        let stops: [TerminalReference] = pdbPattern.matches(in: text, range: whole).compactMap { match in
+            let path = ns.substring(with: match.range(at: 1))
+            guard path.contains("/") || hasExtension(path), let line = number(match, 2), line >= 1 else { return nil }
+            return TerminalReference(range: match.range, path: path, lines: LineRange(start: line, end: line))
         }
         let nodes = nodePattern.matches(in: text, range: whole).map { match in
             TerminalReference(range: match.range, path: ns.substring(with: match.range(at: 1)), lines: LineRange(start: 1, end: 1),
                               test: ns.substring(with: match.range(at: 2)).components(separatedBy: "::").filter { !$0.isEmpty })
         }
-        return (located + nodes).sorted { $0.range.location < $1.range.location }
+        return (located + frames + stops + nodes).sorted { $0.range.location < $1.range.location }
     }
 
     /// The reference covering UTF-16 offset `offset` of `text`.
@@ -268,11 +287,13 @@ public struct TerminalTextRows {
     }
 
     /// How `upper` goes on into `lower` in a terminal `columns` wide; nil when it doesn't. A row
-    /// whose text reaches the last column goes on directly; one that ends in blanks or a border
+    /// whose text reaches the last column goes on directly, unless it is a separator a program
+    /// padded to the width (`TerminalTail.isRule`); one that ends in blanks or a border
     /// (a TUI's margin and scrollbar, even when they fill the row) only after an unfinished word,
     /// or inside a table cell: a reference that looks whole (`trade-ups.ts:1383-13` before the
     /// cell's `│`) goes on when the row below holds nothing in its cells but digits (`92`).
     static func join(_ upper: String, _ lower: String, columns: Int) -> Join? {
+        guard !TerminalTail.isRule(upper) else { return nil }
         let above = Array(upper), below = Array(lower)
         var end = above.count
         while end > 0, isMargin(above[end - 1]) { end -= 1 }

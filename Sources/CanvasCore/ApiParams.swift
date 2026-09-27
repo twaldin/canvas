@@ -33,7 +33,7 @@ enum ApiParams {
         "agent.prompt": (["target", "text", "mentions", "caller", "force"], ["target", "text"]),
         "agent.wait": (["target", "until", "timeoutMs"], ["target"]),
         "agent.read": (["target", "lines", "since", "block", "final"], ["target"]),
-        "follow.report": (["tile", "path", "range", "action"], ["tile", "path", "action"]),
+        "follow.report": (["tile", "path", "range", "changes", "action"], ["tile", "path", "action"]),
         "view.attention": (["id", "message", "clear", "caller"], ["id"]),
         "view.get": (["board"], []),
         "view.render": (["board", "target", "scale", "full", "exclude", "padding", "out", "format", "timeoutMs"], ["target"]),

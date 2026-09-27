@@ -386,15 +386,23 @@ final class CodeTile: NSView, TileContent {
     }
 
     /// An agent's edit to a file the tile wasn't showing has no earlier load to compare with:
-    /// flash the change around the reported line (a whole new file for writes). Not when the
-    /// tile stepped back to it because the file it showed was deleted.
+    /// flash the lines the edit reported changing (`lastChanges`, every hunk), else the change
+    /// around the reported line (a whole new file for writes). Not when the tile stepped back to
+    /// it because the file it showed was deleted.
     private func flashFollowedEdit(in document: CodeDocument) {
         if let back = steppedBackTo, back == document.path {
             steppedBackTo = nil
             return
         }
         guard followOf != nil, displayed == propsAim, let action = object.props["lastAction"]?.string, action == "edit" || action == "write" else { return }
-        if let line = displayed.range?.start, let sign = document.sign(at: line), !document.signs[sign].lines.isEmpty {
+        let lineCount = document.text.lineCount
+        let changed = (object.props["lastChanges"]?.array ?? []).compactMap { change -> Range<Int>? in
+            guard let start = change["start"]?.int, let end = change["end"]?.int, start >= 1, start <= lineCount else { return nil }
+            return start..<(min(max(start, end), lineCount) + 1)
+        }
+        if !changed.isEmpty {
+            startFlash(changed)
+        } else if let line = displayed.range?.start, let sign = document.sign(at: line), !document.signs[sign].lines.isEmpty {
             startFlash([document.signs[sign].lines])
         } else if displayed.range == nil, document.diff.state == .added || document.diff.state == .noBase, document.text.lineCount > 0 {
             startFlash([1..<(document.text.lineCount + 1)])

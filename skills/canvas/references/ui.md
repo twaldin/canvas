@@ -21,7 +21,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 - **Lifecycle dot** in a terminal's title bar (its tooltip says the same):
   blue *working* (busy), orange *blocked* (waits for the user to approve or answer), green *done* (finished, not seen yet), grey *idle* (waiting for the next prompt).
   No dot: no agent reports a lifecycle in that terminal.
-- **Blocked**: the terminal also gets an orange ring and a bubble with a raised hand and the approval text; clicking the bubble puts the keyboard in the terminal.
+- **Blocked**: the terminal also gets an orange ring and a bubble with a raised hand and the approval text; clicking the bubble brings the terminal into view (its bottom, where the question is, when it is taller than the window) and puts the keyboard in it.
   Off screen, an orange pill at the edge of the view points at it.
 - **Tab dot** on a board's tab: orange, an agent there is blocked; green, one finished unseen.
 - Zoomed far out, tiles become cards tinted with their agent's state.

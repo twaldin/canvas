@@ -762,6 +762,17 @@ struct LayoutBoardTests {
         #expect(up.origin.x == 0)
     }
 
+    @Test func aBlockedTerminalTallerThanTheViewShowsItsBottomWhereTheQuestionIs() {
+        let now = Layout.Jump(zoom: 0.5, origin: .zero)  // shows y 116…1628
+        let terminal = CGRect(x: 100, y: 1000, width: 700, height: 2000)
+        let jump = Layout.reveal(terminal, from: now, clear: clear, padding: 40, bottomFirst: true)
+        #expect(shown(terminal, after: jump).maxY == clear.maxY - 20, "its padded bottom edge at the view's bottom")
+        #expect(Layout.reveal(terminal, from: now, clear: clear, padding: 40).origin.y < jump.origin.y, "without it, the top shows")
+        #expect(Layout.reveal(terminal, from: jump, clear: clear, padding: 40, bottomFirst: true) == jump, "the bottom in view: no move")
+        let short = CGRect(x: 100, y: 1500, width: 700, height: 400)
+        #expect(Layout.reveal(short, from: now, clear: clear, padding: 40, bottomFirst: true) == Layout.reveal(short, from: now, clear: clear, padding: 40), "one that fits shows whole")
+    }
+
     @Test func aTileOpenedFromAReferencePansOnlyWhenMostlyHiddenAndKeepsTheReferenceInView() {
         let now = Layout.Jump(zoom: 0.5, origin: .zero)  // shows x 0…2880, y 116…1628
         let reference = CGRect(x: 100, y: 600, width: 200, height: 17)

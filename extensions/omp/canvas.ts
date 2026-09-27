@@ -8,6 +8,7 @@
 import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { CanvasClient } from "../../clients/ts/src/index";
+import { numberedDiffChanges } from "../agent-hooks/follow";
 import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-omp";
@@ -204,7 +205,11 @@ export default function canvas(pi: ExtensionAPI): void {
     }
     if (name === "edit") {
       for (const file of (details.perFileResults as Details[] | undefined) ?? [details]) {
-        if (typeof file.path === "string" && !file.isError) follow(file.path, file.firstChangedLine, file.firstChangedLine, "edit");
+        if (typeof file.path !== "string" || file.isError) continue;
+        // Every hunk, so the tile flashes them all and aims at the largest, not at the first.
+        const changes = numberedDiffChanges(file.diff);
+        if (changes.length) follow(file.path, undefined, undefined, "edit", changes);
+        else follow(file.path, file.firstChangedLine, file.firstChangedLine, "edit");
       }
     }
     // New files and overwrites: the tile jumps to what changed and flashes it.
@@ -212,12 +217,12 @@ export default function canvas(pi: ExtensionAPI): void {
     if (name === "write" && typeof written === "string" && !written.startsWith("xd://")) follow(written, undefined, undefined, "write");
   });
 
-  function follow(path: string, start: unknown, end: unknown, action: "read" | "edit" | "write" | "lsp"): void {
+  function follow(path: string, start: unknown, end: unknown, action: "read" | "edit" | "write" | "lsp", changes?: Array<{ start: number; end: number }>): void {
     // Subagents' reads (background scouts) would drag the tile's follow view around.
     if (!reporting) return;
     const absolute = isAbsolute(path) ? path : resolve(process.cwd(), path.replace(/:[\d+\-,]+$/, ""));
     const range = typeof start === "number" && start > 0 ? { start, end: typeof end === "number" && end >= start ? end : start } : undefined;
-    void quietly(client.api.follow.report({ tile: tile!, path: absolute, range, action }));
+    void quietly(client.api.follow.report({ tile: tile!, path: absolute, range, changes, action }));
   }
 }
 

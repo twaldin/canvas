@@ -1612,10 +1612,11 @@ final class CanvasView: NSScrollView {
     }
 
     /// The least pan that shows an object the user just opened (a code tile from an HTML link),
-    /// clear of the chrome; nothing when it is already in view.
-    func reveal(_ id: ObjectID) {
+    /// clear of the chrome; nothing when it is already in view. `bottomFirst`: an object taller
+    /// than the view shows its bottom (a terminal's prompt or question), not its top.
+    func reveal(_ id: ObjectID, bottomFirst: Bool = false) {
         guard let rect = docFrame(id) else { return }
-        let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification)
+        let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification, bottomFirst: bottomFirst)
         if jump != currentJump { apply(jump) }
     }
 
@@ -1797,8 +1798,10 @@ final class CanvasView: NSScrollView {
             } else {
                 let id = terminal.id
                 let view = AttentionMarker(objectID: id, message: message, style: .blocked)
-                // Answering is what it needs: clicking the bubble puts the keyboard in the terminal.
+                // Answering is what it needs: clicking the bubble shows the terminal (its bottom,
+                // where the question is, when it is taller than the view) and puts the keyboard in it.
                 view.onClick = { [weak self] in
+                    self?.reveal(id, bottomFirst: true)
                     self?.select(id, extend: false)
                     self?.takeKeyboard(id)
                 }

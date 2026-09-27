@@ -70,16 +70,26 @@ public struct TerminalTail: Sendable {
 
     /// Whether `row` (trailing blanks trimmed) is the first part of a line the terminal
     /// soft-wrapped at `columns` into `next`: it fills the width and ends in text (`fills`), and
-    /// the next row doesn't start with a border (`continues`). A full-width box line or a TUI's
-    /// frame (`│ … │`) stays its own row; a row that happens to end in text at the edge joins,
-    /// which is how it reads.
+    /// the next row doesn't start with a border (`continues`). A full-width box line, a TUI's
+    /// frame (`│ … │`) or a separator a program padded to the width (`isRule`: pytest's
+    /// `==== FAILURES ====`) stays its own row; a row that happens to end in text at the edge
+    /// joins, which is how it reads. (zmx's history carries no wrap flag, so this is a guess.)
     public static func joinsNext(_ row: String, _ next: String, columns: Int) -> Bool {
         fills(row, columns: columns) && continues(next)
     }
 
     static func fills(_ row: String, columns: Int) -> Bool {
-        guard let last = row.last, !isEdge(last) else { return false }
+        guard let last = row.last, !isEdge(last), !isRule(row) else { return false }
         return row.reduce(0) { $0 + TerminalStyledTail.cellWidth($1) } == columns
+    }
+
+    /// A separator row: it starts and ends with a run of one punctuation character (`=`, `-`,
+    /// `_`, `!`, `*`, `#`, `~`, `+`, `.`), maybe with a title between (`==== 2 failed ====`,
+    /// `!!!! stopping after 1 failures !!!!`, `____ test_x ____`). Box drawing is an edge anyway.
+    static func isRule(_ row: String) -> Bool {
+        let characters = Array(row.reversed().drop(while: \.isWhitespace).reversed())
+        guard let mark = characters.first, "=-_!*#~+.".contains(mark), characters.count >= 6 else { return false }
+        return characters.prefix(3).allSatisfy { $0 == mark } && characters.suffix(3).allSatisfy { $0 == mark }
     }
 
     static func continues(_ next: String) -> Bool {

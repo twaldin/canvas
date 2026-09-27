@@ -21,11 +21,117 @@ struct TerminalCommandTests {
         #expect(tail("want \"a b w\nant\"\n", columns: nil) == "want \"a b w\nant\"", "unknown width: rows as they are")
     }
 
+    @Test func aSeparatorPaddedToTheWidthNeverJoinsTheNextLine() {
+        // pytest pads its section rules to the terminal's width exactly.
+        #expect(tail("=== short summary ===\nFAILED tests/a.py::t\n", columns: 21) == "=== short summary ===\nFAILED tests/a.py::t")
+        #expect(tail("!!!!!!!!!!\n1 failed\n", columns: 10) == "!!!!!!!!!!\n1 failed")
+        #expect(tail("____ t ____\nrunner = x\n", columns: 11) == "____ t ____\nrunner = x")
+        #expect(tail("----------\n==========\nnext\n", columns: 10) == "----------\n==========\nnext")
+        #expect(tail("a == b ===\n=c\n", columns: 10) == "a == b ====c", "text ending in punctuation at the edge still wraps")
+    }
+
+    @Test func aBellNamesWhatRangIt() {
+        let now = Date()
+        let last = (command: TerminalCommand(command: "make test", exit: 1, durationMs: 900), finishedAt: now.addingTimeInterval(-2))
+        #expect(TerminalCommand.bellMessage(program: "pytest", shell: "zsh", last: last, at: now) == "pytest rang the bell", "the foreground program first")
+        #expect(TerminalCommand.bellMessage(program: nil, shell: "zsh", last: last, at: now) == "Bell after `make test`")
+        #expect(TerminalCommand.bellMessage(program: nil, shell: "zsh", last: last, at: now.addingTimeInterval(10)) == "zsh rang the bell", "a command long done isn't why")
+        #expect(TerminalCommand.bellMessage(program: nil, shell: nil, last: nil, at: now) == "The shell rang the bell")
+    }
+
+    @Test func onlyOneLineOfPrintableTextIsTypedIntoAShell() {
+        #expect(ShellTyping.action(#"clear; grep -n "a\b" x.py"#) == #"text:clear; grep -n "a\\b" x.py"#, "a backslash is escaped for Ghostty's parser")
+        #expect(ShellTyping.action("écho ✓") == "text:écho ✓")
+        #expect(ShellTyping.action("make\nmake install") == nil, "a newline would run the first line alone")
+        #expect(ShellTyping.action("a\tb") == nil && ShellTyping.action("\u{1B}[A") == nil && ShellTyping.action("") == nil)
+    }
+
+    @Test func aFollowTileAimsAtAnEditsLargestHunkTheLastOfEquals() {
+        let hunks = [LineRange(start: 28, end: 28), LineRange(start: 63, end: 63), LineRange(start: 106, end: 106)]
+        #expect(Board.followAim(hunks) == LineRange(start: 106, end: 106), "a removed import first, the fix last")
+        #expect(Board.followAim([LineRange(start: 5, end: 9), LineRange(start: 40, end: 40)]) == LineRange(start: 5, end: 9))
+        #expect(Board.followAim([]) == nil)
+    }
+
     @Test func longTerminalTextKeepsItsHeadAndTailAndSaysHowMuchWasLeftOut() {
         let lines = (1...50).map { "line \($0)" }
         #expect(TerminalExcerpt.trim(lines, head: 2, tail: 3) == ["line 1", "line 2", "… 45 lines omitted …", "line 48", "line 49", "line 50"])
         #expect(TerminalExcerpt.trim(Array(lines.prefix(6)), head: 2, tail: 3) == Array(lines.prefix(6)), "one more line than fits beats a marker")
         #expect(TerminalExcerpt.lines("\n\n  a  \nb\n\n") == ["  a", "b"])
+    }
+
+    /// `pytest -q` with two failures, as the debugger study's run printed it (2246 tests).
+    static let pytestRun: [String] = {
+        var lines = (1...21).map { row in String(repeating: row == 2 ? "..FF.." : "......", count: 17) + " [\(String(format: "%3d", row * 100 / 21))%]" }
+        lines += [
+            "=================================== FAILURES ===================================",
+            "___________________________ test_nargs_star_ordering ___________________________",
+            "",
+            "runner = <click.testing.CliRunner object at 0x1115d3e30>",
+            "",
+            "    def test_nargs_star_ordering(runner):",
+            "        @click.command()",
+            "        @click.argument(\"a\", nargs=-1)",
+            "        @click.argument(\"b\")",
+            "        @click.argument(\"c\")",
+            "        def cmd(a, b, c):",
+            "            for arg in (a, b, c):",
+            "                click.echo(arg)",
+            "",
+            "        result = runner.invoke(cmd, [\"a\", \"b\", \"c\"])",
+            ">       assert result.output.splitlines() == [\"('a',)\", \"b\", \"c\"]",
+            "E       assert [\"('a',)\", 'c', 'b'] == [\"('a',)\", 'b', 'c']",
+            "E",
+            "E         At index 1 diff: 'c' != 'b'",
+            "E         Use -v to get more diff",
+            "",
+            "tests/test_arguments.py:932: AssertionError",
+            "___________________ test_nargs_specified_plus_star_ordering ____________________",
+            "",
+            "runner = <click.testing.CliRunner object at 0x11161a3c0>",
+            "",
+            "    def test_nargs_specified_plus_star_ordering(runner):",
+            "        @click.command()",
+            "        @click.argument(\"a\", nargs=-1)",
+            "        @click.argument(\"b\")",
+            "        @click.argument(\"c\", nargs=2)",
+            "        def cmd(a, b, c):",
+            "            for arg in (a, b, c):",
+            "                click.echo(arg)",
+            "",
+            "        result = runner.invoke(cmd, [\"a\", \"b\", \"c\", \"d\", \"e\", \"f\"])",
+            ">       assert result.output.splitlines() == [\"('a', 'b', 'c')\", \"d\", \"('e', 'f')\"]",
+            "E       assert ['Usage: cmd ...an iterable.'] == [\"('a', 'b', ... \"('e', 'f')\"]",
+            "E",
+            "E         At index 0 diff: 'Usage: cmd [OPTIONS] [A]... B C...' != \"('a', 'b', 'c')\"",
+            "",
+            "tests/test_arguments.py:945: AssertionError",
+            "=========================== short test summary info ============================",
+            "FAILED tests/test_arguments.py::test_nargs_star_ordering - assert [\"('a',)\", 'c', 'b'] == [\"('a',)\", 'b', 'c']",
+            "FAILED tests/test_arguments.py::test_nargs_specified_plus_star_ordering - assert ['Usage: cmd ...an iterable.'] == [\"('a', 'b', ... \"('e', 'f')\"]",
+            "2 failed, 2242 passed, 25 skipped, 1 xfailed in 4.95s",
+        ]
+        return lines
+    }()
+
+    @Test func aLongTestRunKeepsItsFailuresOverItsProgressDots() {
+        let trimmed = TerminalExcerpt.trim(Self.pytestRun, head: 10, tail: 30)
+        #expect(trimmed.first == "… 21 progress lines omitted …", "no row of dots survives")
+        #expect(trimmed.count <= 40 + 3, "the same budget, plus a marker per gap")
+        for line in ["___________________________ test_nargs_star_ordering ___________________________",
+                     ">       assert result.output.splitlines() == [\"('a',)\", \"b\", \"c\"]",
+                     "E       assert [\"('a',)\", 'c', 'b'] == [\"('a',)\", 'b', 'c']",
+                     "E         At index 1 diff: 'c' != 'b'",
+                     "tests/test_arguments.py:932: AssertionError",
+                     "E       assert ['Usage: cmd ...an iterable.'] == [\"('a', 'b', ... \"('e', 'f')\"]",
+                     "tests/test_arguments.py:945: AssertionError"] {
+            #expect(trimmed.contains(line), "the first failure's body and both assertions stay: \(line)")
+        }
+        #expect(Array(trimmed.suffix(4)) == Array(Self.pytestRun.suffix(4)), "the summary ends it")
+        #expect(trimmed.contains { $0.hasPrefix("… ") && $0.hasSuffix(" lines omitted …") && !$0.contains("progress") }, "the test source between is what goes")
+        // Short enough once its progress rows go: the rest whole.
+        let short = Array(Self.pytestRun.prefix(21)) + Array(Self.pytestRun.suffix(30))
+        #expect(TerminalExcerpt.trim(short, head: 10, tail: 30) == ["… 21 progress lines omitted …"] + Array(Self.pytestRun.suffix(30)))
     }
 
     @Test func rowsAroundAClickMarkTheClickedRowAndDropBlankEdges() {

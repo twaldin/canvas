@@ -83,6 +83,7 @@ class CodeProps(TypedDict):
     diffBase: NotRequired[str]
     followOf: NotRequired["Id"]
     lastAction: NotRequired[Literal["read", "edit", "write", "lsp", "search"]]
+    lastChanges: NotRequired[list["LineRange"]]
     history: NotRequired[list[dict[str, Any]]]
     pinnedCommit: NotRequired[str]
     scale: NotRequired["Scale"]
@@ -435,7 +436,7 @@ class AgentApi:
         return self._call("agent.list", params, [])
 
     def prompt(self, *, target: str, text: str, mentions: list["PromptMention"] | None = None, caller: "Id" | None = None, force: bool | None = None) -> dict[str, Any]:
-        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a target whose agent reports from behind another foreground program (`program` tmux, nvim, less: the text would go to that program, in tmux to whichever pane is active). `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`."""
+        """Paste a prompt into another agent's terminal (bracketed paste; a one-line command into a shell at its prompt is typed) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`."""
         params = {"target": target, "text": text, "mentions": mentions, "caller": caller, "force": force}
         return self._call("agent.prompt", params, ["caller"])
 
@@ -445,7 +446,7 @@ class AgentApi:
         return self._call("agent.wait", params, [])
 
     def read(self, *, target: str, lines: int | None = None, since: Literal["prompt"] | None = None, block: Literal["last"] | None = None, final: bool | None = None) -> dict[str, Any]:
-        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line (a row that fills the terminal's width and ends in text joins the next). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block: "last"`: the output of the last command the terminal's shell finished (from Ghostty's shell-integration prompt marks), with `command` saying what ran. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory)."""
+        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line (a row that fills the terminal's width and ends in text joins the next, unless it is a separator padded to the width, such as pytest's `==== FAILURES ====`). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block: "last"`: the output of the last command the terminal's shell finished (from Ghostty's shell-integration prompt marks), with `command` saying what ran. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory)."""
         params = {"target": target, "lines": lines, "since": since, "block": block, "final": final}
         return self._call("agent.read", params, [])
 
@@ -454,9 +455,9 @@ class FollowApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def report(self, *, tile: "Id", path: str, action: Literal["read", "edit", "write", "lsp", "search"], range: "LineRange" | None = None) -> dict[str, Any]:
+    def report(self, *, tile: "Id", path: str, action: Literal["read", "edit", "write", "lsp", "search"], range: "LineRange" | None = None, changes: list["LineRange"] | None = None) -> dict[str, Any]:
         """Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root, the terminal's cwd, and the other worktrees of their repositories (a worktree file keeps its absolute path and its own gutter), scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file."""
-        params = {"tile": tile, "path": path, "range": range, "action": action}
+        params = {"tile": tile, "path": path, "range": range, "changes": changes, "action": action}
         return self._call("follow.report", params, [])
 
 @_snake_case_hints

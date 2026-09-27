@@ -41,7 +41,8 @@ public enum MentionContext {
     /// A whole note mention carries the note up to this many lines and characters.
     static let maxNoteLines = 80
     static let maxNoteCharacters = 4000
-    /// Terminal text in a mention: the first and last lines of anything longer (`TerminalExcerpt.trim`).
+    /// Terminal text in a mention: at most `terminalHead + terminalTail` lines of anything
+    /// longer, its failures before its middle (`TerminalExcerpt.trim`).
     static let terminalHead = 10
     static let terminalTail = 30
 

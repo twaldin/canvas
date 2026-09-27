@@ -28,6 +28,37 @@ struct TerminalReferencesTests {
         #expect(refs("see main.go:223–231 and url.go:52—57, foo.rs#L3–L5") == ["main.go 223-231", "url.go 52-57", "foo.rs 3-5"])
     }
 
+    @Test func findsPythonTracebackAndPdbFrames() {
+        let traceback = """
+        Traceback (most recent call last):
+          File "/private/tmp/click/src/click/core.py", line 2651, in check_iter
+            return _check_iter(value)
+          File "src/my app/run.py", line 7, in <module>
+          File "<frozen runpy>", line 88, in _run_code
+        click.exceptions.BadParameter: Value must be an iterable.
+        """
+        #expect(refs(traceback) == ["/private/tmp/click/src/click/core.py 2651-2651", "src/my app/run.py 7-7", "<frozen runpy> 88-88"],
+                "a quoted path may hold spaces; resolve turns away what names no file")
+        let pdb = """
+        (Pdb) where
+          /opt/homebrew/lib/python3.13/bdb.py(606)run()
+        -> exec(cmd, globals, locals)
+          <string>(1)<module>()
+        > /private/tmp/click/src/click/parser.py(106)_unpack_args()
+        -> rv[spos] = tuple(args)
+        """
+        #expect(refs(pdb) == ["/opt/homebrew/lib/python3.13/bdb.py 606-606", "/private/tmp/click/src/click/parser.py 106-106"])
+        #expect(refs("print(3) ls(1) f(x.py) tuple(args)").isEmpty, "a call or a man page section isn't a frame")
+    }
+
+    @Test func aWrappedTracebackOrPdbFrameIsOne() {
+        let files: Set<String> = ["/private/tmp/click/src/click/core.py", "/private/tmp/click/src/click/parser.py"]
+        let frame = ["  File \"/private/tmp/click/src/click/cor", "e.py\", line 2651, in check_iter"]
+        #expect(hit(frame, columns: 40, row: 1, column: 3, files: files) == "/private/tmp/click/src/click/core.py 2651-2651 0:2+38 1:0+16")
+        let stop = ["> /private/tmp/click/src/click", "/parser.py(106)_unpack_args()"]
+        #expect(hit(stop, columns: 30, row: 0, column: 10, files: files) == "/private/tmp/click/src/click/parser.py 106-106 0:2+28 1:0+29")
+    }
+
     /// A viewport `columns` wide showing `rows`; what ⌘-click at (`row`, `column`) opens among `files`.
     func hit(_ rows: [String], columns: Int, row: Int, column: Int, files: Set<String>) -> String? {
         guard let hit = TerminalReferences.hit(row: row, column: column, columns: columns, read: { rows.indices.contains($0) ? rows[$0] : nil },

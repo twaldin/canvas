@@ -159,23 +159,51 @@ final class TileFrameView: NSView {
             cardTitle.isHidden = true
             showContent(true)
         } else {
-            let request = cardRequest
-            content.cardSnapshot { [weak self] image in
-                guard let self, !self.isLive, self.cardRequest == request else { return }
-                self.card.image = image.map { self.cardImage($0) }
-                self.card.isHidden = self.card.image == nil
-                self.cardTitle.isHidden = self.card.image != nil
-                self.showContent(false)
-            }
-            // A card that never comes (a page that won't load) mustn't keep the content's
-            // resources: after a second the tile goes to its title card.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                guard let self, !self.isLive, self.cardRequest == request, self.contentLive else { return }
-                self.cardTitle.isHidden = false
-                self.showContent(false)
-            }
+            requestCard()
         }
         updateTint()
+    }
+
+    /// A new tile where it wouldn't be live (zoomed out or offscreen) starts as its card, the
+    /// title until the card is drawn: its content never shows, so it never loads or lays out
+    /// its live view (a batch of dozens of tiles would otherwise build every one live and only
+    /// then swap it for its card). Called before the tile joins the canvas; the card is
+    /// requested once it is in the window (web content renders in it).
+    func startAsCard() {
+        guard isLive else { return }
+        isLive = false
+        cardRequest += 1
+        cardTitle.isHidden = false
+        showContent(false)
+        startCardDue = true
+        updateTint()
+    }
+
+    private var startCardDue = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil, startCardDue else { return }
+        startCardDue = false
+        if !isLive { requestCard() }
+    }
+
+    private func requestCard() {
+        let request = cardRequest
+        content.cardSnapshot { [weak self] image in
+            guard let self, !self.isLive, self.cardRequest == request else { return }
+            self.card.image = image.map { self.cardImage($0) }
+            self.card.isHidden = self.card.image == nil
+            self.cardTitle.isHidden = self.card.image != nil
+            self.showContent(false)
+        }
+        // A card that never comes (a page that won't load) mustn't keep the content's
+        // resources: after a second the tile goes to its title card.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, !self.isLive, self.cardRequest == request, self.contentLive else { return }
+            self.cardTitle.isHidden = false
+            self.showContent(false)
+        }
     }
 
     /// Below the readable zoom: the tile is one handle (click selects, drag moves) and shows its

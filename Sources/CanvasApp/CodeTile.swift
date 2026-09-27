@@ -72,10 +72,16 @@ final class CodeTile: NSView, TileContent {
         refreshHeader()
         resizeSubviews(withOldSize: .zero)
         navigation = CodeNavigation(host: self, board: board, tile: object.id, accessories: header, reservedWidth: CodeHeaderBar.reservedTrailing)
-        load()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    /// The first load waits until the tile is in a window, live: one created as a card (in a
+    /// batch, zoomed out or offscreen) loads when it first becomes live instead.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil, isLive, needsLoad { load() }
+    }
 
     deinit {
         if watcherSuspended { watcher?.resume() }
@@ -246,6 +252,8 @@ final class CodeTile: NSView, TileContent {
             let held = await engine.retain(containing: url)
             let diff = await engine.diff(file: url, base: base)
             let document = await offPool { CodeDocument(path: path, diff: diff) }
+            // Tiles loading together (a batch) install one per main turn.
+            await MainTurns.next()
             guard let self, !Task.isCancelled, current == self.generation, self.isLive else {
                 if let held { await engine.release(held) }
                 return
@@ -263,6 +271,7 @@ final class CodeTile: NSView, TileContent {
         let path = displayed.path, base = diffBase
         let diff = await GitDiffEngine.shared.diff(file: board.absoluteURL(path), base: base)
         let document = await offPool { CodeDocument(path: path, diff: diff) }
+        await MainTurns.next()
         guard path == displayed.path, base == diffBase else { return nil }
         if !showsCurrent || loadedBase != base || self.document?.text != document.text {
             install(document, base: base)

@@ -245,7 +245,7 @@ extension Board {
         var order: [ObjectID] = []
         for move in moves {
             let object = try object(move.id)
-            for target in object.type == .group ? leafMembers(of: move.id) : [move.id] {
+            for target in object.type == .group ? BoardGeometry.leafMembers(of: move.id, in: objects) : [move.id] {
                 if let earlier = offsets[target] {
                     guard earlier == (move.dx, move.dy) else {
                         throw BoardError.invalidParams("\(target) would move twice: \(move.id) and a group containing it are both listed")
@@ -290,7 +290,7 @@ extension ArrowSpec {
 
 // MARK: Checks
 
-extension Board {
+extension BoardGeometry {
     public struct LayoutReport: Equatable, Sendable {
         /// Pairs (sorted ids) whose frames overlap by accident.
         public var overlaps: [[ObjectID]]
@@ -332,7 +332,7 @@ extension Board {
         var groupMembers: [ObjectID: Set<ObjectID>] = [:]
         func members(of group: CanvasObject) -> Set<ObjectID> {
             if let cached = groupMembers[group.id] { return cached }
-            var all = Set(leafMembers(of: group.id))
+            var all = Set(Self.leafMembers(of: group.id, in: objects))
             var queue = [group.id]
             while let next = queue.popLast() {
                 for member in GroupSpec(objects[next]?.props ?? .null)?.members ?? [] where objects[member]?.type == .group && !all.contains(member) {

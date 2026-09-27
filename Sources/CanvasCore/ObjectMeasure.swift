@@ -66,7 +66,7 @@ public enum ObjectMeasure {
     /// A code tile showing exactly `lines` of a file with `fileLineCount` lines, wide enough for
     /// its whole `caption` too, but at most `maxWidth` (at least `CodeMetrics.minWidth`): past
     /// that, long lines wrap and the caption truncates.
-    public static func code(lines: [String], fileLineCount: Int, caption: String?, follow: Bool, maxWidth: CGFloat) -> CGSize {
+    nonisolated public static func code(lines: [String], fileLineCount: Int, caption: String?, follow: Bool, maxWidth: CGFloat) -> CGSize {
         var size = codeRows(lines: lines, fileLineCount: fileLineCount, caption: caption != nil, follow: follow, maxWidth: maxWidth)
         if let caption { size.width = min(max(size.width, captionWidth(caption)), max(CodeMetrics.minWidth, maxWidth.rounded(.down))) }
         return size
@@ -75,7 +75,7 @@ public enum ObjectMeasure {
     /// `code` without the caption's width: the frame the rows themselves need, as wide as the
     /// longest line or `maxWidth` (at least `CodeMetrics.minWidth`) with the longer lines wrapped,
     /// and as tall as the rows that makes.
-    public static func codeRows(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool, maxWidth: CGFloat) -> CGSize {
+    nonisolated public static func codeRows(lines: [String], fileLineCount: Int, caption: Bool, follow: Bool, maxWidth: CGFloat) -> CGSize {
         let longest = lines.map { CodeMetrics.columns($0) }.max() ?? 0
         let header = CodeMetrics.chromeHeight(caption: caption, history: follow) - CodeMetrics.titleHeight
         let gutter = CodeMetrics.gutterWidth(lineCount: fileLineCount)
@@ -89,7 +89,7 @@ public enum ObjectMeasure {
     /// Narrowest code tile frame whose caption strip shows `caption` untruncated: the header's
     /// caption text (`CodeCaption.string`), `CodeMetrics.captionInset` on each side, and the
     /// label cell's 2-point text padding on each side, plus a point of slack.
-    public static func captionWidth(_ caption: String) -> CGFloat {
+    nonisolated public static func captionWidth(_ caption: String) -> CGFloat {
         let text = CodeCaption.string(caption)
         let width = text.boundingRect(with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).width
         return (ceil(width) + 2 * CodeMetrics.captionInset + 4 + 1).rounded(.up)

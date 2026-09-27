@@ -251,7 +251,7 @@ final class AgentBoardApiTests {
         #expect(context.contains("[1] code src/a.ts:4-4 · tile \(code)\n    1    import x\n"), "\(context)")
         #expect(context.contains("  > 4      return 1\n"), "the given line, marked like a staged one")
         #expect(context.contains("[2] code src/a.ts:3-5 · tile \(code)\n"), "a code tile without lines mentions the range it shows")
-        #expect(context.contains("[3] note \(note) \"# Findings\"\n    # Findings\n    1. load returns a constant\n"))
+        #expect(context.contains("[3] note \(note) \"Findings\"") && context.contains("1. load returns a constant\n"), "the whole note, titled by its first line")
 
         let ids = try #require(drained["mentions"]?.array?.compactMap { $0["id"]?.string })
         #expect(ids.count == 3)

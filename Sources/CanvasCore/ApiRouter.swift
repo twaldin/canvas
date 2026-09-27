@@ -840,7 +840,7 @@ public final class ApiRouter {
             origin = (x, y)
         } else {
             let board = try board(p)
-            let placed = board.place(width: size.width, height: size.height, near: caller(p, on: board))
+            let placed = board.place(width: size.width, height: size.height, near: caller(p, on: board), stacking: true)
             origin = (placed.x, placed.y)
         }
         params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))

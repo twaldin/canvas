@@ -352,6 +352,92 @@ struct BoardTests {
         #expect(try board.follow(tile: away.id, path: "a.ts", range: nil, action: "read")?.frame == Frame(x: 10024, y: 0, w: 640, h: 446))
     }
 
+    /// An agent's frameless HTML answer.
+    private func answer(on board: Board, by agent: CanvasObject) -> CanvasObject {
+        board.create(type: .html, props: .object(["html": .string("<p>answer</p>")]), caller: agent.id)
+    }
+
+    @Test func anAgentsAnswersStackBelowTheFirstInsteadOfGoingRoundTheTerminal() {
+        // The study: consecutive answers landed right, below, left of the terminal in turn.
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        let answers = (0..<3).map { _ in answer(on: board, by: terminal).frame }
+        #expect(answers == [Frame(x: 1024, y: 0, w: 640, h: 506), Frame(x: 1024, y: 530, w: 640, h: 506), Frame(x: 1024, y: 1060, w: 640, h: 506)])
+
+        // Below the last one taken: right of it.
+        let other = board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 3000, w: 1000, h: 620))
+        let first = answer(on: board, by: other)
+        board.create(type: .note, props: .object(["markdown": .string("mine")]), frame: Frame(x: 1024, y: 3530, w: 640, h: 200))
+        #expect(answer(on: board, by: other).frame == Frame(x: first.frame.maxX + Board.placementGap, y: 3000, w: 640, h: 506))
+    }
+
+    @Test func onlyTheAgentsOwnRecentLiveAnswersAreStackedOn() throws {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        _ = answer(on: board, by: terminal)
+        let second = answer(on: board, by: terminal)
+        // A deleted answer doesn't count: the next one takes its place under the first.
+        try board.delete(second.id)
+        #expect(answer(on: board, by: terminal).frame == second.frame)
+
+        // Older than the window: beside the terminal again (right is taken, so below it).
+        var snapshot = board.snapshot
+        for index in snapshot.objects.indices where snapshot.objects[index].id != terminal.id {
+            snapshot.objects[index].createdAt = Date().addingTimeInterval(-Board.answerStackWindow - 60)
+        }
+        let later = Board(snapshot: snapshot)
+        #expect(answer(on: later, by: terminal).frame == Frame(x: 0, y: 644, w: 640, h: 506))
+
+        // Another agent's object and the user's don't count. Theirs is taller than the terminal, so
+        // below it is not a slot beside the terminal.
+        let mixed = makeBoard()
+        let mine = mixed.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        let theirs = mixed.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 5000, y: 0, w: 1000, h: 620))
+        mixed.create(type: .html, props: .object(["html": .string("theirs")]), frame: Frame(x: 1024, y: 0, w: 640, h: 700), caller: theirs.id)
+        mixed.create(type: .note, props: .object(["markdown": .string("user's")]), frame: Frame(x: -400, y: 0, w: 300, h: 300))
+        #expect(answer(on: mixed, by: mine).frame == Frame(x: 0, y: 644, w: 640, h: 506), "below the terminal, not under theirs")
+    }
+
+    @Test func followTilesNeitherStackNorAreStackedOn() throws {
+        let board = makeBoard()
+        try "x\n".write(to: root.appendingPathComponent("a.ts"), atomically: true, encoding: .utf8)
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        // Taller than the terminal: under it is not beside the terminal.
+        board.create(type: .html, props: .object(["html": .string("first")]), frame: Frame(x: 1024, y: 0, w: 640, h: 700), caller: terminal.id)
+        let follow = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: nil, action: "read"))
+        #expect(follow.frame == Frame(x: 0, y: 644, w: 640, h: 446), "beside the terminal, not under the answer")
+        #expect(answer(on: board, by: terminal).frame == Frame(x: 1024, y: 724, w: 640, h: 506), "the follow tile isn't the last answer")
+
+        // A short terminal: under its follow tile is not beside the terminal.
+        let fresh = makeBoard()
+        let agent = fresh.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: 0, y: 0, w: 1000, h: 300))
+        let followFirst = try #require(try fresh.follow(tile: agent.id, path: "a.ts", range: nil, action: "read"))
+        #expect(followFirst.frame == Frame(x: 1024, y: 0, w: 640, h: 446))
+        #expect(answer(on: fresh, by: agent).frame == Frame(x: 0, y: 324, w: 640, h: 506), "no answer yet: beside the terminal")
+    }
+
+    @Test func stackedAnswersStillPreferTheView() {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        // A tall view: the stack stays in it.
+        board.viewport = { Frame(x: -100, y: -100, w: 2000, h: 1800) }
+        #expect((0..<3).map { _ in answer(on: board, by: terminal).frame.y } == [0, 530, 1060])
+
+        // A short wide view: under the last answer is partly off-screen; left of the terminal fits.
+        let wide = makeBoard()
+        let agent = wide.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        #expect(answer(on: wide, by: agent).frame == Frame(x: 1024, y: 0, w: 640, h: 506))
+        wide.viewport = { Frame(x: -800, y: -100, w: 3000, h: 900) }
+        #expect(answer(on: wide, by: agent).frame == Frame(x: -664, y: 0, w: 640, h: 506))
+
+        // The last answer scrolled out of view, the terminal in it: beside the terminal, in view.
+        let scrolled = makeBoard()
+        let busy = scrolled.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        #expect(answer(on: scrolled, by: busy).frame == Frame(x: 1024, y: 0, w: 640, h: 506))
+        scrolled.viewport = { Frame(x: -800, y: -100, w: 1820, h: 900) }
+        #expect(answer(on: scrolled, by: busy).frame == Frame(x: -664, y: 0, w: 640, h: 506))
+    }
+
     @Test func aBoardNeedsYouWhenAnAgentIsBlockedElseWhenOneFinishedUnseen() throws {
         let board = makeBoard()
         let a = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))

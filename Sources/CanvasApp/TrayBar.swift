@@ -35,18 +35,19 @@ final class TrayBar: NSVisualEffectView {
             target.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             target.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
-        show([], targetTitle: nil, hasTerminal: false)
+        show([], targetTitle: nil, targetDrains: false, hasTerminal: false)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
     /// `targetTitle` is the prompt target's; without one, the hint says how to get one.
-    func show(_ mentions: [Mention], targetTitle: String?, hasTerminal: Bool) {
+    /// `targetDrains`: the target runs an agent integration that takes the tray with its next
+    /// prompt; any other target needs Hyper-V to paste the mentions.
+    func show(_ mentions: [Mention], targetTitle: String?, targetDrains: Bool, hasTerminal: Bool) {
         for view in stack.arrangedSubviews { view.removeFromSuperview() }
         if mentions.isEmpty { stack.addArrangedSubview(hint) }
         for mention in mentions { stack.addArrangedSubview(chip(for: mention)) }
-        // Hyper-V pastes staged mentions into agents that don't drain the tray themselves.
-        target.stringValue = targetTitle.map { mentions.isEmpty ? "→ \($0)" : "→ \($0) · ⌃⌥⇧⌘V pastes" } ?? (hasTerminal ? "→ click a terminal to target it" : "→ no terminal yet (⌘T)")
+        target.stringValue = targetTitle.map { mentions.isEmpty || targetDrains ? "→ \($0)" : "→ \($0) · ⌃⌥⇧⌘V pastes" } ?? (hasTerminal ? "→ click a terminal to target it" : "→ no terminal yet (⌘T)")
     }
 
     private func chip(for mention: Mention) -> NSView {

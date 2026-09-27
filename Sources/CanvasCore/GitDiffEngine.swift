@@ -184,7 +184,12 @@ public actor GitDiffEngine {
         let path = Self.relative(Self.realPath(file), to: repository.toplevel)
         let hash = await offPool { data.map { Data(SHA256.hash(data: $0)) } ?? Data() }
         let key = CacheKey(toplevel: toplevel, path: path, base: sha, content: hash)
-        if let cached = cache[key] { return cached }
+        // Keyed by commit: another base that resolved to the same commit (HEAD is the merge-base)
+        // shares the diff but names its own base.
+        if var cached = cache[key] {
+            cached.baseLabel = resolved.label
+            return cached
+        }
         let patch = await patch(path, in: repository, base: sha)
         let patchData = patch.patch
         let parsed = await offPool { UnifiedDiff.parse(patchData) }

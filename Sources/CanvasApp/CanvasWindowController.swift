@@ -124,8 +124,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private func refreshTray() {
         trayTitleWork?.cancel()
         trayTitleWork = nil
-        let title = canvas.promptTarget.flatMap { board.objects[$0] }.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
-        tray.show(board.tray, targetTitle: title, hasTerminal: board.objects.values.contains { $0.type == .terminal })
+        let target = canvas.promptTarget.flatMap { board.objects[$0] }
+        let title = target.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
+        tray.show(board.tray, targetTitle: title, targetDrains: target.map(PromptTarget.runsAgent) ?? false,
+                  hasTerminal: board.objects.values.contains { $0.type == .terminal })
     }
 
     /// What the tab last showed (`NeedsYou`), so a terminal's frequent updates redraw nothing.

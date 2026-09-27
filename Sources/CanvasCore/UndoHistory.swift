@@ -55,6 +55,9 @@ public final class UndoHistory {
         depth += 1
     }
 
+    /// True while a step is open (between the outermost `begin` and its `end`).
+    var isOpen: Bool { depth > 0 }
+
     /// Marks the open step's current end for a later `discard(from:)`.
     func mark() -> Int {
         mergeFloor = open.count
@@ -126,7 +129,7 @@ extension Board {
     /// Groups every change made inside `body` into one undo step (a multi-object gesture).
     public func transaction<T>(_ body: () throws -> T) rethrows -> T {
         history.begin()
-        defer { history.end() }
+        defer { endStep() }
         return try body()
     }
 

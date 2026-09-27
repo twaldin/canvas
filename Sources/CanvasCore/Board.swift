@@ -102,6 +102,12 @@ public final class Board {
     /// An arrow's route as currently drawn (canvas coordinates), so deleting what it points at
     /// keeps its end exactly where the user saw it. Without it, routes come from object frames.
     public var arrowRoute: ((ObjectID) -> (start: CGPoint, end: CGPoint)?)?
+    /// Terminal tiles that left the board for good, once the step that removed them is over:
+    /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create). A terminal a failed
+    /// batch deleted and put back never counts. The app ends their sessions.
+    public var onTerminalsEnded: (([ObjectID]) -> Void)?
+    /// Terminals deleted in the open step; checked against `objects` when it closes.
+    private var removedTerminals: [ObjectID] = []
 
     public init(id: BoardID, root: URL) {
         self.id = id
@@ -198,7 +204,7 @@ public final class Board {
         object.updatedBy = Actor(caller: caller)
         let credited = actor ?? ActivityActor(caller: caller)
         history.begin()
-        defer { history.end() }
+        defer { endStep() }
         commit(object)
         history.record(.updated(before: before, after: object))
         if let changes = ActivityLog.changes(from: before, to: object) {
@@ -219,12 +225,13 @@ public final class Board {
         let actor = ActivityActor(caller: caller)
         // Arrows bound to it detach within the same undo step, so one ⌘Z restores both.
         history.begin()
-        defer { history.end() }
+        defer { endStep() }
         detachArrows(from: id, actor: actor, caller: caller)
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         bumpRevision()
         history.record(.deleted(removed))
+        if removed.type == .terminal { removedTerminals.append(id) }
         log(.deleted, removed, actor: actor, "deleted \(ActivityLog.describe(removed))")
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
@@ -304,6 +311,16 @@ public final class Board {
         revision = pinnedRevision ?? revision + 1
     }
 
+    /// Closes a step opened with `history.begin()`. When the outermost one closes, terminals it
+    /// deleted that are still gone (a failed batch puts its deletes back) are reported ended.
+    func endStep() {
+        history.end()
+        guard !history.isOpen, !removedTerminals.isEmpty else { return }
+        let ended = removedTerminals.filter { objects[$0] == nil }
+        removedTerminals = []
+        if !ended.isEmpty { onTerminalsEnded?(ended) }
+    }
+
     /// Runs `body` as one undo step and one board revision; when it throws, every change it
     /// made is reverted (announced as normal changes) and the error rethrown.
     public func atomically<T>(_ body: () throws -> T) throws -> T {
@@ -312,7 +329,7 @@ public final class Board {
         history.begin()
         let mark = history.mark()
         defer {
-            history.end()
+            endStep()
             if outermost { pinnedRevision = nil }
         }
         do {

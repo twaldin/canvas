@@ -218,6 +218,47 @@ final class ApiRouterTests {
         #expect(context.contains("inner arrow \(a.id) → \(b.id) (calls)"))
         #expect(context.contains("arrow → \(outside.id) (hypothesis_about)"))
     }
+
+    /// One request on `client`; the whole reply.
+    func call(_ client: LineClient, _ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
+        let request: JSONValue = .object(["id": .string(method), "method": .string(method), "params": .object(params)])
+        client.send(String(decoding: try JSONEncoder().encode(request), as: UTF8.self))
+        return try await client.next()
+    }
+
+    @Test func deletingATerminalThroughTheApiEndsItsSessionUnlessTheBatchFails() async throws {
+        var ended: [ObjectID] = []
+        registry.onTerminalsEnded = { _, ids in ended += ids }
+        let client = try connect()
+
+        let deleted = terminal()
+        #expect(try await call(client, "object.delete", ["id": .string(deleted)])["ok"] == .bool(true))
+        #expect(ended == [deleted])
+        // ⌘Z brings the tile back (it starts a new session); nothing more ends.
+        #expect(board.undo())
+        #expect(board.objects[deleted]?.type == .terminal)
+        #expect(ended == [deleted])
+
+        // A batch that fails puts its deleted terminal back: its session must survive.
+        let kept = terminal()
+        let failed = try await call(client, "object.batch", ["board": .string(board.id), "ops": .array([
+            .object(["method": "object.delete", "params": .object(["id": .string(kept)])]),
+            .object(["method": "object.update", "params": .object(["id": "obj_missing", "props": .object([:])])]),
+        ])])
+        #expect(failed["ok"] == .bool(false))
+        #expect(board.objects[kept] != nil)
+        #expect(ended == [deleted])
+
+        // One that succeeds ends every terminal it deleted, once it has committed.
+        let other = terminal()
+        let batch = try await call(client, "object.batch", ["board": .string(board.id), "ops": .array([
+            .object(["method": "object.delete", "params": .object(["id": .string(kept)])]),
+            .object(["method": "object.delete", "params": .object(["id": .string(other)])]),
+        ])])
+        #expect(batch["ok"] == .bool(true))
+        #expect(ended == [deleted, kept, other])
+    }
+
 }
 
 /// Minimal blocking NDJSON client; reads happen off the main actor so the server can answer.

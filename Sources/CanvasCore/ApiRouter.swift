@@ -12,6 +12,8 @@ public final class BoardRegistry {
     public var onEvent: ((Board, BoardEvent) -> Void)?
     /// The router's own observer (agent.wait), kept apart from the app-level hook.
     var routerHook: ((Board, BoardEvent) -> Void)?
+    /// Terminal tiles deleted for good on any open board (`Board.onTerminalsEnded`): the app ends their sessions.
+    public var onTerminalsEnded: ((Board, [ObjectID]) -> Void)?
 
     public init(store: BoardStore = BoardStore()) {
         self.store = store
@@ -27,6 +29,10 @@ public final class BoardRegistry {
             self.onEvent?(board, event)
             self.routerHook?(board, event)
             self.broadcast(event, board: board.id)
+        }
+        board.onTerminalsEnded = { [weak self, weak board] ids in
+            guard let self, let board else { return }
+            self.onTerminalsEnded?(board, ids)
         }
         boards[id] = board
         board.activity.record(.restart, actor: .system, rev: board.revision,

@@ -694,8 +694,9 @@ final class CanvasView: NSScrollView {
         delete(Array(selection))
     }
 
-    /// Deletes objects as one undo step. Closing a terminal ends its zmx session, so ask first,
-    /// in a sheet: an app-modal alert would stall every socket request until answered.
+    /// Deletes objects as one undo step. Closing a terminal ends its zmx session (the board
+    /// reports it ended; see AppDelegate), so ask first, in a sheet: an app-modal alert would
+    /// stall every socket request until answered.
     func delete(_ ids: [ObjectID]) {
         guard !ids.isEmpty else { return }
         let terminals = ids.filter { tiles[$0]?.content is TerminalTile }
@@ -709,7 +710,6 @@ final class CanvasView: NSScrollView {
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
             // The board may have changed while the sheet was up.
-            for id in terminals { (self.tiles[id]?.content as? TerminalTile)?.killSession() }
             self.remove(ids.filter { self.board.objects[$0] != nil })
         }
     }

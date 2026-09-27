@@ -116,13 +116,13 @@ final class TerminalTile: NSView, TileContent {
         argv.map { "'" + $0.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }.joined(separator: " ")
     }
 
-    /// Ends the persistent session; used only when the user closes the tile. Never another
-    /// instance's session (`ownerGuard`).
-    func killSession() {
+    /// Ends a deleted terminal's persistent session (`Board.onTerminalsEnded`: every delete path,
+    /// UI, API, batch, undo/redo). Never another instance's session (`ownerGuard`).
+    static func killSession(tile: ObjectID) {
         guard let zmx = AppPaths.zmx else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", Self.ownerGuard(refusal: "exit 0") + "exec \"$1\" kill \"$2\"", "canvas-kill", zmx, sessionName, Self.homeLabel]
+        process.arguments = ["-c", ownerGuard(refusal: "exit 0") + "exec \"$1\" kill \"$2\"", "canvas-kill", zmx, sessionName(tile), homeLabel]
         try? process.run()
     }
 

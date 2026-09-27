@@ -43,6 +43,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controllers[board.id]?.apply(event)
             self?.notifier.observe(event, on: board)
         }
+        // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session.
+        registry.onTerminalsEnded = { _, tiles in
+            for tile in tiles { TerminalTile.killSession(tile: tile) }
+        }
         notifier.onOpen = { [weak self] board, tile in
             guard let controller = self?.controllers[board] else { return }
             NSApp.activate(ignoringOtherApps: true)

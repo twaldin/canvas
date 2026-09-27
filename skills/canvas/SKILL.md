@@ -193,7 +193,7 @@ To make a tile readable from further out without changing what it shows, set `sc
 Users scale objects with ⌥-drag on a corner or the Scale menu; leave their scale alone unless asked.
 
 Update with `object.update` (props shallow-merge; pass `rev` from your last read to avoid clobbering a concurrent edit; `conflict` means re-read and retry).
-Delete with `object.delete`.
+Delete with `object.delete`; deleting a terminal tile ends its session and whatever runs in it.
 
 ### Notes
 

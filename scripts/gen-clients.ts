@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-// Generates typed clients from schema/canvas-api.json.
+// Generates typed clients (and the app's param table) from schema/canvas-api.json.
 //   bun scripts/gen-clients.ts          write generated files
 //   bun scripts/gen-clients.ts --check  exit 1 if generated files are stale
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -241,9 +241,24 @@ function genPy(): string {
   return out.join("\n");
 }
 
+// ---------- Swift (the app's param check) ----------
+
+function genSwift(): string {
+  const list = (keys: string[]) => `[${keys.map((k) => JSON.stringify(k)).join(", ")}]`;
+  const out: string[] = [`// ${HEADER}`, "", "/// Each method's params (`params.properties`, in schema order) and the required ones: what"];
+  out.push("/// `ApiRouter` checks every request against, and names in its `invalid_params` errors.");
+  out.push("enum ApiParams {", "    static let methods: [String: (accepted: [String], required: [String])] = [");
+  for (const [method, m] of Object.entries(catalog.methods)) {
+    out.push(`        ${JSON.stringify(method)}: (${list(Object.keys(m.params.properties ?? {}))}, ${list(m.params.required ?? [])}),`);
+  }
+  out.push("    ]", "}", "");
+  return out.join("\n");
+}
+
 const targets: Array<[string, string]> = [
   ["clients/ts/src/generated.ts", genTs()],
   ["clients/python/canvas_sdk/_generated.py", genPy()],
+  ["Sources/CanvasCore/ApiParams.swift", genSwift()],
 ];
 
 const check = process.argv.includes("--check");

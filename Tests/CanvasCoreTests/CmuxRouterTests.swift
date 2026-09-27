@@ -9,8 +9,9 @@ final class CmuxRouterTests {
     let registry: BoardRegistry
     let board: Board
     var servers: [SocketServer] = []
-    /// Commands that reached the WebKit side, with their surface.
+    /// Commands that reached the WebKit side, with their surface and driving terminal.
     var performed: [(ObjectID, CmuxBrowserCommand)] = []
+    var drivers: [ObjectID?] = []
 
     init() throws {
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("root"), withIntermediateDirectories: true)
@@ -25,8 +26,9 @@ final class CmuxRouterTests {
 
     func connect(password: String? = nil) throws -> LineClient {
         let router = CmuxRouter(registry: registry, password: password)
-        router.perform = { [unowned self] _, object, command in
+        router.perform = { [unowned self] _, object, command, driver in
             performed.append((object.id, command))
+            drivers.append(driver)
             return .object(["value": .number(1)])
         }
         let path = dir.appendingPathComponent("c\(servers.count)").path
@@ -177,6 +179,32 @@ final class CmuxRouterTests {
         #expect(board.activity.entries.last { $0.kind == .deleted }?.actor == .agent(agent.id))
     }
 
+    @Test func commandsNameTheTerminalDrivingThePage() async throws {
+        let agent = terminal(at: Frame(x: 0, y: 0, w: 400, h: 300))
+        let other = terminal(at: Frame(x: 0, y: 400, w: 400, h: 300))
+        let client = try connect()
+        client.send(#"{"id":"o","method":"browser.open_split","params":{"surface_id":"\#(agent.id)"}}"#)
+        let opened = try #require(try await client.next()["result"]?["surface_id"]?.string)
+        client.send(#"{"id":"u","method":"browser.url.get","params":{"surface_id":"\#(opened)"}}"#)
+        _ = try await client.next()
+
+        // Another agent's connection drives a tile it didn't open: that agent drives it.
+        let theirs = try connect()
+        theirs.send(#"{"id":"o","method":"browser.open_split","params":{"surface_id":"\#(other.id)"}}"#)
+        _ = try await theirs.next()
+        theirs.send(#"{"id":"u","method":"browser.url.get","params":{"surface_id":"\#(opened)"}}"#)
+        _ = try await theirs.next()
+
+        // A fresh connection falls back to the tile's opener; a user's tile has no known driver.
+        let fresh = try connect()
+        fresh.send(#"{"id":"u","method":"browser.url.get","params":{"surface_id":"\#(opened)"}}"#)
+        _ = try await fresh.next()
+        let users = browser()
+        fresh.send(#"{"id":"v","method":"browser.url.get","params":{"surface_id":"\#(users.id)"}}"#)
+        _ = try await fresh.next()
+        #expect(drivers == [agent.id, other.id, agent.id, nil])
+    }
+
     @Test func passwordGatesRequestsUntilAuth() async throws {
         let page = browser()
         let client = try connect(password: "s3cret")
@@ -231,5 +259,25 @@ struct CmuxEvalTests {
         #expect(CmuxEval.awaitingBody("var x = 2; x * 3") == nil)
         #expect(CmuxEval.awaitingBody("document.title;") == nil)
         #expect(CmuxEval.awaitingBody("1)); alert((1") == nil, "nothing that escapes the wrapper counts as an expression")
+    }
+}
+
+struct NavigationCreditTests {
+    @Test func pageChangesGoToWhoeverActedLastWhileRecent() {
+        let start = Date()
+        var credit = NavigationCredit()
+        #expect(credit.actor(at: start) == .system, "nobody acted: the page did it")
+
+        credit.user(at: start)
+        #expect(credit.actor(at: start.addingTimeInterval(1)) == .user)
+        credit.agent("obj_agent", at: start.addingTimeInterval(2))
+        #expect(credit.actor(at: start.addingTimeInterval(3)) == .agent("obj_agent"), "the latest actor wins")
+        #expect(credit.actor(at: start.addingTimeInterval(2 + NavigationCredit.window)) == .agent("obj_agent"))
+        #expect(credit.actor(at: start.addingTimeInterval(2.5 + NavigationCredit.window)) == .system, "long after, a page's own change")
+
+        credit.agent(nil, at: start.addingTimeInterval(30))
+        #expect(credit.actor(at: start.addingTimeInterval(31)) == .system, "a command from no known terminal credits nobody")
+        credit.user(at: start.addingTimeInterval(32))
+        #expect(credit.actor(at: start.addingTimeInterval(33)) == .user)
     }
 }

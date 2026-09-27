@@ -24,6 +24,9 @@ final class BrowserTile: NSView, TileContent {
     static let revealWait: TimeInterval = 0.5
     /// How long a released web view outlives its release (see `release`).
     static let closeDelay: TimeInterval = 2
+    /// A page asking for the same new tile again this soon (a second click on a `_blank` link
+    /// while the first tile appears) gets the first one back.
+    static let reopenInterval: TimeInterval = 2
 
     let objectID: ObjectID
     let board: Board
@@ -50,6 +53,12 @@ final class BrowserTile: NSView, TileContent {
     /// Automation waits parked until the page changes (navigation, DOM activity) or time runs out.
     private var changeWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
+    /// Who the page's URL changes and the tiles it opens are credited to.
+    var credit = NavigationCredit()
+    /// A tile the user opened from this page (their click on a `_blank` link or `window.open`
+    /// button): the canvas shows and selects it.
+    var onOpenedTile: ((ObjectID) -> Void)?
+    private var lastOpened: (url: String, id: ObjectID, at: Date)?
     /// Latest Hyper-hover answer, and the point whose answer is still wanted.
     private var hover: (point: CGPoint, element: WebMentions.Element)?
     private var hoverWanted: CGPoint?
@@ -61,11 +70,21 @@ final class BrowserTile: NSView, TileContent {
         self.object = object
         super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         chrome.autoresizingMask = [.width]
-        chrome.onBack = { [weak self] in self?.webView?.goBack() }
-        chrome.onForward = { [weak self] in self?.webView?.goForward() }
-        chrome.onSubmit = { [weak self] text in self?.submitAddress(text) }
+        chrome.onBack = { [weak self] in
+            self?.credit.user()
+            self?.webView?.goBack()
+        }
+        chrome.onForward = { [weak self] in
+            self?.credit.user()
+            self?.webView?.goForward()
+        }
+        chrome.onSubmit = { [weak self] text in
+            self?.credit.user()
+            self?.submitAddress(text)
+        }
         chrome.onReload = { [weak self] in
             guard let self else { return }
+            self.credit.user()
             if let webView = self.webView, webView.isLoading { return webView.stopLoading() }
             self.track(self.ensureWebView().reload())
         }
@@ -86,6 +105,31 @@ final class BrowserTile: NSView, TileContent {
         NSRect(x: 0, y: Self.chromeHeight, width: bounds.width, height: max(0, bounds.height - Self.chromeHeight))
     }
 
+    /// The web view's frame: the page area, its size rounded up to whole device pixels at the
+    /// tile's on-screen scale (the sliver past the tile is clipped). WebKit sizes the page's
+    /// viewport from the view's size in device pixels, rounded to whole pixels, then scaled
+    /// back and cut to whole CSS pixels: at 90% zoom a 648 pt tile is 1166.4 px, rounded to
+    /// 1166, which comes back as 647.8, and `innerWidth` was 647. Rounded up first it is the
+    /// tile's body width (and `innerHeight` its body height); when rounding up would pass the
+    /// next whole point (on-screen scale below 1 px/pt) the size stays as it is.
+    private var webViewFrame: NSRect {
+        let page = pageFrame
+        let unit = convert(NSSize(width: 1, height: 1), to: nil)
+        let backing = window?.backingScaleFactor ?? 2
+        func snapped(_ length: CGFloat, _ pixelsPerPoint: CGFloat) -> CGFloat {
+            guard pixelsPerPoint > 0 else { return length }
+            let up = (length * pixelsPerPoint - 0.001).rounded(.up) / pixelsPerPoint
+            return up.rounded(.down) == length.rounded(.down) ? up : length
+        }
+        return NSRect(x: page.minX, y: page.minY, width: snapped(page.width, abs(unit.width) * backing),
+                      height: snapped(page.height, abs(unit.height) * backing))
+    }
+
+    /// The canvas zoom settled at a new value: the web view's device-pixel size changed.
+    func zoomChanged() {
+        if let webView, webView.superview === self { webView.frame = webViewFrame }
+    }
+
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         layoutParts()
     }
@@ -94,7 +138,7 @@ final class BrowserTile: NSView, TileContent {
     private func layoutParts() {
         chrome.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.chromeHeight)
         cover.frame = pageFrame
-        webView?.frame = pageFrame
+        webView?.frame = webViewFrame
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -144,11 +188,15 @@ final class BrowserTile: NSView, TileContent {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.applicationNameForUserAgent = "Version/18.0 Safari/605.1.15"
+        // The page's context menu offers Inspect Element (Web Inspector), as in Safari with
+        // its Develop menu on.
+        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         WebMentions.install(on: configuration)
         let controller = configuration.userContentController
         controller.addUserScript(WKUserScript(source: BrowserScripts.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: BrowserScripts.world))
         controller.add(PageMessages(tile: self), contentWorld: BrowserScripts.world, name: BrowserScripts.messageName)
-        let view = BrowserWebView(frame: pageFrame, configuration: configuration)
+        let view = BrowserWebView(frame: webViewFrame, configuration: configuration)
+        view.onUserInput = { [weak self] in self?.credit.user() }
         view.autoresizingMask = [.width, .height]
         view.navigationDelegate = self
         view.uiDelegate = self
@@ -162,7 +210,8 @@ final class BrowserTile: NSView, TileContent {
             view.observe(\.url, options: [.new]) { [weak self] view, _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    // Same-document navigations (pushState) never "finish"; commit them here.
+                    // Same-document navigations (pushState, back/forward between its entries)
+                    // never "finish"; commit them here, or when the load they ran in ends.
                     if !view.isLoading { self.commitURL() }
                     self.signalChange()
                 }
@@ -171,6 +220,7 @@ final class BrowserTile: NSView, TileContent {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.chrome.isLoading = view.isLoading
+                    if !view.isLoading { self.commitURL() }
                     self.signalChange()
                 }
             },
@@ -204,10 +254,10 @@ final class BrowserTile: NSView, TileContent {
         if drivenTimer != nil, !shown {
             releaseTimer?.invalidate()
             releaseTimer = nil
-            if !WebStage.isParked(webView) { WebStage.park(webView, frame: pageFrame) }
+            if !WebStage.isParked(webView) { WebStage.park(webView, frame: webViewFrame) }
         } else if isLive {
             guard webView.superview !== self else { return }
-            webView.frame = pageFrame
+            webView.frame = webViewFrame
             addSubview(webView, positioned: .below, relativeTo: cover)
         } else if webView.superview != nil {
             webView.removeFromSuperview()
@@ -337,11 +387,16 @@ final class BrowserTile: NSView, TileContent {
         window?.makeFirstResponder(webView)
     }
 
+    /// The page's committed URL into the address bar and `props.url`, credited per `credit`.
     private func commitURL() {
         guard let url = webView?.url?.absoluteString else { return }
         if !chrome.isEditing { chrome.setAddress(url) }
         guard url != object.props["url"]?.string else { return }
-        _ = try? board.update(objectID, props: .object(["url": .string(url)]))
+        let props = JSONValue.object(["url": .string(url)])
+        switch credit.actor() {
+        case .agent(let tile): _ = try? board.update(objectID, props: props, caller: tile)
+        case let actor: _ = try? board.update(objectID, props: props, actor: actor)
+        }
     }
 
     /// The page named itself: the app's write-back, not anyone's edit.
@@ -350,10 +405,28 @@ final class BrowserTile: NSView, TileContent {
         _ = try? board.update(objectID, props: .object(["title": .string(title)]), actor: .system)
     }
 
-    /// A new tile beside this one (⌘-click, `target=_blank`, `window.open`).
+    /// A new tile beside this one (⌘-click, `target=_blank`, `window.open`), credited like a
+    /// navigation. One the user opened (`onOpenedTile`) is shown and selected, since it may land
+    /// outside the view; the same address asked for again within `reopenInterval` (a second
+    /// click while the first tile appears) gets the first tile instead of a duplicate.
     private func openTile(_ url: URL) {
+        let address = url.absoluteString
+        let actor = credit.actor()
+        if let last = lastOpened, last.url == address, Date().timeIntervalSince(last.at) < Self.reopenInterval, board.objects[last.id] != nil {
+            if actor == .user { onOpenedTile?(last.id) }
+            return
+        }
         let size = Board.defaultSize(.browser)
-        board.create(type: .browser, props: .object(["url": .string(url.absoluteString)]), frame: board.place(width: size.w, height: size.h, near: objectID))
+        let caller: ObjectID? = if case .agent(let tile) = actor { tile } else { nil }
+        let opened = board.create(type: .browser, props: .object(["url": .string(address)]),
+                                  frame: board.place(width: size.w, height: size.h, near: objectID), caller: caller)
+        lastOpened = (address, opened.id, Date())
+        if actor == .user { onOpenedTile?(opened.id) }
+    }
+
+    /// Puts keyboard focus in the address field (a new, empty tile the user made).
+    func focusAddress() {
+        chrome.focusAddress()
     }
 
     // MARK: Change signals (automation waits, snapshot freshness)
@@ -559,14 +632,16 @@ final class BrowserTile: NSView, TileContent {
 
     var takesKeyboardFocus: Bool { true }
 
-    /// Someone else changed `props.url` (an agent's object.update): go there.
+    /// Someone else changed `props.url` (an agent's object.update): go there, credited to them.
     func update(_ object: CanvasObject) {
         let previous = self.object.props["url"]?.string
         self.object = object
         guard let url = object.props["url"]?.string, url != previous else { return }
         // A released page reloads from props.url when it comes back.
         guard let webView else { return chrome.setAddress(url) }
-        if url != webView.url?.absoluteString { load(url) }
+        guard url != webView.url?.absoluteString else { return }
+        if case .agent(let tile) = object.updatedBy { credit.agent(tile) } else { credit.user() }
+        load(url)
     }
 
     /// File > New Browser Tile: asks for an address and opens it in the viewport. A sheet, not
@@ -605,6 +680,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         uncommittedNavigations.removeAll { $0 === navigation }
+        commitURL()
         signalChange()
     }
 
@@ -647,8 +723,21 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 
 /// The first click into a page acts (follows the link, presses the button) even while the
 /// window isn't key, as the canvas's own gestures do; WebKit alone only activates the window.
+/// Clicks and key presses are the user acting on the page (`NavigationCredit`).
 final class BrowserWebView: WKWebView {
+    var onUserInput: (() -> Void)?
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        onUserInput?()
+        super.mouseDown(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        onUserInput?()
+        super.keyDown(with: event)
+    }
 }
 
 /// The script message handler for page activity. WebKit retains handlers strongly, so this
@@ -725,6 +814,10 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
 
     func setAddress(_ text: String) {
         address.stringValue = text == "about:blank" ? "" : text
+    }
+
+    func focusAddress() {
+        window?.makeFirstResponder(address)
     }
 
     private static func button(_ symbol: String, _ label: String) -> NSButton {

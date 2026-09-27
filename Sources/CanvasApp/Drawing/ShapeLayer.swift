@@ -61,6 +61,8 @@ final class ShapeLayer: NSView {
     var color: String? { didSet { onToolChange?() } }
     var fill: ShapeSpec.Fill = .none { didSet { onToolChange?() } }
     var onToolChange: (() -> Void)?
+    /// The floating tool strip at the top of the window (viewport jumps keep clear of it).
+    private(set) weak var toolbar: NSView?
 
     private(set) var items: [ObjectID: DrawnItem] = [:]
     /// Item ids in paint order (ascending z); rebuilt lazily after inserts and z changes.
@@ -105,6 +107,7 @@ final class ShapeLayer: NSView {
         let toolbar = DrawingToolbar(layer: layer)
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(toolbar)
+        layer.toolbar = toolbar
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
             toolbar.centerXAnchor.constraint(equalTo: container.centerXAnchor),

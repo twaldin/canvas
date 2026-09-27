@@ -28,6 +28,9 @@ final class HtmlTile: NSView, TileContent {
     private var queuedHover: NSPoint?
     /// Bounds the native work a page can have outstanding; cancelled when the web view goes away.
     private let work = HtmlWorkQueue()
+    /// A code tile the user opened from this page (`<canvas-link>`, `<canvas-code>`); the canvas
+    /// pans it into view.
+    var onOpenedCode: ((ObjectID) -> Void)?
 
     init(object: CanvasObject, board: Board) {
         self.object = object
@@ -147,7 +150,9 @@ final class HtmlTile: NSView, TileContent {
             if let y { scrollY = y }
             pageSettled()
         }
-        return try await work.perform { [object, board] in try await HtmlChannel.handle(message, tile: object.id, board: board) }
+        let result = try await work.perform { [object, board] in try await HtmlChannel.handle(message, tile: object.id, board: board) }
+        if case .openCode = message, let opened = result["tile"]?.string { onOpenedCode?(opened) }
+        return result
     }
 
     // MARK: Snapshots

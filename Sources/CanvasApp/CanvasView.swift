@@ -190,7 +190,7 @@ final class CanvasView: NSScrollView {
         addSubview(grid, positioned: .below, relativeTo: contentView)
         addSubview(attention)
         addSubview(edges)
-        edges.onReveal = { [weak self] id in self?.reveal(id) }
+        edges.onReveal = { [weak self] id in self?.jumpToAttention(id) }
         contentView.postsBoundsChangedNotifications = true
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(boundsChanged), name: NSView.boundsDidChangeNotification, object: contentView)
@@ -307,6 +307,7 @@ final class CanvasView: NSScrollView {
         if let terminal = content as? TerminalTile {
             terminal.onTitle = { [weak self] title in self?.tiles[id]?.setTitle(title) }
         }
+        (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
         tile.onFrameCommit = { [weak self] rect, scale in
             guard let self, let object = self.board.objects[id] else { return }
@@ -844,15 +845,33 @@ final class CanvasView: NSScrollView {
 
     // MARK: Navigation (user-initiated only)
 
+    /// Floating window chrome over the canvas edges (the drawing toolbar at the top, the tray at
+    /// the bottom), in view points; the window controller measures it. Jumps land clear of it.
+    var chromeInsets: () -> NSEdgeInsets = { NSEdgeInsets() }
+
+    /// Space kept between a jump's target and the floating chrome, in view points.
+    static let chromeMargin: CGFloat = 12
+
+    /// The part of the viewport jumps aim at (view points, top-left origin): between the floating
+    /// toolbar and the tray, with a margin; never less than half the viewport.
+    private var clearArea: CGRect {
+        let size = contentView.frame.size
+        let insets = chromeInsets()
+        let top = insets.top + Self.chromeMargin, bottom = insets.bottom + Self.chromeMargin
+        let height = max(size.height - top - bottom, size.height / 2)
+        return CGRect(x: 0, y: min(top, size.height - height), width: size.width, height: height)
+    }
+
     /// Where a board opens: the top of its content, or of its largest cluster when the content
     /// doesn't fit at this zoom (the middle of a board with a stray tile far away is empty canvas).
     func centerOnContent() {
         viewportMover = .system
         defer { viewportMover = .user }
-        let visible = documentVisibleRect
-        let target = Layout.fitTarget(tiles.values.map(\.frame), viewport: visible.size, padding: Self.fitPadding, minZoom: 1)
+        let clear = clearArea
+        let target = Layout.fitTarget(tiles.values.map(\.frame), viewport: clear.size, padding: Self.fitPadding, minZoom: 1)
             ?? NSRect(origin: CanvasDocumentView.origin, size: .zero)
-        scroll(to: NSPoint(x: target.midX - visible.width / 2, y: target.minY - 40))
+        let zoom = magnification
+        scroll(to: NSPoint(x: target.midX - clear.midX / zoom, y: target.minY - Self.jumpPadding - clear.minY / zoom))
     }
 
     private func scroll(to origin: NSPoint) {
@@ -861,12 +880,14 @@ final class CanvasView: NSScrollView {
         scheduleLiveness()
     }
 
-    /// Centers a document rect in the viewport; a rect too big to fit shows its top-left corner.
-    private func center(on rect: NSRect) {
-        let visible = contentView.bounds.size
-        let x = rect.width > visible.width ? rect.minX - 20 : rect.midX - visible.width / 2
-        let y = rect.height > visible.height ? rect.minY - 20 : rect.midY - visible.height / 2
-        scroll(to: NSPoint(x: x, y: y))
+    private func apply(_ jump: Layout.Jump) {
+        if magnification != jump.zoom { magnification = jump.zoom }
+        scroll(to: jump.origin)
+    }
+
+    /// The viewport now, as a jump (for minimal pans).
+    private var currentJump: Layout.Jump {
+        Layout.Jump(zoom: magnification, origin: contentView.bounds.origin)
     }
 
     func zoom(to scale: CGFloat) {
@@ -875,47 +896,67 @@ final class CanvasView: NSScrollView {
         scheduleLiveness()
     }
 
+    /// ⌘0: 100%. With a selection, the selection at 100%, centered clear of the chrome (its top
+    /// when taller than the view); without one, around the viewport's center.
+    func zoomToActualSize() {
+        let rects = selection.compactMap(docFrame)
+        guard let first = rects.first else { return zoom(to: 1) }
+        apply(Layout.center(rects.dropFirst().reduce(first) { $0.union($1) }, in: clearArea, zoom: 1, padding: Self.jumpPadding))
+    }
+
     /// Room kept around whatever a fit shows, in document points.
     static let fitPadding: CGFloat = 60
+    /// Room kept around a target shown at a fixed zoom, in document points.
+    static let jumpPadding: CGFloat = 20
+    /// Below this, a target too tall to read when fitted whole fits its width instead.
+    static let readableZoom: CGFloat = 0.5
 
-    /// Zooms (at most to 100%) so a document rect fills the viewport, centered.
-    func fit(_ rect: NSRect) {
-        let padded = rect.insetBy(dx: -Self.fitPadding, dy: -Self.fitPadding)
-        let size = contentView.frame.size
-        magnification = min(maxMagnification, max(minMagnification, min(size.width / padded.width, size.height / padded.height)))
-        let visible = contentView.bounds.size
-        scroll(to: NSPoint(x: padded.midX - visible.width / 2, y: padded.midY - visible.height / 2))
+    /// Zooms (at most to 100%) so a document rect fills the viewport clear of the chrome,
+    /// centered. `readable`: a tall target fits its width and shows its top instead of shrinking
+    /// below `readableZoom` (objects; not Zoom to Fit, which must show everything).
+    func fit(_ rect: NSRect, readable: Bool = false) {
+        apply(Layout.fit(rect, in: clearArea, padding: Self.fitPadding, zoom: minMagnification...maxMagnification,
+                         readable: readable ? Self.readableZoom : nil))
     }
 
     /// Everything, or when that can't be read at minimum zoom, the largest cluster of objects
     /// (`Layout.fitTarget`): a few strays far away don't shrink the board to nothing.
     func zoomToFit() {
         let rects = selectableRects().map(\.rect) + groups.values.filter { !$0.isHidden }.map(\.frame)
-        guard let target = Layout.fitTarget(rects, viewport: contentView.frame.size, padding: Self.fitPadding, minZoom: minMagnification) else { return }
+        guard let target = Layout.fitTarget(rects, viewport: clearArea.size, padding: Self.fitPadding, minZoom: minMagnification) else { return }
         fit(target)
     }
 
-    /// The navigator's "go to": the object fitted (at most 100%) and selected; a terminal also
-    /// takes keyboard focus, as `focus(tile:)` does.
+    /// The navigator's "go to": the object fitted (at most 100%, a tall one by its width) and
+    /// selected; a terminal also takes keyboard focus.
     func go(to id: ObjectID) {
         guard let rect = docFrame(id) else { return }
-        fit(rect)
+        fit(rect, readable: true)
         select(id, extend: false)
     }
 
     /// "Zoom in" on the canvas: this tile at 100%, centered, selected, and focused if it types.
     func focus(tile id: ObjectID) {
         guard let rect = docFrame(id) else { return }
-        magnification = 1
-        center(on: rect)
+        apply(Layout.center(rect, in: clearArea, zoom: 1, padding: Self.jumpPadding))
         setSelection([id])
         (tiles[id]?.content as? TerminalTile)?.focus()
     }
 
-    /// Scrolls an object into the middle of the viewport at the current zoom.
+    /// An attention edge pill: framed like Go to, and the marker is acknowledged (the user went
+    /// there). Selection and keyboard focus stay.
+    func jumpToAttention(_ id: ObjectID) {
+        guard let rect = docFrame(id) else { return }
+        fit(rect, readable: true)
+        clearAttention(id)
+    }
+
+    /// The least pan that shows an object the user just opened (a code tile from an HTML link),
+    /// clear of the chrome; nothing when it is already in view.
     func reveal(_ id: ObjectID) {
         guard let rect = docFrame(id) else { return }
-        center(on: rect)
+        let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification)
+        if jump != currentJump { apply(jump) }
     }
 
     // MARK: Attention

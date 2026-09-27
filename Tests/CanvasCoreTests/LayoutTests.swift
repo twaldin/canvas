@@ -446,6 +446,59 @@ struct LayoutBoardTests {
         #expect(Layout.fitTarget(small + pair, viewport: viewport, padding: 0, minZoom: 0.1) == CGRect(x: 50_000, y: 0, width: 2600, height: 2000), "equal counts: more area wins")
     }
 
+    /// A 1440 × 872 viewport under a floating toolbar and above a tray (each 46 pt, plus a 12 pt margin).
+    let clear = CGRect(x: 0, y: 58, width: 1440, height: 756)
+
+    /// Where a document rect lands in the viewport after a jump, in view points.
+    func shown(_ rect: CGRect, after jump: Layout.Jump) -> CGRect {
+        CGRect(x: (rect.minX - jump.origin.x) * jump.zoom, y: (rect.minY - jump.origin.y) * jump.zoom, width: rect.width * jump.zoom, height: rect.height * jump.zoom)
+    }
+
+    func close(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a - b) < 0.001 }
+
+    @Test func fitFillsTheAreaBetweenTheChromeNotTheWholeViewport() {
+        let board = CGRect(x: 0, y: 0, width: 2000, height: 1000)
+        let jump = Layout.fit(board, in: clear, padding: 60, zoom: 0.1...1)
+        let padded = shown(board.insetBy(dx: -60, dy: -60), after: jump)
+        #expect(close(padded.minY, clear.minY) && close(padded.maxY, clear.maxY), "height-bound: the padded board spans exactly the clear band")
+        #expect(padded.minX >= 0 && padded.maxX <= clear.maxX)
+        #expect(close(padded.midX, clear.midX))
+    }
+
+    @Test func aTallTargetFitsItsWidthAndShowsItsTopInsteadOfShrinkingPastReadable() {
+        let page = CGRect(x: 1000, y: 0, width: 820, height: 3100)
+        let whole = Layout.fit(page, in: clear, padding: 60, zoom: 0.1...1)
+        #expect(whole.zoom < 0.5, "fitted whole, the page is unreadable")
+        let readable = Layout.fit(page, in: clear, padding: 60, zoom: 0.1...1, readable: 0.5)
+        #expect(readable.zoom == 1, "its width fits at 100%, the zoom cap")
+        #expect(close(shown(page, after: readable).minY, clear.minY + 60), "its top sits just below the toolbar")
+        #expect(close(shown(page, after: readable).midX, clear.midX))
+        // A target that fits whole at a readable zoom is centered as before.
+        let tile = CGRect(x: 0, y: 0, width: 800, height: 500)
+        let fitted = Layout.fit(tile, in: clear, padding: 60, zoom: 0.1...1, readable: 0.5)
+        #expect(fitted.zoom == 1 && close(shown(tile, after: fitted).midY, clear.midY))
+    }
+
+    @Test func centerShowsTheTopOfWhatDoesntFitBelowTheChrome() {
+        let page = CGRect(x: 0, y: 0, width: 820, height: 3100)
+        let jump = Layout.center(page, in: clear, zoom: 1, padding: 20)
+        #expect(shown(page, after: jump).minY == clear.minY + 20)
+        #expect(shown(page, after: jump).midX == clear.midX, "the width fits, so it is centered")
+    }
+
+    @Test func revealPansTheLeastThatBringsTheTargetIntoTheClearArea() {
+        let now = Layout.Jump(zoom: 0.5, origin: .zero)
+        // In view: no move.
+        #expect(Layout.reveal(CGRect(x: 100, y: 200, width: 300, height: 300), from: now, clear: clear, padding: 40) == now)
+        // Past the right edge: only x moves, just enough for its padded right edge.
+        let right = Layout.reveal(CGRect(x: 2800, y: 500, width: 640, height: 446), from: now, clear: clear, padding: 40)
+        #expect(right == Layout.Jump(zoom: 0.5, origin: CGPoint(x: 600, y: 0)))
+        // Under the toolbar: it comes down to just below it.
+        let up = Layout.reveal(CGRect(x: 100, y: 0, width: 300, height: 300), from: now, clear: clear, padding: 40)
+        #expect(shown(CGRect(x: 100, y: 0, width: 300, height: 300), after: up).minY == clear.minY + 20)
+        #expect(up.origin.x == 0)
+    }
+
     @Test func nearbyGroupsAreOneClusterAndALoneObjectIsItsOwn() {
         let left = [CGRect(x: 0, y: 0, width: 400, height: 300), CGRect(x: 500, y: 0, width: 400, height: 300)]
         // 1400 pt right of `left`: within the margin, so the groups join.

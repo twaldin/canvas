@@ -27,7 +27,8 @@ extension ShapeLayer {
         guard event.type == .keyDown, canvasHasKeyboard, editor == nil else { return false }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
         guard modifiers.isEmpty else { return false }
-        if event.keyCode == 53 {  // Escape
+        if event.keyCode == 53 {  // Escape: ends a drawing gesture or tool; otherwise the canvas's (deselect, exit group)
+            guard gesture != nil || tool != .select else { return false }
             cancelGesture()
             tool = .select
             return true

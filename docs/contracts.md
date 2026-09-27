@@ -179,7 +179,7 @@ Mentions: a row is the line on the side it shows; a sign in the gutter is the wh
 | `onSelectionDrag(ids, offset)` | scene → drawing | Live drag offset in document points; `.zero` just before the move commits. |
 | `selection`, `onSelectionChange` | scene → all | Current selection (tiles, drawn objects, groups). |
 
-Groups (`type: group`, props `{members, title?, color?, padding?}`, frame derived by the board, see Object model rules) are drawn by the scene as titled, tinted regions behind their members (`GroupView`), following members live mid-drag with the same `GroupSpec.frame`; only the title band takes the mouse. Title and border are in document space like everything else. `focus(tile:)` zooms a tile to 100%, centers, selects, and focuses it; `raiseAttention(_:message:)` backs `view.attention`.
+Groups (`type: group`, props `{members, title?, color?, padding?}`, frame derived by the board, see Object model rules) are drawn by the scene as titled, tinted regions behind their members (`GroupView`), following members live mid-drag with the same `GroupSpec.frame`; only the title band takes the mouse. Title and border are in document space like everything else. `focus(tile:)` zooms a tile to 100%, centers, selects, and focuses it; `raiseAttention(_:message:)` backs `view.attention`. Every user viewport jump (`go(to:)`, `zoomToFit()`, `zoomToActualSize()`, `focus(tile:)`, `jumpToAttention(_:)`, `reveal(_:)`, entering a group, opening a board) aims at the clear area between the floating toolbar and the tray (`chromeInsets`, measured by the window controller, plus a 12 pt margin); the geometry is `Layout.fit`/`center`/`reveal` (CanvasCore).
 
 ## Undo
 
@@ -239,7 +239,7 @@ All git in the app runs through `GitRunner.shared` (CanvasCore), which caps conc
 | `type` | Fields | Reply |
 | --- | --- | --- |
 | `code.excerpt` | `path`, `lines?` (`"N"`/`"N-M"`), `symbol?` | `SourceExcerpt` (`start`, `end`, `lines`, `language`, `stale`, `reason`, `truncated`) |
-| `code.open` | `path`, `lines?`, `symbol?` | `{tile, created}`: re-aims the topmost non-follow code tile for `path`, else creates one beside the HTML tile |
+| `code.open` | `path`, `lines?`, `symbol?` | `{tile, created}`: re-aims the topmost non-follow code tile for `path`, else creates one beside the HTML tile; from the live page (a user's click), the canvas pans the least that shows that tile clear of the chrome |
 | `state.get` | `key?` | `{value}` from `props.state` |
 | `state.set` | `key` (`[A-Za-z0-9_.:-]{1,128}`), `value` (≤ 16 KiB, `null` deletes) | `{}`; `props.state` is capped at 256 KiB |
 | `view.rendered` | `scrollY?` | `{}`; the tile refreshes its snapshot and remembers the scroll; the first after the page attaches lifts the card (`whenLiveReady`) |

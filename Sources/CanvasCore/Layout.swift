@@ -183,6 +183,61 @@ public enum Layout {
         }
         return largest.flatMap { bounds($0) }
     }
+
+    // MARK: Viewport jumps
+
+    /// Where a viewport jump lands: the zoom, and the document point at the viewport's top-left
+    /// corner. Jumps aim at `clear`, the part of the viewport (view points, top-left origin) that
+    /// the window's floating chrome (drawing toolbar, tray) leaves uncovered.
+    public struct Jump: Equatable, Sendable {
+        public var zoom: CGFloat
+        public var origin: CGPoint
+
+        public init(zoom: CGFloat, origin: CGPoint) {
+            self.zoom = zoom
+            self.origin = origin
+        }
+    }
+
+    /// `rect` with `padding` on every side fitted into `clear` and centered there, the zoom
+    /// clamped to `zoom`. With `readable`, a target so tall that fitting it whole would land below
+    /// that zoom (a long HTML page, a tall note) fits its width instead and shows its top.
+    public static func fit(_ rect: CGRect, in clear: CGRect, padding: CGFloat, zoom limits: ClosedRange<CGFloat>, readable: CGFloat? = nil) -> Jump {
+        let padded = rect.insetBy(dx: -padding, dy: -padding)
+        func clamp(_ zoom: CGFloat) -> CGFloat { min(limits.upperBound, max(limits.lowerBound, zoom)) }
+        let widthZoom = clamp(clear.width / padded.width)
+        let whole = clamp(min(widthZoom, clear.height / padded.height))
+        if let readable, whole < readable, widthZoom > whole {
+            return Jump(zoom: widthZoom, origin: CGPoint(x: padded.midX - clear.midX / widthZoom, y: padded.minY - clear.minY / widthZoom))
+        }
+        return Jump(zoom: whole, origin: CGPoint(x: padded.midX - clear.midX / whole, y: padded.midY - clear.midY / whole))
+    }
+
+    /// `rect` at `zoom`, centered in `clear`; along an axis where it (with `padding`) doesn't fit,
+    /// its left or top edge shows instead.
+    public static func center(_ rect: CGRect, in clear: CGRect, zoom: CGFloat, padding: CGFloat) -> Jump {
+        func axis(_ min: CGFloat, _ mid: CGFloat, _ length: CGFloat, clearMin: CGFloat, clearMid: CGFloat, clearLength: CGFloat) -> CGFloat {
+            length + 2 * padding > clearLength / zoom ? min - padding - clearMin / zoom : mid - clearMid / zoom
+        }
+        return Jump(zoom: zoom, origin: CGPoint(
+            x: axis(rect.minX, rect.midX, rect.width, clearMin: clear.minX, clearMid: clear.midX, clearLength: clear.width),
+            y: axis(rect.minY, rect.midY, rect.height, clearMin: clear.minY, clearMid: clear.midY, clearLength: clear.height)))
+    }
+
+    /// The least pan that brings `rect` (with `padding`) into view clear of the chrome, from a
+    /// viewport at `jump`; along an axis where it doesn't fit, its left or top edge shows. The
+    /// same `jump` when the rect is already in view.
+    public static func reveal(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat) -> Jump {
+        let zoom = jump.zoom
+        let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        let target = rect.insetBy(dx: -padding, dy: -padding)
+        func shift(_ min: CGFloat, _ max: CGFloat, shownMin: CGFloat, shownMax: CGFloat) -> CGFloat {
+            if max - min > shownMax - shownMin || min < shownMin { return min - shownMin }
+            return max > shownMax ? max - shownMax : 0
+        }
+        return Jump(zoom: zoom, origin: CGPoint(x: jump.origin.x + shift(target.minX, target.maxX, shownMin: shown.minX, shownMax: shown.maxX),
+                                                y: jump.origin.y + shift(target.minY, target.maxY, shownMin: shown.minY, shownMax: shown.maxY)))
+    }
 }
 
 extension Board {

@@ -16,6 +16,7 @@ import { realpathSync } from "node:fs";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { canvasGuidance } from "../guidance";
 import { absolute, editLocation, type Location, patchLocation, readLocation } from "./follow";
+import { thread } from "./threads";
 
 type Kind = "claude" | "codex" | "gemini" | "opencode";
 type Json = Record<string, unknown>;
@@ -48,9 +49,13 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
   const report = (state: "working" | "blocked" | "idle", message?: string, call?: string) =>
     quietly(client.api.agent.report({ tile, kind, state, message, seq, source, call }));
   const context = (text: string) => JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
-  // Claude and Codex mark events from inside a subagent with its id.
-  const subagent = typeof input.agent_id === "string" && input.agent_id.length > 0;
-
+  // Only the tile's own session owns its lifecycle, session id and tray (./threads.ts). A
+  // subagent's approvals and finished calls still count (the tile waits on them); nothing of
+  // Codex's internal sessions does.
+  const from = thread(kind, input);
+  if (from === "internal") return undefined;
+  const subagent = from === "subagent";
+  if (subagent && event !== "PermissionRequest" && event !== "PostToolUse" && event !== "PostToolUseFailure" && event !== "Notification") return undefined;
   switch (event) {
     case "Launch": {
       // bin/codex, as Codex starts: it fires SessionStart only with the first prompt.
@@ -69,8 +74,8 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
     }
     case "UserPromptSubmit":
     case "BeforeAgent": {
-      // A subagent's task arrives as its prompt: the user's turn goes on, and the tray is theirs.
-      if (subagent) return undefined;
+      // A subagent's task arrives as its prompt (filtered above): the user's turn goes on, and
+      // the tray is theirs.
       const prompt = str(input.prompt)?.trim() ?? "";
       if (!prompt || /^[/!]/.test(prompt)) return undefined; // slash commands and shell escapes aren't prompts
       await report("working");

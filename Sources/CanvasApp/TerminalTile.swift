@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+import GhosttyKit
 import GhosttyTerminal
 
 /// A Ghostty surface running `zmx attach <session>`: the agent/shell survives app quit, crash,
@@ -181,8 +182,14 @@ final class TerminalTile: NSView, TileContent {
         window?.makeFirstResponder(terminal)
     }
 
+    /// Ghostty starts a surface focused, and libghostty-spm tells it otherwise only when first
+    /// responder or key window changes. Until then a terminal nobody had focused kept Ghostty's
+    /// focused-surface timers (cursor blink, termios polling) running once it had been shown,
+    /// minimized or not: ~12 wakeups/s per terminal.
     fileprivate func attached(_ surface: TerminalSurface?) {
         self.surface = surface
+        guard let handle = surface?.handle else { return }
+        ghostty_surface_set_focus(handle, window?.isKeyWindow == true && window?.firstResponder === terminal)
     }
 
     fileprivate func titleChanged(_ title: String) {
@@ -302,7 +309,7 @@ final class TerminalTile: NSView, TileContent {
     // MARK: TileContent
 
     private var isLive = true
-    private var occlusionObserver: NSObjectProtocol?
+    private var windowObservers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
 
     func setLive(_ live: Bool) {
         isLive = live
@@ -315,20 +322,38 @@ final class TerminalTile: NSView, TileContent {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        occlusionObserver.map(NotificationCenter.default.removeObserver)
-        occlusionObserver = window.map { window in
-            NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.updateSurfaceVisibility() }
+        for observer in windowObservers { observer.center.removeObserver(observer.token) }
+        windowObservers = []
+        if let window {
+            let changed: @Sendable (Notification) -> Void = { [weak self] _ in
+                MainActor.assumeIsolated { self?.windowVisibilityChanged() }
             }
+            let app = NotificationCenter.default, workspace = NSWorkspace.shared.notificationCenter
+            let names = [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification]
+            windowObservers = names.map { (app, app.addObserver(forName: $0, object: window, queue: .main, using: changed)) }
+                + [NSApplication.didHideNotification, NSApplication.didUnhideNotification].map { (app, app.addObserver(forName: $0, object: NSApp, queue: .main, using: changed)) }
+                + [(workspace, workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: changed))]
         }
         updateSurfaceVisibility()
     }
 
+    /// AppKit posts these before `occlusionState` settles (`didMiniaturize` arrives with the
+    /// window still occlusion-visible, `didDeminiaturize` with it still occluded), so look again
+    /// on the next main-loop turn.
+    private func windowVisibilityChanged() {
+        updateSurfaceVisibility()
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated { self?.updateSurfaceVisibility() }
+        }
+    }
+
     /// Ghostty renders every display-link tick while output streams, even into a window nobody
-    /// sees (another Space, covered, minimized): ~18% CPU for one busy terminal. Draw only while
-    /// the tile is live and its window visible; the session keeps running either way.
+    /// sees: ~18% CPU for one busy terminal. Draw only while the tile is live and its window
+    /// shown (not minimized, covered, on another Space, in a background tab, or the app hidden);
+    /// the session keeps running either way, and a surface shown again draws the current screen.
     private func updateSurfaceVisibility() {
-        terminal.setSurfaceVisible(isLive && window?.occlusionState.contains(.visible) == true)
+        let shown = window.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
+        terminal.setSurfaceVisible(isLive && shown)
     }
 
     /// The grid Ghostty reports for this surface, in points; nil until it first lays out.

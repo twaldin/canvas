@@ -154,13 +154,18 @@ struct TerminalTextRows {
 }
 
 extension TerminalSurface {
+    /// Ghostty's handle for this surface, for its public C API where libghostty-spm has no
+    /// wrapper. The wrapper keeps it private, so it's taken by reflection; nil if a package
+    /// update renames it.
+    var handle: ghostty_surface_t? {
+        Mirror(reflecting: self).children.first(where: { $0.label == "surface" })?.value as? ghostty_surface_t
+    }
+
     /// The text of viewport row `row`, `columns` cells wide. libghostty-spm reads a grid's text
     /// only for its in-memory backend (`InMemoryTerminalSession.readViewportText`); for exec
-    /// surfaces the Ghostty handle is private, so it's taken by reflection and read through
-    /// Ghostty's public C API the same way. Nil if a package update renames the handle.
+    /// surfaces it's read through Ghostty's C API the same way.
     func viewportRow(_ row: Int, columns: Int) -> String? {
-        guard row >= 0, columns > 0,
-              let handle = Mirror(reflecting: self).children.first(where: { $0.label == "surface" })?.value as? ghostty_surface_t else { return nil }
+        guard row >= 0, columns > 0, let handle else { return nil }
         let selection = ghostty_selection_s(
             top_left: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: 0, y: UInt32(row)),
             bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: UInt32(columns - 1), y: UInt32(row)),

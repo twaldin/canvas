@@ -1,8 +1,10 @@
-// Canvas integration for Claude Code and Codex, run as their lifecycle hooks:
-//   bun hook.ts <claude|codex> <HookEvent>   (the agent's hook JSON on stdin)
-// The claude/codex wrappers in bin/ install these hooks for one session (Claude: the plugin in
-// extensions/claude; Codex: `-c hooks=…` from extensions/codex/config.ts) and only inside a Canvas
-// terminal tile. Mirrors extensions/omp/canvas.ts:
+// Canvas integration for Claude Code, Codex and Gemini CLI, run as their lifecycle hooks:
+//   bun hook.ts <claude|codex|gemini> <HookEvent>   (the agent's hook JSON on stdin)
+// and for opencode's plugin (extensions/opencode), `opencode SessionEnd` as opencode exits.
+// The claude/codex/gemini wrappers in bin/ install these hooks for one session (Claude: the
+// plugin in extensions/claude; Codex: `-c hooks=…` from extensions/codex/config.ts; Gemini: a
+// system settings layer from extensions/gemini/settings.ts) and only inside a Canvas terminal
+// tile. Mirrors extensions/omp/canvas.ts:
 //  - lifecycle (working / blocked / idle) and session identity for resume
 //  - the canvas-awareness block (extensions/guidance.ts) as session context
 //  - the selection tray drained into the prompt you submit, as hidden context
@@ -10,26 +12,24 @@
 // A hook never fails or stalls the agent: every Canvas call has a short timeout, errors are
 // swallowed, and the process exits by a hard deadline.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { canvasGuidance } from "../guidance";
+import { absolute, editLocation, type Location, patchLocation, readLocation } from "./follow";
 
-type Kind = "claude" | "codex";
+type Kind = "claude" | "codex" | "gemini" | "opencode";
 type Json = Record<string, unknown>;
-type Action = "read" | "edit" | "write";
-type Range = { start: number; end: number };
-type Location = { path: string; range?: Range; action: Action };
 
 const HARD_DEADLINE_MS = 2500;
 
 const kind = process.argv[2];
 const event = process.argv[3] ?? "";
 const tile = process.env.CANVAS_TILE_ID;
-if ((kind === "claude" || kind === "codex") && process.env.CANVAS_ENV === "1" && tile && process.env.CANVAS_SOCKET && process.env.CANVAS_AGENT_HOOKS !== "0") {
+if ((kind === "claude" || kind === "codex" || kind === "gemini" || kind === "opencode") && process.env.CANVAS_ENV === "1" && tile && process.env.CANVAS_SOCKET && process.env.CANVAS_AGENT_HOOKS !== "0") {
   setTimeout(() => process.exit(0), HARD_DEADLINE_MS).unref();
   try {
-    const input = JSON.parse(await Bun.stdin.text()) as Json;
+    const text = await Bun.stdin.text();
+    const input = (text.trim() ? JSON.parse(text) : {}) as Json;
     const output = await handle(kind, tile, event, input);
     if (output) await Bun.write(Bun.stdout, output);
   } catch {
@@ -67,7 +67,8 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       ]);
       return context(canvasGuidance(kind, tile));
     }
-    case "UserPromptSubmit": {
+    case "UserPromptSubmit":
+    case "BeforeAgent": {
       // A subagent's task arrives as its prompt: the user's turn goes on, and the tray is theirs.
       if (subagent) return undefined;
       const prompt = str(input.prompt)?.trim() ?? "";
@@ -91,14 +92,20 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
     }
     case "Notification": {
       // Claude Code: an MCP server asks for input, or the prompt has sat idle. Permission dialogs
-      // are reported by PermissionRequest, which names the tool.
+      // are reported by PermissionRequest, which names the tool. Gemini CLI: each approval
+      // dialog, with what it runs or changes (not the call).
       const type = str(input.notification_type);
       if (type === "elicitation_dialog") await report("blocked", str(input.message));
       else if (type === "idle_prompt") await report("idle");
+      else if (type === "ToolPermission") {
+        const details = obj(input.details) ?? {};
+        await report("blocked", geminiApproval(details) ?? str(input.message), geminiApprovalCall(details, str(input.cwd) ?? process.cwd()));
+      }
       return undefined;
     }
     case "PostToolUse":
-    case "PostToolUseFailure": {
+    case "PostToolUseFailure":
+    case "AfterTool": {
       // A finished call: the turn runs on (an approval of it was answered), unless other calls
       // still wait for approval. Claude reports a failed call separately; an Esc during it ends
       // the turn, with no Stop.
@@ -107,15 +114,16 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
         return undefined;
       }
       // Subagents' reads would drag the follow tile around.
-      const location = subagent || event === "PostToolUseFailure" ? undefined : kind === "claude" ? claudeLocation(input) : codexLocation(input);
+      const location = subagent || event === "PostToolUseFailure" ? undefined : kind === "claude" ? claudeLocation(input) : kind === "codex" ? codexLocation(input) : geminiLocation(input);
       await Promise.all([
-        report("working", undefined, toolCall(input)),
+        report("working", undefined, kind === "gemini" ? geminiToolCall(input) : toolCall(input)),
         location ? quietly(client.api.follow.report({ tile, path: location.path, range: location.range, action: location.action })) : undefined,
       ]);
       return undefined;
     }
     case "Stop":
     case "Interrupt":
+    case "AfterAgent":
       await report("idle");
       return undefined;
     case "SessionEnd":
@@ -187,64 +195,102 @@ function codexLocation(input: Json): Location | undefined {
   return undefined;
 }
 
-/** The first file an apply_patch touched, at its first added line. */
-function patchLocation(patch: string, cwd: string): Location | undefined {
-  const header = /^\*\*\* (Add|Update) File: (.+)$/m.exec(patch);
-  if (!header) return undefined;
-  const moved = /^\*\*\* Move to: (.+)$/m.exec(patch.slice(header.index))?.[1];
-  const path = absolute((moved ?? header[2]).trim(), cwd);
-  if (header[1] === "Add") return { path, action: "write" };
-  const added = /^\+(.*\S.*)$/m.exec(patch.slice(header.index))?.[1];
-  let line: number | undefined;
-  if (added) {
-    try {
-      const index = readFileSync(path, "utf8").split("\n").indexOf(added);
-      line = index >= 0 ? index + 1 : undefined;
-    } catch {
-      line = undefined;
+// MARK: Gemini CLI
+
+/** The approval dialog's question as Gemini CLI words it, with what it is about. */
+function geminiApproval(details: Json): string | undefined {
+  switch (str(details.type)) {
+    case "exec": {
+      const command = str(details.command);
+      const root = str(details.rootCommand) ?? command;
+      if (!root) return undefined;
+      const question = `Allow execution of: '${root}'?${command && command !== root ? ` (${command})` : ""}`;
+      return question.length > 160 ? `${question.slice(0, 159)}…` : question;
     }
+    case "edit":
+      return `Apply this change?${str(details.fileName) ? ` (${str(details.fileName)})` : ""}`;
+    case "mcp":
+      return `Allow execution of MCP tool "${str(details.toolName) ?? "?"}" from server "${str(details.serverName) ?? "?"}"?`;
+    case "info":
+      return `Do you want to proceed?${str(details.title) ? ` (${str(details.title)})` : ""}`;
   }
-  return { path, range: line ? { start: line, end: line } : undefined, action: "edit" };
+  return str(details.title);
 }
 
-/** Codex reads files through the shell: `sed -n 'A,Bp' f`, `nl -ba f | sed -n 'A,Bp'`, `cat f`, `head -n N f`. */
-function readLocation(command: string, cwd: string): Location | undefined {
-  for (const pipeline of command.split(/&&|;|\n/)) {
-    let file: string | undefined;
-    let range: Range | undefined;
-    for (const stage of pipeline.split("|")) {
-      const [program, ...args] = shellWords(stage);
-      const operands = args.filter((a) => !a.startsWith("-"));
-      const lines = program === "sed" && args[0] === "-n" ? /^(\d+)(?:,(\d+))?p$/.exec(args[1] ?? "") : null;
-      if (lines) {
-        range = { start: Number(lines[1]), end: Number(lines[2] ?? lines[1]) };
-        file = args[2] ?? file;
-      } else if ((program === "nl" || program === "cat") && operands.length === 1) {
-        file = operands[0];
-      } else if (program === "head" && args.length >= 2 && operands.length >= 1) {
-        const count = Number(args[0] === "-n" ? args[1] : args[0].slice(1));
-        file = args.at(-1);
-        range = count > 0 ? { start: 1, end: count } : undefined;
-      }
+/**
+ * Gemini's approval notification names no tool call, so both it and the call's AfterTool name
+ * the call by what it runs or changes: the shell command, the edited file, the MCP tool, the
+ * fetch prompt. A dialog that names none of these (Gemini's own questions) blocks without a call,
+ * which the next report of any kind ends.
+ */
+function geminiApprovalCall(details: Json, cwd: string): string | undefined {
+  switch (str(details.type)) {
+    case "exec":
+      return geminiCallId("exec", str(details.command));
+    case "edit": {
+      const path = str(details.filePath);
+      return geminiCallId("edit", path && real(absolute(path, cwd)));
     }
-    if (file) return { path: absolute(file, cwd), range, action: "read" };
+    case "mcp":
+      return geminiCallId("mcp", str(details.serverName) && str(details.toolName) ? `${details.serverName}_${details.toolName}` : undefined);
+    case "info":
+      return geminiCallId("info", str(details.prompt));
   }
   return undefined;
 }
 
-/** Splits a simple shell command into words (quotes, no expansions). */
-function shellWords(text: string): string[] {
-  const words: string[] = [];
-  const pattern = /'([^']*)'|"((?:\\.|[^"\\])*)"|(\S+)/g;
-  for (let m = pattern.exec(text); m; m = pattern.exec(text)) words.push(m[1] ?? m[2]?.replace(/\\(.)/g, "$1") ?? m[3]);
-  return words;
+function geminiToolCall(input: Json): string {
+  const tool = str(input.tool_name) ?? "";
+  const args = obj(input.tool_input) ?? {};
+  const cwd = str(input.cwd) ?? process.cwd();
+  const path = str(args.file_path);
+  const call =
+    tool === "run_shell_command" ? geminiCallId("exec", str(args.command))
+    : (tool === "replace" || tool === "write_file") && path ? geminiCallId("edit", real(absolute(path, cwd)))
+    : tool.startsWith("mcp_") ? geminiCallId("mcp", tool.slice(4))
+    : tool === "web_fetch" ? geminiCallId("info", str(args.prompt))
+    : undefined;
+  return call ?? geminiCallId("tool", tool)!;
+}
+
+/** The dialog and the call can name one file differently (`/tmp` is `/private/tmp`). */
+function real(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function geminiCallId(kind: string, value: string | undefined): string | undefined {
+  return value === undefined ? undefined : createHash("sha256").update(`${kind}\0${value}`).digest("hex").slice(0, 16);
+}
+
+/** read_file (its line range), replace (the new text's first line), write_file, and shell reads. */
+function geminiLocation(input: Json): Location | undefined {
+  const tool = str(input.tool_name);
+  const args = obj(input.tool_input) ?? {};
+  const cwd = str(input.cwd) ?? process.cwd();
+  if (obj(input.tool_response)?.error) return undefined;
+  const file = str(args.file_path);
+  if (tool === "run_shell_command") {
+    const command = str(args.command);
+    return command ? readLocation(command, cwd) : undefined;
+  }
+  if (!file) return undefined;
+  const path = absolute(file, cwd);
+  if (tool === "read_file") {
+    // 0.37 takes 1-based start_line/end_line; its docs still describe 0-based offset/limit.
+    const start = num(args.start_line) ?? (typeof args.offset === "number" && args.offset >= 0 ? args.offset + 1 : undefined);
+    const end = num(args.end_line) ?? (start && num(args.limit) ? start + num(args.limit)! - 1 : undefined);
+    return { path, range: start ? { start, end: end && end >= start ? end : start } : undefined, action: "read" };
+  }
+  if (tool === "write_file") return { path, action: "write" };
+  if (tool === "replace") return editLocation(path, str(args.old_string), str(args.new_string));
+  return undefined;
 }
 
 // MARK: Input helpers
-
-function absolute(path: string, cwd: string): string {
-  return isAbsolute(path) ? path : resolve(cwd, path);
-}
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;

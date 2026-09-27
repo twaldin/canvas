@@ -1,0 +1,14 @@
+#!/bin/sh
+# Canvas's opencode wrapper: in a Canvas terminal tile, runs the real opencode with the Canvas plugin
+# (extensions/opencode/canvas.ts, added through OPENCODE_CONFIG_CONTENT by
+# extensions/opencode/config.ts) for this session only, and without its self-update. Anywhere else,
+# and with CANVAS_AGENT_HOOKS=0, it is the real opencode, untouched.
+here="$(cd "$(dirname "$0")/.." && pwd)"
+. "$here/extensions/agent-hooks/wrap.sh"
+real=$(canvas_agent_real opencode) || exit 127
+canvas_env_restore OPENCODE_CONFIG_CONTENT
+canvas_integrate || exec "$real" "$@"
+config=$(bun "$here/extensions/opencode/config.ts" "${OPENCODE_CONFIG_CONTENT-}" 2>/dev/null) || exec "$real" "$@"
+export CANVAS_AGENT=opencode OPENCODE_DISABLE_AUTOUPDATE=1
+canvas_env_set OPENCODE_CONFIG_CONTENT "$config"
+exec "$real" "$@"

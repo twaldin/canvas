@@ -239,6 +239,26 @@ public enum Layout {
                                                 y: jump.origin.y + shift(target.minY, target.maxY, shownMin: shown.minY, shownMax: shown.maxY)))
     }
 
+    /// A tile opened from `source` (a ⌘-clicked reference, in document coordinates): no pan
+    /// while at least half of `rect` shows clear of the chrome; otherwise `reveal`'s least pan,
+    /// cut short where it would take `source` out of view.
+    public static func reveal(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat, keeping source: CGRect) -> Jump {
+        let zoom = jump.zoom
+        let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        let visible = rect.intersection(shown)
+        if !visible.isNull, visible.width * visible.height >= rect.width * rect.height / 2 { return jump }
+        let full = reveal(rect, from: jump, clear: clear, padding: padding)
+        guard !source.isNull, !source.isEmpty else { return full }
+        func clamp(_ shift: CGFloat, _ sourceMin: CGFloat, _ sourceMax: CGFloat, _ shownMin: CGFloat, _ shownMax: CGFloat) -> CGFloat {
+            // The shifts that keep the source wholly in view (none when it isn't now).
+            let lower = min(0, sourceMax - shownMax), upper = max(0, sourceMin - shownMin)
+            return min(max(shift, lower), upper)
+        }
+        return Jump(zoom: zoom, origin: CGPoint(
+            x: jump.origin.x + clamp(full.origin.x - jump.origin.x, source.minX, source.maxX, shown.minX, shown.maxX),
+            y: jump.origin.y + clamp(full.origin.y - jump.origin.y, source.minY, source.maxY, shown.minY, shown.maxY)))
+    }
+
     /// Keyboard zoom levels (⌘= / ⌘-), browser-like: fine steps near 100%, coarse far out.
     public static let zoomLevels: [CGFloat] = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 3, 4]
 

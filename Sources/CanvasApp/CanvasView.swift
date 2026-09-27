@@ -327,11 +327,13 @@ final class CanvasView: NSScrollView {
                 self?.tiles[id]?.setTitle(title)
                 if self?.promptTarget == id { self?.onPromptTargetTitle?() }
             }
-            // A ⌘-clicked reference: user navigation, so the tile is panned into view; one
-            // already on the board is selected (keyboard focus stays in the terminal).
-            terminal.onOpenedCode = { [weak self] opened, created in
-                if !created { self?.setSelection([opened]) }
-                self?.reveal(opened)
+            // A ⌘-clicked reference: user navigation. A tile already on the board (or the
+            // re-aimed preview) is selected (keyboard focus stays in the terminal); the view pans
+            // only when the tile is mostly out of view, never so far that the reference goes.
+            terminal.onOpenedCode = { [weak self] opened, created, source in
+                guard let self else { return }
+                if !created { self.setSelection([opened]) }
+                self.reveal(opened, keeping: source.isNull ? .null : self.document.convert(source, from: nil))
             }
         }
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
@@ -1145,6 +1147,14 @@ final class CanvasView: NSScrollView {
     func reveal(_ id: ObjectID) {
         guard let rect = docFrame(id) else { return }
         let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification)
+        if jump != currentJump { apply(jump) }
+    }
+
+    /// A tile opened from `source` (document coordinates), e.g. a terminal's ⌘-clicked
+    /// reference: panned to only when mostly out of view, never so far that `source` leaves it.
+    func reveal(_ id: ObjectID, keeping source: NSRect) {
+        guard let rect = docFrame(id) else { return }
+        let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification, keeping: source)
         if jump != currentJump { apply(jump) }
     }
 

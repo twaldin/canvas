@@ -209,7 +209,10 @@ final class CodeTile: NSView, TileContent {
 
     // MARK: Follow lock
 
+    /// The user scrolled, clicked, or selected in the tile: a ⌘-click preview becomes a tile
+    /// they keep (`Board.keepCode`); a follow tile holds its re-aims.
     private func userInteracted() {
+        board.keepCode(object.id)
         guard followOf != nil else { return }
         lock.interact(at: Self.now)
         scheduleResume()
@@ -558,6 +561,7 @@ extension CodeTile {
     /// clicked line in a terminal tile beside this one, in view (`CanvasView.openForUser`).
     private func editHere(at point: NSPoint) {
         guard let document, showsCurrent, document.side == .new, !document.isPinned else { return }
+        board.keepCode(object.id)
         let line = displayedLine(atY: point.y) ?? displayed.range?.start ?? 1
         let path = document.path
         Task { [weak self] in

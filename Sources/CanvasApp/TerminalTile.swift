@@ -14,8 +14,9 @@ final class TerminalTile: NSView, TileContent {
     private let handler = TerminalEvents()
     private let underline = TerminalLinkUnderline()
     var onTitle: ((String) -> Void)?
-    /// A ⌘-clicked reference opened this code tile (`created`) or found it already there.
-    var onOpenedCode: ((ObjectID, _ created: Bool) -> Void)?
+    /// A ⌘-clicked reference opened this code tile (`created`) or re-aimed or found it there;
+    /// `source` is the reference's rect in window coordinates.
+    var onOpenedCode: ((ObjectID, _ created: Bool, _ source: NSRect) -> Void)?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -36,7 +37,8 @@ final class TerminalTile: NSView, TileContent {
         terminal.delegate = handler
         terminal.linkAt = { [weak self] point in self?.link(at: point) }
         terminal.onHover = { [weak self] hit in self?.showUnderline(hit) }
-        terminal.onOpen = { [weak self] hit in self?.open(hit) }
+        terminal.onOpen = { [weak self] hit, newTile in self?.open(hit, newTile: newTile) }
+        terminal.hasScrollback = { [weak self] in self?.scrollbar.map { $0.total > $0.len } ?? false }
         addSubview(terminal)
         underline.frame = bounds
         underline.autoresizingMask = [.width, .height]
@@ -255,49 +257,60 @@ final class TerminalTile: NSView, TileContent {
     fileprivate var reportedCwd: String?
 
     /// The `path:line` reference drawn at `point` (terminal view coordinates) that names an
-    /// existing file: relative to the reported cwd, then `props.cwd`, then the board root, then
-    /// by name among the board root's files (`BoardFiles`), nearest the cwd.
-    private func link(at point: NSPoint) -> TerminalLinkHit? {
+    /// existing file (`TerminalReferences.hit`, which follows it onto neighbouring rows):
+    /// relative to the reported cwd, then `props.cwd`, then the board root, then by name among
+    /// the board root's files (`BoardFiles`), nearest the cwd.
+    private func link(at point: NSPoint) -> TerminalReferences.Hit? {
         guard let surface, let grid else { return nil }
         let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
         let fromTop = terminal.bounds.height - point.y
         let column = Int(floor((point.x - padding.width) / grid.cell.width))
         let row = Int(floor((fromTop - padding.height) / grid.cell.height))
         guard (0..<grid.columns).contains(column), (0..<grid.rows).contains(row) else { return nil }
-        let rows = TerminalTextRows(around: row, columns: grid.columns) { row in
-            row < grid.rows ? surface.viewportRow(row, columns: grid.columns) : nil
-        }
-        guard let offset = rows.offset(row: row, column: column),
-              let reference = TerminalReferences.reference(in: rows.text, at: offset) else { return nil }
         let cwd = board.objects[objectID]?.props["cwd"]?.string
         let directories = [reportedCwd, cwd, board.root.path].compactMap { $0 }
         let files = BoardFiles.of(board.root)
-        guard let file = TerminalReferences.resolve(reference.path, directories: directories, home: NSHomeDirectory(), isFile: TerminalReferences.isFile,
-                                                    listed: (files.root.path, files.current()), near: reportedCwd ?? cwd ?? board.root.path) else { return nil }
-        return TerminalLinkHit(file: file, lines: reference.lines, runs: rows.runs(reference.range))
+        let listed = (root: files.root.path, files: files.current())
+        let near = reportedCwd ?? cwd ?? board.root.path
+        return TerminalReferences.hit(row: row, column: column, columns: grid.columns,
+                                      read: { $0 < grid.rows ? surface.viewportRow($0, columns: grid.columns) : nil },
+                                      resolve: { TerminalReferences.resolve($0, directories: directories, home: NSHomeDirectory(), isFile: TerminalReferences.isFile, listed: listed, near: near) })
     }
 
-    private func showUnderline(_ hit: TerminalLinkHit?) {
+    /// The cells `runs` cover in the underline's (flipped) coordinates, `height` tall at the
+    /// bottom of each cell (the whole cell when nil).
+    private func rects(_ runs: [TerminalTextRows.Run], grid: TerminalRender.Grid, height: CGFloat? = nil) -> [NSRect] {
+        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
+        return runs.map { run in
+            let height = height ?? grid.cell.height
+            return NSRect(x: padding.width + CGFloat(run.column) * grid.cell.width,
+                          y: padding.height + CGFloat(run.row + 1) * grid.cell.height - height,
+                          width: CGFloat(run.width) * grid.cell.width, height: height)
+        }
+    }
+
+    private func showUnderline(_ hit: TerminalReferences.Hit?) {
         guard let hit, let grid else {
             underline.isHidden = true
             return
         }
-        let style = TerminalConfig.shared.style(for: effectiveAppearance)
-        let thickness = max(1, (grid.cell.height / 14).rounded())
-        underline.color = style.foreground
-        underline.rects = hit.runs.map { run in
-            NSRect(x: style.padding.width + CGFloat(run.column) * grid.cell.width,
-                   y: style.padding.height + CGFloat(run.row + 1) * grid.cell.height - thickness,
-                   width: CGFloat(run.width) * grid.cell.width, height: thickness)
-        }
+        underline.color = TerminalConfig.shared.style(for: effectiveAppearance).foreground
+        underline.rects = rects(hit.runs, grid: grid, height: max(1, (grid.cell.height / 14).rounded()))
         underline.isHidden = false
     }
 
-    private func open(_ hit: TerminalLinkHit) {
-        let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID)
-        NSLog("Canvas: terminal %@ opened %@:%d-%d as %@ (%@)", objectID, hit.file, hit.lines.start, hit.lines.end, opened.id, opened.created ? "new" : "existing")
-        onOpenedCode?(opened.id, opened.created)
+    private func open(_ hit: TerminalReferences.Hit, newTile: Bool) {
+        let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile)
+        NSLog("Canvas: terminal %@ opened %@:%d-%d as %@ (%@)", objectID, hit.file, hit.lines.start, hit.lines.end, opened.id,
+              opened.created ? (newTile ? "new tile" : "new preview") : "re-aimed or existing")
+        let source = grid.map { rects(hit.runs, grid: $0).reduce(NSRect.null) { $0.union($1) } } ?? .null
+        onOpenedCode?(opened.id, opened.created, source.isNull ? .null : underline.convert(source, to: nil))
     }
+
+    // MARK: Scrollback
+
+    /// Ghostty's scrollbar (rows in total, the viewport's offset and rows); nil until reported.
+    fileprivate var scrollbar: TerminalScrollbar?
 
     // MARK: TileContent
 
@@ -413,7 +426,8 @@ final class TerminalTile: NSView, TileContent {
 /// Retained delegate for the terminal view (its delegate reference is weak).
 @MainActor
 private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate,
-    TerminalSurfaceBellDelegate, TerminalSurfaceDesktopNotificationDelegate, TerminalSurfacePwdDelegate, TerminalSurfaceCloseDelegate {
+    TerminalSurfaceBellDelegate, TerminalSurfaceDesktopNotificationDelegate, TerminalSurfacePwdDelegate, TerminalSurfaceCloseDelegate,
+    TerminalSurfaceScrollbarDelegate {
     weak var tile: TerminalTile?
 
     func terminalDidResize(_ size: TerminalGridMetrics) {
@@ -442,6 +456,10 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
 
     func terminalDidChangeWorkingDirectory(_ path: String) {
         tile?.reportedCwd = path.isEmpty ? nil : path
+    }
+
+    func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {
+        tile?.scrollbar = scrollbar
     }
 
     func terminalDidClose(processAlive: Bool) {

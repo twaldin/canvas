@@ -135,42 +135,13 @@ canvas render 0,1200,2400,1600 --exclude '["terminal"]'   # a canvas rect x,y,w,
 canvas render obj_… --full                           # a note/HTML tile's whole content (code: its whole range), below its frame too
 ```
 
-Python: `canvas.view.render(target="obj_…", full=True)["path"]`
-(`target` is an id, a list of ids, or `{"x","y","w","h"}`).
-The app writes a new file under `$TMPDIR/canvas-renders/` (or `out` if you pass one: png or jpg by extension; clients resolve relative paths), and `path` in the result is that file.
-The result maps pixels to the canvas: pixel `(px, py)` is canvas `(canvasRect.x + px / scale, canvasRect.y + py / scale)`,
-and `objects` lists every object drawn with its `pixelRect`
-(a tile's is exactly its frame: a tile's `frame` is its whole drawn box, 26 pt title bar included), `state`, and `overflow`:
-
-- `state: rendered` means the content painted.
-  `placeholder` means it didn't in time or can't be rendered here (`reason` says why; the image shows an orange "not rendered" tag instead of a silent blank).
-  A browser tile that isn't loaded (offscreen, never shown) is loaded for the render.
-  Content waits up to `timeoutMs` (8 s) for HTML and browser pages and file reads to settle.
-- `overflow: {x, y}`: canvas points of content beyond the tile's frame
-  (a note taller than its box, a code range longer than the tile; code wraps at the tile's width, so it only overflows downward).
-  Absent when the content fits. Resize the frame by that much to fit it, or render with `full`.
-- `contentSize`: the content's own extent at the tile's width, below its title bar.
-  For code it is the range (its rows, wrapped at the tile's width, and longest line under the header), not the whole file: what `size: "fit"` shows.
-
-Terminals are drawn from their session text in the terminal's font and colors.
-App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn; leave out object types with `exclude`.
-
-**`view.snapshot`** is the window as the user sees it now, toolbar and all.
-Its result includes `viewport {rect, zoom}`, `scale`, and visible `objects` with `pixelRect`s, so you never need pixel math against a known tile.
-
-**`view.get`** returns `viewport {rect, zoom}` (the visible canvas rect in canvas coordinates), `promptTarget`, `focused`, `selection`, and whether the window is `visible`.
-
-**`board.history`** is a plain request/response log, cheap to poll from a REPL:
-`canvas board.history --since 42` (the `cursor` from your last call; or an ISO time) → `entries` oldest first, each `{seq, rev, at, actor, kind, id?, type?, summary}`.
-
-- `actor` is `user`, `system`, or `agent:<tile>`.
-  A side effect of someone's change (a group re-fit to its members, an arrow end freed because what it pointed at was deleted) is credited to them and has a `cause`,
-  logged once per object per revision at its net change.
-- `kind` is `created`, `updated`, `deleted`, `viewport` (logged once the view comes to rest), `selection`, `follow` (your follow tile re-aimed, and by whom),
-  or `restart` (the app started; if your `since` is from before a restart the result says `restarted: true` and returns everything).
-  `kinds: ["created","deleted"]` narrows it.
-- Objects that existed for only seconds are in it too.
-  The log is in memory: the newest 2000 entries per board (`truncated: true` when entries you hadn't seen were dropped).
+Python: `canvas.view.render(target="obj_…", full=True)["path"]` (`target` is an id, a list of ids, or `{"x","y","w","h"}`).
+The result has `path` (a new PNG under `$TMPDIR/canvas-renders/`, or your `out`) and, per object drawn, its `pixelRect`, `state`, and `overflow`:
+`state: placeholder` means it didn't paint in time (`reason` says why; raise `timeoutMs`); `overflow {x, y}` is content beyond the frame (resize by that much, or render `--full`).
+App chrome (toolbar, tray, selection rings, markers) is never drawn.
+`view.snapshot` is the window as the user sees it; `view.get` returns the viewport, `promptTarget`, `focused` and `selection`.
+`canvas board.history --since <cursor>` lists who created, moved, and deleted what (`actor` `user`, `system` or `agent:<tile>`) since your last look.
+Every result field, pixel-to-canvas mapping, and history detail: `references/rendering.md`.
 
 ## Show your work on the canvas
 
@@ -263,50 +234,21 @@ Read it before building an explainer.
 
 ### Shapes and arrows
 
-- `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "…", "fill": "none" | "semi" | "solid"}` with a `frame`.
-  A rect drawn around tiles *encloses* them.
-  - `color`: `black` (the default ink; white in dark mode), `grey`, `blue`, `green`, `orange`, `red`, `violet`, or `#rrggbb`. Arrows take `color` too.
-  - `fill` (rect/ellipse): `none` (default; the interior passes clicks through), `semi` (a 14% wash of the color, for regions), `solid` (85%).
-  - Text sizing: a `text` shape draws its text in 20 pt handwriting from the frame's top-left, wrapping at the frame width;
-    one line needs about 30 pt of height (`h ≈ 30 × lines`).
-    A rect/ellipse `text` is an 18 pt label centered in the frame, wrapping at `w − 16`.
-    Arrow labels are 15 pt, wrapping at 240 pt, centered on the shaft.
-- `arrow`: `{"from": {"object": "obj_…"}, "to": {"object": "obj_…", "lines": {"start": 41, "end": 48}}, "relation": "calls", "label": "…", "route": "avoid"}`.
-  - Endpoints bind to objects (optionally a line range or a DOM `selector`) or to a `{"point": [x, y]}`.
-  - An end bound to `lines` of a code tile attaches to the tile's left or right edge at the row of `lines.start`
-    (the right edge unless the other end lies wholly to the left), so call-site → callee arrows point at the lines.
-    It follows the tile's scroll, and a line scrolled out of view pins the end to the top of the code or the bottom of the tile.
-    On other tiles `lines` binds the whole tile.
-  - `relation` is the machine-readable edge (`calls`, `depends_on`, `hypothesis_about`, …); `label` is what the user reads.
-    Without a label the arrow shows its relation in a secondary color; `label: ""` shows no caption.
-  - `route`: `straight` (default), `orthogonal`, or `avoid` (goes around tiles in the way).
-    Arrows between the same two objects are drawn apart automatically, both directions.
-- `group`: `{"members": [ids], "title": "…", "color": "blue", "padding": 24}` is a titled, tinted region whose frame always wraps its members
-  (plus padding and a title band) as they move; use one per lane or cluster instead of a rect plus a text label.
+- `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "blue", "fill": "none" | "semi" | "solid"}` with a `frame`; a rect drawn around tiles *encloses* them.
+- `arrow`: `{"from": {"object": "obj_…"}, "to": {"object": "obj_…", "lines": {"start": 41, "end": 48}}, "relation": "calls", "label": "…", "route": "avoid"}`;
+  an end bound to a code tile's `lines` attaches at that row (see Known surprises). `relation` is the machine-readable edge, `label` what the user reads.
+- `group`: `{"members": [ids], "title": "…", "color": "blue"}` is a titled, tinted region that always wraps its members; use one per lane or cluster instead of a rect plus a label.
+
+Colors, fills, text sizes, arrow routing and binding rules: `references/shapes.md`.
 
 `canvas get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
 
 ## Browser tiles
 
-omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens a browser tile beside your terminal for each `browser.open({name})`;
-`close` deletes it.
-
-- The tool doesn't return the tile id. Find it with `canvas board.history --limit 5` (`agent:<your tile> created … browser <url>`)
-  or `canvas board.get` (browser tiles whose `createdBy` is your tile).
-  Tiles made with `object.create` or by the user can't be driven by the tool: change their `props.url` with `object.update` and look with `canvas render`.
-- The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus 58 (26 pt title bar, 32 pt address bar), at any zoom.
-  The tool's `viewport`/`emulate` options are ignored here. To test a width, resize the tile
-  (`canvas object.update <id> --json '{"frame":{"w":390,"h":844}}'`); the user sees the same tile.
-- `tab.evaluate` must return plain values (omp rejects functions that return a promise on this backend); poll with `waitForFunction` for async state.
-  On strict-CSP pages (e.g. GitHub) pass functions, not code strings: string code runs through the page's `eval`, which CSP blocks.
-- A page you drive or render stays live for 60 s after your last command wherever its tile is (offscreen, window minimized, another Space):
-  `visibilityState` is `visible` and timers and `requestAnimationFrame` run. Don't move tiles into the user's view to make them work.
-- `canvas render <tile>` loads a page that was never shown and waits up to `--timeoutMs` (8 s).
-  `--full` doesn't capture below the fold on browser tiles; make the tile taller instead.
-- All browser tiles share one WebKit profile, separate from the user's own browser and signed out: use `gh` or APIs for logged-in state.
-- The user can click links and buttons in a tile directly. `board.history` credits your terminal with the tiles you open and close
-  and with URL changes your commands cause within 10 s (pushState and back included; a `_blank` link opens a tile beside the page, never moving the view);
-  the user's clicks are `user`, changes the page makes later on its own `system`.
+omp's `browser` tool opens a browser tile beside your terminal for each `browser.open` (find its id with `canvas board.history --limit 5`); `close` deletes it.
+The page's viewport is the tile's body (`innerWidth` = frame width, `innerHeight` = frame height − 58): resize the tile to test a width; the tool's `viewport`/`emulate` are ignored.
+Pages you drive stay live for 60 s wherever the tile is; all tiles share one signed-out WebKit profile.
+Eval and CSP limits, rendering unloaded pages, and history credit: `references/browser.md`.
 
 ## Follow mode
 

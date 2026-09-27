@@ -277,6 +277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func navigateBack(_ sender: Any?) { keyController?.navigateBack(sender) }
     @objc func navigateForward(_ sender: Any?) { keyController?.navigateForward(sender) }
     @objc func reviewChanges(_ sender: Any?) { keyController?.reviewChanges(sender) }
+    @objc func reviewBranch(_ sender: Any?) { keyController?.reviewBranch(sender) }
     @objc func clearAttentionMarkers(_ sender: Any?) { keyController?.clearAttentionMarkers(sender) }
     @objc func toggleFollowFiles(_ sender: Any?) { keyController?.toggleFollowFiles(sender) }
     @objc func scaleSelection(_ sender: Any?) { keyController?.scaleSelection(sender) }
@@ -341,6 +342,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Open Board…", #selector(openBoard(_:)), "O", [.command, .shift]),
             item("New HTML Tile", #selector(newHtmlTile(_:)), "H", [.command, .shift]),
             item("Review Changes", #selector(reviewChanges(_:)), "R", [.command, .shift]),
+            item("Review Branch", #selector(reviewBranch(_:)), ""),
             .separator(),
             item("Export Selection as PNG…", #selector(saveAsPNG(_:)), "E", [.command, .shift]),
             item("Save HTML Tile as HTML…", #selector(saveHTMLTile(_:)), ""),

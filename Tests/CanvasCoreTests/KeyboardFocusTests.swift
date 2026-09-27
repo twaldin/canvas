@@ -39,13 +39,15 @@ struct KeyboardFocusTests {
         #expect(target("shell", ["note"], "shell") == nil, "nothing to act on: the command says so")
     }
 
-    @Test func theHeaderShowsTheLongestHintThatLeavesRoomForTheSummary() {
+    @Test func theHeaderDropsItsHintBeforeItCutsTheSummary() {
         let width: (String) -> CGFloat = { CGFloat($0.count) * 6 }
         let full = ChangesMetrics.keysHints[0], compact = ChangesMetrics.keysHints[1], shortest = ChangesMetrics.keysHints.last!
-        #expect(ChangesMetrics.hint(ChangesMetrics.keysHints, available: 2000, width: width) == full)
-        #expect(ChangesMetrics.hint(ChangesMetrics.keysHints, available: width(full) + ChangesMetrics.summaryReserve - 1, width: width) == compact, "a narrow tile still says which keys work")
-        #expect(ChangesMetrics.hint(ChangesMetrics.keysHints, available: width(shortest) + ChangesMetrics.summaryReserve, width: width) == shortest)
-        #expect(ChangesMetrics.hint(ChangesMetrics.keysHints, available: 100, width: width) == nil)
+        let summary: CGFloat = 260
+        func hint(_ available: CGFloat) -> String? { ChangesMetrics.hint(ChangesMetrics.keysHints, available: available, summary: summary, width: width) }
+        #expect(hint(2000) == full)
+        #expect(hint(summary + ChangesMetrics.hintGap + width(full) - 1) == compact, "a narrower tile still says which keys work")
+        #expect(hint(summary + ChangesMetrics.hintGap + width(shortest)) == shortest)
+        #expect(hint(summary + ChangesMetrics.hintGap + width(shortest) - 1) == nil, "the whole summary stays: the hint goes first")
         #expect(ChangesMetrics.idleHints[0].contains("⇧-click or drag lines"), "the widest idle hint says how to select lines")
     }
 

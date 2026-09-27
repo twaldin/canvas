@@ -115,15 +115,15 @@ export type HtmlProps = {
 export type ChangesProps = {
   /** another worktree of the board's repository to review (absolute or board-relative, e.g. ../wt-agent; default: the board root). Anything that isn't a worktree of the board's repository lists nothing and says so. Its files have absolute paths */
   root?: string;
-  /** what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch) | a commit */
+  /** what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch: everything the branch changed, a PR's view) | a commit or ref. The user picks it in the tile's header too. Against anything but HEAD, committed hunks can't be discarded */
   base?: string;
   /** files or directories to limit it to, relative to `root` (default the board root) or absolute (default: all of it); a path outside that worktree lists nothing and says so */
   paths?: string[];
   title?: string;
-  /** written by the tile: the Stage and Discard actions the user took, oldest first (⌘Z of one removes its entry). Agents read it; writing it changes nothing in git */
+  /** written by the tile: the Stage, Unstage, and Discard actions the user took, oldest first (⌘Z of one removes its entry). Agents read it; writing it changes nothing in git */
   reviewed?: ({
-    /** revert: the user's Discard */
-    action?: "stage" | "revert";
+    /** revert: the user's Discard; unstage: taken out of the index */
+    action?: "stage" | "unstage" | "revert";
     /** board-relative, else absolute */
     path?: string;
     /** lines: some lines of one hunk the user selected */
@@ -139,7 +139,7 @@ export type ChangesProps = {
     added?: number;
     /** removed lines the action covered */
     removed?: number;
-    /** the unified patch applied (at most 200 lines): staged as is to the index; a discard's is the base → working tree diff applied reversed (`applied: reversed`), so its `-` lines are what came back and its `+` lines what went */
+    /** the unified patch applied (at most 200 lines): staged as is to the index; a discard's is the base → working tree diff (HEAD → working tree against an older base) applied reversed (`applied: reversed`), so its `-` lines are what came back and its `+` lines what went; an unstage's is the HEAD → index diff applied reversed to the index */
     patch?: string;
     applied?: "reversed";
     /** the patch had more lines */

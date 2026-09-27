@@ -59,6 +59,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
     /// Bumped with every listing installed.
     private var setVersion = 0
+    /// The base field's delegate while it is open (`askForBase`).
+    fileprivate var baseField: BaseFieldResponder?
 
     private var isLive = true
     private var needsLoad = true
@@ -72,12 +74,12 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private var revealAfterLoad = false
 
     static let tooltip = """
-    Click a line to open it in a code tile; drag over lines, ⇧-click or ⌘-click to select lines (an edited line brings its old version), then Stage or Discard just those; \
-    Hyper-click (⌃⌥⇧⌘) a line or hunk header to mention it; click a file's header to fold it, its Viewed box to fold it until it changes.
+    Click a line to open it in a code tile; drag over lines, ⇧-click or ⌘-click to select lines (an edited line brings its old version), then Stage, Unstage, or Discard just those; \
+    Hyper-click (⌃⌥⇧⌘) a line or hunk header to mention it; click a file's header to fold it, its Viewed box to fold it until it changes; click the summary to pick the base.
     Keys once the tile has the keyboard (↩ or a click): j or ↓ next hunk, k or ↑ previous hunk, J or ] next file, K or [ previous file, \
-    / filter files, Return open the hunk in a code tile, s stage, r discard (the selected lines, else the hunk), Esc back to the canvas. \
+    / filter files, Return open the hunk in a code tile, s stage, u unstage, r twice discard, m mention (the selected lines, else the hunk), Esc back to the canvas. \
     With the tile only selected: j/k, J/K, ]/[, ↓/↑.
-    Every Stage and Discard is one ⌘Z.
+    Every Stage, Unstage, and Discard is one ⌘Z. Discard only puts back work not committed yet: committed hunks have none.
     """
 
     init(object: CanvasObject, board: Board) {
@@ -186,7 +188,6 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         let current = generation, root = board.root, spec = spec
         loadTask = Task { [weak self] in
             let set = await ChangeSet.load(root: root, spec: spec)
-            let branch = spec.root == nil ? await Self.branch(in: root) : nil
             await MainTurns.next()
             guard let self, current == self.generation, self.isLive else { return }
             self.loadTask = nil
@@ -194,15 +195,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             self.install(set)
             self.watch(set.repository)
             self.growIfFitted(from: previous, to: set)
-            if spec.root == nil { self.onBranch?(branch) }
+            if spec.root == nil { self.onBranch?(set.branch) }
         }
-    }
-
-    /// The branch checked out in `directory`'s worktree; nil when detached or outside git.
-    private static func branch(in directory: URL) async -> String? {
-        guard let output = try? await GitRunner.shared.run(["symbolic-ref", "--short", "-q", "HEAD"], in: directory, allowedStatus: [0, 1]) else { return nil }
-        let name = String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? nil : name
     }
 
     /// A new listing: the current hunk stays the same file and position (the next one when it
@@ -273,18 +267,17 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         needsDisplay = true
     }
 
-    /// A tile fitted to its diff (its height is what `size: "fit"` gave the last listing) grows
-    /// with it when hunks are added, up to the fit maximum; one the user or an agent sized
-    /// otherwise keeps its size.
+    /// A tile fitted to its diff (its height is what `size: "fit"` gave the last listing, or
+    /// Review Changes' compact "No changes" tile) grows with it when hunks are added
+    /// (`ChangesMetrics.grown`): the user's up to the default size, an agent's up to the fit
+    /// maximum; one the user or an agent sized otherwise keeps its size.
     private func growIfFitted(from old: ChangeSet?, to new: ChangeSet) {
-        guard let old, old.notice == nil, new.notice == nil else { return }
         let natural = object.naturalFrame
-        let viewed = object.props["viewed"]
-        let before = ChangesMetrics.fit(old, maxWidth: natural.w, viewed: viewed).height
-        let after = ChangesMetrics.fit(new, maxWidth: natural.w, viewed: viewed).height
-        guard abs(natural.h - before) <= 1, after > natural.h + 0.5 else { return }
+        let cap = object.createdBy == .user ? Board.defaultSize(.changes) : nil
+        guard let size = ChangesMetrics.grown(CGSize(width: natural.w, height: natural.h), from: old, to: new, viewed: object.props["viewed"],
+                                              cap: cap.map { CGSize(width: $0.w, height: $0.h) }) else { return }
         let scale = ObjectScale.of(object.props)
-        board.growFitted(object.id, frame: Frame(x: object.frame.x, y: object.frame.y, w: object.frame.w, h: (after * scale).rounded(.up)))
+        board.growFitted(object.id, frame: Frame(x: object.frame.x, y: object.frame.y, w: (size.width * scale).rounded(.up), h: (size.height * scale).rounded(.up)))
     }
 
     /// Working-tree writes, and the index, HEAD, and refs in the git directory, reload the
@@ -368,19 +361,20 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         needsDisplay = true
     }
 
-    /// A refusal or failure in the header for a few seconds.
-    private func show(message text: String) {
+    /// A refusal, failure, or question in the header for a few seconds.
+    private func show(message text: String, for duration: TimeInterval = 6) {
         message = text
         refreshPainter()
         messageWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 self?.message = nil
+                self?.discardAsked = nil
                 self?.refreshPainter()
             }
         }
         messageWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration, execute: work)
     }
 
     // MARK: Filter
@@ -459,17 +453,18 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private func refreshToolTips() {
         removeAllToolTips()
         guard isLive, window != nil, let painter else { return }
+        if let lead = painter.headerLayout(width: bounds.width).lead { addToolTip(lead.rect, owner: self, userData: nil) }
         addToolTip(NSRect(x: 0, y: 0, width: bounds.width, height: ChangesMetrics.headerHeight), owner: self, userData: nil)
         var areas: [NSRect] = []
         for index in painter.rows.visible(from: scroll, to: scroll + viewportHeight) {
             let rect = painter.rect(ofRow: index, width: bounds.width, scroll: scroll)
             switch painter.rows.rows[index] {
             case .file(let file) where painter.set.files[file].notice == nil:
-                let buttons = painter.buttons(inRow: rect).map(\.1)
+                let buttons = painter.buttons(inRow: rect, file: file, hunk: nil).map(\.1)
                 let viewed = painter.viewedRect(inRow: rect)
                 areas += [NSRect(x: 0, y: rect.minY, width: viewed.minX, height: rect.height), viewed] + buttons
-            case .hunk:
-                let buttons = painter.buttons(inRow: rect).map(\.1)
+            case .hunk(let file, let hunk):
+                let buttons = painter.buttons(inRow: rect, file: file, hunk: hunk).map(\.1)
                 areas += [NSRect(x: 0, y: rect.minY, width: buttons[0].minX, height: rect.height)] + buttons
             default:
                 areas.append(rect)
@@ -523,6 +518,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         let point = convert(event.locationInWindow, from: nil)
         pressed = nil
         dragged = false
+        if let lead = painter.headerLayout(width: bounds.width).lead, lead.rect.contains(point) { return showBaseMenu(below: lead.rect) }
         guard let hit = painter.hit(at: point, width: bounds.width, scroll: scroll) else { return }
         switch hit {
         case .button(let action, let file, let hunk):
@@ -660,17 +656,48 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                 (enclosingScrollView as? CanvasView)?.leaveTile(object.id)
             }
         case (_, "s"): actOnCurrent(.stage)
-        case (_, "r"): actOnCurrent(.revert)
+        case (_, "u"): actOnCurrent(.unstage)
+        case (_, "r"): askToDiscard()
         case (_, "/"): focusFilter()
         default: super.keyDown(with: event)
         }
     }
 
     private func actOnCurrent(_ action: ChangesAction) {
-        if let selection { return perform(action, file: selection.file, hunk: selection.hunk, lines: selection.lines) }
-        guard let current else { return show(message: "pick a hunk first (j/k or click)") }
-        perform(action, file: current.file, hunk: current.hunk, lines: nil)
+        guard let target = keyTarget else { return show(message: "pick a hunk first (j/k or click)") }
+        perform(action, file: target.file, hunk: target.hunk, lines: target.lines)
     }
+
+    /// What s, u and r act on: the selected lines, else the current hunk.
+    private var keyTarget: (file: Int, hunk: Int, lines: Set<Int>?)? {
+        if let selection { return (selection.file, selection.hunk, selection.lines) }
+        return current.map { ($0.file, $0.hunk, nil) }
+    }
+
+    /// The target the last `r` asked about, while its question shows.
+    private var discardAsked: String?
+
+    /// `r` discards only when pressed again within 2 s (the header asks), so one stray key never
+    /// throws away work; a committed hunk has nothing to discard and says so at once.
+    private func askToDiscard() {
+        guard let target = keyTarget, let set, set.files.indices.contains(target.file), set.files[target.file].hunks.indices.contains(target.hunk) else {
+            return show(message: "pick a hunk first (j/k or click)")
+        }
+        let hunk = set.files[target.file].hunks[target.hunk]
+        guard hunk.status.discardable else { return show(message: Self.committedRefusal) }
+        let key = "\(hunk.id) \(target.lines.map { $0.sorted().map(String.init).joined(separator: ",") } ?? "")"
+        if discardAsked == key {
+            discardAsked = nil
+            messageWork?.cancel()
+            message = nil
+            return perform(.revert, file: target.file, hunk: target.hunk, lines: target.lines)
+        }
+        let what = target.lines.map { "\($0.count) selected line\($0.count == 1 ? "" : "s")" } ?? "this hunk"
+        show(message: "press r again to discard \(what) from your files", for: 2)
+        discardAsked = key
+    }
+
+    static let committedRefusal = "committed: Discard only puts back work not committed yet"
 
     /// The next or previous hunk of an unfolded, listed file becomes current and scrolls into view.
     private func step(_ delta: Int) {
@@ -781,22 +808,34 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         setScroll(painter.rows.tops[row])
     }
 
-    /// Stage or discard one hunk (nil: the whole file), or some of its lines: the patch is
-    /// built, applied, and recorded as one undo step; a refusal shows in the header and changes
-    /// nothing.
+    /// Stage, unstage, or discard one hunk (nil: the whole file), or some of its lines: the patch
+    /// is built, applied, and recorded as one undo step; a refusal shows in the header and
+    /// changes nothing. Discard only ever puts back work not committed yet: a committed hunk is
+    /// refused, and against a base older than HEAD (`ChangeSet.includesCommits`) the patch is
+    /// built from HEAD, so a hunk mixing committed and uncommitted lines loses only the latter.
     private func perform(_ action: ChangesAction, file: Int, hunk: Int?, lines: Set<Int>?) {
         guard !acting, let set, let repository = set.repository, set.files.indices.contains(file) else { return }
         let changed = set.files[file]
         let target = hunk.map { changed.hunks[$0] }
-        if action == .stage, let target, !target.status.stageable { return show(message: "already staged") }
+        switch action {
+        case .stage: if !(target.map(\.status.stageable) ?? changed.stageable) { return show(message: "already staged") }
+        case .unstage: if !(target.map(\.status.unstageable) ?? changed.hunks.contains { $0.status.unstageable }) { return show(message: "not staged") }
+        case .revert: if !(target.map(\.status.discardable) ?? changed.discardable) { return show(message: Self.committedRefusal) }
+        }
         acting = true
-        let tile = object.id, board = board
+        let tile = object.id, board = board, includesCommits = set.includesCommits
         Task { [weak self] in
             defer { self?.acting = false }
             do {
                 let hunks = target.map { [$0] }
-                let patch = action == .stage ? try await ReviewPatch.stage(hunks, of: changed, in: repository, lines: lines)
-                    : try ReviewPatch.revert(hunks ?? changed.hunks, of: changed, in: repository, lines: lines)
+                let patch: ReviewPatch
+                switch action {
+                case .stage: patch = try await ReviewPatch.stage(hunks, of: changed, in: repository, lines: lines)
+                case .unstage: patch = try await ReviewPatch.unstage(hunks, of: changed, in: repository, lines: lines)
+                case .revert:
+                    patch = includesCommits ? try await ReviewPatch.discardUncommitted(hunks, of: changed, in: repository, lines: lines)
+                        : try ReviewPatch.revert(hunks ?? changed.hunks, of: changed, in: repository, lines: lines)
+                }
                 try await ReviewGit.shared.apply(patch)
                 try board.recordReview(tile: tile, entry: ReviewPatch.entry(action.entryName, file: changed, hunk: target, lines: lines, patch: patch), patch: patch)
                 self?.revealAfterLoad = true
@@ -906,5 +945,78 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         }
         guard let image else { return TileRender(image: nil, contentSize: content, state: .failed, reason: "could not allocate the bitmap") }
         return TileRender(image: image, contentSize: content, state: .rendered, reason: nil)
+    }
+}
+
+// MARK: Base picker
+
+extension ChangesTile {
+    /// The header's base picker: the uncommitted changes, everything the branch changed (against
+    /// the merge-base with the default branch), the commit or ref typed in before, or another one
+    /// typed into a small field. A pick is `props.base`, one ⌘Z step.
+    fileprivate func showBaseMenu(below rect: NSRect) {
+        let current = ChangesBaseChoice(prop: ChangesSpec(object.props).baseProp)
+        let directory = ChangesSpec(object.props).directory(boardRoot: board.root)
+        let defaultBranch = GitWorktree.containing(directory.path)?.defaultBranch
+        let menu = NSMenu()
+        for choice in ChangesBaseChoice.choices(current: current) {
+            let item = MenuAction.item(choice.title(defaultBranch: defaultBranch)) { [weak self] in self?.setBase(choice) }
+            item.state = choice == current ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        menu.addItem(MenuAction.item("Commit or Ref…") { [weak self] in self?.askForBase(below: rect) })
+        menu.popUp(positioning: nil, at: NSPoint(x: rect.minX, y: rect.maxY), in: self)
+    }
+
+    fileprivate func setBase(_ choice: ChangesBaseChoice) {
+        guard choice.prop != ChangesSpec(object.props).baseProp else { return }
+        _ = try? board.update(object.id, props: .object(["base": .string(choice.prop)]))
+    }
+
+    /// A field under the header for a commit, branch, or tag (`HEAD~3`, `origin/main`, `v1.2`):
+    /// Return compares with it, Esc or a click elsewhere leaves the base as it is. A name git
+    /// doesn't know shows as the tile's notice, and the picker is still there to fix it.
+    fileprivate func askForBase(below rect: NSRect) {
+        let field = NSTextField(string: "")
+        field.placeholderString = "commit, branch, or tag (HEAD~3, origin/main, v1.2)"
+        field.font = .systemFont(ofSize: 12)
+        field.frame = NSRect(x: 10, y: 10, width: 300, height: 22)
+        let content = NSViewController()
+        content.view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 42))
+        content.view.addSubview(field)
+        let popover = NSPopover()
+        popover.contentViewController = content
+        popover.behavior = .transient
+        let responder = BaseFieldResponder { [weak self, weak popover] text in
+            popover?.close()
+            if let text, let choice = ChangesBaseChoice(typed: text) { self?.setBase(choice) }
+        }
+        field.delegate = responder
+        baseField = responder
+        popover.show(relativeTo: rect, of: self, preferredEdge: .maxY)
+        popover.contentViewController?.view.window?.makeFirstResponder(field)
+    }
+}
+
+/// Return and Esc in the base field.
+@MainActor
+fileprivate final class BaseFieldResponder: NSObject, NSTextFieldDelegate {
+    let done: (String?) -> Void
+
+    init(done: @escaping (String?) -> Void) {
+        self.done = done
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        if selector == #selector(NSResponder.insertNewline(_:)) {
+            done(control.stringValue)
+            return true
+        }
+        if selector == #selector(NSResponder.cancelOperation(_:)) {
+            done(nil)
+            return true
+        }
+        return false
     }
 }

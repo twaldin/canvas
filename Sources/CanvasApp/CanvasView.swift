@@ -927,9 +927,10 @@ final class CanvasView: NSScrollView {
 
     /// New Terminal/Note/Browser Here: the object's top-left at a document point, moved to the
     /// nearest free spot on whole points, wholly in view clear of the toolbar and tray when there's
-    /// room (`Board.place`); when there isn't, the canvas pans the least that shows it.
-    private func createHere(_ type: ObjectType, props: JSONValue, at point: NSPoint) -> CanvasObject {
-        let size = Board.defaultSize(type)
+    /// room (`Board.place`); when there isn't, the canvas pans the least that shows it. `size`:
+    /// other than the type's default.
+    private func createHere(_ type: ObjectType, props: JSONValue, at point: NSPoint, size: (w: Double, h: Double)? = nil) -> CanvasObject {
+        let size = size ?? Board.defaultSize(type)
         let object = board.create(type: type, props: props, frame: board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h)))
         reveal(object.id)
         return object
@@ -1087,31 +1088,53 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Review Changes: a changes tile for the uncommitted work of the board root, or of another
-    /// worktree of its repository (`root`), at a document point (`createHere`), selected with the
-    /// canvas holding the keyboard, so j/k step through hunks. With one already on the board for
-    /// that directory and base (`Board.changesTile`), Review Changes goes to it instead.
-    func createChanges(at point: NSPoint, root: String? = nil) {
-        if let existing = board.changesTile(root: root, base: "HEAD") { return go(to: existing) }
-        var props: [String: JSONValue] = ["base": .string("HEAD")]
+    /// Review Changes: a changes tile for the uncommitted work (`base`: or everything the branch
+    /// changed) of the board root, or of another worktree of its repository (`root`), at a
+    /// document point (`createHere`), selected with the canvas holding the keyboard, so j/k step
+    /// through hunks. It lists first: with nothing to review the tile is a compact "No changes"
+    /// (it grows when changes appear, `ChangesMetrics.grown`), not a full-size empty one. With
+    /// one already on the board for that directory and base (`Board.changesTile`), Review
+    /// Changes goes to it instead.
+    func createChanges(at point: NSPoint, root: String? = nil, base: ChangesBaseChoice = .uncommitted) {
+        if let existing = board.changesTile(root: root, base: base.prop) { return go(to: existing) }
+        var props: [String: JSONValue] = ["base": .string(base.prop)]
         if let root { props["root"] = .string(root) }
-        let changes = createHere(.changes, props: .object(props), at: point)
-        setSelection([changes.id])
-        takeKeyboard(changes.id)
+        let spec = ChangesSpec(.object(props)), boardRoot = board.root
+        Task { [weak self] in
+            let set = await ChangeSet.load(root: boardRoot, spec: spec, highlight: false)
+            guard let self else { return }
+            if let existing = self.board.changesTile(root: root, base: base.prop) { return self.go(to: existing) }
+            let full = Board.defaultSize(.changes)
+            let compact = set.files.isEmpty ? ChangesMetrics.fit(set, maxWidth: full.w) : nil
+            let changes = self.createHere(.changes, props: .object(props), at: point, size: compact.map { (Double($0.width), Double($0.height)) })
+            self.setSelection([changes.id])
+            self.takeKeyboard(changes.id)
+        }
     }
 
-    /// Review Changes in the empty canvas's menu: one item, or with several worktrees in the
-    /// board's repository a submenu of them by branch (the board's own first).
+    /// Review Changes in the empty canvas's menu: per worktree of the board's repository (the
+    /// board's own first, by branch when there are several), its uncommitted changes and
+    /// everything its branch changed against the default branch (the merge-base: a PR's view).
     private func reviewChangesItem(at point: NSPoint) -> NSMenuItem {
-        let worktrees = GitWorktree.containing(board.root.path).map(\.siblings) ?? []
-        guard worktrees.count > 1, let own = GitWorktree.containing(board.root.path) else {
-            return MenuAction.item("Review Changes") { [weak self] in self?.createChanges(at: point) }
-        }
+        let own = GitWorktree.containing(board.root.path)
+        let worktrees = own.map { own in [own] + own.siblings.filter { $0.gitDir != own.gitDir } } ?? []
         let submenu = NSMenu()
-        for worktree in [own] + worktrees.filter({ $0.gitDir != own.gitDir }) {
-            let isOwn = worktree.gitDir == own.gitDir
-            let title = "\(worktree.branch ?? "detached") — \(worktree.name)\(isOwn ? " (this board)" : "")"
-            submenu.addItem(MenuAction.item(title) { [weak self] in self?.createChanges(at: point, root: isOwn ? nil : worktree.toplevel) })
+        for worktree in worktrees {
+            let isOwn = worktree.gitDir == own?.gitDir
+            if worktrees.count > 1 {
+                submenu.addItem(MenuAction.item("\(worktree.branch ?? "detached") — \(worktree.name)\(isOwn ? " (this board)" : "")", enabled: false) {})
+            }
+            let defaultBranch = worktree.defaultBranch
+            for base in [ChangesBaseChoice.uncommitted, .branch] {
+                let item = MenuAction.item(base.title(defaultBranch: defaultBranch), enabled: base == .uncommitted || defaultBranch != nil) { [weak self] in
+                    self?.createChanges(at: point, root: isOwn ? nil : worktree.toplevel, base: base)
+                }
+                item.indentationLevel = worktrees.count > 1 ? 1 : 0
+                submenu.addItem(item)
+            }
+        }
+        if worktrees.isEmpty {
+            submenu.addItem(MenuAction.item(ChangesBaseChoice.uncommitted.title(defaultBranch: nil)) { [weak self] in self?.createChanges(at: point) })
         }
         let item = NSMenuItem(title: "Review Changes", action: nil, keyEquivalent: "")
         item.submenu = submenu
@@ -1162,10 +1185,11 @@ final class CanvasView: NSScrollView {
         return id
     }
 
-    /// File ▸ Review Changes: a changes tile for the board root's uncommitted work in view.
-    func reviewChanges() {
+    /// File ▸ Review Changes (the board root's uncommitted work) and Review Branch (everything
+    /// its branch changed against the default branch): a changes tile in view.
+    func reviewChanges(base: ChangesBaseChoice = .uncommitted) {
         let size = Board.defaultSize(.changes), visible = documentVisibleRect
-        createChanges(at: NSPoint(x: visible.midX - size.w / 2, y: visible.midY - size.h / 2))
+        createChanges(at: NSPoint(x: visible.midX - size.w / 2, y: visible.midY - size.h / 2), base: base)
     }
 
     /// ⌘L: the address field of the focused browser tile, else of the one selected browser tile

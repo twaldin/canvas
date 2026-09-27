@@ -3,20 +3,25 @@ import CanvasCore
 import GhosttyTerminal
 
 /// A Ghostty surface running `zmx attach <session>`: the agent/shell survives app quit, crash,
-/// and rebuild; reattaching restores the screen. After a reboot, a recorded omp session resumes.
+/// and rebuild; reattaching restores the screen. After a reboot, a recorded agent session resumes.
 @MainActor
 final class TerminalTile: NSView, TileContent {
     let objectID: ObjectID
     let sessionName: String
-    let terminal: TerminalView
+    let terminal: CanvasTerminalView
+    private let board: Board
     private var surface: TerminalSurface?
     private let handler = TerminalEvents()
+    private let underline = TerminalLinkUnderline()
     var onTitle: ((String) -> Void)?
+    /// A ⌘-clicked reference opened this code tile (`created`) or found it already there.
+    var onOpenedCode: ((ObjectID, _ created: Bool) -> Void)?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
         sessionName = Self.sessionName(object.id)
-        terminal = TerminalView(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
+        self.board = board
+        terminal = CanvasTerminalView(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         super.init(frame: terminal.frame)
         terminal.autoresizingMask = [.width, .height]
         let environment = Self.environment(tile: object.id, board: board)
@@ -26,10 +31,17 @@ final class TerminalTile: NSView, TileContent {
             envVars: environment,
             command: Self.command(session: sessionName, object: object, board: board, keep: Set(environment.keys))
         )
-        terminal.controller = TerminalController.shared
+        terminal.controller = TerminalConfig.shared.controller
         handler.tile = self
         terminal.delegate = handler
+        terminal.linkAt = { [weak self] point in self?.link(at: point) }
+        terminal.onHover = { [weak self] hit in self?.showUnderline(hit) }
+        terminal.onOpen = { [weak self] hit in self?.open(hit) }
         addSubview(terminal)
+        underline.frame = bounds
+        underline.autoresizingMask = [.width, .height]
+        underline.isHidden = true
+        addSubview(underline)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -110,10 +122,11 @@ final class TerminalTile: NSView, TileContent {
     }()
 
     /// What a new session runs before dropping to a login shell: after a reboot, resume the
-    /// recorded omp session; otherwise the tile's initial `command`.
+    /// recorded agent session (`AgentResume`: omp, claude, codex); otherwise the tile's initial `command`.
     static func initialCommand(_ object: CanvasObject) -> String? {
-        if object.props["agent"]?["kind"]?.string == "omp", let sessionId = object.props["agent"]?["sessionId"]?.string {
-            return "omp --resume=\(quote([sessionId]))"
+        if let kind = object.props["agent"]?["kind"]?.string, let sessionId = object.props["agent"]?["sessionId"]?.string,
+           let resume = AgentResume.argv(kind: kind, sessionId: sessionId) {
+            return quote(resume)
         }
         let argv = object.props["command"]?.array?.compactMap(\.string) ?? []
         return argv.isEmpty ? nil : quote(argv)
@@ -179,6 +192,113 @@ final class TerminalTile: NSView, TileContent {
 
     fileprivate func titleChanged(_ title: String) {
         onTitle?(title)
+    }
+
+    // MARK: Notices
+
+    /// The user is looking at this terminal: it has keyboard focus in the active app's key window.
+    private var isWatched: Bool {
+        guard let window, NSApp.isActive, window.isKeyWindow else { return false }
+        return window.firstResponder === terminal
+    }
+
+    /// A program asked for the user (OSC 9 / OSC 777 `notify`, or BEL): an attention marker on
+    /// this terminal, unless the user is already looking at it.
+    fileprivate func notice(_ message: String, bell: Bool) {
+        guard !isWatched else { return }
+        if board.raiseTerminalNotice(objectID, message: message, bell: bell) {
+            NSLog("Canvas: terminal %@ %@: %@", objectID, bell ? "rang the bell" : "sent a notification", message)
+        }
+    }
+
+    // MARK: Exit
+
+    /// Ghostty closed the surface: its process (`zmx attach`) exited, and the user pressed a key
+    /// on "Process exited. Press any key to close the terminal" (or it exited cleanly). The
+    /// session ended with it, so the tile goes the normal delete path without asking: there is
+    /// nothing left to kill. A detached client (the session still runs) reattaches instead.
+    /// `processAlive` is Ghostty's own close request (its ⌘W binding): not an exit, ignored here.
+    fileprivate func surfaceClosed(processAlive: Bool) {
+        guard !processAlive else { return }
+        let session = sessionName
+        Task { [weak self] in
+            let running = await offPool { Self.sessionExists(session) }
+            guard let self, self.board.objects[self.objectID] != nil else { return }
+            if running {
+                NSLog("Canvas: terminal %@ detached from a running session; reattaching", self.objectID)
+                let controller = self.terminal.controller
+                self.terminal.controller = nil
+                self.terminal.controller = controller
+            } else {
+                NSLog("Canvas: terminal %@ exited; closing it", self.objectID)
+                self.board.transaction { try? self.board.delete(self.objectID) }
+            }
+        }
+    }
+
+    /// Whether zmx still has `session`. Blocks until zmx exits; false without zmx.
+    nonisolated static func sessionExists(_ session: String) -> Bool {
+        guard let zmx = AppPaths.zmx else { return false }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: zmx)
+        process.arguments = ["list"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return false }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).contains { line in
+            let name = line.split(separator: "\t").first?.drop { $0 == " " || $0 == "*" } ?? ""
+            return name == "name=\(session)"
+        }
+    }
+
+    // MARK: References
+
+    /// The directory the shell last reported (OSC 7), which relative references resolve against first.
+    fileprivate var reportedCwd: String?
+
+    /// The `path:line` reference drawn at `point` (terminal view coordinates) that names an
+    /// existing file: relative to the reported cwd, then `props.cwd`, then the board root.
+    private func link(at point: NSPoint) -> TerminalLinkHit? {
+        guard let surface, let grid else { return nil }
+        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
+        let fromTop = terminal.bounds.height - point.y
+        let column = Int(floor((point.x - padding.width) / grid.cell.width))
+        let row = Int(floor((fromTop - padding.height) / grid.cell.height))
+        guard (0..<grid.columns).contains(column), (0..<grid.rows).contains(row) else { return nil }
+        let rows = TerminalTextRows(around: row, columns: grid.columns) { row in
+            row < grid.rows ? surface.viewportRow(row, columns: grid.columns) : nil
+        }
+        guard let offset = rows.offset(row: row, column: column),
+              let reference = TerminalReferences.reference(in: rows.text, at: offset) else { return nil }
+        let cwd = board.objects[objectID]?.props["cwd"]?.string
+        let directories = [reportedCwd, cwd, board.root.path].compactMap { $0 }
+        guard let file = TerminalReferences.resolve(reference.path, directories: directories, home: NSHomeDirectory(), isFile: TerminalReferences.isFile) else { return nil }
+        return TerminalLinkHit(file: file, lines: reference.lines, runs: rows.runs(reference.range))
+    }
+
+    private func showUnderline(_ hit: TerminalLinkHit?) {
+        guard let hit, let grid else {
+            underline.isHidden = true
+            return
+        }
+        let style = TerminalConfig.shared.style(for: effectiveAppearance)
+        let thickness = max(1, (grid.cell.height / 14).rounded())
+        underline.color = style.foreground
+        underline.rects = hit.runs.map { run in
+            NSRect(x: style.padding.width + CGFloat(run.column) * grid.cell.width,
+                   y: style.padding.height + CGFloat(run.row + 1) * grid.cell.height - thickness,
+                   width: CGFloat(run.width) * grid.cell.width, height: thickness)
+        }
+        underline.isHidden = false
+    }
+
+    private func open(_ hit: TerminalLinkHit) {
+        let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID)
+        NSLog("Canvas: terminal %@ opened %@:%d-%d as %@ (%@)", objectID, hit.file, hit.lines.start, hit.lines.end, opened.id, opened.created ? "new" : "existing")
+        onOpenedCode?(opened.id, opened.created)
     }
 
     // MARK: TileContent
@@ -248,7 +368,7 @@ final class TerminalTile: NSView, TileContent {
     /// Ghostty draws through Metal, which `cacheDisplay` can't capture, so renders, cards, and
     /// `view.snapshot` covers draw the session's styled text on the tile's grid instead.
     func render(_ request: TileRenderRequest) async -> TileRender {
-        let grid = TerminalRender.grid(for: request.size, known: grid)
+        let grid = TerminalRender.grid(for: request.size, known: grid, style: TerminalConfig.shared.style(for: request.appearance))
         let session = sessionName
         let rows = grid.rows
         guard let history = await offPool(qos: .userInitiated, { Self.styledHistory(session: session, rows: rows) }) else {
@@ -262,12 +382,12 @@ final class TerminalTile: NSView, TileContent {
     private var snapshotView: NSImageView?
 
     /// Temporarily covers the Metal surface with its text so `cacheDisplay` can capture it
-    /// (synchronous: `view.snapshot` renders in one pass).
+    /// (synchronous: `view.snapshot` renders in one pass). The surface stays unhidden: hiding it
+    /// would take its keyboard focus, and the program would see a focus-out and focus-in.
     func showSnapshot(_ show: Bool) {
         snapshotView?.removeFromSuperview()
         snapshotView = nil
-        terminal.isHidden = false
-        let grid = TerminalRender.grid(for: bounds.size, known: grid)
+        let grid = TerminalRender.grid(for: bounds.size, known: grid, style: TerminalConfig.shared.style(for: effectiveAppearance))
         guard show, let history = Self.styledHistory(session: sessionName, rows: grid.rows) else { return }
         let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: grid.rows)
         let request = TileRenderRequest(size: bounds.size, scale: window?.backingScaleFactor ?? 2, full: false, appearance: effectiveAppearance)
@@ -276,7 +396,6 @@ final class TerminalTile: NSView, TileContent {
         view.imageScaling = .scaleAxesIndependently
         addSubview(view)
         snapshotView = view
-        terminal.isHidden = true
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
@@ -295,7 +414,8 @@ final class TerminalTile: NSView, TileContent {
 
 /// Retained delegate for the terminal view (its delegate reference is weak).
 @MainActor
-private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate {
+private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate,
+    TerminalSurfaceBellDelegate, TerminalSurfaceDesktopNotificationDelegate, TerminalSurfacePwdDelegate, TerminalSurfaceCloseDelegate {
     weak var tile: TerminalTile?
 
     func terminalDidResize(_ size: TerminalGridMetrics) {
@@ -312,5 +432,21 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
 
     func terminalDidDetachSurface() {
         tile?.attached(nil)
+    }
+
+    func terminalDidRingBell() {
+        tile?.notice("Bell", bell: true)
+    }
+
+    func terminalDidRequestDesktopNotification(title: String, body: String) {
+        tile?.notice(Board.noticeMessage(title: title, body: body), bell: false)
+    }
+
+    func terminalDidChangeWorkingDirectory(_ path: String) {
+        tile?.reportedCwd = path.isEmpty ? nil : path
+    }
+
+    func terminalDidClose(processAlive: Bool) {
+        tile?.surfaceClosed(processAlive: processAlive)
     }
 }

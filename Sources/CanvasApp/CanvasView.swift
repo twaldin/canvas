@@ -316,6 +316,12 @@ final class CanvasView: NSScrollView {
                 self?.tiles[id]?.setTitle(title)
                 if self?.promptTarget == id { self?.onPromptTargetTitle?() }
             }
+            // A ⌘-clicked reference: user navigation, so the tile is panned into view; one
+            // already on the board is selected (keyboard focus stays in the terminal).
+            terminal.onOpenedCode = { [weak self] opened, created in
+                if !created { self?.setSelection([opened]) }
+                self?.reveal(opened)
+            }
         }
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
         (content as? BrowserTile)?.onOpenedTile = { [weak self] opened in

@@ -795,12 +795,14 @@ final class CanvasView: NSScrollView {
 
     // MARK: Navigation (user-initiated only)
 
+    /// Where a board opens: the top of its content, or of its largest cluster when the content
+    /// doesn't fit at this zoom (the middle of a board with a stray tile far away is empty canvas).
     func centerOnContent() {
         viewportMover = .system
         defer { viewportMover = .user }
-        let frames = tiles.values.map(\.frame)
-        let target = frames.isEmpty ? NSRect(origin: CanvasDocumentView.origin, size: .zero) : frames.dropFirst().reduce(frames[0]) { $0.union($1) }
         let visible = documentVisibleRect
+        let target = Layout.fitTarget(tiles.values.map(\.frame), viewport: visible.size, padding: Self.fitPadding, minZoom: 1)
+            ?? NSRect(origin: CanvasDocumentView.origin, size: .zero)
         scroll(to: NSPoint(x: target.midX - visible.width / 2, y: target.minY - 40))
     }
 

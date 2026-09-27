@@ -55,7 +55,7 @@ struct ChangeSetTests {
         #expect(set.files[2].added == 2 && !set.files[2].tracked && set.files[2].hunks.map(\.header) == ["@@ -0,0 +1,2 @@"])
         // What the index holds: the staged file's hunk, nothing else.
         #expect(set.files.flatMap { $0.hunks.map(\.status) } == [.unstaged, .unstaged, .unstaged, .unstaged, .staged])
-        #expect(set.summary.hasPrefix("4 files · +5 −4 · HEAD "))
+        #expect(set.summary.hasPrefix("4 files · +5 −4 · vs HEAD "))
     }
 
     @Test func pathsLimitTheListAndNeverLeaveTheRepository() async throws {

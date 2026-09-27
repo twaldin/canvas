@@ -16,6 +16,9 @@ final class ChangesTile: NSView, TileContent {
     private var set: ChangeSet?
     private var painter: ChangesPainter?
     private var collapsed: Set<String> = []
+    /// Files listed before: a deleted file starts folded the first time it shows up (its whole
+    /// text is rarely what needs review), and stays as the user leaves it after that.
+    private var seen: Set<String> = []
     /// The hunk the keys act on, by file and index.
     private var current: (file: Int, hunk: Int)?
     private var scroll: CGFloat = 0
@@ -137,6 +140,10 @@ final class ChangesTile: NSView, TileContent {
         let previous = current.flatMap { current in self.set.map { ($0.files[current.file].boardPath, current.hunk) } }
         self.set = set
         cache.removeAll()
+        for file in set.files where !seen.contains(file.boardPath) {
+            seen.insert(file.boardPath)
+            if file.status == .deleted { collapsed.insert(file.boardPath) }
+        }
         if let (path, hunk) = previous {
             if let file = set.files.firstIndex(where: { $0.boardPath == path }), !set.files[file].hunks.isEmpty {
                 current = (file, min(hunk, set.files[file].hunks.count - 1))
@@ -157,7 +164,6 @@ final class ChangesTile: NSView, TileContent {
         painter.current = current
         painter.message = message
         painter.focused = hasKeyboard
-        painter.baseProp = spec.baseProp
         self.painter = painter
         clampScroll()
         needsDisplay = true
@@ -323,15 +329,14 @@ final class ChangesTile: NSView, TileContent {
         perform(action, file: current.file, hunk: current.hunk)
     }
 
-    /// The next or previous hunk becomes current (unfolding its file) and scrolls into view.
+    /// The next or previous hunk of an unfolded file becomes current and scrolls into view.
     private func step(_ delta: Int) {
         guard let set else { return }
-        let order = set.hunkOrder
+        let order = set.hunkOrder.filter { !collapsed.contains(set.files[$0.file].boardPath) }
         guard !order.isEmpty else { return }
         let index = current.flatMap { current in order.firstIndex { $0 == current } }.map { min(max(0, $0 + delta), order.count - 1) } ?? (delta > 0 ? 0 : order.count - 1)
         let target = order[index]
         current = (target.file, target.hunk)
-        collapsed.remove(set.files[target.file].boardPath)
         refreshPainter()
         reveal(file: target.file, hunk: target.hunk)
     }
@@ -479,7 +484,6 @@ final class ChangesTile: NSView, TileContent {
         var painter = ChangesPainter(set: loaded, collapsed: collapsed)
         painter.current = current
         painter.message = message
-        painter.baseProp = spec.baseProp
         let content = CGSize(width: request.size.width, height: painter.contentHeight)
         let size = request.full ? CGSize(width: request.size.width, height: max(request.size.height, content.height)) : request.size
         let scrollY = request.full ? 0 : scroll

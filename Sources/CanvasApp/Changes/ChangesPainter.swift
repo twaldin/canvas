@@ -55,7 +55,6 @@ struct ChangesPainter {
     var message: String?
     /// The tile holds the keyboard: the header says which keys work.
     var focused = false
-    var baseProp = "HEAD"
 
     init(set: ChangeSet, collapsed: Set<String>) {
         self.set = set
@@ -140,7 +139,7 @@ struct ChangesPainter {
             text = message
             color = .systemOrange
         } else {
-            text = "Changes vs \(baseProp) · " + set.summary
+            text = set.summary
             color = .secondaryLabelColor
         }
         let available = width - 12 - (showsHint ? hintSize.width + 24 : ChangesMetrics.trailingPadding)

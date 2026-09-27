@@ -202,10 +202,10 @@ public struct ChangeSet: Sendable {
     public var added: Int { files.reduce(0) { $0 + $1.added } }
     public var removed: Int { files.reduce(0) { $0 + $1.removed } }
 
-    /// The header's summary: `3 files · +40 −12 · HEAD 1a2b3c4`.
+    /// The header's summary: `3 files · +40 −12 · vs HEAD 1a2b3c4`.
     public var summary: String {
         if let notice { return notice }
-        let base = base.map { " · \(baseLabel) \($0.prefix(7))" } ?? ""
+        let base = base.map { " · vs \(baseLabel) \($0.prefix(7))" } ?? ""
         guard !files.isEmpty else { return "no changes\(base)" }
         let count = files.count + omitted
         return "\(count) file\(count == 1 ? "" : "s") · +\(added) −\(removed)\(base)"

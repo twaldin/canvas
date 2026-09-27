@@ -17,6 +17,9 @@ final class TerminalTile: NSView, TileContent {
     /// The header text changed: the name (`props.name`, else the foreground program) and the
     /// live title the program set (`TerminalName.label`).
     var onTitle: ((String) -> Void)?
+    /// The last command's status for the header (`TerminalCommand.status`: `exit 1 · 42 s`), nil
+    /// after a quick success; `detail` says what ran, for its tooltip.
+    var onStatus: ((_ status: String?, _ failed: Bool, _ detail: String?) -> Void)?
     /// A ⌘-clicked reference opened this code tile (`created`) or re-aimed or found it there;
     /// `source` is the reference's rect in window coordinates.
     var onOpenedCode: ((ObjectID, _ created: Bool, _ source: NSRect) -> Void)?
@@ -41,6 +44,11 @@ final class TerminalTile: NSView, TileContent {
         terminal.linkAt = { [weak self] point in self?.link(at: point) }
         terminal.onHover = { [weak self] hit in self?.showUnderline(hit) }
         terminal.onOpen = { [weak self] hit, newTile in self?.open(hit, newTile: newTile) }
+        terminal.onMissedLink = { [weak self] point, newTile in self?.retryLink(at: point, newTile: newTile) }
+        // AppKit makes the view first responder only after `becomeFirstResponder` returns.
+        terminal.onFocusChange = { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.updateSurfaceFocus() } }
+        }
         terminal.hasScrollback = { [weak self] in self?.scrollbar.map { $0.total > $0.len } ?? false }
         addSubview(terminal)
         underline.frame = bounds
@@ -80,6 +88,8 @@ final class TerminalTile: NSView, TileContent {
             if let zdotdir = inherited["ZDOTDIR"] { env["CANVAS_ZSH_ZDOTDIR"] = zdotdir }
             let bash = ". " + quote([shell.appendingPathComponent("bash/canvas.bash").path])
             env["PROMPT_COMMAND"] = inherited["PROMPT_COMMAND"].map { "\(bash); \($0)" } ?? bash
+            // Ghostty's own shell integration (prompt marks), which the scripts above load.
+            if let integration = TerminalConfig.shared.shellIntegration { env["CANVAS_GHOSTTY_INTEGRATION"] = integration }
         }
         return env
     }
@@ -154,7 +164,8 @@ final class TerminalTile: NSView, TileContent {
     /// The last `limit` lines of the session's text; nil when zmx is missing or the session
     /// doesn't exist. Streams zmx's output through a bounded tail (never the whole scrollback)
     /// and blocks until zmx exits, so call it off the main actor when it isn't for drawing.
-    nonisolated static func history(session: String, lines limit: Int) -> TerminalTail.Tail? {
+    /// `columns`: the terminal's width, so rows it soft-wrapped read as one line.
+    nonisolated static func history(session: String, lines limit: Int, columns: Int? = nil) -> TerminalTail.Tail? {
         guard let zmx = AppPaths.zmx else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: zmx)
@@ -164,7 +175,7 @@ final class TerminalTile: NSView, TileContent {
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return nil }
         // Drain while zmx writes: it blocks once the pipe buffer fills, so waiting first would deadlock.
-        var tail = TerminalTail(limit: limit)
+        var tail = TerminalTail(limit: limit, columns: columns)
         let reader = output.fileHandleForReading
         while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
             tail.append(chunk)
@@ -210,12 +221,23 @@ final class TerminalTile: NSView, TileContent {
     /// minimized or not: ~12 wakeups/s per terminal.
     fileprivate func attached(_ surface: TerminalSurface?) {
         self.surface = surface
+        updateSurfaceFocus()
+    }
+
+    /// Ghostty's focus, as a terminal app has it: the terminal has keyboard focus in the key
+    /// window of the active app, and the window isn't minimized. libghostty-spm sets it on first
+    /// responder and key-window changes only, so a terminal focused while the app was inactive
+    /// (an API focus, a window that never became key) or whose window was minimized kept
+    /// Ghostty's focused timers (cursor blink, termios polling: 12–18 wakeups/s) running.
+    func updateSurfaceFocus() {
         guard let handle = surface?.handle else { return }
-        ghostty_surface_set_focus(handle, window?.isKeyWindow == true && window?.firstResponder === terminal)
+        let focused = window.map { NSApp.isActive && $0.isKeyWindow && !$0.isMiniaturized && $0.firstResponder === terminal } ?? false
+        ghostty_surface_set_focus(handle, focused)
     }
 
     fileprivate func titleChanged(_ title: String) {
         oscTitle = title
+        commands.title(title, at: Date(), promptTitle: TerminalCommandTracker.promptTitle(cwd: reportedCwd, home: NSHomeDirectory()))
         refreshProgram()
         publishLabel()
     }
@@ -241,6 +263,7 @@ final class TerminalTile: NSView, TileContent {
         case .running(let argv): TerminalName.program(argv: argv)
         case .gone, .prompt: nil
         }
+        commands.running(program: program)
         guard program != self.program else { return }
         self.program = program
         publishLabel()
@@ -268,7 +291,13 @@ final class TerminalTile: NSView, TileContent {
 
     private func publishLabel() {
         guard let object = board.objects[objectID] else { return }
-        onTitle?(TerminalName.label(name: name ?? program, title: oscTitle) ?? TileFrameView.title(for: object))
+        onTitle?(label ?? TileFrameView.title(for: object))
+    }
+
+    /// What the header calls this terminal: its name, else the program running in it, with the
+    /// title that program set (`TerminalName.label`); nil when it has none of them.
+    var label: String? {
+        TerminalName.label(name: name ?? program, title: oscTitle?.trimmingCharacters(in: .whitespaces))
     }
 
     // MARK: Notices
@@ -287,6 +316,183 @@ final class TerminalTile: NSView, TileContent {
             NSLog("Canvas: terminal %@ %@: %@", objectID, bell ? "rang the bell" : "sent a notification", message)
         }
     }
+
+    // MARK: Commands
+
+    /// What the shell is running, from the titles Ghostty's shell integration sets.
+    fileprivate var commands = TerminalCommandTracker()
+    /// The last command the shell finished (Ghostty's shell integration: OSC 133 D), and when.
+    private(set) var lastCommand: (command: TerminalCommand, finishedAt: Date)?
+
+    /// A command finished: the header shows its exit status or duration when it failed or ran
+    /// long, and one that ran `noticeAfterMs` or more raises a marker (the bell's rules: not
+    /// while the user looks at the terminal, never for an agent reporting a lifecycle).
+    fileprivate func commandFinished(exit: Int?, durationNanos: UInt64) {
+        let command = commands.finished(exit: exit, durationNanos: durationNanos, at: Date())
+        lastCommand = (command, Date())
+        let detail = ([command.command ?? "The last command"] + [command.exit.map { "exit \($0)" }, command.durationMs.map(TerminalCommand.duration)].compactMap { $0 })
+            .joined(separator: " · ")
+        onStatus?(command.status, (command.exit ?? 0) != 0, detail)
+        guard (command.durationMs ?? 0) >= TerminalCommand.noticeAfterMs else { return }
+        notice(command.noticeMessage, bell: false)
+    }
+
+    // MARK: Mentions
+
+    /// While Hyper is held: the selection, else the whole terminal. A click resolves more
+    /// (`resolveMention`), but finding a command's block takes Ghostty a click, too much for hover.
+    func mentionTarget(at point: NSPoint) -> MentionTarget? {
+        if let text = surface?.readSelection(), !text.isEmpty {
+            return .terminal(object: objectID, text: text)
+        }
+        return .object(objectID)
+    }
+
+    /// A Hyper-click: the selection; else, inside a command's output that Ghostty's shell
+    /// integration marked, that command's block; else the screen rows around the click. Outside
+    /// the text (the title bar, the padding): the whole terminal.
+    func resolveMention(at point: NSPoint) async -> MentionTarget? {
+        if let text = surface?.readSelection(), !text.isEmpty {
+            return .terminal(object: objectID, text: text)
+        }
+        guard let surface, let grid, let cell = cell(at: point) else { return .object(objectID) }
+        if let block = commandBlock(row: cell.row, column: cell.column) {
+            return .terminal(object: objectID, text: block.output, part: .command, command: block.command)
+        }
+        let from = max(0, cell.row - Self.rowsBefore), to = min(grid.rows - 1, cell.row + Self.rowsAfter)
+        let rows = (from...to).map { surface.viewportRow($0, columns: grid.columns) ?? "" }
+        let lines = TerminalExcerpt.around(rows, index: cell.row - from, before: Self.rowsBefore, after: Self.rowsAfter)
+        return .terminal(object: objectID, text: lines.joined(separator: "\n"), part: .rows)
+    }
+
+    /// The screen rows a Hyper-click outside a command's output mentions: an error's context is
+    /// mostly above it.
+    static let rowsBefore = 8
+    static let rowsAfter = 3
+
+    /// The viewport cell under `point` (this view's coordinates); nil in the padding.
+    private func cell(at point: NSPoint) -> (row: Int, column: Int)? {
+        guard let grid else { return nil }
+        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
+        let fromTop = terminal.bounds.height - point.y
+        let column = Int(floor((point.x - padding.width) / grid.cell.width))
+        let row = Int(floor((fromTop - padding.height) / grid.cell.height))
+        guard (0..<grid.columns).contains(column), (0..<grid.rows).contains(row) else { return nil }
+        return (row, column)
+    }
+
+    /// The command block whose output covers viewport cell (`row`, `column`): its output, and
+    /// what ran (`TerminalBlocks.command`: the shell's last command with exit status and
+    /// duration when this is its block, else the prompt row above the output). Nil without
+    /// Ghostty's prompt marks there.
+    private func commandBlock(row: Int, column: Int) -> (output: String, command: TerminalCommand?)? {
+        guard let surface, let grid, let output = selectOutput(row: row, column: column) else { return nil }
+        func text(_ row: Int) -> String { (surface.viewportRow(row, columns: grid.columns) ?? "").trimmingCharacters(in: .whitespaces) }
+        let promptRow = output.top > 0 ? text(output.top - 1) : nil
+        // Where the output ends on screen: the row just above the prompt showing its last line.
+        let last = output.text.split(separator: "\n").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        let cursor = cursorRow
+        let end = cursor.flatMap { cursor in
+            stride(from: cursor - 1, through: max(0, cursor - TerminalBlocks.promptRows - 1), by: -1).first { !text($0).isEmpty && last.hasSuffix(text($0)) }
+        } ?? output.top + TerminalBlocks.rows(of: output.text, columns: grid.columns) - 1
+        refreshProgram()
+        let command = TerminalBlocks.command(promptRow: promptRow, outputEnd: end, cursorRow: cursor,
+                                             atPrompt: shell != nil && program == nil, last: lastCommand?.command)
+        guard command?.exit != nil || command?.durationMs != nil else {
+            // Starting at the very top of everything the terminal holds, with no prompt above:
+            // text from before Canvas reattached to the session, which carries no marks.
+            if output.top == 0, (scrollbar?.offset ?? 0) == 0 { return nil }
+            return (output.text, command)
+        }
+        return (TerminalBlocks.output(output.text, after: command?.command), command)
+    }
+
+    /// The output of the command whose block covers viewport cell (`row`, `column`), as Ghostty
+    /// selects it on a ⌘-triple-click (Ghostty's semantic prompts: the output between the
+    /// command's line and the next prompt), and the viewport row it starts on. Ghostty's C API
+    /// has no call for the block itself, so this is that triple click, with the selection
+    /// cleared after it by a click on the top-left cell (above any prompt, so it never moves
+    /// the cursor). Nil when a program owns the mouse (a TUI), the user has a selection (it
+    /// would be lost), or the cell isn't command output.
+    private func selectOutput(row: Int, column: Int) -> (text: String, top: Int)? {
+        guard let handle = surface?.handle, let grid, !ghostty_surface_mouse_captured(handle), !ghostty_surface_has_selection(handle) else { return nil }
+        // The current prompt at the top of the screen: that click would land on it.
+        if let cursorRow, cursorRow < TerminalBlocks.promptRows { return nil }
+        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
+        let none = GHOSTTY_MODS_NONE, command = GHOSTTY_MODS_SUPER
+        ghostty_surface_mouse_pos(handle, Double(padding.width + (CGFloat(column) + 0.5) * grid.cell.width),
+                                  Double(padding.height + (CGFloat(row) + 0.5) * grid.cell.height), none)
+        _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, command)
+        _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, command)
+        let word = readSelection(handle)
+        _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, command)
+        let output = readSelection(handle)
+        ghostty_surface_mouse_pos(handle, Double(padding.width + grid.cell.width / 2), Double(padding.height + grid.cell.height / 2), none)
+        _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, none)
+        _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, none)
+        ghostty_surface_mouse_pos(handle, -1, -1, none)
+        if ghostty_surface_has_selection(handle) { NSLog("Canvas: terminal %@ kept a selection after reading a command block", objectID) }
+        guard let output, !output.text.isEmpty, output.text != word?.text else { return nil }
+        // `tl_px_y`: the first row's baseline, in points from the top.
+        let top = Int(floor((CGFloat(output.y) - padding.height) / grid.cell.height))
+        return (output.text, max(0, top))
+    }
+
+    private func readSelection(_ handle: ghostty_surface_t) -> (text: String, y: Double)? {
+        var out = ghostty_text_s()
+        guard ghostty_surface_read_selection(handle, &out) else { return nil }
+        defer { ghostty_surface_free_text(handle, &out) }
+        guard let text = out.text, out.text_len > 0 else { return nil }
+        return (String(decoding: UnsafeRawBufferPointer(start: text, count: Int(out.text_len)), as: UTF8.self), out.tl_px_y)
+    }
+
+    /// The viewport row the cursor is on; nil when it's out of view or unknown. Ghostty gives
+    /// the cursor's cell by its bottom, in points from the top.
+    private var cursorRow: Int? {
+        guard let handle = surface?.handle, let grid else { return nil }
+        var x = 0.0, y = 0.0, width = 0.0, height = 0.0
+        ghostty_surface_ime_point(handle, &x, &y, &width, &height)
+        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
+        let row = Int(((CGFloat(y - height) - padding.height) / grid.cell.height).rounded())
+        return (0..<grid.rows).contains(row) ? row : nil
+    }
+
+    /// `agent.read` `block: "last"`: the output of the last command the shell finished, found
+    /// on the rows just above the prompt.
+    func lastBlock() throws -> (command: TerminalCommand, output: String) {
+        guard let last = lastCommand?.command else {
+            throw ApiRouter.Failure("unavailable", "no command has finished in terminal \(objectID) since Canvas attached to it (its shell needs Ghostty's shell integration; read with lines instead)")
+        }
+        guard surface?.handle != nil, grid != nil else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
+        guard surface?.readSelection()?.isEmpty ?? true else {
+            throw ApiRouter.Failure("unavailable", "the user has text selected in terminal \(objectID); read with lines instead")
+        }
+        guard let cursorRow else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) is scrolled back; read with lines instead") }
+        for row in stride(from: cursorRow - 1, through: max(0, cursorRow - TerminalBlocks.promptRows - 1), by: -1) {
+            guard let block = commandBlock(row: row, column: 0) else { continue }
+            guard let command = block.command, command.exit == last.exit, command.durationMs == last.durationMs else { break }
+            return (command, block.output)
+        }
+        return (last, "")
+    }
+
+    /// The terminal's current screen (not where the user scrolled to), soft-wrapped rows joined,
+    /// for a mention of the whole terminal.
+    func screenText() -> String? {
+        guard let handle = surface?.handle, let grid else { return nil }
+        let selection = ghostty_selection_s(
+            top_left: ghostty_point_s(tag: GHOSTTY_POINT_ACTIVE, coord: GHOSTTY_POINT_COORD_EXACT, x: 0, y: 0),
+            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_ACTIVE, coord: GHOSTTY_POINT_COORD_EXACT, x: UInt32(grid.columns - 1), y: UInt32(grid.rows - 1)),
+            rectangle: false)
+        var out = ghostty_text_s()
+        guard ghostty_surface_read_text(handle, selection, &out) else { return nil }
+        defer { ghostty_surface_free_text(handle, &out) }
+        guard let text = out.text, out.text_len > 0 else { return "" }
+        return String(decoding: UnsafeRawBufferPointer(start: text, count: Int(out.text_len)), as: UTF8.self)
+    }
+
+    /// The terminal's width in cells, once Ghostty laid it out.
+    var columns: Int? { grid?.columns }
 
     // MARK: Exit
 
@@ -342,20 +548,28 @@ final class TerminalTile: NSView, TileContent {
     /// relative to the reported cwd, then `props.cwd`, then the board root, then by name among
     /// the board root's files (`BoardFiles`), nearest the cwd.
     private func link(at point: NSPoint) -> TerminalReferences.Hit? {
-        guard let surface, let grid else { return nil }
-        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
-        let fromTop = terminal.bounds.height - point.y
-        let column = Int(floor((point.x - padding.width) / grid.cell.width))
-        let row = Int(floor((fromTop - padding.height) / grid.cell.height))
-        guard (0..<grid.columns).contains(column), (0..<grid.rows).contains(row) else { return nil }
+        guard let surface, let grid, let cell = cell(at: point) else { return nil }
         let cwd = board.objects[objectID]?.props["cwd"]?.string
         let directories = [reportedCwd, cwd, board.root.path].compactMap { $0 }
         let files = BoardFiles.of(board.root)
         let listed = (root: files.root.path, files: files.current())
         let near = reportedCwd ?? cwd ?? board.root.path
-        return TerminalReferences.hit(row: row, column: column, columns: grid.columns,
+        return TerminalReferences.hit(row: cell.row, column: cell.column, columns: grid.columns,
                                       read: { $0 < grid.rows ? surface.viewportRow($0, columns: grid.columns) : nil },
                                       resolve: { TerminalReferences.resolve($0, directories: directories, home: NSHomeDirectory(), isFile: TerminalReferences.isFile, listed: listed, near: near) })
+    }
+
+    /// A ⌘-click that found no file on a reference: the file may be newer than the board root's
+    /// file list (a test just wrote it, and the click that made the list stale started the
+    /// re-listing). Look again once the list is fresh, and open it then.
+    private func retryLink(at point: NSPoint, newTile: Bool) {
+        guard let surface, let grid, let cell = cell(at: point),
+              TerminalReferences.hit(row: cell.row, column: cell.column, columns: grid.columns,
+                                     read: { $0 < grid.rows ? surface.viewportRow($0, columns: grid.columns) : nil }, resolve: { $0 }) != nil else { return }
+        BoardFiles.of(board.root).refresh { [weak self] _ in
+            guard let self, let hit = self.link(at: point) else { return }
+            self.open(hit, newTile: newTile)
+        }
     }
 
     /// The cells `runs` cover in the underline's (flipped) coordinates, `height` tall at the
@@ -381,6 +595,18 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private func open(_ hit: TerminalReferences.Hit, newTile: Bool) {
+        if let test = hit.test {
+            // A pytest node id: its line is the test's `def`, read off the main thread.
+            let file = hit.file
+            Task { [weak self] in
+                let line = await offPool { (try? String(contentsOfFile: file, encoding: .utf8)).flatMap { PytestNode.line(of: test, in: $0) } } ?? 1
+                var located = hit
+                located.test = nil
+                located.lines = LineRange(start: line, end: line)
+                self?.open(located, newTile: newTile)
+            }
+            return
+        }
         let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile)
         NSLog("Canvas: terminal %@ opened %@:%d-%d as %@ (%@)", objectID, hit.file, hit.lines.start, hit.lines.end, opened.id,
               opened.created ? (newTile ? "new tile" : "new preview") : "re-aimed or existing")
@@ -416,9 +642,11 @@ final class TerminalTile: NSView, TileContent {
                 MainActor.assumeIsolated { self?.windowVisibilityChanged() }
             }
             let app = NotificationCenter.default, workspace = NSWorkspace.shared.notificationCenter
-            let names = [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification]
+            let names = [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                         NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification]
             windowObservers = names.map { (app, app.addObserver(forName: $0, object: window, queue: .main, using: changed)) }
-                + [NSApplication.didHideNotification, NSApplication.didUnhideNotification].map { (app, app.addObserver(forName: $0, object: NSApp, queue: .main, using: changed)) }
+                + [NSApplication.didHideNotification, NSApplication.didUnhideNotification, NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification]
+                    .map { (app, app.addObserver(forName: $0, object: NSApp, queue: .main, using: changed)) }
                 + [(workspace, workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: changed))]
         }
         updateSurfaceVisibility()
@@ -426,11 +654,16 @@ final class TerminalTile: NSView, TileContent {
 
     /// AppKit posts these before `occlusionState` settles (`didMiniaturize` arrives with the
     /// window still occlusion-visible, `didDeminiaturize` with it still occluded), so look again
-    /// on the next main-loop turn.
+    /// on the next main-loop turn. Ghostty's focus follows key window, app activation and
+    /// minimizing (`updateSurfaceFocus`), after libghostty-spm's own key-window handlers ran.
     private func windowVisibilityChanged() {
         updateSurfaceVisibility()
+        updateSurfaceFocus()
         DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated { self?.updateSurfaceVisibility() }
+            MainActor.assumeIsolated {
+                self?.updateSurfaceVisibility()
+                self?.updateSurfaceFocus()
+            }
         }
     }
 
@@ -508,13 +741,6 @@ final class TerminalTile: NSView, TileContent {
         snapshotView = view
     }
 
-    func mentionTarget(at point: NSPoint) -> MentionTarget? {
-        if let text = surface?.readSelection(), !text.isEmpty {
-            return .terminal(object: objectID, text: text)
-        }
-        return .object(objectID)
-    }
-
     func outline(for target: MentionTarget) -> NSRect? { bounds }
 
     var takesKeyboardFocus: Bool { true }
@@ -531,7 +757,7 @@ final class TerminalTile: NSView, TileContent {
 @MainActor
 private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, TerminalSurfaceLifecycleDelegate, TerminalSurfaceGridResizeDelegate,
     TerminalSurfaceBellDelegate, TerminalSurfaceDesktopNotificationDelegate, TerminalSurfacePwdDelegate, TerminalSurfaceCloseDelegate,
-    TerminalSurfaceScrollbarDelegate {
+    TerminalSurfaceScrollbarDelegate, TerminalSurfaceCommandFinishedDelegate {
     weak var tile: TerminalTile?
 
     func terminalDidResize(_ size: TerminalGridMetrics) {
@@ -562,6 +788,11 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
         tile?.reportedCwd = path.isEmpty ? nil : path
         // The shell reports its directory at each prompt: whatever ran has finished.
         tile?.refreshProgram()
+        tile?.commands.prompt(at: Date())
+    }
+
+    func terminalDidFinishCommand(exitCode: Int?, durationNanos: UInt64) {
+        tile?.commandFinished(exit: exitCode, durationNanos: durationNanos)
     }
 
     func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {

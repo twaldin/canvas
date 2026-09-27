@@ -153,14 +153,16 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     /// word on the lines, e.g. `added line · unstaged hunk` (`ChangeSet.mentionDetail`).
     case code(object: ObjectID, path: String, lines: LineRange, side: String? = nil, symbol: String? = nil, commit: String? = nil, diff: String? = nil)
     case dom(object: ObjectID, url: String, selector: String, text: String?)
-    case terminal(object: ObjectID, text: String)
+    /// Terminal text: the user's selection, the screen rows around a click, or one command's
+    /// block (its output; `command` says what ran, with exit status and duration when known).
+    case terminal(object: ObjectID, text: String, part: TerminalPart = .selection, command: TerminalCommand? = nil)
     case group(objects: [ObjectID], name: String?)
     /// A point on an image tile's picture, in the image's own pixels from its top-left.
     case image(object: ObjectID, path: String, x: Int, y: Int)
     /// A block of a note (`NoteItem`) as it read when staged: the drain re-finds it by `text`.
     case note(object: ObjectID, item: NoteItem)
 
-    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, diff, url, selector, text, objects, name, x, y, block, headings }
+    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, diff, url, selector, text, objects, name, x, y, block, headings, part, command }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -170,7 +172,8 @@ public enum MentionTarget: Codable, Equatable, Sendable {
         case "dom":
             self = .dom(object: try c.decode(String.self, forKey: .object), url: try c.decode(String.self, forKey: .url), selector: try c.decode(String.self, forKey: .selector), text: try c.decodeIfPresent(String.self, forKey: .text))
         case "terminal":
-            self = .terminal(object: try c.decode(String.self, forKey: .object), text: try c.decode(String.self, forKey: .text))
+            self = .terminal(object: try c.decode(String.self, forKey: .object), text: try c.decode(String.self, forKey: .text),
+                             part: try c.decodeIfPresent(TerminalPart.self, forKey: .part) ?? .selection, command: try c.decodeIfPresent(TerminalCommand.self, forKey: .command))
         case "group":
             self = .group(objects: try c.decode([String].self, forKey: .objects), name: try c.decodeIfPresent(String.self, forKey: .name))
         case "image":
@@ -205,10 +208,12 @@ public enum MentionTarget: Codable, Equatable, Sendable {
             try c.encode(url, forKey: .url)
             try c.encode(selector, forKey: .selector)
             try c.encodeIfPresent(text, forKey: .text)
-        case .terminal(let object, let text):
+        case .terminal(let object, let text, let part, let command):
             try c.encode("terminal", forKey: .kind)
             try c.encode(object, forKey: .object)
             try c.encode(text, forKey: .text)
+            if part != .selection { try c.encode(part, forKey: .part) }
+            try c.encodeIfPresent(command, forKey: .command)
         case .group(let objects, let name):
             try c.encode("group", forKey: .kind)
             try c.encode(objects, forKey: .objects)
@@ -233,10 +238,20 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     public var objectIDs: [ObjectID] {
         switch self {
         case .object(let id): [id]
-        case .code(let object, _, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _), .image(let object, _, _, _), .note(let object, _): [object]
+        case .code(let object, _, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _, _, _), .image(let object, _, _, _), .note(let object, _): [object]
         case .group(let objects, _): objects
         }
     }
+}
+
+/// Which part of a terminal a terminal mention holds.
+public enum TerminalPart: String, Codable, Sendable {
+    /// What the user selected.
+    case selection
+    /// The screen rows around a Hyper-click, the clicked row marked.
+    case rows
+    /// One command's output, as the shell integration marks it.
+    case command
 }
 
 public struct Mention: Codable, Equatable, Sendable {

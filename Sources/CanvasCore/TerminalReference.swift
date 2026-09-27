@@ -2,18 +2,22 @@ import Foundation
 
 /// A `path:line` reference in terminal output (an agent's answer, a compiler error, a stack
 /// trace): `src/foo.ts:42`, `src/foo.ts:42:7`, `src/foo.ts:42-50` (also with an en or em dash,
-/// as Gemini writes ranges), `foo.rs#L10-20`, `/abs/path.swift:3`, `~/x.py:9`. ⌘-click opens it
-/// as a code tile beside the terminal.
+/// as Gemini writes ranges), `foo.rs#L10-20`, `/abs/path.swift:3`, `~/x.py:9`; or a pytest node id
+/// (`tests/test_x.py::TestA::test_b[1]`), whose line is its `def`'s, found when it opens.
+/// ⌘-click opens it as a code tile beside the terminal.
 public struct TerminalReference: Equatable, Sendable {
     /// UTF-16 range of the whole reference in the searched text.
     public var range: NSRange
     public var path: String
     public var lines: LineRange
+    /// A pytest node id's names after the file (`["TestA", "test_b"]`); `lines` is then 1-1.
+    public var test: [String]?
 
-    public init(range: NSRange, path: String, lines: LineRange) {
+    public init(range: NSRange, path: String, lines: LineRange, test: [String]? = nil) {
         self.range = range
         self.path = path
         self.lines = lines
+        self.test = test
     }
 }
 
@@ -24,10 +28,14 @@ public enum TerminalReferences {
     // or `#Lstart`, `#Lstart-end`, `#Lstart-Lend`; a range's dash may be `-`, `–` or `—`.
     private static let pattern = try! NSRegularExpression(pattern:
         #"(?<![\w./@:~-])((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*)(?::(\d+)(?:[-–—](\d+)|:\d+)?|#L(\d+)(?:[-–—]L?(\d+))?)(?![\w/])"#)
+    /// A pytest node id: a `.py` path, `::` and names, maybe a parameter set in brackets.
+    private static let nodePattern = try! NSRegularExpression(pattern:
+        #"(?<![\w./@:~-])((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*\.py)((?:::[A-Za-z_]\w*)+)(?:\[[^\]\s]*\])?"#)
 
     public static func find(in text: String) -> [TerminalReference] {
         let ns = text as NSString
-        return pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)).compactMap { match in
+        let whole = NSRange(location: 0, length: ns.length)
+        let located: [TerminalReference] = pattern.matches(in: text, range: whole).compactMap { match in
             let path = ns.substring(with: match.range(at: 1))
             guard path.contains("/") || hasExtension(path) else { return nil }
             func number(_ group: Int) -> Int? {
@@ -38,6 +46,11 @@ public enum TerminalReferences {
             let end = max(start, number(3) ?? number(5) ?? start)
             return TerminalReference(range: match.range, path: path, lines: LineRange(start: start, end: end))
         }
+        let nodes = nodePattern.matches(in: text, range: whole).map { match in
+            TerminalReference(range: match.range, path: ns.substring(with: match.range(at: 1)), lines: LineRange(start: 1, end: 1),
+                              test: ns.substring(with: match.range(at: 2)).components(separatedBy: "::").filter { !$0.isEmpty })
+        }
+        return (located + nodes).sorted { $0.range.location < $1.range.location }
     }
 
     /// The reference covering UTF-16 offset `offset` of `text`.
@@ -119,11 +132,14 @@ extension TerminalReferences {
         public var lines: LineRange
         /// Where it is drawn: one run per viewport row it covers.
         public var runs: [TerminalTextRows.Run]
+        /// A pytest node id's names (`TerminalReference.test`): the line is its `def`'s.
+        public var test: [String]?
 
-        public init(file: String, lines: LineRange, runs: [TerminalTextRows.Run]) {
+        public init(file: String, lines: LineRange, runs: [TerminalTextRows.Run], test: [String]? = nil) {
             self.file = file
             self.lines = lines
             self.runs = runs
+            self.test = test
         }
     }
 
@@ -176,7 +192,7 @@ extension TerminalReferences {
             guard let offset = rows.offset(row: row, column: column),
                   let reference = reference(in: rows.text, at: offset),
                   let file = resolve(reference.path) else { continue }
-            return Hit(file: file, lines: reference.lines, runs: rows.runs(reference.range))
+            return Hit(file: file, lines: reference.lines, runs: rows.runs(reference.range), test: reference.test)
         }
         return nil
     }
@@ -253,7 +269,9 @@ public struct TerminalTextRows {
 
     /// How `upper` goes on into `lower` in a terminal `columns` wide; nil when it doesn't. A row
     /// whose text reaches the last column goes on directly; one that ends in blanks or a border
-    /// (a TUI's margin and scrollbar, even when they fill the row) only after an unfinished word.
+    /// (a TUI's margin and scrollbar, even when they fill the row) only after an unfinished word,
+    /// or inside a table cell: a reference that looks whole (`trade-ups.ts:1383-13` before the
+    /// cell's `│`) goes on when the row below holds nothing in its cells but digits (`92`).
     static func join(_ upper: String, _ lower: String, columns: Int) -> Join? {
         let above = Array(upper), below = Array(lower)
         var end = above.count
@@ -261,11 +279,20 @@ public struct TerminalTextRows {
         if end == above.count, upper.reduce(0, { $0 + TerminalStyledTail.cellWidth($1) }) >= columns { return Join() }
         var start = end
         while start > 0, isPathCharacter(above[start - 1]) { start -= 1 }
-        guard start < end, isUnfinished(String(above[start..<end])) else { return nil }
+        guard start < end else { return nil }
         var lead = 0
         while lead < below.count, isMargin(below[lead]) { lead += 1 }
         guard lead < below.count, isPathCharacter(below[lead]) else { return nil }
+        if isUnfinished(String(above[start..<end])) { return Join(trailing: above.count - end, leading: lead) }
+        let inCell = above[end...].contains(where: isBorder) && above[end - 1].isNumber
+        let digits = below[lead...].prefix { $0.isNumber }
+        guard inCell, !digits.isEmpty, below[(lead + digits.count)...].allSatisfy(isMargin) else { return nil }
         return Join(trailing: above.count - end, leading: lead)
+    }
+
+    /// A box-drawing character: a table's or a TUI's border.
+    private static func isBorder(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { (0x2500...0x257F).contains($0.value) }
     }
 
     /// Blank cells and a TUI's borders and scrollbars (box drawing, block elements).

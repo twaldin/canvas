@@ -327,7 +327,9 @@
           "properties": {
             "kind": { "const": "terminal" },
             "object": { "$ref": "#/definitions/Id" },
-            "text": { "type": "string" }
+            "text": { "type": "string" },
+            "part": { "enum": ["selection", "rows", "command"], "default": "selection", "description": "what `text` is: the user's selection; the screen rows around a Hyper-click, the clicked row marked `> ` and the others indented two spaces; or one command's output (Hyper-click inside it, with Ghostty's shell integration)" },
+            "command": { "$ref": "#/definitions/TerminalCommand", "description": "with part command: what ran (exit and duration only for the shell's last command)" }
           },
           "additionalProperties": false
         },
@@ -412,7 +414,18 @@
         "title": { "type": "string", "description": "the title the program in the terminal set (OSC 0/2), e.g. Gemini CLI's \"✋ Action Required (glow)\"; absent when none" },
         "program": { "type": "string", "description": "what runs in the terminal's foreground, named the way a person would (`gemini`, `opencode`, `cargo test`); absent at the shell's prompt" },
         "sessionId": { "type": "string" },
-        "lifecycle": { "$ref": "#/definitions/Lifecycle" }
+        "lifecycle": { "$ref": "#/definitions/Lifecycle" },
+        "lastCommand": { "$ref": "#/definitions/TerminalCommand", "description": "the last command the terminal's shell finished (Ghostty's shell integration reports it); absent until one did" }
+      },
+      "additionalProperties": false
+    },
+    "TerminalCommand": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "the command line (its first line), as the shell integration titled the terminal while it ran; for an older block, the prompt row above its output" },
+        "exit": { "type": ["integer", "null"], "description": "exit status; null when the shell didn't report one" },
+        "durationMs": { "type": "integer", "description": "how long it ran" },
+        "finishedAt": { "type": "string", "format": "date-time", "description": "`lastCommand` only" }
       },
       "additionalProperties": false
     },
@@ -557,7 +570,7 @@
       }
     },
     "object.get": {
-      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). To look at an object, `view.render` it.",
+      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. To look at an object, `view.render` it.",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -570,6 +583,7 @@
         "properties": {
           "object": { "$ref": "#/definitions/CanvasObject" },
           "graph": { "type": "object" },
+          "lastCommand": { "$ref": "#/definitions/TerminalCommand", "description": "terminals only: the last command the shell finished, as in `agent.list`" },
           "changes": {
             "type": "object",
             "description": "changes tiles only",
@@ -969,7 +983,7 @@
       "result": { "type": "object", "required": ["agent"], "properties": { "agent": { "$ref": "#/definitions/Agent" } } }
     },
     "agent.read": {
-      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory).",
+      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line (a row that fills the terminal's width and ends in text joins the next). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block: \"last\"`: the output of the last command the terminal's shell finished (from Ghostty's shell-integration prompt marks), with `command` saying what ran. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory).",
       "params": {
         "type": "object",
         "required": ["target"],
@@ -977,7 +991,8 @@
           "target": { "type": "string", "description": "agent name or tile id" },
           "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "tail length; larger values are capped at 2000. With `since`: the last this many lines of the reply (default 2000)" },
           "since": { "const": "prompt", "description": "only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started" },
-          "final": { "type": "boolean", "default": false, "description": "the last answer instead of the screen; takes no `lines` or `since`" }
+          "block": { "const": "last", "description": "the output of the last command the shell finished instead of the tail (its last `lines` lines, default 2000), for a shell at its prompt with the command's output on screen; `unavailable` when there is no such block (no shell integration, a command still running, the view scrolled back). Doesn't combine with `since` or `final`" },
+          "final": { "type": "boolean", "default": false, "description": "the last answer instead of the screen; takes no `lines`, `since` or `block`" }
         },
         "additionalProperties": false
       },
@@ -988,7 +1003,8 @@
           "agent": { "$ref": "#/definitions/Agent" },
           "text": { "type": "string" },
           "lines": { "type": "integer", "description": "number of lines returned" },
-          "truncated": { "type": "boolean", "description": "with `since`: the reply has more lines than returned" }
+          "truncated": { "type": "boolean", "description": "with `since`: the reply has more lines than returned; with `block`: the output has" },
+          "command": { "$ref": "#/definitions/TerminalCommand", "description": "with `block`: the command whose output this is" }
         }
       }
     },

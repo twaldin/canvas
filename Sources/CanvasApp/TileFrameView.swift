@@ -14,6 +14,8 @@ final class TileFrameView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     /// The agent terminal that made the object (`AuthorMark`), small and muted at the right.
     private let authorLabel = NSTextField(labelWithString: "")
+    /// A terminal's last command when it failed or ran long (`exit 1 · 42 s`), right-aligned.
+    private let statusLabel = NSTextField(labelWithString: "")
     private let badge = NSView()
     private let closeButton = TileCloseButton()
     private let card = NSImageView()
@@ -79,6 +81,10 @@ final class TileFrameView: NSView {
         titleBar.addSubview(badge)
         titleBar.addSubview(titleLabel)
         titleBar.addSubview(authorLabel)
+        statusLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        statusLabel.alignment = .right
+        statusLabel.isHidden = true
+        titleBar.addSubview(statusLabel)
         titleBar.addSubview(closeButton)
         addSubview(titleBar)
         addSubview(content)
@@ -171,6 +177,16 @@ final class TileFrameView: NSView {
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
     }
 
+    /// A terminal's last-command status (`TerminalCommand.status`), nil to hide it: quiet
+    /// secondary text, red only for a failure; `detail` is its tooltip.
+    func setStatus(_ status: String?, failed: Bool, detail: String?) {
+        statusLabel.stringValue = status ?? ""
+        statusLabel.textColor = failed ? .systemRed : .secondaryLabelColor
+        statusLabel.toolTip = detail
+        statusLabel.isHidden = status == nil
+        layoutParts()
+    }
+
     /// Puts the title into the labels (also for `view.snapshot` of a window nobody sees).
     func syncTitle() {
         guard titleLabel.stringValue != title else { return }
@@ -196,7 +212,11 @@ final class TileFrameView: NSView {
     }
 
     private func layoutTitle() {
-        let frames = Self.titleFrames(width: bounds.width, title: titleLabel.stringValue, author: author)
+        // A terminal's command status (never on a tile with an author mark) takes the right end.
+        let width = bounds.width
+        let status = statusLabel.isHidden ? 0 : min(statusLabel.fittingSize.width, max(0, width / 3))
+        statusLabel.frame = NSRect(x: width - 32 - status, y: 6, width: status, height: 15)
+        let frames = Self.titleFrames(width: width - (status > 0 ? status + 8 : 0), title: titleLabel.stringValue, author: author)
         titleLabel.frame = frames.title
         authorLabel.isHidden = frames.author == nil
         if let rect = frames.author { authorLabel.frame = rect }

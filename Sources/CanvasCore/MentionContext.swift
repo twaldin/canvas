@@ -41,6 +41,9 @@ public enum MentionContext {
     /// A whole note mention carries the note up to this many lines and characters.
     static let maxNoteLines = 80
     static let maxNoteCharacters = 4000
+    /// Terminal text in a mention: the first and last lines of anything longer (`TerminalExcerpt.trim`).
+    static let terminalHead = 10
+    static let terminalTail = 30
 
     public static func label(for target: MentionTarget, on board: Board) -> String {
         switch target {
@@ -53,24 +56,29 @@ public enum MentionContext {
             // What a person recognizes first; the CSS path last, where the chip truncates.
             var parts = text.map { ["\"\(clip($0, 24))\""] } ?? []
             if let tag = tag(ofSelector: selector) { parts.append(tag) }
-            if let tile = board.objects[object] { parts.append(clip(title(of: tile), 24)) }
+            if let tile = board.objects[object] { parts.append(clip(title(of: tile, on: board), 24)) }
             parts.append(selector)
             return parts.joined(separator: " · ")
-        case .terminal(_, let text):
-            return "terminal \"\(clip(text, 28))\""
+        case .terminal(_, let text, let part, let command):
+            if part == .command {
+                let status = command.flatMap(\.status).map { " · \($0)" } ?? ""
+                return command?.command.map { "$ \(clip($0, 28))\(status)" } ?? "command output\(status)"
+            }
+            let shown = part == .rows ? text.split(separator: "\n").first { $0.hasPrefix(">") }.map { String($0.dropFirst(2)) } ?? text : text
+            return "terminal \"\(clip(shown.trimmingCharacters(in: .whitespaces), 28))\""
         case .group(let objects, let name):
             return name ?? "\(objects.count) objects"
         case .image(_, let path, let x, let y):
             return "\(PathLabel.short(path)) at (\(x), \(y))"
         case .note(let object, let item):
             // Short enough that the chip shows it whole: the item's words matter most.
-            let note = board.objects[object].map { clip(title(of: $0), 14) } ?? object
+            let note = board.objects[object].map { clip(title(of: $0, on: board), 14) } ?? object
             let summary = item.summary
             return "note \(note) › \(summary.isEmpty ? item.kind.noun : clip(summary, 24))"
         case .object(let id):
             guard let object = board.objects[id] else { return id }
-            let name = object.type == .code ? PathLabel.short(title(of: object)) : title(of: object)
-            return "\(object.type.rawValue) \(clip(name, 28))"
+            let name = object.type == .code ? PathLabel.short(title(of: object, on: board)) : title(of: object, on: board)
+            return name == object.type.rawValue ? name : "\(object.type.rawValue) \(clip(name, 28))"
         }
     }
 
@@ -98,9 +106,20 @@ public enum MentionContext {
         case .dom(let object, let url, let selector, let text):
             let textPart = text.map { " \"\(clip($0, 80))\"" } ?? ""
             lines.append("[\(index)] dom \(url) · \(selector)\(textPart) · \(board.objects[object]?.type.rawValue ?? "browser") tile \(object)\(edited)")
-        case .terminal(let object, let text):
-            lines.append("[\(index)] terminal tile \(object)\(terminalName(object, on: board, caller: caller))\(edited)")
-            lines.append(contentsOf: text.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
+        case .terminal(let object, let text, let part, let command):
+            let name = terminalName(object, on: board, caller: caller)
+            switch part {
+            case .selection:
+                lines.append("[\(index)] terminal tile \(object)\(name) · selected text\(edited)")
+            case .rows:
+                lines.append("[\(index)] terminal tile \(object)\(name) · screen rows around the click (> marks it)\(edited)")
+            case .command:
+                var parts = [command?.command.map { "command `\(clip($0, 120))`" } ?? "command output"]
+                if let exit = command?.exit { parts.append("exit \(exit)") }
+                if let duration = command?.durationMs { parts.append(TerminalCommand.duration(duration)) }
+                lines.append("[\(index)] \(parts.joined(separator: " · ")) · output of terminal tile \(object)\(name)\(edited)")
+            }
+            lines.append(contentsOf: terminalLines(part == .rows ? text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : TerminalExcerpt.lines(text)))
         case .group(let objects, let name):
             lines.append("[\(index)] group \(name.map { "\"\($0)\" " } ?? "")of \(objects.count) objects\(edited)")
             for id in objects {
@@ -121,6 +140,11 @@ public enum MentionContext {
                 if object.type == .note, let markdown = object.props["markdown"]?.string {
                     lines.append(contentsOf: noteLines(markdown, of: id))
                 }
+                if object.type == .terminal, let screen = await board.terminalScreen?(id) {
+                    let shown = TerminalExcerpt.lines(screen)
+                    lines.append(shown.isEmpty ? "    (its screen is empty)" : "    its screen now:")
+                    lines.append(contentsOf: terminalLines(shown))
+                }
                 lines.append(contentsOf: await pageLines(under: object, on: board, indent: "    "))
             } else {
                 lines.append("[\(index)] object \(id) (deleted)")
@@ -130,16 +154,35 @@ public enum MentionContext {
         return Resolved(id: mention.id, ref: "canvas:\(mention.id)\(rev)", label: mention.label, summary: lines.joined(separator: "\n"))
     }
 
+    /// The block around the mentions. The closing hint names the calls that read more of what
+    /// was mentioned: `agent.read` for terminals, `get`/`render` for everything else.
     /// `from`/`header`: mentions another agent attached to its `agent.prompt` (`Handoff`) name
     /// the sending terminal in the tag and say who attached them on the first line.
-    public static func render(_ resolved: [Resolved], board: Board, from: ObjectID? = nil, header: String? = nil) -> String {
+    public static func render(_ resolved: [Resolved], board: Board, targets: [MentionTarget] = [], from: ObjectID? = nil, header: String? = nil) -> String {
         guard !resolved.isEmpty else { return "" }
         var out = ["<canvas-mentions board=\"\(board.id)\" root=\"\(board.root.path)\"\(from.map { " from=\"\($0)\"" } ?? "")>"]
         if let header { out.append(header) }
         out.append(contentsOf: resolved.map(\.summary))
-        out.append("Read more with the canvas SDK or CLI: canvas get <id> --as graph; look with canvas render <id>")
+        let terminal = targets.map { target in
+            switch target {
+            case .terminal: true
+            case .object(let id): board.objects[id]?.type == .terminal
+            default: false
+            }
+        }
+        if terminal.contains(false) || targets.isEmpty {
+            out.append("Read more with the canvas SDK or CLI: canvas get <id> --as graph; look with canvas render <id>")
+        }
+        if terminal.contains(true) {
+            out.append("Read more of a terminal: canvas agent.read --target <id> (--block last: its last command's output)")
+        }
         out.append("</canvas-mentions>")
         return out.joined(separator: "\n")
+    }
+
+    /// Terminal text as mention lines: indented, the middle of a long text left out.
+    static func terminalLines(_ lines: [String]) -> [String] {
+        TerminalExcerpt.trim(lines, head: terminalHead, tail: terminalTail).map { "    \($0)" }
     }
 
     /// What a Hyper-click on a drawn object mentions: the whole selection when the object is
@@ -191,7 +234,7 @@ public enum MentionContext {
     static func describe(_ object: CanvasObject, on board: Board, caller: ObjectID? = nil) -> String {
         let author = object.createdBy == .user ? "drawn by user" : "by agent"
         var parts = ["\(object.type.rawValue) \(object.id)"]
-        let title = title(of: object)
+        let title = title(of: object, on: board)
         // A shape's text is the user's note to the agent: all of it.
         if !title.isEmpty { parts.append("\"\(object.type == .shape ? title.replacingOccurrences(of: "\n", with: "\\n") : clip(title, 60))\"") }
         if object.type == .terminal, object.id == caller { parts.append("(your terminal)") }
@@ -246,15 +289,18 @@ public enum MentionContext {
     static func terminalName(_ id: ObjectID, on board: Board, caller: ObjectID?) -> String {
         if id == caller { return " (your terminal)" }
         guard let terminal = board.objects[id] else { return "" }
-        return " \"\(clip(title(of: terminal), 60))\""
+        return " \"\(clip(title(of: terminal, on: board), 60))\""
     }
 
-    static func title(of object: CanvasObject) -> String {
+    static func title(of object: CanvasObject, on board: Board) -> String {
         let props = object.props
         func nonEmpty(_ key: String) -> String? { props[key]?.string.flatMap { $0.isEmpty ? nil : $0 } }
         switch object.type {
-        // The user's own name for it first: what "the fees terminal" means.
-        case .terminal: return nonEmpty("name") ?? nonEmpty("title") ?? props["agent"]?["kind"]?.string ?? "terminal"
+        // The user's own name for it first: what "the fees terminal" means; else what its header
+        // shows (the program running in it, the title it set).
+        case .terminal:
+            return nonEmpty("name") ?? board.terminalLabel?(object.id).flatMap { $0.isEmpty ? nil : $0 } ?? nonEmpty("title")
+                ?? props["agent"]?["kind"]?.string ?? "terminal"
         case .browser: return nonEmpty("title") ?? nonEmpty("pageTitle") ?? props["url"]?.string ?? ""
         case .code: return props["path"]?.string ?? ""
         case .note:
@@ -329,7 +375,7 @@ public enum MentionContext {
         let current = found?.item ?? item
         let range = current.lines.start == current.lines.end ? "line \(current.lines.start)" : "lines \(current.lines.start)-\(current.lines.end)"
         let path = current.headings.isEmpty ? "" : " · in \(current.headings.joined(separator: " › "))"
-        var lines = ["[\(index)] note \(id) \"\(clip(title(of: note), 60))\" · \(current.kind.noun), markdown \(range)\(path)\(edited)"]
+        var lines = ["[\(index)] note \(id) \"\(clip(title(of: note, on: board), 60))\" · \(current.kind.noun), markdown \(range)\(path)\(edited)"]
         switch found {
         case nil: lines.append("    (no longer in the note; as it read when mentioned:)")
         case let found? where !found.unchanged: lines.append("    (changed since it was mentioned; as it reads now:)")

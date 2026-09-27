@@ -61,10 +61,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return await terminal.submit(text)
         }
         router.terminalStatus = { [weak self] board, tile in
-            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return (nil, nil) }
+            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return TerminalStatus() }
             terminal.refreshProgram()
             // Gemini CLI pads its title to a fixed width.
-            return (terminal.oscTitle?.trimmingCharacters(in: .whitespaces), terminal.program)
+            return TerminalStatus(title: terminal.oscTitle?.trimmingCharacters(in: .whitespaces), program: terminal.program, lastCommand: terminal.lastCommand)
+        }
+        router.readTerminalBlock = { [weak self] board, tile in
+            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else {
+                throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window")
+            }
+            return try terminal.lastBlock()
         }
         router.snapshotBoard = { [weak self] board, format in self?.controllers[board.id]?.snapshot(format: format) }
         router.renderView = { [weak self] board, request, format in
@@ -75,12 +81,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         router.openBoard = { [weak self, registry] root, select in
             self?.open(root: root, select: select) ?? registry.open(root: root)
         }
-        router.readTerminal = { _, tile, lines in
+        router.readTerminal = { [weak self] board, tile, lines in
+            // Rows the terminal soft-wrapped join when its tile knows its width.
+            let columns = (self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile)?.columns
             // A blocking subprocess read: keep it on GCD so it can't park Swift's cooperative
             // threads, which the socket servers' request tasks need.
-            await withCheckedContinuation { continuation in
+            return await withCheckedContinuation { continuation in
                 DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(returning: TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines))
+                    continuation.resume(returning: TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines, columns: columns))
                 }
             }
         }

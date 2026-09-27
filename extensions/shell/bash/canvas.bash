@@ -7,6 +7,12 @@
 # claude and codex wrappers. Every run reports the directory as a percent-encoded file URL (OSC 7,
 # as macOS Terminal's own bashrc does), so `path:line` references in the tile resolve against
 # where the user cd'ed.
+#
+# The first run in an interactive shell also loads Ghostty's shell integration (OSC 133 prompt
+# marks: jump to prompt, click to move the cursor, command exit status) from
+# CANVAS_GHOSTTY_INTEGRATION, which the app sets unless the user's Ghostty config says
+# `shell-integration = none`: Ghostty injects it only into shells it starts itself. Its hooks
+# (bash-preexec) install right away rather than at the next prompt, so the first command counts.
 __canvas_url=''
 __canvas_i=0
 while [ "$__canvas_i" -lt "${#PWD}" ]; do
@@ -27,3 +33,13 @@ __canvas_path="${__canvas_path//:$__canvas_bin:/:}"
 __canvas_path="${__canvas_path#:}"
 PATH="$__canvas_bin:${__canvas_path%:}"
 unset __canvas_bin __canvas_path
+if [[ $- == *i* && -n "${CANVAS_GHOSTTY_INTEGRATION-}" && -z "${_ghostty_integration_loaded-}" && -r "$CANVAS_GHOSTTY_INTEGRATION/bash/ghostty.bash" ]] \
+    && ! declare -F __ghostty_precmd >/dev/null; then
+  builtin source "$CANVAS_GHOSTTY_INTEGRATION/bash/ghostty.bash"
+  if declare -F __bp_install >/dev/null && [[ -n "${__bp_install_string-}" ]]; then
+    eval "$__bp_install_string"
+    declare -F _ghostty_precmd >/dev/null && _ghostty_precmd
+    declare -F _ghostty_mark_input >/dev/null && _ghostty_mark_input
+    __bp_interactive_mode
+  fi
+fi

@@ -49,17 +49,46 @@ public struct TerminalTail: Sendable {
     }
 
     public let limit: Int
+    /// The terminal's width: a row that fills it goes on in the next (`joinsNext`), and the two
+    /// read as one line. Nil when unknown: every row is a line.
+    public let columns: Int?
     private var lines: [String] = []
     private var positions: [Int] = []
     /// Lines read so far: the position of the next one.
     private var count = 0
     /// Blank lines since the last non-blank one; they only matter once content follows.
     private var blanks = 0
+    /// The last kept line filled the terminal's width: the next row may continue it.
+    private var wrapping = false
     /// Bytes after the last newline. Split on raw bytes: 0x0A never occurs inside a UTF-8 sequence.
     private var partial = Data()
 
-    public init(limit: Int) {
+    public init(limit: Int, columns: Int? = nil) {
         self.limit = max(1, limit)
+        self.columns = columns.flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    /// Whether `row` (trailing blanks trimmed) is the first part of a line the terminal
+    /// soft-wrapped at `columns` into `next`: it fills the width and ends in text (`fills`), and
+    /// the next row doesn't start with a border (`continues`). A full-width box line or a TUI's
+    /// frame (`│ … │`) stays its own row; a row that happens to end in text at the edge joins,
+    /// which is how it reads.
+    public static func joinsNext(_ row: String, _ next: String, columns: Int) -> Bool {
+        fills(row, columns: columns) && continues(next)
+    }
+
+    static func fills(_ row: String, columns: Int) -> Bool {
+        guard let last = row.last, !isEdge(last) else { return false }
+        return row.reduce(0) { $0 + TerminalStyledTail.cellWidth($1) } == columns
+    }
+
+    static func continues(_ next: String) -> Bool {
+        guard let first = next.first else { return false }
+        return first == " " || !isEdge(first)
+    }
+
+    private static func isEdge(_ character: Character) -> Bool {
+        character.isWhitespace || character.unicodeScalars.allSatisfy { (0x2500...0x259F).contains($0.value) }
     }
 
     public mutating func append(_ bytes: Data) {
@@ -92,13 +121,22 @@ public struct TerminalTail: Sendable {
         var line = String(decoding: bytes, as: UTF8.self)
         guard let last = line.lastIndex(where: { !$0.isWhitespace }) else {
             blanks += 1
+            wrapping = false
             return
         }
         line = String(line[...last])
         if line.unicodeScalars.contains(Self.placeholder) {
+            wrapping = false
             line = Self.replacingImages(in: line)
             // The rows under one image each hold a run of placeholders.
             if blanks == 0, line.trimmingCharacters(in: .whitespaces) == Self.image, lines.last == line { return }
+        } else if let columns {
+            let joins = wrapping && blanks == 0 && !lines.isEmpty && Self.continues(line)
+            wrapping = Self.fills(line, columns: columns)
+            if joins {
+                lines[lines.count - 1] += line
+                return
+            }
         }
         if blanks > 0 {
             let kept = min(blanks, limit)

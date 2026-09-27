@@ -114,7 +114,7 @@ extension Board {
             resolved.append(contentsOf: part)
             let name = group.first?.fromName.map { " \"\($0)\"" } ?? ""
             let header = sender.map { "Attached by terminal \($0)\(name) to its prompt to you (agent.prompt):" } ?? "Attached by a script to its prompt to you (agent.prompt):"
-            blocks.append(MentionContext.render(part, board: self, from: sender, header: header))
+            blocks.append(MentionContext.render(part, board: self, targets: group.map(\.mention.target), from: sender, header: header))
         }
         return (resolved, blocks)
     }

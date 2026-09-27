@@ -58,6 +58,13 @@ final class TerminalTile: NSView, TileContent {
             env["PATH"] = resources.appendingPathComponent("bin").path + ":" + (inherited["PATH"] ?? "/usr/bin:/bin")
             let python = resources.appendingPathComponent("clients/python").path
             env["PYTHONPATH"] = inherited["PYTHONPATH"].map { "\(python):\($0)" } ?? python
+            // Shell integration (extensions/shell): after the user's startup files, Canvas's bin
+            // goes back to the front of PATH so its claude/codex wrappers aren't shadowed.
+            let shell = resources.appendingPathComponent("extensions/shell")
+            env["ZDOTDIR"] = shell.appendingPathComponent("zsh").path
+            if let zdotdir = inherited["ZDOTDIR"] { env["CANVAS_ZSH_ZDOTDIR"] = zdotdir }
+            let bash = ". " + quote([shell.appendingPathComponent("bash/canvas.bash").path])
+            env["PROMPT_COMMAND"] = inherited["PROMPT_COMMAND"].map { "\(bash); \($0)" } ?? bash
         }
         return env
     }

@@ -52,10 +52,36 @@ Every terminal tile's process (inside zmx) gets:
 | `CMUX_SURFACE_ID` | This tile's object id |
 | `CMUX_WORKSPACE_ID` | This board's id |
 | `CMUX_SOCKET_PASSWORD` | Only when the app was launched with it; the cmux socket then requires `auth <password>` |
+| `PATH` | Canvas's `bin/` (`canvas`, and the `claude`/`codex` wrappers) first, then the app's PATH |
+| `ZDOTDIR` | `extensions/shell/zsh`: zsh shell integration (below) |
+| `CANVAS_ZSH_ZDOTDIR` | The user's own `ZDOTDIR`, only when the app's environment had one |
+| `PROMPT_COMMAND` | `. <extensions/shell/bash/canvas.bash>` (before an inherited value): bash shell integration |
 
 Integrations report only when `CANVAS_ENV=1` and the variables they need are present, so they are no-ops outside the app.
 
+Shell integration keeps Canvas's `bin/` first on PATH after the user's startup files, which may prepend directories (e.g. `~/.local/bin`, Claude Code's install location) that would shadow the wrappers. zsh: each startup file in `ZDOTDIR` sources the user's file of the same name with the user's `ZDOTDIR` in place (their files may set their own), and the last one zsh reads re-prepends `bin/`; interactive shells then restore the user's `ZDOTDIR` (unset if they had none), so shells they start are plain zsh. A non-interactive login shell (a tile's `zsh -l -c '<command>; exec zsh -l'`, e.g. resuming an agent) keeps the integration for the command and the shell after it. bash: `canvas.bash` runs before the first prompt, after the user's startup files, as long as they keep an inherited `PROMPT_COMMAND` when setting their own; `bash -l -c` commands and other shells (fish, nushell) resolve `claude`/`codex` with whatever PATH their startup files leave.
+
 zmx session names: `canvas-<tileId>`, labelled `canvas.board=<boardId> canvas.tile=<tileId> canvas.home=<support dir path, every byte outside [A-Za-z0-9._-] as _>` (zmx label values allow only those characters). `canvas.home` names the instance that created the session: board copies in another home (replicas, dev instances) carry the same ids, so `scripts/dev.sh stop` kills only sessions labelled with its own home. Because `zmx attach --labels` relabels a session that already exists, a tile never attaches to or ends a session labelled for another home (`TerminalTile.ownerGuard` runs before `attach` and `kill`): the copy's tile says whose session it is instead of taking it over. `scripts/dev.sh` trusts a `pid` file only while that process owns the home's socket, since a copied home carries the original's pid file. Names stay short because zmx sockets live under `$TMPDIR/zmx-<uid>` (a long `/var/folders/…` path for GUI apps) and a socket path is capped at 104 bytes. Tiles inherit the app's `TMPDIR`, so `zmx list` inside a tile shows canvas sessions. Deleting a terminal ends its session on every path (the UI close, `object.delete`, an `object.batch`, undo of its creation, redo of its delete): `Board.onTerminalsEnded` reports the terminals a step removed once its outermost step closes (a failed batch that put its delete back reports nothing), and the app runs `TerminalTile.killSession(tile:)` for each (owner-guarded). Undoing the delete brings the tile back with a new session (its `command`, or `omp --resume` for a recorded omp session).
+
+## Agent integrations
+
+Claude Code and Codex get omp's integration (`extensions/omp/canvas.ts`) through Canvas's wrappers `bin/claude` and `bin/codex` and one hook script, `extensions/agent-hooks/hook.ts` (`run <claude|codex> <event>`, the agent's hook JSON on stdin). A wrapper execs the next `claude`/`codex` on PATH that is not a Canvas wrapper (any directory beside `extensions/agent-hooks`, so two Canvas installs never recurse), or exits 127 naming the missing binary. It adds the integration only when `CANVAS_ENV=1`, `CANVAS_TILE_ID` and `CANVAS_SOCKET` are set, `CANVAS_AGENT_HOOKS` is not `0` (the opt-out), and `CANVAS_AGENT` is unset; it then exports `CANVAS_AGENT=<kind>`, so an agent started inside that agent (and a second wrapper) runs plain and never reports as the tile's agent. Nothing is written to the user's agent config or repo.
+
+- Claude Code: `claude --plugin-dir extensions/claude …`. The plugin holds `hooks/hooks.json` and `skills/canvas` (a symlink to the shipped skill, listed to Claude as `canvas:canvas`). Claude creates an empty plugin data directory `~/.claude/plugins/data/canvas-inline` the first time.
+- Codex: `codex -c "hooks={…}" …`, printed by `extensions/codex/config.ts`. Codex skips non-managed hooks until their definition is trusted; the override is a session-flags config layer, whose `hooks.state` Codex honors, so it also carries `trusted_hash` for exactly the hooks it defines (key `/<session-flags>/config.toml:<event>:0:0`, hash as in codex-rs `hook_hash`). A Codex that hashes differently lists them under `/hooks` as needing review instead of running them.
+
+| Event (agent) | Canvas call | Notes |
+| --- | --- | --- |
+| `SessionStart` (both) | `agent.report_session` (`kind`, `sessionId`, `sessionPath` = transcript), `agent.report idle` (not after a compaction) | Returns the canvas-awareness block (`extensions/guidance.ts`, shared with omp) as `additionalContext`. Codex starts its session at the first prompt, so a fresh `codex` joins `agent.list` then |
+| `UserPromptSubmit` (both) | `agent.report working`; `tray.drain` with `peek`, then `tray.commit` of those ids after the context was written to the agent | Returns the mentions context as `additionalContext`. Skipped for prompts starting with `/` or `!`. The drain is empty unless this tile is the tray's prompt target |
+| `PermissionRequest` (both), `Notification` `elicitation_dialog` (Claude) | `agent.report blocked` with `approve <tool>?` (or Codex's approval reason) or the MCP server's message | |
+| `PostToolUse` (both, async) | `agent.report working` (an answered approval continues); `follow.report` | Claude: `Read` (range from the result), `Edit`/`MultiEdit`/`NotebookEdit` (first changed line), `Write`. Codex: `apply_patch` (first file, at its first added line), and shell reads `sed -n 'A,Bp' f`, `nl -ba f \| sed -n 'A,Bp'`, `cat f`, `head -n N f`. Not for Claude subagents' calls (`agent_id`) |
+| `Stop` (both), `Interrupt` (Codex), `Notification` `idle_prompt` (Claude) | `agent.report idle` | Claude Code runs no hook when you interrupt a turn (Esc) or deny an approval (the turn ends as interrupted), so its tile keeps `working`/`blocked` until your next prompt; Codex continues after a denial and runs `Stop` |
+| `SessionEnd` (both) | `agent.release` | |
+
+Reports carry `source: "canvas-claude"`/`"canvas-codex"` and `seq` = the hook process's start time in µs, so reports from hooks that finish out of order (async `PostToolUse`) apply in the order the agent fired them. Every call has a 1 s timeout and no reconnect wait, errors are swallowed, the process exits by 2.5 s, and without `bun` on PATH the hook does nothing: Canvas being gone never fails or stalls the agent. Resume: `claude --resume <sessionId>`, `codex resume <sessionId>`.
+
+Codex's `workspace-write` sandbox denies unix-socket connects (`EPERM`, which the CLI reports as `unavailable`), so the model's own `canvas` commands need escalated permissions; Codex offers no narrower grant than turning the sandbox's network on (`sandbox_workspace_write.network_access`, or a permission profile's `network.unix_sockets`, which enables all network), and the wrapper leaves the user's sandbox choice alone. The awareness block tells Codex to run canvas commands escalated. Hooks run outside the sandbox and are unaffected.
 
 ## Client connection
 
@@ -78,7 +104,8 @@ The app writes replies and events through a per-connection queue, in order, and 
 | `<board root>/.canvas/board.json` | `board.export` snapshot (default path), for committing with the repo | Written on request only |
 | `clients/python/canvas_sdk/builtin_compositions/`, `clients/ts/src/builtin_compositions/` | Shipped compositions, installed with each client (wheel, bundle, checkout) | Canvas |
 | `~/.canvas/compositions/` | The user's and agents' own compositions; searched first, so they shadow shipped ones | User/agents |
-| `skills/canvas/` (repo, or the bundle's `Resources/`) | The shipped agent skill; the omp extension announces it only when `CANVAS_ENV=1` | Canvas |
+| `skills/canvas/` (repo, or the bundle's `Resources/`) | The shipped agent skill; the agent integrations offer it only when `CANVAS_ENV=1` (omp and Codex: announced with its path; Claude Code: the plugin's `canvas:canvas` skill) | Canvas |
+| `extensions/` (repo, or the bundle's `Resources/`) | Agent integrations: `omp/canvas.ts`, `claude/` (plugin), `codex/config.ts`, `agent-hooks/` (hook script, wrapper helpers), `guidance.ts` (the shared awareness block), `shell/` (zsh/bash integration) | Canvas |
 
 ## Compositions
 
@@ -260,7 +287,7 @@ All git in the app runs through `GitRunner.shared` (CanvasCore), which caps conc
 ## Lifecycle authority
 
 - The omp extension is authoritative for omp tiles (`source: "canvas-omp"`).
-- Claude Code and Codex hook scripts report with `source: "canvas-claude"` / `"canvas-codex"`.
+- The Claude Code and Codex hooks ("Agent integrations") report with `source: "canvas-claude"` / `"canvas-codex"`.
 - A report with a lower `seq` than the last accepted one from the same source is ignored.
 - `done` is derived by the app: an `idle` report on a tile that has not been seen since it was last `working`.
 

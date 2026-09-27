@@ -5,10 +5,10 @@
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
 //  - provides the shipped `canvas` skill (skills/canvas) to the agent, only inside Canvas
 // Load explicitly with `omp -e /path/to/canvas.ts`, or install into ~/.omp/agent/extensions.
-import { readFileSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { CanvasClient } from "../../clients/ts/src/index";
+import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-omp";
 const IDLE_DEBOUNCE_MS = 250;
@@ -21,7 +21,7 @@ export default function canvas(pi: ExtensionAPI): void {
   const tile = process.env.CANVAS_TILE_ID;
   if (process.env.CANVAS_ENV !== "1" || !tile || !process.env.CANVAS_SOCKET) return;
 
-  const guidance = canvasGuidance(tile);
+  const guidance = canvasGuidance("omp", tile);
 
   // Short timeouts: a missing, wedged, or restarting app must never stall the user's prompt.
   const client = new CanvasClient({ timeoutMs: 1500, reconnectTimeoutMs: 0 });
@@ -182,30 +182,4 @@ export default function canvas(pi: ExtensionAPI): void {
     const range = typeof start === "number" && start > 0 ? { start, end: typeof end === "number" && end >= start ? end : start } : undefined;
     void quietly(client.api.follow.report({ tile: tile!, path: absolute, range, action }));
   }
-}
-
-/** The skill shipped with Canvas, next to this extension. */
-const SKILL_PATH = resolve(import.meta.dir, "../../skills/canvas/SKILL.md");
-
-/** System-prompt text for a Canvas tile. The shipped skill is announced the way omp lists
- * skills (name + description) and read on demand from its absolute path: omp's skill discovery
- * isn't extensible from an extension, and global skill config would leak outside Canvas.
- * The connection values are spelled out because omp starts its eval Python kernel with an
- * allowlisted environment (PATH, HOME, PYTHONPATH, LC_/XDG_/PI_ …) that drops CANVAS_*. */
-function canvasGuidance(tile: string): string {
-  const description = /^description:\s*(.+)$/m.exec(readFileSync(SKILL_PATH, "utf8"))?.[1]?.trim() ?? "";
-  const socket = process.env.CANVAS_SOCKET ?? "";
-  const board = process.env.CANVAS_BOARD_ID ?? "";
-  return [
-    `You are running in a Canvas terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>.`,
-    "Canvas provides this skill for the session (not reachable through skill://):",
-    "<skills>",
-    `- canvas: ${description}`,
-    "</skills>",
-    `Before reading or changing the canvas, or when the user refers to things on it, you MUST read ${SKILL_PATH} with the read tool. Its relative references (e.g. references/html-explainers.md) live in ${dirname(SKILL_PATH)}/.`,
-    "When your answer is something the user will come back to (a plan, a walkthrough across several files, a comparison), put it on the canvas or offer to; one-off answers stay in the terminal.",
-    `Canvas connection: CANVAS_SOCKET=${socket} CANVAS_TILE_ID=${tile} CANVAS_BOARD_ID=${board}. The bash tool inherits these; the eval Python kernel does not, so connect there explicitly:`,
-    `  from canvas_sdk import connect; canvas = connect(socket=${JSON.stringify(socket)}, tile=${JSON.stringify(tile)}, board=${JSON.stringify(board)})`,
-    "Subprocesses started from eval (e.g. the `canvas` CLI) need those three variables in their env.",
-  ].join("\n");
 }

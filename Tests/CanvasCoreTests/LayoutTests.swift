@@ -275,13 +275,47 @@ final class LayoutApiTests {
         let measured = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19, caption: "why")])))
         #expect(code.frame.w == Double(measured.width) && code.frame.h == Double(measured.height))
         // The body under the title bar holds the header, the caption strip, and the range's ten rows: nothing more.
-        #expect(RenderMath.body(code.frame).height == CodeMetrics.headerHeight + CodeMetrics.captionHeight + 2 * CodeMetrics.verticalPadding + 10 * CodeMetrics.rowHeight)
+        #expect(RenderMath.body(of: code).height == CodeMetrics.headerHeight + CodeMetrics.captionHeight + 2 * CodeMetrics.verticalPadding + 10 * CodeMetrics.rowHeight)
         let createdNote = try await result("object.create", .object(["type": "note", "props": .object(["markdown": "# Title\n\nBody"]), "frame": .object(["x": 0, "y": 400, "w": 300]), "size": "fit"]))
         let note = try board.object(try #require(createdNote["object"]?["id"]?.string))
         let noteSize = Self.size(try await result("object.measure", .object(["type": "note", "props": .object(["markdown": "# Title\n\nBody"]), "width": 300])))
         #expect(note.frame.h == Double(noteSize.height))
         let lane = board.create(type: .group, props: .object(["members": .array([.string(code.id)]), "padding": 24]))
         #expect(lane.frame.maxY == code.frame.maxY + 24, "the padding starts where the tile's drawn box ends")
+    }
+
+    @Test func scaledTilesLayOutAtTheirNaturalSizeAndReportCanvasPoints() async throws {
+        let scaled = Self.code(10, 19).merging(.object(["scale": 2]))
+        let natural = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19)])))
+        let measured = Self.size(try await result("object.measure", .object(["type": "code", "props": scaled])))
+        #expect(measured == CGSize(width: natural.width * 2, height: natural.height * 2))
+        // 600 canvas points at 2× wrap like a 300-point tile: line 12's 64 columns still take 3 rows.
+        let wide = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(1, 30).merging(.object(["scale": 2])), "width": 600])))
+        let narrow = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(1, 30), "width": 300])))
+        #expect(wide == CGSize(width: narrow.width * 2, height: narrow.height * 2))
+
+        let created = try await result("object.create", .object(["type": "code", "props": scaled, "frame": .object(["x": 0, "y": 0]), "size": "fit"]))
+        let fit = try board.object(try #require(created["object"]?["id"]?.string))
+        #expect(fit.frame.w == Double(measured.width) && fit.frame.h == Double(measured.height))
+
+        let tiny = board.create(type: .code, props: Self.code(1, 30).merging(.object(["scale": 2])), frame: Frame(x: 0, y: 600, w: 600, h: 200))
+        let report = try await result("layout.check", .object(["ids": .array([.string(tiny.id)])]))
+        let overflow = try #require(report["overflow"]?.array?.first { $0["id"] == .string(tiny.id) })
+        #expect(overflow["x"]?.number == 0)
+        #expect(overflow["y"]?.number == 2 * (Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - 100))
+    }
+
+    @Test func scaleIsClampedAndOnlyTilesAndTextTakeIt() {
+        #expect(ObjectScale.of(.object([:])) == 1)
+        #expect(ObjectScale.of(.object(["scale": 100])) == ObjectScale.range.upperBound)
+        #expect(ObjectScale.of(.object(["scale": .number(0.01)])) == ObjectScale.range.lowerBound)
+        #expect(ObjectScale.of(.object(["scale": .number(-2)])) == 1 && ObjectScale.of(.object(["scale": "2"])) == 1)
+        let rect = board.create(type: .shape, props: .object(["kind": "rect", "scale": 2]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
+        let text = board.create(type: .shape, props: .object(["kind": "text", "text": "hi", "scale": 2]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
+        let note = board.create(type: .note, props: .object(["markdown": "n", "scale": 2]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
+        #expect(rect.scale == 1 && text.scale == 2 && note.scale == 2)
+        #expect(note.naturalFrame == Frame(x: 0, y: 0, w: 200, h: 150))
+        #expect(ObjectScale.rescaled(note.frame, from: 2, to: 0.5) == Frame(x: 0, y: 0, w: 100, h: 75), "the natural size is kept, top-left fixed")
     }
 
     @Test func captionsWidenMeasureAndTruncatedCaptionsAreReported() async throws {
@@ -621,6 +655,11 @@ struct LayoutBoardTests {
         // A caption strip moves the rows down.
         let captioned: JSONValue = .object(["path": "src.txt", "caption": "why", "range": .object(["start": 10, "end": 19])])
         #expect(CodeMetrics.lineY(line: 10, frame: fit, props: captioned, rows: nil) == 100 + middle(ofRow: 0, scroll: 0) + CodeMetrics.captionHeight)
+        // At 2× in a frame twice the size, the tile shows the same rows, twice as far down.
+        let scaled: JSONValue = .object(["path": "src.txt", "scale": 2, "range": .object(["start": 10, "end": 19])])
+        let doubled = Frame(x: 0, y: 50, w: 800, h: tall.h * 2)
+        #expect(CodeMetrics.lineY(line: 10, frame: doubled, props: scaled, rows: nil) == 50 + 2 * middle(ofRow: 3, scroll: 0))
+        #expect(CodeMetrics.lineY(line: 99, frame: doubled, props: scaled, rows: nil) == 50 + CGFloat(doubled.h))
     }
 
     @Test func lineAnchorsBelowAWrappedLineLandOnTheirVisualRow() {

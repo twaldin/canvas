@@ -32,7 +32,9 @@ extension CanvasView {
             for id in ids {
                 guard var frame = outline(of: id) else { continue }
                 if let object = board.objects[id], let render = renders[id], request.full {
-                    frame = RenderMath.extended(frame, body: RenderMath.body(object.frame), content: render.image?.size ?? render.contentSize)
+                    // Grown in the tile's own points, then scaled like the tile.
+                    let grown = RenderMath.extended(object.naturalFrame, body: RenderMath.body(of: object), content: render.image?.size ?? render.contentSize)
+                    frame = Frame(x: frame.x, y: frame.y, w: grown.w * object.scale, h: grown.h * object.scale)
                 }
                 outlines[id] = frame
             }
@@ -67,11 +69,14 @@ extension CanvasView {
 
         var drawn: [RenderedObject] = []
         func record(_ object: CanvasObject, _ frame: Frame, _ render: TileRender? = nil) {
-            let body = RenderMath.body(object.frame)
+            // Tiles lay out in their own points; the report is in canvas points, like `frame`.
+            let tileScale = CGFloat(object.scale), natural = RenderMath.body(of: object)
+            let body = CGSize(width: natural.width * tileScale, height: natural.height * tileScale)
+            let content = render.map { CGSize(width: $0.contentSize.width * tileScale, height: $0.contentSize.height * tileScale) }
             drawn.append(RenderedObject(
                 id: object.id, type: object.type, pixelRect: RenderMath.pixelRect(frame, in: region, scale: scale),
                 state: render?.state ?? .rendered, reason: render?.reason,
-                contentSize: render?.contentSize, overflow: render.flatMap { RenderMath.overflow(content: $0.contentSize, body: body) }))
+                contentSize: content, overflow: content.flatMap { RenderMath.overflow(content: $0, body: body) }))
         }
 
         NSGraphicsContext.saveGraphicsState()
@@ -99,7 +104,13 @@ extension CanvasView {
             @MainActor func paint(_ object: CanvasObject) {
                 guard let render = renders[object.id] else { return }
                 let frame = outlines[object.id] ?? object.frame
-                drawTile(object, render: render, in: NSRect(x: frame.x + origin.x, y: frame.y + origin.y, width: frame.w, height: frame.h))
+                // Chrome and content in the tile's own points, magnified by its scale.
+                let tileScale = CGFloat(object.scale)
+                cg.saveGState()
+                cg.translateBy(x: frame.x + origin.x, y: frame.y + origin.y)
+                cg.scaleBy(x: tileScale, y: tileScale)
+                drawTile(object, render: render, in: NSRect(x: 0, y: 0, width: frame.w / tileScale, height: frame.h / tileScale))
+                cg.restoreGState()
                 record(object, frame, render)
             }
             for object in tiled where !extended.contains(object.id) { paint(object) }
@@ -147,9 +158,10 @@ extension CanvasView {
         group.frame.w > 0 && group.frame.h > 0 ? CanvasView.docRect(group.frame) : nil
     }
 
+    /// A tile's content at its natural size, at enough pixels per point for its scale.
     private func tileJob(_ id: ObjectID, scale: Double, full: Bool, appearance: NSAppearance) -> TileJob? {
         guard let object = board.objects[id], let tile = tiles[id] else { return nil }
-        let request = TileRenderRequest(size: RenderMath.body(object.frame), scale: scale, full: full, appearance: appearance)
+        let request = TileRenderRequest(size: RenderMath.body(of: object), scale: scale * object.scale, full: full, appearance: appearance)
         return TileJob(object: object, content: tile.content, request: request)
     }
 

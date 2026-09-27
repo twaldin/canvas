@@ -110,6 +110,7 @@ final class CanvasView: NSScrollView {
     let board: Board
     let document = CanvasDocumentView(frame: NSRect(x: 0, y: 0, width: CanvasDocumentView.extent, height: CanvasDocumentView.extent))
     let overlay = SceneOverlay(frame: NSRect(x: 0, y: 0, width: CanvasDocumentView.extent, height: CanvasDocumentView.extent))
+    private let attention = AttentionLayer()
     private let edges = AttentionEdgeView()
     private let grid = CanvasGrid()
     private(set) var tiles: [ObjectID: TileFrameView] = [:]
@@ -124,7 +125,6 @@ final class CanvasView: NSScrollView {
     private var livenessScheduled = false
     private var geometryDirty = false
     private var magnifying = false
-    private var appliedScale: CGFloat = 0
     private var move: MoveGesture?
     private var marquee: MarqueeGesture?
     /// A press on a drawn object is tracked here (the event never reaches a view).
@@ -188,6 +188,7 @@ final class CanvasView: NSScrollView {
         maxMagnification = 1.0
         drawsBackground = false
         addSubview(grid, positioned: .below, relativeTo: contentView)
+        addSubview(attention)
         addSubview(edges)
         edges.onReveal = { [weak self] id in self?.reveal(id) }
         contentView.postsBoundsChangedNotifications = true
@@ -211,6 +212,7 @@ final class CanvasView: NSScrollView {
 
     override func tile() {
         super.tile()
+        attention.frame = bounds
         edges.frame = bounds
         grid.frame = bounds
         updateGrid()
@@ -276,8 +278,7 @@ final class CanvasView: NSScrollView {
             if object.type == .group {
                 groups[object.id]?.update(object)
             } else if let tile = tiles[object.id] {
-                let rect = Self.docRect(object.frame)
-                if tile.frame != rect { tile.frame = rect }
+                tile.place(Self.docRect(object.frame), scale: CGFloat(object.scale))
                 let restacks = tile.z != object.z
                 tile.update(object)
                 if restacks { restack() }
@@ -307,8 +308,10 @@ final class CanvasView: NSScrollView {
             terminal.onTitle = { [weak self] title in self?.tiles[id]?.setTitle(title) }
         }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
-        tile.onFrameCommit = { [weak self] rect in
-            _ = try? self?.board.update(id, frame: Self.canvasFrame(rect))
+        tile.onFrameCommit = { [weak self] rect, scale in
+            guard let self, let object = self.board.objects[id] else { return }
+            let props: JSONValue? = scale == CGFloat(object.scale) ? nil : .object(["scale": Self.scaleProp(Double(scale))])
+            _ = try? self.board.update(id, frame: Self.canvasFrame(rect), props: props)
         }
         tile.onResizing = { [weak self] in self?.objectsMoved() }
         tile.onClose = { [weak self] in self?.delete([id]) }
@@ -324,7 +327,7 @@ final class CanvasView: NSScrollView {
         if object.type != .terminal, object.type != .browser, !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
         document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
         tiles[id] = tile
-        tile.zoomedOut = appliedScale > 0 && appliedScale < Self.liveThreshold
+        tile.zoomedOut = magnification * tile.scale < Self.liveThreshold
         if object.type == .terminal { lifecycleChanged(object) }
         scheduleLiveness()
     }
@@ -341,8 +344,8 @@ final class CanvasView: NSScrollView {
         groups[id] = view
     }
 
-    /// Orders document subviews: group regions, tiles by `z`, the drawing layer, attention
-    /// markers, then the overlay. Reorders in place so tiles never leave the window.
+    /// Orders document subviews: group regions, tiles by `z`, the drawing layer, then the
+    /// overlay. Reorders in place so tiles never leave the window.
     private func restack() {
         document.sortSubviews({ a, b, _ in
             MainActor.assumeIsolated {
@@ -356,13 +359,12 @@ final class CanvasView: NSScrollView {
         switch view {
         case is GroupView: (0, 0)
         case let tile as TileFrameView: (1, tile.z)
-        case is AttentionMarker: (3, 0)
         case is SceneOverlay: (4, 0)
         default: (2, 0)
         }
     }
 
-    /// The drawing layer sits above tiles and below markers and the overlay.
+    /// The drawing layer sits above tiles and below the overlay.
     func installShapeLayer(_ view: NSView) {
         shapeLayer = view
         document.addSubview(view, positioned: .below, relativeTo: overlay)
@@ -768,10 +770,50 @@ final class CanvasView: NSScrollView {
         menu.addItem(MenuAction.item("Bring to Front") { [weak self] in self?.bringToFront() })
         menu.addItem(MenuAction.item("Send to Back") { [weak self] in self?.sendToBack() })
         menu.addItem(.separator())
+        if let scale = scaleMenu() { menu.addItem(scale) }
         menu.addItem(MenuAction.item("Group Selection", enabled: expandedSelection().count >= 2) { [weak self] in self?.groupSelection() })
         menu.addItem(.separator())
         menu.addItem(MenuAction.item(count > 1 ? "Copy Object IDs" : "Copy Object ID") { [weak self] in self?.copyIDs() })
         return menu
+    }
+
+    /// Scale presets and Reset for the selected tiles and text shapes (a preset is checked when
+    /// they all show it); nil when nothing selected scales.
+    private func scaleMenu() -> NSMenuItem? {
+        let scalable = selection.compactMap { board.objects[$0] }.filter { ObjectScale.applies(to: $0.type, props: $0.props) }
+        guard !scalable.isEmpty else { return nil }
+        let current = Set(scalable.map(\.scale))
+        func percent(_ scale: Double) -> String { "\(Int((scale * 100).rounded()))%" }
+        let submenu = NSMenu()
+        for preset in ObjectScale.presets {
+            let item = MenuAction.item(percent(preset)) { [weak self] in self?.scaleSelection(to: preset) }
+            item.state = current == [preset] ? .on : .off
+            submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        submenu.addItem(MenuAction.item("Reset to 100%", enabled: current != [1]) { [weak self] in self?.scaleSelection(to: 1) })
+        submenu.addItem(MenuAction.item("⌥-drag a corner to scale freely", enabled: false) {})
+        let title = current.count == 1 && current != [1] ? "Scale (\(percent(current.first!)))" : "Scale"
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        return item
+    }
+
+    /// Sets the selected tiles' and text shapes' `props.scale`, resizing each around its top-left
+    /// corner so its content keeps its layout, as one undo step.
+    func scaleSelection(to scale: Double) {
+        let objects = selection.compactMap { board.objects[$0] }.filter { ObjectScale.applies(to: $0.type, props: $0.props) && $0.scale != scale }
+        guard !objects.isEmpty else { return }
+        board.transaction {
+            for object in objects {
+                _ = try? board.update(object.id, frame: ObjectScale.rescaled(object.frame, from: object.scale, to: scale), props: .object(["scale": Self.scaleProp(scale)]))
+            }
+        }
+    }
+
+    /// `props.scale` as written: 1 removes it.
+    static func scaleProp(_ scale: Double) -> JSONValue {
+        scale == 1 ? .null : .number(scale)
     }
 
     private func groupMenu(for id: ObjectID) -> NSMenu {
@@ -890,7 +932,7 @@ final class CanvasView: NSScrollView {
                 self?.clearAttention(id)
                 self?.select(id, extend: false)
             }
-            document.addSubview(marker, positioned: .below, relativeTo: overlay)
+            attention.addSubview(marker)
             markers[id] = marker
         }
         layoutMarkers()
@@ -905,10 +947,15 @@ final class CanvasView: NSScrollView {
         return true
     }
 
+    /// Markers live in window space: re-placed on every pan and pinch step (`boundsChanged`) and
+    /// whenever objects move, around their object's rect as it is on screen now.
     private func layoutMarkers() {
+        let visible = attention.bounds
         for marker in markers.values {
             guard let rect = docFrame(marker.objectID) else { continue }
-            marker.place(around: rect)
+            let shown = attention.convert(rect, from: document)
+            marker.isHidden = !shown.insetBy(dx: -60, dy: -60).intersects(visible)
+            if !marker.isHidden { marker.place(around: shown) }
         }
     }
 
@@ -991,8 +1038,9 @@ final class CanvasView: NSScrollView {
     // MARK: Scene pass (zoom LOD, offscreen culling, chevrons, seen)
 
     @objc private func boundsChanged() {
-        // Every pan and pinch step, not coalesced: the grid is one layer move.
+        // Every pan and pinch step, not coalesced: the grid is one layer move, markers a few.
         updateGrid()
+        layoutMarkers()
         board.activity.viewportChanged(viewport, actor: viewportMover, rev: board.revision)
         scheduleActivitySettle()
         scheduleLiveness()
@@ -1060,10 +1108,9 @@ final class CanvasView: NSScrollView {
         // Mid-pinch, LOD flips wait for the gesture to end.
         if !magnifying {
             let scale = magnification
-            for tile in tiles.values { tile.setLive(shouldBeLive(tile, scale: scale)) }
-            if scale != appliedScale {
-                appliedScale = scale
-                for tile in tiles.values { tile.zoomedOut = scale < Self.liveThreshold }
+            for tile in tiles.values {
+                tile.setLive(shouldBeLive(tile, scale: scale))
+                tile.zoomedOut = scale * tile.scale < Self.liveThreshold
             }
         }
         updateEdges()
@@ -1071,11 +1118,12 @@ final class CanvasView: NSScrollView {
         updateContentInView()
     }
 
-    /// Live: readable at `scale` and near the viewport; a live tile stays live a little further
-    /// out and zoomed out (hysteresis), so small pans and zooms don't swap it back and forth.
+    /// Live: readable at `scale` (a scaled-up tile's content is bigger on screen, so it stays live
+    /// further out) and near the viewport; a live tile stays live a little further out and zoomed
+    /// out (hysteresis), so small pans and zooms don't swap it back and forth.
     private func shouldBeLive(_ tile: TileFrameView, scale: CGFloat) -> Bool {
         let margin = tile.isLive ? Self.cardMargin : Self.liveMargin
-        let readable = scale >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
+        let readable = scale * tile.scale >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
         return readable && tile.frame.intersects(documentVisibleRect.insetBy(dx: -margin, dy: -margin))
     }
 

@@ -22,8 +22,8 @@ final class TileFrameView: NSView {
     private(set) var z: Double = 0
     private var lifecycleState: String?
 
-    /// Called with the new canvas-space frame when a resize ends.
-    var onFrameCommit: ((NSRect) -> Void)?
+    /// Called with the new canvas-space frame and scale when a resize or ⌥-drag scale ends.
+    var onFrameCommit: ((NSRect, CGFloat) -> Void)?
     /// Live resize, so the canvas can keep rings and groups around the tile.
     var onResizing: (() -> Void)?
     var onClose: (() -> Void)?
@@ -34,12 +34,17 @@ final class TileFrameView: NSView {
     var onTitleDoubleClick: (() -> Void)?
     var onMenu: (() -> NSMenu?)?
 
-    private var resizeStart: (mouse: NSPoint, frame: NSRect)?
+    private var resizeStart: (mouse: NSPoint, frame: NSRect, scale: CGFloat, scaling: Bool)?
+    /// The object's `props.scale`: title bar and content drawn this many times their natural
+    /// size. The view's bounds are its natural size (frame ÷ scale), so everything inside lays
+    /// out, hit-tests, and converts coordinates in the tile's own points.
+    private(set) var scale: CGFloat = 1
     private var moving = false
 
     init(object: CanvasObject, content: any TileContent, frame: NSRect) {
         objectID = object.id
         self.content = content
+        scale = CGFloat(object.scale)
         super.init(frame: frame)
         wantsLayer = true
         layer?.cornerRadius = 8
@@ -74,7 +79,7 @@ final class TileFrameView: NSView {
         cardTint.isHidden = true
         addSubview(cardTint)
         update(object)
-        layoutParts()
+        applyScale()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -82,7 +87,27 @@ final class TileFrameView: NSView {
     nonisolated override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func resizeSubviews(withOldSize oldSize: NSSize) {
+    /// Layout happens in `applyScale`, once the bounds match the new frame.
+    override func resizeSubviews(withOldSize oldSize: NSSize) {}
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        applyScale()
+    }
+
+    /// Moves and scales the tile in one step, so its content never lays out at a size in between.
+    func place(_ rect: NSRect, scale: CGFloat) {
+        let rescaled = scale != self.scale
+        self.scale = scale
+        if frame != rect { frame = rect }
+        if rescaled { applyScale() }
+    }
+
+    /// Bounds are the natural size, so the layer (radius and border included) and everything in
+    /// it draw magnified by `scale`.
+    private func applyScale() {
+        let natural = NSSize(width: frame.width / scale, height: frame.height / scale)
+        if bounds.size != natural { setBoundsSize(natural) }
         layoutParts()
     }
 
@@ -93,7 +118,7 @@ final class TileFrameView: NSView {
         closeButton.frame = NSRect(x: width - 28, y: 3, width: 22, height: 20)
         titleLabel.frame = NSRect(x: 26, y: 5, width: max(0, width - 60), height: 16)
         let body = NSRect(x: 0, y: Self.titleHeight, width: width, height: max(0, bounds.height - Self.titleHeight))
-        content.frame = body
+        if content.frame != body { content.frame = body }
         card.frame = body
         cardTitle.frame = body.insetBy(dx: 12, dy: body.height / 3)
         cardTint.frame = bounds
@@ -274,7 +299,11 @@ final class TileFrameView: NSView {
 
     // MARK: Move / resize
 
-    private var resizeGrip: NSRect { NSRect(x: bounds.width - 16, y: bounds.height - 16, width: 16, height: 16) }
+    /// The bottom-right corner: drag resizes, ⌥-drag scales. 16 canvas points at any tile scale.
+    private var resizeGrip: NSRect {
+        let size = 16 / scale
+        return NSRect(x: bounds.width - size, y: bounds.height - size, width: size, height: size)
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
@@ -286,7 +315,7 @@ final class TileFrameView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         if resizeGrip.contains(convert(event.locationInWindow, from: nil)) {
-            resizeStart = (event.locationInWindow, frame)
+            resizeStart = (event.locationInWindow, frame, scale, event.modifierFlags.contains(.option))
         } else if event.clickCount == 2 {
             onTitleDoubleClick?()
         } else {
@@ -298,10 +327,20 @@ final class TileFrameView: NSView {
     override func mouseDragged(with event: NSEvent) {
         if moving { return onMoveDragged?(event) ?? () }
         guard let start = resizeStart, let superview else { return }
-        let scale = superview.convert(NSSize(width: 1, height: 1), from: nil).width
-        let dx = (event.locationInWindow.x - start.mouse.x) * scale
-        let dy = (event.locationInWindow.y - start.mouse.y) * scale
-        setFrameSize(NSSize(width: max(160, start.frame.width + dx), height: max(80 + Self.titleHeight, start.frame.height - dy)))
+        let perPoint = superview.convert(NSSize(width: 1, height: 1), from: nil).width
+        let dx = (event.locationInWindow.x - start.mouse.x) * perPoint
+        let dy = (start.mouse.y - event.locationInWindow.y) * perPoint
+        let w = start.frame.width, h = start.frame.height
+        if start.scaling {
+            // The drag projected on the diagonal: the tile keeps its proportions and its content
+            // its layout, magnified with it.
+            let ratio = ((w + dx) * w + (h + dy) * h) / max(w * w + h * h, 1)
+            let scale = min(max(start.scale * ratio, ObjectScale.range.lowerBound), ObjectScale.range.upperBound)
+            let applied = scale / start.scale
+            place(NSRect(origin: start.frame.origin, size: NSSize(width: w * applied, height: h * applied)), scale: scale)
+        } else {
+            setFrameSize(NSSize(width: max(160 * scale, w + dx), height: max((80 + Self.titleHeight) * scale, h + dy)))
+        }
         onResizing?()
     }
 
@@ -309,8 +348,8 @@ final class TileFrameView: NSView {
         if moving {
             moving = false
             onMoveEnded?(event)
-        } else if let start = resizeStart, start.frame != frame {
-            onFrameCommit?(frame)
+        } else if let start = resizeStart, start.frame != frame || start.scale != scale {
+            onFrameCommit?(frame, scale)
         }
         resizeStart = nil
     }

@@ -26,6 +26,7 @@ Error codes: `not_found` (no such object/agent/board), `conflict` (stale `rev`: 
 - `frame` is `{x, y, w, h}` in canvas points (100% zoom): the whole box the object draws. A tile's 26 pt title bar is inside its frame, at the top. Omit it on create for automatic placement beside your terminal.
 - `props` on `object.update` merge shallowly: `{"range": …}` replaces `range` and keeps other props. Set a prop to `null` to clear it.
 - Every change bumps `rev`. Pass `rev` on updates to objects the user may be editing.
+- `props.scale` on any tile or text shape (0.25–8, default 1) magnifies what it draws: a tile lays out at frame ÷ scale (a 1200×800 tile at scale 2 shows what a 600×400 one does, twice as big), a text shape's font scales. Measure, fit, `layout.check`, `view.render` sizes, and line anchors account for it; everything you get back is in canvas points.
 - Terminal tiles: `{"cwd": "/path", "command": ["omp"]}` starts an agent in a new tile (its session survives app restarts). Only start agents the user asked for.
 
 ## Layout

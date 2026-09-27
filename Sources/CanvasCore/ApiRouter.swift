@@ -824,8 +824,8 @@ public final class ApiRouter {
             .filter { scope?.contains($0.id) ?? true }
             .filter { $0.type == .code && $0.props["followOf"]?.string == nil || $0.type == .note || ($0.type == .shape && ShapeSpec($0.props)?.kind == .text) }
             .sorted { $0.id < $1.id }
-        // Code: the rows' own extent, wrapped at the frame's width (so only the height can
-        // overflow); a caption too long for the frame is `truncated`, not overflow.
+        // Code: the rows' own extent, wrapped at the frame's (natural) width, so only the height
+        // can overflow, scaled like the tile; a caption too long for the frame is `truncated`.
         let code = measurable.filter { $0.type == .code }
         let (report, codeSizes, captionMissing) = await offPool { [scope] in
             var sizes: [ObjectID: CGSize] = [:]
@@ -833,9 +833,11 @@ public final class ApiRouter {
             for object in code {
                 guard let excerpt = excerpts[object.id] else { continue }
                 let caption = object.props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-                sizes[object.id] = ObjectMeasure.codeRows(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption != nil, follow: false,
-                                                          maxWidth: CGFloat(object.frame.w))
-                if let caption { missing[object.id] = ObjectMeasure.captionWidth(caption) - object.frame.w }
+                let scale = object.scale
+                let rows = ObjectMeasure.codeRows(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption != nil, follow: false,
+                                                  maxWidth: CGFloat(object.naturalFrame.w))
+                sizes[object.id] = CGSize(width: rows.width * scale, height: rows.height * scale)
+                if let caption { missing[object.id] = (ObjectMeasure.captionWidth(caption) - object.naturalFrame.w) * scale }
             }
             return (geometry.layoutCheck(scope: scope, rows: rows), sizes, missing)
         }
@@ -870,8 +872,8 @@ public final class ApiRouter {
     }
 
     /// The visual rows line anchors sit on for each of `tiles` (code tiles with an excerpt): its
-    /// whole file wrapped at its frame width, the way the tile shows it, or one row per line when
-    /// the file can't be read. Each file is read once and wrapped once per width, concurrently.
+    /// whole file wrapped at its natural frame width, the way the tile shows it, or one row per
+    /// line when the file can't be read. Each file is read once and wrapped once per width, concurrently.
     static func lineRows(of tiles: [CanvasObject], excerpts: [ObjectID: NoteExcerpt], root: URL) async -> [ObjectID: CodeRows] {
         let paths = Set(tiles.compactMap { $0.props["path"]?.string })
         let texts = await withTaskGroup(of: (String, String?).self) { group in
@@ -881,7 +883,7 @@ public final class ApiRouter {
             return texts
         }
         struct Key: Hashable { var path: String, width: Double }
-        let keys = Set(tiles.compactMap { tile in tile.props["path"]?.string.flatMap { texts[$0] != nil ? Key(path: $0, width: tile.frame.w) : nil } })
+        let keys = Set(tiles.compactMap { tile in tile.props["path"]?.string.flatMap { texts[$0] != nil ? Key(path: $0, width: tile.naturalFrame.w) : nil } })
         let wrapped = await withTaskGroup(of: (Key, CodeRows).self) { group in
             for key in keys {
                 let text = texts[key.path]!
@@ -893,7 +895,7 @@ public final class ApiRouter {
         }
         var rows: [ObjectID: CodeRows] = [:]
         for tile in tiles {
-            if let path = tile.props["path"]?.string, let found = wrapped[Key(path: path, width: tile.frame.w)] {
+            if let path = tile.props["path"]?.string, let found = wrapped[Key(path: path, width: tile.naturalFrame.w)] {
                 rows[tile.id] = found
             } else if let excerpt = excerpts[tile.id] {
                 rows[tile.id] = CodeRows(lineCount: excerpt.fileLineCount)

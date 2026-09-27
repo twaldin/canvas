@@ -26,6 +26,9 @@ export type LineRange = {
   end: number;
 };
 
+/** how much bigger the object draws its content than its natural size: a tile lays out at frame size ÷ scale and draws magnified (header, text, page, terminal cells), so resizing the frame by the same factor keeps its layout; a text shape scales its font. Out-of-range values clamp; 1 is written as absent. The user sets it with ⌥-drag on a tile corner, a text shape's corner, or the Scale menu */
+export type Scale = number;
+
 export type Lifecycle = {
   state: "working" | "blocked" | "idle" | "done" | "unknown";
   message?: string;
@@ -44,11 +47,13 @@ export type TerminalProps = {
     sessionPath?: string;
   };
   lifecycle?: Lifecycle;
+  scale?: Scale;
 };
 
 export type BrowserProps = {
   url: string;
   title?: string;
+  scale?: Scale;
 };
 
 export type CodeProps = {
@@ -72,11 +77,13 @@ export type CodeProps = {
     action: "read" | "edit" | "write" | "lsp" | "search";
   })[];
   pinnedCommit?: string;
+  scale?: Scale;
 };
 
 export type NoteProps = {
   /** Markdown. Code fence info strings pick a mode: ```ts file=path#L10-40``` (or symbol=Name, optionally with file=) is a live excerpt of the file; add `propose` to render the fence body as a diff against that range; file=path@<sha>#L10-40 pins to a commit; anchor="first line text" re-finds the range when lines move. Any other fence is free-written; path:line references in it are clickable. */
   markdown: string;
+  scale?: Scale;
 };
 
 export type HtmlProps = {
@@ -86,6 +93,7 @@ export type HtmlProps = {
   allowNetwork?: string[];
   /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
   state?: Record<string, unknown>;
+  scale?: Scale;
 };
 
 export type ShapeProps = {
@@ -97,6 +105,8 @@ export type ShapeProps = {
   color?: string;
   /** rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it */
   fill?: "none" | "semi" | "solid";
+  /** text shapes only: font scale (the frame grows with it); ignored on other kinds */
+  scale?: Scale;
 };
 
 export type Binding = {
@@ -250,12 +260,12 @@ export type RenderedObject = {
   state: "rendered" | "placeholder" | "failed";
   /** why a tile is a placeholder or failed */
   reason?: string;
-  /** the content's own extent in points at the tile's width, below its title bar (tiles only); code: its range's rows and longest line under the header, the whole file without a range (what size "fit" shows) */
+  /** the content's own extent in canvas points at the tile's width, below its title bar (tiles only; a scaled tile's layout extent times its `scale`); code: its range's rows and longest line under the header, the whole file without a range (what size "fit" shows) */
   contentSize?: {
     w?: number;
     h?: number;
   };
-  /** points of content beyond the frame (right, bottom); absent when it fits */
+  /** canvas points of content beyond the frame (right, bottom); absent when it fits */
   overflow?: {
     x?: number;
     y?: number;

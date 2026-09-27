@@ -75,7 +75,7 @@ canvas render obj_… --full                       # a note/HTML tile's whole co
 Python: `canvas.view.render(target="obj_…", full=True, out="note.png")` (`target` is an id, a list of ids, or `{"x","y","w","h"}`). The app writes `out` (png or jpg by extension; clients resolve relative paths); without `out` the result has `imageBase64`. The result maps pixels to the canvas: pixel `(px, py)` is canvas `(canvasRect.x + px / scale, canvasRect.y + py / scale)`, and `objects` lists every object drawn with its `pixelRect` (a tile's is exactly its frame: a tile's `frame` is its whole drawn box, 26 pt title bar included), `state`, and `overflow`:
 
 - `state: rendered` means the content painted. `placeholder` means it didn't in time or can't be rendered here (`reason` says why; the image shows an orange "not rendered" tag instead of a silent blank). Browser pages that aren't loaded are not reloaded for a render; they show their last capture as a placeholder. Content waits up to `timeoutMs` (8 s) for HTML pages and file reads to settle.
-- `overflow: {x, y}`: points of content beyond the tile's frame (a note taller than its box, a code range longer than the tile; code wraps at the tile's width, so it only overflows downward). Absent when the content fits. Resize the frame by that much to fit it, or render with `full`.
+- `overflow: {x, y}`: canvas points of content beyond the tile's frame (a note taller than its box, a code range longer than the tile; code wraps at the tile's width, so it only overflows downward). Absent when the content fits. Resize the frame by that much to fit it, or render with `full`.
 - `contentSize`: the content's own extent at the tile's width, below its title bar. For code it is the range (its rows, wrapped at the tile's width, and longest line under the header), not the whole file: what `size: "fit"` shows.
 
 Terminals are drawn from their session text in the terminal's font and colors. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn; leave out object types with `exclude`.
@@ -102,6 +102,8 @@ Omit `frame` and the canvas places new objects beside your terminal without cove
 | A web page | `browser`: `{"url": "http://localhost:3000"}` (your native browser tool also drives these) |
 
 Code paths may point outside the board root (`../other-repo/src/x.ts` or an absolute path); the tile reads git from that file's own repository.
+
+Any tile or text shape takes `scale` in its props (0.25–8, default 1): it draws everything inside bigger or smaller while laying out as if its frame were frame ÷ scale. To make a tile readable from further out without changing what it shows, set `scale` and multiply `w`/`h` by the same factor (or use `size: "fit"`, which measures at the scale). Users scale objects with ⌥-drag on a corner or the Scale menu; leave their scale alone unless asked.
 
 Update with `object.update` (props shallow-merge; pass `rev` from your last read to avoid clobbering a concurrent edit; `conflict` means re-read and retry). Delete with `object.delete`.
 

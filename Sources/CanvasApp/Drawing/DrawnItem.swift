@@ -72,7 +72,7 @@ struct DrawnItem {
                 labelRect = NSRect(x: frame.midX - tight / 2, y: frame.midY - size.height / 2, width: tight, height: ceil(size.height))
             }
         case .text:
-            label = DrawingStyle.text(spec.text ?? "", size: DrawingStyle.textSize, color: DrawingStyle.color(spec.color))
+            label = DrawingStyle.text(spec.text ?? "", size: DrawingStyle.textSize * spec.scale, color: DrawingStyle.color(spec.color))
             labelRect = frame
         case .ink:
             inkOutline = DrawingInk.outline(spec.points).map { CGPoint(x: $0.x + frame.minX, y: $0.y + frame.minY) }

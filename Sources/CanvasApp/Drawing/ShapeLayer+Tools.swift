@@ -78,12 +78,18 @@ extension ShapeLayer {
             points.append(inkPoint(point, event, pressured))
             gesture = .ink(points: points, pressured: pressured)
         case .resize(let id, let anchor, _):
-            let resized = Self.rect(anchor, point)
-            gesture = .resize(id: id, anchor: anchor, frame: resized)
-            if let object = board.objects[id] {
+            guard let object = board.objects[id] else { break }
+            if ShapeSpec(object.props)?.kind == .text {
+                // A text shape's corner scales it: box and font together.
+                let scaled = Self.scaledText(object, anchor: anchor, to: point)
+                gesture = .resize(id: id, anchor: anchor, frame: scaled.frame)
+                refresh(scaled.object, frameOverride: scaled.frame)
+            } else {
+                let resized = Self.rect(anchor, point)
+                gesture = .resize(id: id, anchor: anchor, frame: resized)
                 refresh(object, frameOverride: resized)
-                reroute(boundTo: id)
             }
+            reroute(boundTo: id)
         }
         invalidate(before.union(gestureBounds))
     }
@@ -109,8 +115,16 @@ extension ShapeLayer {
             createArrow(ArrowSpec(from: from, to: to, color: color))
         case .ink(let points, _):
             createInk(points)
-        case .resize(let id, _, let frame):
-            if frame.width >= 4, frame.height >= 4, board.objects[id] != nil {
+        case .resize(let id, let anchor, let frame):
+            if let object = board.objects[id], ShapeSpec(object.props)?.kind == .text {
+                let scaled = Self.scaledText(object, anchor: anchor, to: point)
+                if scaled.frame != Self.docRect(object.frame) {
+                    board.transaction { _ = try? board.update(id, frame: Self.canvasFrame(scaled.frame), props: .object(["scale": .number(scaled.object.scale)])) }
+                } else {
+                    refresh(object)
+                    reroute(boundTo: id)
+                }
+            } else if frame.width >= 4, frame.height >= 4, board.objects[id] != nil {
                 board.transaction { _ = try? board.update(id, frame: Self.canvasFrame(frame)) }
             } else if let object = board.objects[id] {
                 refresh(object)
@@ -136,6 +150,26 @@ extension ShapeLayer {
 
     static func rect(_ a: NSPoint, _ b: NSPoint) -> NSRect {
         NSRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+    }
+
+    /// A text shape scaled by a corner drag from `anchor` (the corner that stays put) to `point`:
+    /// the drag projected on the box's diagonal gives the ratio, so the box keeps its proportions
+    /// and the font (`props.scale`) grows with it, within `ObjectScale.range`.
+    static func scaledText(_ object: CanvasObject, anchor: NSPoint, to point: NSPoint) -> (object: CanvasObject, frame: NSRect) {
+        let start = docRect(object.frame)
+        let from = object.scale
+        let diagonal = (x: Double(start.width), y: Double(start.height))
+        let drag = (x: Double(abs(point.x - anchor.x)), y: Double(abs(point.y - anchor.y)))
+        let projected = (drag.x * diagonal.x + drag.y * diagonal.y) / max(diagonal.x * diagonal.x + diagonal.y * diagonal.y, 1)
+        let scale = min(max(from * projected, ObjectScale.range.lowerBound), ObjectScale.range.upperBound)
+        let ratio = scale / from
+        let size = NSSize(width: start.width * ratio, height: start.height * ratio)
+        // Grow away from the anchor, toward the dragged corner.
+        let x = anchor.x > start.midX ? anchor.x - size.width : anchor.x
+        let y = anchor.y > start.midY ? anchor.y - size.height : anchor.y
+        var scaled = object
+        scaled.props = object.props.merging(.object(["scale": .number(scale)]))
+        return (scaled, NSRect(x: x, y: y, width: size.width, height: size.height))
     }
 
     /// What an arrow end dropped at a document point binds to: the topmost drawn shape whose

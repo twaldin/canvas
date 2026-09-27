@@ -16,7 +16,7 @@ final class TerminalTile: NSView, TileContent {
     init(object: CanvasObject, board: Board) {
         objectID = object.id
         sessionName = Self.sessionName(object.id)
-        terminal = TerminalView(frame: NSRect(origin: .zero, size: RenderMath.body(object.frame)))
+        terminal = TerminalView(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         super.init(frame: terminal.frame)
         terminal.autoresizingMask = [.width, .height]
         let environment = Self.environment(tile: object.id, board: board)

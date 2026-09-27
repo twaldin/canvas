@@ -117,6 +117,23 @@ enum DevInput {
             let at = point("x", "y")
             mouse(.rightMouseDown, at)
             mouse(.rightMouseUp, at)
+        case "menu":
+            // A shown context menu runs a tracking loop posted events can't drive: build the menu
+            // a right-click at x,y would show (the hit view, then its superviews) and perform the
+            // item at `path`, titles separated by "/" (e.g. "Scale/150%").
+            let at = point("x", "y")
+            guard let frame = content.superview, let hit = content.hitTest(frame.convert(at, from: nil)),
+                  let event = NSEvent.mouseEvent(with: .rightMouseDown, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+            var menu = sequence(first: hit, next: \.superview).lazy.compactMap { $0.menu(for: event) }.first
+            var titles = (fields["path"] ?? "").split(separator: "/").map(String.init)
+            while let current = menu, !titles.isEmpty {
+                let title = titles.removeFirst()
+                guard let index = current.items.firstIndex(where: { $0.title == title }) else {
+                    return NSLog("DevInput: no menu item %@ in [%@]", title, current.items.map(\.title).joined(separator: ", "))
+                }
+                if titles.isEmpty { current.performActionForItem(at: index) } else { menu = current.items[index].submenu }
+            }
         case "move":
             // Tracking-area mouseMoved events come from the window server; a posted mouseMoved
             // never reaches their owners. Deliver it to the areas under the point directly.

@@ -45,7 +45,7 @@ final class NoteTile: NSView, TileContent {
         self.object = object
         self.board = board
         document = NoteMarkdown.parse(object.props["markdown"]?.string ?? "")
-        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(object.frame)))
+        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         wantsLayer = true
         layer?.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.16).cgColor
 

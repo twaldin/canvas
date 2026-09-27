@@ -174,6 +174,13 @@ struct BoardTests {
         #expect(over.contains("\(circle.id) \"ellipse\" (drawn by user) · over browser \(upper.id) at (240, 200) 125×120"), "the topmost containing tile, in its local units (below its title bar)")
         #expect(!over.contains(page.id))
         #expect(!over.contains("\(straddling.id) \"rect\" (drawn by user) · over"), "a box that only partly covers a tile isn't drawn on it")
+
+        // On a tile at 2×, the same spot is half as many of the tile's own points in, below a title bar twice as tall.
+        let scaled = board.create(type: .browser, props: .object(["url": .string("http://localhost/c"), "scale": .number(2)]), frame: Frame(x: 3000, y: 0, w: 1200, h: 800))
+        let mark = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 3480, y: 452, w: 250, h: 240))
+        try board.stage(.object(mark.id))
+        let onScaled = await board.drain().context
+        #expect(onScaled.contains("\(mark.id) \"ellipse\" (drawn by user) · over browser \(scaled.id) at (240, 200) 125×120"))
     }
 
     @Test func boardsSavedBeforeFormat2GrowTileFramesByTheTitleBarOnce() throws {

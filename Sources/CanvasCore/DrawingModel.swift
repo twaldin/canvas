@@ -18,13 +18,16 @@ public struct ShapeSpec: Equatable, Sendable {
     public var points: [InkPoint]
     public var color: String?
     public var fill: Fill
+    /// `props.scale` (`ObjectScale`): a text shape's font is `DrawingStyle.textSize` times this.
+    public var scale: CGFloat
 
-    public init(kind: Kind, text: String? = nil, points: [InkPoint] = [], color: String? = nil, fill: Fill = .none) {
+    public init(kind: Kind, text: String? = nil, points: [InkPoint] = [], color: String? = nil, fill: Fill = .none, scale: CGFloat = 1) {
         self.kind = kind
         self.text = text
         self.points = points
         self.color = color
         self.fill = fill
+        self.scale = scale
     }
 
     public init?(_ props: JSONValue) {
@@ -33,6 +36,7 @@ public struct ShapeSpec: Equatable, Sendable {
         text = props["text"]?.string
         color = props["color"]?.string
         fill = props["fill"]?.string.flatMap(Fill.init(rawValue:)) ?? .none
+        scale = kind == .text ? CGFloat(ObjectScale.of(props)) : 1
         points = (props["points"]?.array ?? []).compactMap { value in
             guard let values = value.array?.compactMap(\.number), values.count >= 2 else { return nil }
             return InkPoint(x: values[0], y: values[1], pressure: values.count > 2 ? values[2] : nil)
@@ -44,6 +48,7 @@ public struct ShapeSpec: Equatable, Sendable {
         if let text { props["text"] = .string(text) }
         if let color { props["color"] = .string(color) }
         if fill != .none { props["fill"] = .string(fill.rawValue) }
+        if scale != 1 { props["scale"] = .number(Double(scale)) }
         if !points.isEmpty { props["points"] = .array(points.map(\.json)) }
         return .object(props)
     }

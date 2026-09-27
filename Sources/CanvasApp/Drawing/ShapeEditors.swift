@@ -70,6 +70,8 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
     unowned let shapeLayer: ShapeLayer
     let editing: ObjectID?
     private let object: CanvasObject?
+    /// A text shape's font scale (`props.scale`); labels don't scale.
+    private let textScale: CGFloat
     private let isLabel: Bool
     private let session = EditorSession()
 
@@ -79,7 +81,8 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
         editing = object?.id
         let spec = object.flatMap { ShapeSpec($0.props) }
         isLabel = spec.map { $0.kind == .rect || $0.kind == .ellipse } ?? false
-        let size = isLabel ? DrawingStyle.labelSize : DrawingStyle.textSize
+        textScale = isLabel ? 1 : spec?.scale ?? 1
+        let size = isLabel ? DrawingStyle.labelSize : DrawingStyle.textSize * textScale
         let frame: NSRect
         if isLabel, let object {
             let shape = ShapeLayer.docRect(object.frame)
@@ -153,7 +156,7 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
 
     /// Size of the committed text shape: the laid-out text plus a little room for descenders.
     private func measured(_ text: String) -> NSSize {
-        let attributed = DrawingStyle.text(text, size: DrawingStyle.textSize, color: .labelColor)
+        let attributed = DrawingStyle.text(text, size: DrawingStyle.textSize * textScale, color: .labelColor)
         let size = attributed.boundingRect(with: NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
         return NSSize(width: ceil(size.width) + 4, height: ceil(size.height) + 4)
     }

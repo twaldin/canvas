@@ -337,7 +337,8 @@ final class ShapeLayer: NSView {
     /// anything else by its outline. Lines of other tiles bind the whole tile.
     func end(of id: ObjectID, lines: LineRange?) -> DrawingGeometry.ArrowEnd? {
         if let lines, let tile = canvas.tiles[id], let code = tile.content as? CodeTile {
-            return .row(tile.frame, y: tile.frame.minY + code.lineY(lines.start, frameHeight: tile.frame.height))
+            let scale = tile.scale
+            return .row(tile.frame, y: tile.frame.minY + scale * code.lineY(lines.start, frameHeight: tile.frame.height / scale))
         }
         return outline(of: id).map { .bound($0) }
     }
@@ -450,6 +451,12 @@ final class ShapeLayer: NSView {
         return item(at: local) != nil ? self : nil
     }
 
+    /// A drawn object gets the same menu as a tile (close, order, scale, group, copy id).
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard tool == .select, let item = item(at: convert(event.locationInWindow, from: nil)) else { return nil }
+        return canvas.objectMenu(for: item.object.id)
+    }
+
     override func resetCursorRects() {
         if tool != .select { addCursorRect(visibleRect, cursor: tool == .text ? .iBeam : .crosshair) }
     }
@@ -459,9 +466,10 @@ final class ShapeLayer: NSView {
     /// Resize handle size in screen points.
     let handleSize: CGFloat = 12
 
-    /// Selected rect/ellipse shapes get corner handles for resizing (the scene draws the selection).
+    /// Selected rect/ellipse shapes get corner handles for resizing, text shapes for scaling
+    /// (the scene draws the selection).
     private var resizable: [DrawnItem] {
-        canvas.selection.compactMap { items[$0] }.filter { [.rect, .ellipse].contains($0.shape?.kind) }
+        canvas.selection.compactMap { items[$0] }.filter { [.rect, .ellipse, .text].contains($0.shape?.kind) }
     }
 
     /// Handles are a fixed size on screen, so in document points they grow as the canvas zooms out.

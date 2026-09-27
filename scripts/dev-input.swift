@@ -3,6 +3,7 @@
 //
 //   dev-input <pid> click <x> <y> [--mods hyper|cmd|shift|opt|ctrl[+…]] [--clicks 2]
 //   dev-input <pid> rightclick <x> <y>
+//   dev-input <pid> menu <x> <y> "<item>/<submenu item>"  perform a context-menu item without opening the menu
 //   dev-input <pid> drag <x> <y> <toX> <toY> [--mods …]
 //   dev-input <pid> flags <x> <y> [--mods …]         hold modifiers with the pointer at x,y (hover); no --mods releases
 //   dev-input <pid> move <x> <y>                     move the pointer (tracking-area hover, e.g. code navigation)
@@ -35,6 +36,9 @@ switch args[1] {
 case "click", "rightclick", "flags", "move":
     guard rest.count >= 2 else { exit(2) }
     info["x"] = rest[0]; info["y"] = rest[1]
+case "menu":
+    guard rest.count >= 3 else { exit(2) }
+    info["x"] = rest[0]; info["y"] = rest[1]; info["path"] = rest.dropFirst(2).joined(separator: " ")
 case "drag":
     guard rest.count >= 4 else { exit(2) }
     info["x"] = rest[0]; info["y"] = rest[1]; info["toX"] = rest[2]; info["toY"] = rest[3]

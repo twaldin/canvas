@@ -51,6 +51,8 @@ class LineRange(TypedDict):
     start: Required[int]
     end: Required[int]
 
+Scale = float
+
 class Lifecycle(TypedDict):
     state: Required[Literal["working", "blocked", "idle", "done", "unknown"]]
     message: NotRequired[str]
@@ -63,10 +65,12 @@ class TerminalProps(TypedDict):
     title: NotRequired[str]
     agent: NotRequired[dict[str, Any]]
     lifecycle: NotRequired["Lifecycle"]
+    scale: NotRequired["Scale"]
 
 class BrowserProps(TypedDict):
     url: Required[str]
     title: NotRequired[str]
+    scale: NotRequired["Scale"]
 
 class CodeProps(TypedDict):
     path: Required[str]
@@ -78,15 +82,18 @@ class CodeProps(TypedDict):
     lastAction: NotRequired[Literal["read", "edit", "write", "lsp", "search"]]
     history: NotRequired[list[dict[str, Any]]]
     pinnedCommit: NotRequired[str]
+    scale: NotRequired["Scale"]
 
 class NoteProps(TypedDict):
     markdown: Required[str]
+    scale: NotRequired["Scale"]
 
 class HtmlProps(TypedDict):
     html: Required[str]
     title: NotRequired[str]
     allowNetwork: NotRequired[list[str]]
     state: NotRequired[dict[str, Any]]
+    scale: NotRequired["Scale"]
 
 class ShapeProps(TypedDict):
     kind: Required[Literal["rect", "ellipse", "text", "ink"]]
@@ -94,6 +101,7 @@ class ShapeProps(TypedDict):
     points: NotRequired[list[list[float]]]
     color: NotRequired[str]
     fill: NotRequired[Literal["none", "semi", "solid"]]
+    scale: NotRequired["Scale"]
 
 Binding = Union[dict[str, Any], dict[str, Any]]
 

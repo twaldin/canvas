@@ -32,7 +32,7 @@ final class HtmlTile: NSView, TileContent {
     init(object: CanvasObject, board: Board) {
         self.object = object
         self.board = board
-        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(object.frame)))
+        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
         build()

@@ -2,20 +2,33 @@ import AppKit
 import CanvasCore
 
 /// An agent's "look here" on one object: a pulsing ring around it and a message bubble above.
-/// Lives in document space above the tiles and scales with the canvas; only the bubble takes
-/// clicks (which dismiss it).
+/// Lives in window space above the canvas (`AttentionLayer`) and is re-placed on every pan and
+/// pinch step, so it keeps its on-screen size at any zoom and follows the zoom smoothly while
+/// everything on the canvas scales. Only the bubble takes clicks (which dismiss it).
 @MainActor
 final class AttentionMarker: NSView {
     static let inset: CGFloat = 10
     static let bubbleHeight: CGFloat = 28
+    static let gap: CGFloat = 6
+    static let stroke: CGFloat = 4
 
     let objectID: ObjectID
-    var message: String? { didSet { needsDisplay = true } }
+    var message: String? {
+        didSet {
+            bubbleWidth = Self.bubbleWidth(message)
+            needsDisplay = true
+        }
+    }
     var onClick: (() -> Void)?
+    /// The ring and bubble in this view's coordinates, from `place(around:)`.
+    private var ringRect = NSRect.zero
+    private var bubbleRect = NSRect.zero
+    private var bubbleWidth: CGFloat
 
     init(objectID: ObjectID, message: String?) {
         self.objectID = objectID
         self.message = message
+        bubbleWidth = Self.bubbleWidth(message)
         super.init(frame: .zero)
         wantsLayer = true
         // The pulse runs in the render server; the drawn ring below is what snapshots capture.
@@ -33,20 +46,23 @@ final class AttentionMarker: NSView {
 
     nonisolated override var isFlipped: Bool { true }
 
-    /// Frame around a target's document rect, leaving room above for the bubble.
-    func place(around target: NSRect) {
-        let top = Self.bubbleHeight + 6
-        frame = NSRect(x: target.minX - Self.inset, y: target.minY - Self.inset - top,
-                       width: target.width + 2 * Self.inset, height: target.height + 2 * Self.inset + top)
-    }
-
-    private var bubbleRect: NSRect {
-        let size = bubbleText.size(withAttributes: Self.bubbleAttributes)
-        return NSRect(x: 0, y: 0, width: min(bounds.width, size.width + 24), height: Self.bubbleHeight)
-    }
-
-    private var bubbleText: NSString { (message?.isEmpty == false ? message! : "Look here") as NSString }
     private static let bubbleAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white]
+    private static func text(_ message: String?) -> NSString { (message?.isEmpty == false ? message! : "Look here") as NSString }
+    private static func bubbleWidth(_ message: String?) -> CGFloat { text(message).size(withAttributes: bubbleAttributes).width + 24 }
+
+    /// Places the marker around `target`, the object's rect in the superview's coordinates: the
+    /// ring hugs it at a fixed on-screen inset and the bubble sits above its top-left corner.
+    /// Panning only moves the view; a zoom step resizes the ring and redraws it.
+    func place(around target: NSRect) {
+        let ring = target.insetBy(dx: -Self.inset, dy: -Self.inset)
+        let bubble = NSRect(x: ring.minX, y: ring.minY - Self.gap - Self.bubbleHeight, width: bubbleWidth, height: Self.bubbleHeight)
+        let frame = ring.union(bubble).insetBy(dx: -Self.stroke / 2, dy: -Self.stroke / 2)
+        let ringRect = ring.offsetBy(dx: -frame.minX, dy: -frame.minY)
+        if ringRect != self.ringRect || frame.size != self.frame.size { needsDisplay = true }
+        self.ringRect = ringRect
+        bubbleRect = bubble.offsetBy(dx: -frame.minX, dy: -frame.minY)
+        if self.frame != frame { self.frame = frame }
+    }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let superview else { return nil }
@@ -54,22 +70,35 @@ final class AttentionMarker: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let bubble = bubbleRect
-        let ringTop = bubble.maxY + 6
-        let ring = NSRect(x: 0, y: ringTop, width: bounds.width, height: bounds.height - ringTop).insetBy(dx: 2, dy: 2)
-        let path = NSBezierPath(roundedRect: ring, xRadius: 12, yRadius: 12)
-        path.lineWidth = 4
+        let path = NSBezierPath(roundedRect: ringRect, xRadius: 12, yRadius: 12)
+        path.lineWidth = Self.stroke
         NSColor.systemOrange.setStroke()
         path.stroke()
-        let pill = NSBezierPath(roundedRect: bubble, xRadius: bubble.height / 2, yRadius: bubble.height / 2)
+        let pill = NSBezierPath(roundedRect: bubbleRect, xRadius: bubbleRect.height / 2, yRadius: bubbleRect.height / 2)
         NSColor.systemOrange.setFill()
         pill.fill()
-        let size = bubbleText.size(withAttributes: Self.bubbleAttributes)
-        bubbleText.draw(in: NSRect(x: bubble.minX + 12, y: bubble.midY - size.height / 2, width: bubble.width - 24, height: size.height), withAttributes: Self.bubbleAttributes)
+        let text = Self.text(message)
+        let size = text.size(withAttributes: Self.bubbleAttributes)
+        text.draw(in: NSRect(x: bubbleRect.minX + 12, y: bubbleRect.midY - size.height / 2, width: bubbleRect.width - 24, height: size.height), withAttributes: Self.bubbleAttributes)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?() }
+}
+
+/// Window-space layer over the canvas holding the attention markers; only their bubbles take
+/// clicks, everything else passes through to the canvas.
+@MainActor
+final class AttentionLayer: NSView {
+    nonisolated override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        for marker in subviews.reversed() where !marker.isHidden {
+            if let hit = marker.hitTest(local) { return hit }
+        }
+        return nil
+    }
 }
 
 /// Window-space chevrons at the canvas edge for attention markers whose object is offscreen.

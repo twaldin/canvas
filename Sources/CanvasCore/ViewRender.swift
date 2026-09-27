@@ -54,7 +54,7 @@ public struct RenderedObject: Equatable, Sendable {
     public var pixelRect: Frame
     public var state: RenderState
     public var reason: String?
-    /// The content's own extent in points (tiles).
+    /// The content's own extent in canvas points (tiles): a scaled tile's layout extent times its scale.
     public var contentSize: CGSize?
     public var overflow: CGSize?
 
@@ -126,9 +126,11 @@ public enum RenderMath {
     /// Tallest a tile's full content is drawn, in points (a runaway page can't allocate gigabytes).
     public static let maxContentExtent: Double = 20_000
 
-    /// A tile's content area: its frame below the title bar.
-    public static func body(_ frame: Frame) -> CGSize {
-        CGSize(width: frame.w, height: max(0, frame.h - tileTitleHeight))
+    /// A tile's content area in its own (natural) points: its frame below the title bar, both
+    /// divided by its `scale`.
+    public static func body(of object: CanvasObject) -> CGSize {
+        let frame = object.naturalFrame
+        return CGSize(width: frame.w, height: max(0, frame.h - tileTitleHeight))
     }
 
     public static func isTile(_ type: ObjectType) -> Bool {

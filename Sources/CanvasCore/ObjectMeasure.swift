@@ -26,14 +26,19 @@ public enum ObjectMeasure {
 
     /// `width` wraps notes and text (a note defaults to a new note's width; text defaults to
     /// one unwrapped line per paragraph); for code it is the widest the frame may get (default
-    /// `CodeMetrics.defaultFitWidth`), past which long lines wrap.
+    /// `CodeMetrics.defaultFitWidth`), past which long lines wrap. Sizes and `width` are canvas
+    /// points: a tile with `props.scale` lays out at `width / scale` and measures `scale` times
+    /// its natural size; a text shape's font is `scale` times the text size.
     public static func size(type: ObjectType, props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
+        let scale = RenderMath.isTile(type) ? ObjectScale.of(props) : 1
+        let natural = width.map { CGFloat($0 / scale) }
+        let size: CGSize
         switch type {
         case .code:
             let excerpt = try await codeExcerpt(props, root: root)
             let caption = props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-            return code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil,
-                        maxWidth: width.map { CGFloat($0) } ?? CodeMetrics.defaultFitWidth)
+            size = code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil,
+                        maxWidth: natural ?? CodeMetrics.defaultFitWidth)
         case .note:
             let markdown = props["markdown"]?.string ?? ""
             let document = NoteMarkdown.parse(markdown)
@@ -41,13 +46,14 @@ public enum ObjectMeasure {
             for fence in NoteMarkdown.anchoredFences(in: document) {
                 excerpts[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
             }
-            return note(document, width: width.map { CGFloat($0) } ?? defaultNoteWidth, excerpts: excerpts)
+            size = note(document, width: natural ?? defaultNoteWidth, excerpts: excerpts)
         case .shape:
             guard let spec = ShapeSpec(props) else { throw Failure.invalidParams("shape props need a kind") }
             return try shape(spec, width: width.map { CGFloat($0) })
         case .html, .browser, .terminal, .arrow, .group:
             throw Failure.unsupported("\(type.rawValue) objects have no intrinsic size")
         }
+        return CGSize(width: size.width * scale, height: size.height * scale)
     }
 
     /// The lines a code tile's `range` (or symbol, or whole file) resolves to, read from disk.
@@ -124,7 +130,7 @@ public enum ObjectMeasure {
         let text = spec.text ?? ""
         switch spec.kind {
         case .text:
-            let label = DrawingStyle.text(text, size: DrawingStyle.textSize, color: .labelColor)
+            let label = DrawingStyle.text(text, size: DrawingStyle.textSize * spec.scale, color: .labelColor)
             let bounds = textBounds(label, width: width)
             return CGSize(width: width ?? bounds.width, height: bounds.height)
         case .rect, .ellipse:

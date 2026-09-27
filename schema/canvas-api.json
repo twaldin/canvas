@@ -43,6 +43,13 @@
       "additionalProperties": false,
       "description": "1-based inclusive line range"
     },
+    "Scale": {
+      "type": "number",
+      "minimum": 0.25,
+      "maximum": 8,
+      "default": 1,
+      "description": "how much bigger the object draws its content than its natural size: a tile lays out at frame size ÷ scale and draws magnified (header, text, page, terminal cells), so resizing the frame by the same factor keeps its layout; a text shape scales its font. Out-of-range values clamp; 1 is written as absent. The user sets it with ⌥-drag on a tile corner, a text shape's corner, or the Scale menu"
+    },
     "Lifecycle": {
       "type": "object",
       "required": ["state"],
@@ -67,14 +74,15 @@
           "properties": { "kind": { "type": "string" }, "sessionId": { "type": "string" }, "sessionPath": { "type": "string" } },
           "additionalProperties": false
         },
-        "lifecycle": { "$ref": "#/definitions/Lifecycle" }
+        "lifecycle": { "$ref": "#/definitions/Lifecycle" },
+        "scale": { "$ref": "#/definitions/Scale" }
       },
       "additionalProperties": false
     },
     "BrowserProps": {
       "type": "object",
       "required": ["url"],
-      "properties": { "url": { "type": "string" }, "title": { "type": "string" } },
+      "properties": { "url": { "type": "string" }, "title": { "type": "string" }, "scale": { "$ref": "#/definitions/Scale" } },
       "additionalProperties": false
     },
     "CodeProps": {
@@ -103,7 +111,8 @@
             "additionalProperties": false
           }
         },
-        "pinnedCommit": { "type": "string" }
+        "pinnedCommit": { "type": "string" },
+        "scale": { "$ref": "#/definitions/Scale" }
       },
       "additionalProperties": false
     },
@@ -114,7 +123,8 @@
         "markdown": {
           "type": "string",
           "description": "Markdown. Code fence info strings pick a mode: ```ts file=path#L10-40``` (or symbol=Name, optionally with file=) is a live excerpt of the file; add `propose` to render the fence body as a diff against that range; file=path@<sha>#L10-40 pins to a commit; anchor=\"first line text\" re-finds the range when lines move. Any other fence is free-written; path:line references in it are clickable."
-        }
+        },
+        "scale": { "$ref": "#/definitions/Scale" }
       },
       "additionalProperties": false
     },
@@ -125,7 +135,8 @@
         "html": { "type": "string", "description": "page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded" },
         "title": { "type": "string" },
         "allowNetwork": { "type": "array", "items": { "type": "string", "description": "host, host:port, or *.host; http/https/ws to anything else is blocked" }, "default": [] },
-        "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" }
+        "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" },
+        "scale": { "$ref": "#/definitions/Scale" }
       },
       "additionalProperties": false
     },
@@ -137,7 +148,8 @@
         "text": { "type": "string" },
         "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 }, "description": "ink points [x, y, pressure?] in object-local coordinates" },
         "color": { "type": "string", "description": "palette name (black, grey, blue, green, orange, red, violet) or #rrggbb" },
-        "fill": { "enum": ["none", "semi", "solid"], "default": "none", "description": "rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it" }
+        "fill": { "enum": ["none", "semi", "solid"], "default": "none", "description": "rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it" },
+        "scale": { "$ref": "#/definitions/Scale", "description": "text shapes only: font scale (the frame grows with it); ignored on other kinds" }
       },
       "additionalProperties": false
     },
@@ -331,8 +343,8 @@
         "pixelRect": { "$ref": "#/definitions/Frame", "description": "image pixels, top-left origin; a tile's rect is its frame (its 26 pt title bar is inside it)" },
         "state": { "enum": ["rendered", "placeholder", "failed"], "description": "placeholder: content not loaded in time or not renderable (a stand-in was drawn); failed: rendering errored" },
         "reason": { "type": "string", "description": "why a tile is a placeholder or failed" },
-        "contentSize": { "type": "object", "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "description": "the content's own extent in points at the tile's width, below its title bar (tiles only); code: its range's rows and longest line under the header, the whole file without a range (what size \"fit\" shows)" },
-        "overflow": { "type": "object", "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "description": "points of content beyond the frame (right, bottom); absent when it fits" }
+        "contentSize": { "type": "object", "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "description": "the content's own extent in canvas points at the tile's width, below its title bar (tiles only; a scaled tile's layout extent times its `scale`); code: its range's rows and longest line under the header, the whole file without a range (what size \"fit\" shows)" },
+        "overflow": { "type": "object", "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "description": "canvas points of content beyond the frame (right, bottom); absent when it fits" }
       }
     },
     "HistoryEntry": {

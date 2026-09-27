@@ -52,7 +52,7 @@ final class CodeTile: NSView, TileContent {
         displayed = aim
         propsAim = aim
         lock = FollowLock(showing: aim)
-        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(object.frame)))
+        super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         addSubview(rowsView)
         rowsView.onScroll = { [weak self] in
             self?.navigation?.contentChanged()
@@ -118,16 +118,14 @@ final class CodeTile: NSView, TileContent {
         rowsView.scroll(toY: CodePainter.rowTop(row) - CodeMetrics.verticalPadding)
     }
 
-    /// Where an arrow bound to `line` attaches, in points from the top of the tile's frame (the
-    /// title bar above this view included): the line's row as scrolled now, clamped to the rows
-    /// (`CodeMetrics.lineY`). Before the file has loaded, the row it will show when aimed.
+    /// Where an arrow bound to `line` attaches, in the tile's own points from the top of its
+    /// frame (the title bar above this view included) for a natural frame `frameHeight` tall: the
+    /// line's row as scrolled now, clamped to the rows (`CodeMetrics.lineY`). Before the file
+    /// has loaded, the row it will show when aimed.
     func lineY(_ line: Int, frameHeight: CGFloat) -> CGFloat {
         let rowsTop = CodeMetrics.titleHeight + rowsView.frame.minY
         guard showsCurrent, let rows = rowsView.painter?.rows else {
-            var frame = object.frame
-            frame.y = 0
-            frame.h = Double(frameHeight)
-            return CodeMetrics.lineY(line: line, frame: frame, props: object.props, rows: nil)
+            return CodeMetrics.naturalLineY(line: line, frameHeight: frameHeight, props: object.props, rows: nil)
         }
         return CodeMetrics.lineY(line: line, rows: rows, scroll: rowsView.bounds.origin.y, rowsTop: rowsTop, frameHeight: frameHeight)
     }

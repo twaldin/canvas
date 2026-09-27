@@ -185,13 +185,21 @@ public enum CodeMetrics {
     }
 
     /// `lineY` for a code tile at `frame` with `props` as it shows them freshly aimed: scrolled to
-    /// `props.range` by `scrollOffset`. Canvas y. `rows` nil: one row per line, content length
-    /// unknown. Live tiles use their real scroll instead (the user may have scrolled).
+    /// `props.range` by `scrollOffset`, magnified by `props.scale`. Canvas y. `rows` (wrapped at
+    /// the tile's natural width) nil: one row per line, content length unknown. Live tiles use
+    /// their real scroll instead (the user may have scrolled).
     public static func lineY(line: Int, frame: Frame, props: JSONValue, rows: CodeRows?) -> CGFloat {
+        let scale = CGFloat(ObjectScale.of(props))
+        return CGFloat(frame.y) + scale * naturalLineY(line: line, frameHeight: CGFloat(frame.h) / scale, props: props, rows: rows)
+    }
+
+    /// `lineY` in the tile's own points from the top of its frame, for a natural frame
+    /// `frameHeight` tall, freshly aimed.
+    public static func naturalLineY(line: Int, frameHeight: CGFloat, props: JSONValue, rows: CodeRows?) -> CGFloat {
         let caption = props["caption"]?.string.map { !$0.isEmpty } ?? false
         let history = props["followOf"]?.string != nil && !(props["history"]?.array?.isEmpty ?? true)
         let rowsTop = chromeHeight(caption: caption, history: history)
-        let viewport = max(0, CGFloat(frame.h) - rowsTop)
+        let viewport = max(0, frameHeight - rowsTop)
         var scroll: CGFloat = 0
         if let start = props["range"]?["start"]?.int {
             let end = max(start, props["range"]?["end"]?.int ?? start)
@@ -200,6 +208,6 @@ public enum CodeMetrics {
             let stop = rows?.rows(ofLine: end).upperBound ?? end
             scroll = scrollOffset(toRow: first, count: stop - first, viewport: viewport, totalRows: rows?.count)
         }
-        return CGFloat(frame.y) + lineY(line: line, rows: rows, scroll: scroll, rowsTop: rowsTop, frameHeight: CGFloat(frame.h))
+        return lineY(line: line, rows: rows, scroll: scroll, rowsTop: rowsTop, frameHeight: frameHeight)
     }
 }

@@ -57,4 +57,28 @@ public enum SelectionScope {
         }
         return result
     }
+
+    /// The object an export of the selection is named after: the one selected object; else the
+    /// one outermost group of what the export draws (`export`) that holds everything else it
+    /// draws, drawings (`drawn`: shapes and arrows, which a marquee takes along) aside. Nil when
+    /// the selection spans several groups or loose tiles.
+    public static func namesake(selection: Set<ObjectID>, groups: [Group], drawn: Set<ObjectID>) -> ObjectID? {
+        if selection.count == 1 { return selection.first }
+        let scope = export(selection: selection, groups: groups)
+        let byID = Dictionary(groups.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func contents(_ group: Group) -> Set<ObjectID> {
+            var found: Set<ObjectID> = [], queue = group.members
+            while let next = queue.popLast() {
+                guard found.insert(next).inserted else { continue }
+                queue += byID[next]?.members ?? []
+            }
+            return found
+        }
+        let chosen = groups.filter { scope.contains($0.id) }
+        let inner = Set(chosen.flatMap(contents))
+        let outer = chosen.filter { !inner.contains($0.id) }
+        guard outer.count == 1, let group = outer.first else { return nil }
+        let inside = contents(group).union([group.id])
+        return scope.subtracting(drawn).allSatisfy(inside.contains) ? group.id : nil
+    }
 }

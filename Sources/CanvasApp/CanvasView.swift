@@ -342,6 +342,7 @@ final class CanvasView: NSScrollView {
         guard tiles[object.id] == nil, TileFactory.hasTile(object.type) else { return }
         let id = object.id
         let content = TileFactory.make(object, board: board)
+        if chromeHidden { (content as? CodeTile)?.setPresenting(true) }
         if let terminal = content as? TerminalTile {
             terminal.onTitle = { [weak self] title in
                 self?.tiles[id]?.setTitle(title)
@@ -350,23 +351,29 @@ final class CanvasView: NSScrollView {
                 self?.syncAuthors(of: id)
             }
             terminal.onStatus = { [weak self] status, failed, detail in self?.tiles[id]?.setStatus(status, failed: failed, detail: detail) }
-            // A ⌘-clicked reference: user navigation. A tile already on the board (or the
-            // re-aimed preview) is selected (keyboard focus stays in the terminal); the view pans
-            // only when the tile is mostly out of view, never so far that the reference goes.
-            terminal.onOpenedCode = { [weak self] opened, created, source in
+            // A ⌘-clicked reference: user navigation. A tile already showing it anywhere on the
+            // board is gone to (`goToShown`); the re-aimed preview is selected (keyboard focus
+            // stays in the terminal). A preview or new tile pans the view only when it is mostly
+            // out of view, never so far that the reference goes.
+            terminal.onOpenedCode = { [weak self] opened, source in
                 guard let self else { return }
-                if !created { self.setSelection([opened]) }
                 let from = self.viewport
-                self.reveal(opened, openedFrom: source.isNull ? .null : self.document.convert(source, from: nil))
-                self.recordNavigation(from: from, landing: self.board.objects[opened].flatMap(CodeAim.init))
+                if opened.existing {
+                    self.goToShown(opened.id)
+                } else {
+                    if !opened.created { self.setSelection([opened.id]) }
+                    self.reveal(opened.id, openedFrom: source.isNull ? .null : self.document.convert(source, from: nil))
+                }
+                self.recordNavigation(from: from, landing: self.board.objects[opened.id].flatMap(CodeAim.init))
             }
         }
-        (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in
-            guard let self else { return }
-            self.navigating(landing: self.board.objects[opened].flatMap(CodeAim.init)) {
-                self.reveal(opened)
-                return nil
-            }
+        // A page's code link: the tile already showing the lines is gone to, anything else is
+        // shown with the least pan.
+        (content as? HtmlTile)?.onOpenedCode = { [weak self] opened, existing in
+            self?.showOpenedCode(opened, existing: existing)
+        }
+        (content as? NoteTile)?.onOpenedCode = { [weak self] opened, existing in
+            self?.showOpenedCode(opened, existing: existing)
         }
         // A clicked line: user navigation. The changes tile keeps the selection and the keyboard
         // (j/k go on through the hunks; a selected code tile would take the keyboard from it);
@@ -479,7 +486,7 @@ final class CanvasView: NSScrollView {
         guard ids != selection else { return }
         let added = ids.subtracting(selection)
         selection = ids
-        for (id, group) in groups { group.isSelected = ids.contains(id) }
+        for (id, group) in groups { group.isSelected = !chromeHidden && ids.contains(id) }
         board.activity.selectionChanged(Array(ids), actor: .user, rev: board.revision)
         scheduleActivitySettle()
         refreshRings()
@@ -510,7 +517,7 @@ final class CanvasView: NSScrollView {
     }
 
     private func refreshRings() {
-        overlay.rings = selection.sorted().compactMap { id in
+        overlay.rings = chromeHidden ? [] : selection.sorted().compactMap { id in
             guard groups[id] == nil, let rect = docFrame(id) else { return nil }
             return SceneOverlay.Ring(rect: rect, dashed: tiles[id] == nil)
         }
@@ -520,7 +527,7 @@ final class CanvasView: NSScrollView {
     /// Selected tiles' resize handles, where their corners are on screen now.
     private func placeHandles() {
         let visible = documentVisibleRect
-        handles.corners = selection.sorted().compactMap { tiles[$0] }.filter { $0.frame.intersects(visible) }
+        handles.corners = chromeHidden ? [] : selection.sorted().compactMap { tiles[$0] }.filter { $0.frame.intersects(visible) }
             .map { handles.convert(NSPoint(x: $0.frame.maxX, y: $0.frame.maxY), from: document) }
     }
 
@@ -815,6 +822,7 @@ final class CanvasView: NSScrollView {
     // MARK: Commands
 
     func escape() {
+        if chromeHidden { return chromeHidden = false }
         if enteredGroup != nil { exitGroup() } else { setSelection([]) }
     }
 
@@ -1040,20 +1048,40 @@ final class CanvasView: NSScrollView {
     var recentLocations = RecentLocations()
     var navigationDepth = 0
 
-    /// ⌥⌘-arrow: the nearest tile that way from the focused tile, else the selection, else the
-    /// viewport center (`Layout.neighbor`), or the tile the previous move came from when this is
-    /// its opposite arrow (`TileWalk`); shown with the least pan, selected, and given the keyboard.
+    /// ⌥⌘-arrow, stepping through the board like slides: from the focused tile, else the selected
+    /// object, ⌥⌘→ follows its outgoing `next_step` arrow and ⌥⌘← its incoming one
+    /// (`StepOrder`; at the end of a sequence a notice says "Last step" or "First step"); else
+    /// the nearest tile that way from the focused tile, else the selection, else the viewport
+    /// center (`Layout.neighbor`), or the tile the previous move came from when this is its
+    /// opposite arrow (`TileWalk`). The stop shows whole: centered when it isn't in view with a
+    /// margin, fitted when it's larger than the view (`Layout.present`); selected, given the
+    /// keyboard, and one step of Navigate Back (which selects the stop it came from again).
     func moveToNeighbor(_ heading: Layout.Heading) {
-        let sources = focusedTile.map { [$0] } ?? selection.filter { tiles[$0] != nil }.sorted()
-        let frames = sources.compactMap { tiles[$0]?.frame }
-        let from = frames.dropFirst().reduce(frames.first) { union, frame in union?.union(frame) }
-            ?? NSRect(x: documentVisibleRect.midX, y: documentVisibleRect.midY, width: 0, height: 0)
-        let candidates = tiles.values.filter { !sources.contains($0.objectID) && !$0.isHidden }.sorted { $0.objectID < $1.objectID }
-        guard let id = walk.step(from: sources.count == 1 ? sources[0] : nil, frame: from, toward: heading,
-                                 among: candidates.map { ($0.objectID, $0.frame) }) else { return }
-        reveal(id)
+        let sources = focusedTile.map { [$0] } ?? selection.sorted()
+        var target: ObjectID?
+        if sources.count == 1, heading == .right || heading == .left {
+            switch StepOrder.step(from: sources[0], forward: heading == .right, in: board.objects) {
+            case .to(let next): target = next
+            case .end: return showNotice(heading == .right ? "Last step" : "First step")
+            case .none: break
+            }
+        }
+        if target == nil {
+            let tileSources = sources.filter { tiles[$0] != nil }
+            let frames = tileSources.compactMap { tiles[$0]?.frame }
+            let from = frames.dropFirst().reduce(frames.first) { union, frame in union?.union(frame) }
+                ?? NSRect(x: documentVisibleRect.midX, y: documentVisibleRect.midY, width: 0, height: 0)
+            let candidates = tiles.values.filter { !tileSources.contains($0.objectID) && !$0.isHidden }.sorted { $0.objectID < $1.objectID }
+            target = walk.step(from: tileSources.count == 1 ? tileSources[0] : nil, frame: from, toward: heading,
+                               among: candidates.map { ($0.objectID, $0.frame) })
+        }
+        guard let id = target, docFrame(id) != nil else { return }
+        let before = viewport, selectedBefore = sources.count == 1 ? sources[0] : nil
+        present(id)
         setSelection([id])
-        takeKeyboard(id)
+        if tiles[id] != nil { takeKeyboard(id) }
+        guard navigationDepth == 0 else { return }
+        navigation.record(NavigationHistory.Entry(from: before, to: viewport, reaim: nil, selectedBefore: selectedBefore, selectedAfter: id))
     }
 
     /// ⌘F: the find bar of the focused code tile, else of the one selected code tile. False
@@ -1095,7 +1123,13 @@ final class CanvasView: NSScrollView {
         if let existing = board.changesTile(root: root, base: "HEAD") { return go(to: existing) }
         var props: [String: JSONValue] = ["base": .string("HEAD")]
         if let root { props["root"] = .string(root) }
-        let changes = createHere(.changes, props: .object(props), at: point)
+        // The pan that shows the new tile is a place ⌘[ comes back from.
+        var changes: CanvasObject?
+        navigating {
+            changes = createHere(.changes, props: .object(props), at: point)
+            return nil
+        }
+        guard let changes else { return }
         setSelection([changes.id])
         takeKeyboard(changes.id)
     }
@@ -1294,6 +1328,29 @@ final class CanvasView: NSScrollView {
     /// the bottom), in view points; the window controller measures it. Jumps land clear of it.
     var chromeInsets: () -> NSEdgeInsets = { NSEdgeInsets() }
 
+    /// View › Hide Canvas Chrome, for presenting: the window hides the drawing toolbar and the
+    /// tray (`onChromeHiddenChange`), the canvas its selection rings and handles, author marks,
+    /// code tiles' header rows and agents' attention markers (a blocked agent's ring, bubble and
+    /// edge pill stay: it needs the user). Esc on the canvas or the menu item again shows them.
+    var chromeHidden = false {
+        didSet {
+            guard chromeHidden != oldValue else { return }
+            for (id, group) in groups { group.isSelected = !chromeHidden && selection.contains(id) }
+            refreshRings()
+            for tile in tiles.values { (tile.content as? CodeTile)?.setPresenting(chromeHidden) }
+            for id in board.objects.keys { syncAuthor(id) }
+            shapeLayer?.needsDisplay = true
+            if !chromeHidden { markers.values.forEach { $0.isHidden = false } }
+            layoutPills()
+            onChromeHiddenChange?()
+        }
+    }
+    var onChromeHiddenChange: (() -> Void)?
+
+    /// The free stretches of the window chrome's toolbar row, in window coordinates: where an
+    /// edge pill goes when the edge of the view has no stretch clear of tiles (`PillLayout`).
+    var chromeBands: () -> [NSRect] = { [] }
+
     /// Space kept between a jump's target and the floating chrome, in view points.
     static let chromeMargin: CGFloat = 12
 
@@ -1442,11 +1499,14 @@ final class CanvasView: NSScrollView {
         (tiles[id]?.content as? TerminalTile)?.focus()
     }
 
-    /// An attention edge pill: framed like Go to, and the marker is acknowledged (the user went
-    /// there). Selection and keyboard focus stay.
+    /// An attention edge pill: framed like Go to (one step of Navigate Back), and the marker is
+    /// acknowledged (the user went there). Selection and keyboard focus stay.
     func jumpToAttention(_ id: ObjectID) {
         guard let rect = docFrame(id) else { return }
-        fit(rect, readable: true)
+        navigating {
+            fit(rect, readable: true)
+            return nil
+        }
         board.clearAttention(id)
     }
 
@@ -1471,6 +1531,24 @@ final class CanvasView: NSScrollView {
     func reveal(_ id: ObjectID, openedFrom source: NSRect) {
         guard let rect = docFrame(id) else { return }
         let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification, openedFrom: source)
+        if jump != currentJump { apply(jump) }
+    }
+
+    /// Code a page's or note's link opened: one step of Navigate Back. A tile that already
+    /// showed the lines is gone to (`goToShown`); a new or re-aimed one is shown with the least pan.
+    private func showOpenedCode(_ id: ObjectID, existing: Bool) {
+        navigating(landing: board.objects[id].flatMap(CodeAim.init)) {
+            if existing { goToShown(id) } else { reveal(id) }
+            return nil
+        }
+    }
+
+    /// An object shown whole like a slide: nothing moves while it is in view with a margin;
+    /// else centered at this zoom, or fitted when larger than the view (`Layout.present`).
+    func present(_ id: ObjectID) {
+        guard let rect = docFrame(id) else { return }
+        let jump = Layout.present(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification,
+                                  zoom: minMagnification...maxMagnification, readable: Self.readableZoom)
         if jump != currentJump { apply(jump) }
     }
 
@@ -1519,7 +1597,9 @@ final class CanvasView: NSScrollView {
         var shownMarkers: [PillLayout.Marker] = []
         var pointers: [ObjectID: AttentionEdgeView.Pointer] = [:]
         func point(_ rect: NSRect) -> NSPoint { edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document) }
-        let views = Array(markers.values) + Array(blocked.values)
+        // Hidden chrome (presenting) hides agents' "look here" markers; a blocked agent still shows.
+        if chromeHidden { markers.values.forEach { $0.isHidden = true } }
+        let views = (chromeHidden ? [] : Array(markers.values)) + Array(blocked.values)
         var shownRects: [ObjectIdentifier: NSRect] = [:]
         for view in views {
             guard let rect = docFrame(view.objectID) else {
@@ -1550,7 +1630,8 @@ final class CanvasView: NSScrollView {
         }
         let clear = clearArea
         let placement = PillLayout.place(markers: shownMarkers, edges: pointers.values.map { .init(id: $0.id, target: $0.target, size: AttentionEdgeView.size(for: $0.message, style: $0.style)) },
-                                         tiles: onScreen, focused: focused, caret: caret, clear: clear)
+                                         tiles: onScreen, focused: focused, caret: caret, clear: clear,
+                                         bands: chromeBands().map { edges.convert($0, from: nil) })
         for view in views {
             let bubble = view.style == .blocked ? placement.blocked[view.objectID] : placement.bubbles[view.objectID]
             if let bubble, let shown = shownRects[ObjectIdentifier(view)] { view.place(around: shown, bubble: bubble) }

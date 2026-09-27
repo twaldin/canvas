@@ -772,6 +772,9 @@ extension CodeTile {
 
     var headerHeight: CGFloat { header.height }
 
+    /// Hidden canvas chrome: the header's first row goes blank (`CodeHeaderBar.presenting`).
+    func setPresenting(_ presenting: Bool) { header.presenting = presenting }
+
     /// Return on the selected tile: the rows take the keyboard (arrows, pages, Home/End scroll;
     /// ⌘F finds; Esc goes back to the canvas).
     func enterKeyboard() -> Bool {

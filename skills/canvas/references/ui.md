@@ -3,6 +3,19 @@
 The legend behind Help › Canvas Basics, so you can answer "what is this?" without reading Canvas's source.
 Point the user at Help › Canvas Basics for the same text in the app.
 
+## Reading a board
+
+- Scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
+- **Groups** are tinted, titled regions of tiles that belong together; an **arrow**'s label says how two things relate, and one into a code tile points at its lines.
+  A code tile's **caption** (the line under its header) says why those lines matter.
+- **⌥⌘→ / ⌥⌘←** step to the next or previous stop: along the selected tile's `relation: "next_step"` arrows when it has one, else to the nearest tile that way.
+  A stop not wholly in view is centered (fitted when larger than the view); "Last step" / "First step" ends a sequence. Each step is a Back entry.
+- **⌘P** finds a tile by title or caption.
+- **Links**: a `path:line` link in a note or page, Go to, a definition and a terminal ⌘-click go to the code tile already showing those lines (exactly, or a captioned tile whose range holds them) wherever it is, else open them beside the source.
+- **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
+- **View › Hide Canvas Chrome** (also a button in Canvas Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
+  Esc on the canvas or the item again brings them back.
+
 ## Agents
 
 - **Lifecycle dot** in a terminal's title bar (its tooltip says the same):
@@ -19,6 +32,7 @@ Point the user at Help › Canvas Basics for the same text in the app.
   It clears when the user selects the tile, types in it, or looks at it for a few seconds; View › Clear Attention Markers clears them all.
   Bubbles sit beside their tile, off other tiles' title bars and never over the terminal the user is typing in.
 - **Edge pill** (arrow + the start of the message; the whole message in its tooltip): something that needs the user is off screen that way; clicking it goes there.
+  It sits on a stretch of the view's edge with no tile under it; when the edge is covered, it is a chip in the toolbar row beside the drawing toolbar.
 - **⌘J**: the next thing that needs the user, blocked agents first, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
 
 ## Agents' tiles
@@ -44,9 +58,10 @@ Point the user at Help › Canvas Basics for the same text in the app.
 
 - ⌘9 fits everything (or the largest cluster); ⌘0 is 100% (the selection at 100%); ⌘= and ⌘- step 10–100%.
   Below about 30% (terminals 15%) tiles show as cards; zooming in brings them back live. ⌥-drag a corner scales a tile.
-- ⌘P Go to (tiles, files, `@symbols`); ⌘T new terminal; ⌘W close the selection; ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows move to the nearest tile that way.
+- ⌘P Go to (tiles, files, `@symbols`); ⌘T new terminal; ⌘W close the selection; ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
   In a terminal Esc belongs to the program: ⌘Esc (View › Leave Tile) leaves any tile.
 - A code tile without changes shows a quiet "no changes"; its diff-base picker appears when the pointer is over the header.
 - Save as PNG…, Save as HTML… and Export Selection (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.
   Export Selection keeps the titles and borders of groups whose tiles are all selected; a marquee around groups selects them and the arrows between what it selects.
+  Its picture is at most 8000 px on its longest side, named after the one tile or group selected.

@@ -7,6 +7,15 @@ import Foundation
 public enum ExportFile {
     /// The longest name kept before the extension.
     public static let maxNameLength = 80
+    /// The longest side of an exported picture, in pixels: a long walkthrough row stays a
+    /// picture a chat or a slide can show rather than a 16,000-pixel strip.
+    public static let maxPixels: Double = 8000
+
+    /// Pixels per point for a picture of a `size`-point region: `requested`, lowered so its
+    /// longest side is at most `maxPixels`.
+    public static func scale(_ requested: Double, for size: CGSize) -> Double {
+        min(requested, maxPixels / max(size.width, size.height, 1))
+    }
 
     /// A file name for an export titled `title` (an object's title): path and drive separators
     /// (`/`, `:`, `\`) read as " - " ("Findings report: top 5" → "Findings report - top 5"),

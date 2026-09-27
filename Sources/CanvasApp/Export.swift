@@ -10,20 +10,29 @@ extension CanvasView {
 
     /// The selection drawn offscreen (tiles, drawings, groups under it; no app chrome), as PNG,
     /// with the groups whose members are all selected (`SelectionScope.export`), so their titles
-    /// and borders aren't cut.
+    /// and borders aren't cut; at a scale that keeps its longest side within
+    /// `ExportFile.maxPixels`.
     private func selectionPNG() async throws -> Data {
         guard !selection.isEmpty else { throw ExportFailure("nothing is selected") }
-        let groups = board.objects.values.compactMap { object in
-            object.type == .group ? GroupSpec(object.props).map { SelectionScope.Group(id: object.id, members: $0.members) } : nil
-        }
-        let ids = SelectionScope.export(selection: selection, groups: groups).sorted()
-        return try await render(RenderRequest(target: .objects(ids), scale: Self.exportScale, padding: 0), format: .png).image
+        let ids = SelectionScope.export(selection: selection, groups: selectionGroups).sorted()
+        let bounds = RenderMath.union(ids.compactMap { outline(of: $0) })
+        let scale = bounds.map { ExportFile.scale(Self.exportScale, for: CGSize(width: $0.w, height: $0.h)) } ?? Self.exportScale
+        return try await render(RenderRequest(target: .objects(ids), scale: scale, padding: 0), format: .png).image
     }
 
-    /// A file name for the selection: the one object's title, else "Canvas selection"
+    private var selectionGroups: [SelectionScope.Group] {
+        board.objects.values.compactMap { object in
+            object.type == .group ? GroupSpec(object.props).map { SelectionScope.Group(id: object.id, members: $0.members) } : nil
+        }
+    }
+
+    /// A file name for the selection: the title of the one object, or of the one group holding
+    /// it (a marquee around a group: `SelectionScope.namesake`), else "Canvas selection"
     /// (`ExportFile.name`).
     private func exportName(_ ext: String) -> String {
-        var title = selection.count == 1 ? selection.first.flatMap { board.objects[$0] }.map(TileFrameView.title(for:)) : nil
+        let drawn = Set(selection.filter { [.shape, .arrow].contains(board.objects[$0]?.type) })
+        let namesake = SelectionScope.namesake(selection: selection, groups: selectionGroups, drawn: drawn)
+        var title = namesake.flatMap { board.objects[$0] }.map { $0.type == .group ? $0.props["title"]?.string ?? "" : TileFrameView.title(for: $0) }
         // An image tile's title is its file name: `chart.png` saves as `chart.png`, not `chart.png.png`.
         if let name = title, LocalImage.extensions.contains((name as NSString).pathExtension.lowercased()) || (name as NSString).pathExtension.lowercased() == "html" {
             title = ((name as NSString).lastPathComponent as NSString).deletingPathExtension

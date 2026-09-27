@@ -35,6 +35,24 @@ struct ExportTests {
         #expect(ExportFile.directory(lastUsed: reports, boardRoot: root, downloads: downloads, exists: { _ in false }) == downloads, "a folder since deleted")
     }
 
+    /// Presenter P4: a marquee around the walkthrough group saved a 16749×1911 strip named
+    /// "Canvas selection.png".
+    @Test func aPictureOfOneGroupIsNamedForItAndCappedInSize() {
+        let walkthrough = SelectionScope.Group(id: "grp_walk", members: ["a", "b", "inner"])
+        let inner = SelectionScope.Group(id: "inner", members: ["c"])
+        let other = SelectionScope.Group(id: "grp_other", members: ["d"])
+        let groups = [walkthrough, inner, other]
+        let marquee: Set<ObjectID> = ["grp_walk", "a", "b", "inner", "c", "arrow1"]
+        #expect(SelectionScope.namesake(selection: marquee, groups: groups, drawn: ["arrow1"]) == "grp_walk")
+        #expect(SelectionScope.namesake(selection: ["a", "b", "c"], groups: groups, drawn: []) == "grp_walk", "its members all selected")
+        #expect(SelectionScope.namesake(selection: ["b"], groups: groups, drawn: []) == "b", "one tile")
+        #expect(SelectionScope.namesake(selection: marquee.union(["d"]), groups: groups, drawn: ["arrow1"]) == nil, "two groups")
+        #expect(SelectionScope.namesake(selection: ["a", "b"], groups: groups, drawn: []) == nil, "loose tiles")
+
+        #expect(ExportFile.scale(2, for: CGSize(width: 8375, height: 956)) * 8375 <= ExportFile.maxPixels + 0.01)
+        #expect(ExportFile.scale(2, for: CGSize(width: 1200, height: 800)) == 2, "a picture within the cap keeps its scale")
+    }
+
     @Test func aMarqueeAroundGroupsSelectsThemAndTheArrowsBetweenThem() {
         // Auditor F3: four groups of code tiles joined by arrows; one arrow's route bends outside
         // the marquee, another leads to a tile outside it.

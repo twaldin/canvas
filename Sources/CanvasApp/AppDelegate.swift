@@ -262,6 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
     @objc func toggleNavigator(_ sender: Any?) { keyController?.toggleNavigator(sender) }
     @objc func toggleBasics(_ sender: Any?) { keyController?.toggleBasics(sender) }
+    @objc func toggleCanvasChrome(_ sender: Any?) { keyController?.toggleCanvasChrome(sender) }
     @objc func toggleLassoSelection(_ sender: Any?) { keyController?.toggleLassoSelection(sender) }
     @objc func exitGroup(_ sender: Any?) { keyController?.exitGroup(sender) }
     @objc func undoCanvas(_ sender: Any?) { keyController?.undoCanvas(sender) }
@@ -423,6 +424,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Zoom to Fit", #selector(zoomToFit(_:)), "9"),
             .separator(),
             item("Clear Attention Markers", #selector(clearAttentionMarkers(_:)), ""),
+            // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
+            item("Hide Canvas Chrome", #selector(toggleCanvasChrome(_:)), ""),
             lasso,
             item("Exit Group", #selector(exitGroup(_:)), ""),
         ])

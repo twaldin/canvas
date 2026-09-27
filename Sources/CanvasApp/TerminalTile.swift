@@ -22,7 +22,7 @@ final class TerminalTile: NSView, TileContent {
     var onStatus: ((_ status: String?, _ failed: Bool, _ detail: String?) -> Void)?
     /// A ⌘-clicked reference opened this code tile (`created`) or re-aimed or found it there;
     /// `source` is the reference's rect in window coordinates.
-    var onOpenedCode: ((ObjectID, _ created: Bool, _ source: NSRect) -> Void)?
+    var onOpenedCode: ((CodeOpened, _ source: NSRect) -> Void)?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -609,9 +609,9 @@ final class TerminalTile: NSView, TileContent {
         }
         let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile)
         NSLog("Canvas: terminal %@ opened %@:%d-%d as %@ (%@)", objectID, hit.file, hit.lines.start, hit.lines.end, opened.id,
-              opened.created ? (newTile ? "new tile" : "new preview") : "re-aimed or existing")
+              opened.created ? (newTile ? "new tile" : "new preview") : opened.existing ? "existing" : "re-aimed preview")
         let source = grid.map { rects(hit.runs, grid: $0).reduce(NSRect.null) { $0.union($1) } } ?? .null
-        onOpenedCode?(opened.id, opened.created, source.isNull ? .null : underline.convert(source, to: nil))
+        onOpenedCode?(opened, source.isNull ? .null : underline.convert(source, to: nil))
     }
 
     // MARK: Scrollback

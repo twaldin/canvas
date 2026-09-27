@@ -60,10 +60,11 @@ public enum HtmlChannel {
         return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
-    /// The user's navigation to code from the HTML tile (`Board.openForNavigation`): a plain
-    /// code tile in view showing `path` re-aimed, else a new one to the right of the HTML tile.
+    /// The user's navigation to code from the HTML tile (`Board.openForNavigation`): a tile
+    /// already showing the lines anywhere (`existing`, a walkthrough's stop), else a plain code
+    /// tile in view showing `path` re-aimed, else a new one to the right of the HTML tile.
     static func openCode(path: String, range: LineRange?, symbol: String?, beside tile: ObjectID, on board: Board) -> JSONValue {
         let opened = board.openForNavigation(CodeAim(path: path, range: range, symbol: symbol), from: tile)
-        return .object(["tile": .string(opened.id), "created": .bool(opened.created)])
+        return .object(["tile": .string(opened.id), "created": .bool(opened.created), "existing": .bool(opened.existing)])
     }
 }

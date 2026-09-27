@@ -273,6 +273,21 @@ public enum Layout {
             y: jump.origin.y + clamp(full.origin.y - jump.origin.y, source.minY, source.maxY, shown.minY, shown.maxY)))
     }
 
+    /// A stop stepped to (⌥⌘-arrows), like a slide advance: nothing moves while `rect` with
+    /// `padding` shows whole; else it is centered at this zoom, or, when it doesn't fit at this
+    /// zoom, fitted (`fit`, `readable` for a tall one) so the audience sees the one stop rather
+    /// than half of the last one beside the least pan.
+    public static func present(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat, zoom limits: ClosedRange<CGFloat>, readable: CGFloat? = nil) -> Jump {
+        let zoom = jump.zoom
+        let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        let padded = rect.insetBy(dx: -padding, dy: -padding)
+        if shown.contains(padded) { return jump }
+        guard padded.width <= shown.width, padded.height <= shown.height else {
+            return fit(rect, in: clear, padding: padding, zoom: limits.lowerBound...min(limits.upperBound, zoom), readable: readable)
+        }
+        return center(rect, in: clear, zoom: zoom, padding: padding)
+    }
+
     /// Keyboard zoom levels (⌘= / ⌘-), browser-like: fine steps near 100%, coarse far out.
     public static let zoomLevels: [CGFloat] = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 3, 4]
 

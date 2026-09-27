@@ -26,7 +26,7 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
 | Component | Use |
 | --- | --- |
 | `<canvas-code path="src/x.ts" lines="10-40"></canvas-code>` | Live excerpt from the real file. `symbol="Board.update"` anchors to a symbol instead (survives edits; wins over `lines`). Shows a stale badge when the anchor is lost. Click opens a code tile. `path` is board-relative. |
-| `<canvas-link path="src/x.ts" line="42">the retry loop</canvas-link>` | Inline file:line link (also `lines="10-20"`, `symbol=`). Empty text renders `path:line`. |
+| `<canvas-link path="src/x.ts" line="42">the retry loop</canvas-link>` | Inline file:line link (also `lines="10-20"`, `symbol=`). Empty text renders `path:line`. A click goes to the code tile already showing those lines (exactly, or a captioned tile whose range holds them), else opens one beside the page: an overview can link to its own stops. |
 | `<canvas-decisions key="storage" question="Where should boards live?">` + `<canvas-option value="sqlite" label="SQLite">why / cost</canvas-option>`… | A choice the user makes in place. The pick is stored in the tile's `props.state.storage`; read it with `object.get`. Clicking again clears it. |
 | `<canvas-compare>` + `<canvas-pane label="Before">…</canvas-pane>`… | Equal-width labeled columns, any count. |
 

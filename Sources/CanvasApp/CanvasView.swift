@@ -767,6 +767,13 @@ final class CanvasView: NSScrollView {
         menu.addItem(.separator())
         if let scale = scaleMenu() { menu.addItem(scale) }
         menu.addItem(MenuAction.item("Group Selection", enabled: expandedSelection().count >= 2) { [weak self] in self?.groupSelection() })
+        if count == 1, let terminal = board.objects[id], terminal.type == .terminal {
+            // Off removes the follow tile; on, the agent's next file report brings it back.
+            let following = terminal.props["follow"]?.bool != false
+            let item = MenuAction.item("Follow Files") { [weak self] in try? self?.board.setFollowing(id, !following) }
+            item.state = following ? .on : .off
+            menu.addItem(item)
+        }
         menu.addItem(.separator())
         menu.addItem(MenuAction.item(count > 1 ? "Copy Object IDs" : "Copy Object ID") { [weak self] in self?.copyIDs() })
         return menu

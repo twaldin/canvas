@@ -118,6 +118,10 @@ struct BoardTests {
     @Test func followReusesOneTilePerTerminalAndIgnoresFilesOutsideTheProject() throws {
         let board = makeBoard()
         let worktree = FileManager.default.temporaryDirectory.appendingPathComponent("follow-cwd-\(UUID().uuidString)")
+        for file in [root.appendingPathComponent("src/a.ts"), root.appendingPathComponent("src/b.ts"), worktree.appendingPathComponent("lib/c.ts")] {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "x\n".write(to: file, atomically: true, encoding: .utf8)
+        }
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(worktree.path), "command": .array([])]))
         let first = try #require(try board.follow(tile: terminal.id, path: root.appendingPathComponent("src/a.ts").path, range: LineRange(start: 1, end: 10), action: "read"))
         let second = try #require(try board.follow(tile: terminal.id, path: "src/b.ts", range: nil, action: "edit"))
@@ -128,9 +132,78 @@ struct BoardTests {
 
         let inCwd = worktree.appendingPathComponent("lib/c.ts").path
         #expect(try board.follow(tile: terminal.id, path: inCwd, range: nil, action: "read")?.id == first.id, "the terminal's cwd counts as the project")
-        #expect(try board.follow(tile: terminal.id, path: "/tmp/shot.png", range: nil, action: "read") == nil)
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: root.appendingPathComponent(".tmp-render.png"))
+        #expect(try board.follow(tile: terminal.id, path: ".tmp-render.png", range: nil, action: "read") == nil, "an agent's own render")
+        #expect(try board.follow(tile: terminal.id, path: "src/gone.ts", range: nil, action: "read") == nil)
         #expect(try board.follow(tile: terminal.id, path: root.path + "-sibling/a.ts", range: nil, action: "read") == nil, "a name prefix is not containment")
         #expect(board.objects[first.id]?.props["path"]?.string == inCwd, "ignored reads leave the follow tile where it was")
+    }
+
+    @Test func followShowsOnlyExistingTextFilesInTheProject() throws {
+        let project = root.appendingPathComponent("repo")
+        let scratch = root.appendingPathComponent("scratch")
+        func file(_ path: String, _ data: Data = Data("let a = 1\n".utf8)) throws -> String {
+            let url = URL(fileURLWithPath: path.hasPrefix("/") ? path : project.appendingPathComponent(path).path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url)
+            return url.path
+        }
+        let projects = [project.path]
+        #expect(FollowFilter.follows(try file("src/main.rs"), projects: projects))
+        #expect(FollowFilter.follows(try file("Makefile"), projects: projects), "no extension is fine")
+        for scratchRender in [".tmp-bug-render.png", ".omp-shots/home.PNG", "target/x.png", "docs/spec.pdf", "dist/app.tar.gz"] {
+            #expect(!FollowFilter.follows(try file(scratchRender), projects: projects), "\(scratchRender)")
+        }
+        #expect(!FollowFilter.follows(try file("data/blob.dat", Data([0x41, 0, 0x42])), projects: projects), "a NUL byte marks a binary")
+        #expect(!FollowFilter.follows(project.appendingPathComponent("src/deleted.rs").path, projects: projects))
+        #expect(!FollowFilter.follows(project.appendingPathComponent("src").path, projects: projects), "a directory")
+        #expect(!FollowFilter.follows(try file(scratch.appendingPathComponent("a.rs").path), projects: projects), "outside the project")
+
+        // The temp directory holds scratch files unless the project itself lives there.
+        let temp = [root.path]
+        #expect(!FollowFilter.follows(scratch.appendingPathComponent("a.rs").path, projects: ["/"], tempDirectories: temp))
+        #expect(FollowFilter.follows(try file("src/main.rs"), projects: projects, tempDirectories: temp))
+    }
+
+    @Test func closingAFollowTileStopsItsTerminalFollowingUntilTurnedBackOn() throws {
+        let board = makeBoard()
+        try "x\n".write(to: root.appendingPathComponent("a.ts"), atomically: true, encoding: .utf8)
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]))
+        let follow = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: nil, action: "read"))
+
+        try board.delete(follow.id)
+        #expect(board.objects[terminal.id]?.props["follow"] == .bool(false))
+        #expect(try board.follow(tile: terminal.id, path: "a.ts", range: nil, action: "read") == nil)
+        #expect(board.followTiles(of: terminal.id).isEmpty)
+
+        #expect(board.undo())
+        #expect(board.objects[follow.id] != nil && board.objects[terminal.id]?.props["follow"] == nil, "one undo brings the tile back and following on")
+        #expect(board.redo())
+        #expect(board.objects[follow.id] == nil && board.objects[terminal.id]?.props["follow"] == .bool(false))
+
+        try board.setFollowing(terminal.id, true)
+        #expect(board.followTiles(of: terminal.id).isEmpty, "turning it on waits for the next report")
+        let back = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: nil, action: "read"))
+        try board.setFollowing(terminal.id, false)
+        #expect(board.objects[back.id] == nil && board.objects[terminal.id]?.props["follow"] == .bool(false))
+        #expect(board.undo())
+        #expect(board.objects[back.id] != nil && board.objects[terminal.id]?.props["follow"] == .bool(true), "turning it off is one undo step")
+    }
+
+    @Test func deletingATerminalDeletesItsFollowTileInTheSameUndoStep() throws {
+        let board = makeBoard()
+        try "x\n".write(to: root.appendingPathComponent("a.ts"), atomically: true, encoding: .utf8)
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]))
+        let other = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]))
+        let follow = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: nil, action: "read"))
+        let kept = try #require(try board.follow(tile: other.id, path: "a.ts", range: nil, action: "read"))
+
+        try board.delete(terminal.id)
+        #expect(board.objects[follow.id] == nil)
+        #expect(board.objects[kept.id] != nil, "other terminals' follow tiles stay")
+        #expect(board.undo())
+        #expect(board.objects[terminal.id] != nil && board.objects[follow.id] != nil)
+        #expect(board.objects[terminal.id]?.props["follow"] == nil, "the cascade didn't turn following off")
     }
 
     @Test func placementKeepsClearOfOtherGroupsAndPrefersTheViewport() {

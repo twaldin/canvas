@@ -223,6 +223,8 @@ struct CodeTileBoardTests {
 
     @Test func followTilesAndPinsCarryNoViewMode() throws {
         let board = Board(id: "brd_test", root: root)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: root.appendingPathComponent("a.ts").path, contents: Data("x\n".utf8))
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/"), "command": .array([])]))
         let follow = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: LineRange(start: 3, end: 4), action: "write"))
         #expect(Set(follow.props.object?.keys.map { $0 } ?? []) == ["path", "range", "followOf", "lastAction", "history", "diffBase"])

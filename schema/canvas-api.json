@@ -75,6 +75,7 @@
           "additionalProperties": false
         },
         "lifecycle": { "$ref": "#/definitions/Lifecycle" },
+        "follow": { "type": "boolean", "default": true, "description": "follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again" },
         "scale": { "$ref": "#/definitions/Scale" }
       },
       "additionalProperties": false
@@ -819,7 +820,7 @@
       }
     },
     "follow.report": {
-      "description": "Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile (unless the user is working in it, which holds re-aims for ~10 s). Files outside the board root and the terminal's cwd are ignored.",
+      "description": "Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root and the terminal's cwd, scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file.",
       "params": {
         "type": "object",
         "required": ["tile", "path", "action"],

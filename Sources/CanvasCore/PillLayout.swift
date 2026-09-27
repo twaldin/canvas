@@ -123,7 +123,7 @@ public enum PillLayout {
         var pills: [String: CGRect] = [:]
         let onScreenPrompts = prompts.map(\.rect)
         let headers = tiles.map(\.headerRect).filter { !$0.isEmpty && $0.intersects(clear) }
-        let bodies = tiles.map(\.rect).filter { $0.intersects(clear) }
+        let bodies = tiles.map(\.rect)
         for edge in edges.sorted(by: { $0.id < $1.id }) {
             let rect = edgePill(edge, placed: placed, keepOff: onScreenPrompts, tiles: bodies, headers: headers, bands: bands, clear: clear)
             pills[edge.id] = rect
@@ -244,14 +244,23 @@ public enum PillLayout {
         if let free = along.map({ clamp($0, into: clear, margin: edgeMargin) }).filter({ !overlapsPill($0, solid) }).min(by: { distance($0) < distance($1) }) {
             return free
         }
-        // A chip in the chrome's band, off the chips already there.
+        // A chip in the chrome's band, off the chips already there, over as little of the tiles
+        // scrolled under the toolbar row as it can, then nearest the ideal spot.
         var chips: [CGRect] = []
         for band in bands where band.width >= size.width && band.height >= size.height {
             let y = band.midY - size.height / 2
+            let row = CGRect(x: band.minX, y: y, width: band.width, height: size.height)
             let xs = escapes(ideal.midX - size.width / 2, length: size.width, placed: placed, axis: \.minX, far: \.maxX)
+                + slides(length: size.width, around: tiles, axis: \.minX, far: \.maxX, crossing: row) + [band.minX, band.maxX - size.width]
             chips += xs.map { CGRect(x: min(max($0, band.minX), band.maxX - size.width), y: y, width: size.width, height: size.height) }
         }
-        if let chip = chips.filter({ !overlapsPill($0, placed) }).min(by: { distance($0) < distance($1) }) { return chip }
+        func covered(_ rect: CGRect) -> CGFloat {
+            tiles.reduce(0) { total, tile in
+                let part = tile.intersection(rect)
+                return total + (part.isNull ? 0 : part.width * part.height)
+            }
+        }
+        if let chip = chips.filter({ !overlapsPill($0, placed) }).min(by: { (covered($0).rounded(), distance($0)) < (covered($1).rounded(), distance($1)) }) { return chip }
         guard overlapsPill(ideal, placed) || overlapsPill(ideal, keepOff) || overlapsPill(ideal, headers) else { return ideal }
         // Along the edge it sits on first, off blocked and focused terminals, then off title bars
         // where the edge allows; stepping inward only when the edge is full of pills.

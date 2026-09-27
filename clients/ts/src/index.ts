@@ -160,8 +160,14 @@ export class CanvasClient {
   close(): void {
     const connection = this.#connection;
     this.#connection = undefined;
+    // `end` half-closes and waits for the app's side; `unref` keeps that wait from holding the
+    // process open (Bun 1.4 keeps a half-closed socket alive until the peer closes, so a CLI
+    // that had printed its result never exited).
     void connection?.then(
-      (c) => c.socket.end(),
+      (c) => {
+        c.socket.end();
+        c.socket.unref();
+      },
       () => undefined,
     );
   }

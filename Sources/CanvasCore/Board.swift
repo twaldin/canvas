@@ -72,6 +72,13 @@ public final class Board {
     public private(set) var tray: [Mention] = []
     /// Unseen attention markers by object (see Attention.swift).
     public internal(set) var attention: [ObjectID: Attention] = [:]
+    /// Mentions agents attached to their `agent.prompt` for each terminal, waiting for its next
+    /// drained prompt (Handoff.swift); in memory only.
+    public internal(set) var handoffs: [ObjectID: [Handoff]] = [:]
+    /// Each terminal's last answer: the final assistant message of its agent's last finished
+    /// turn, as its integration reported it with `idle` (`agent.read` `final`). A new turn clears
+    /// it; in memory only.
+    public internal(set) var finalAnswers: [ObjectID: String] = [:]
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -278,6 +285,7 @@ public final class Board {
         log(.deleted, removed, actor: actor, "deleted \(ActivityLog.describe(removed))")
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
+        forgetHandoffs(of: id)
         let marked = attention.removeValue(forKey: id) != nil
         onChange?()
         onEvent?(.objectDeleted(id))
@@ -564,20 +572,29 @@ public final class Board {
 
     /// Resolve every staged mention at its current revision and return the prompt context.
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids. `caller` is the
-    /// terminal the context goes to: mentions of it say so, other terminals are named.
+    /// terminal the context goes to: mentions of it say so, other terminals are named. The
+    /// mentions other agents handed to `caller` (`handOff`) follow the tray's, one block per
+    /// sender; `tray` false leaves the tray out (it shows another terminal).
     /// Old-side and pinned code excerpts are read from git, hence async.
-    public func drain(peek: Bool = false, caller: ObjectID? = nil) async -> (mentions: [MentionContext.Resolved], context: String) {
+    public func drain(peek: Bool = false, caller: ObjectID? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
         var resolved: [MentionContext.Resolved] = []
-        for (index, mention) in tray.enumerated() {
+        for (index, mention) in (includeTray ? tray : []).enumerated() {
             resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self, caller: caller))
         }
-        let context = MentionContext.render(resolved, board: self)
+        var blocks = resolved.isEmpty ? [] : [MentionContext.render(resolved, board: self)]
+        if let caller {
+            let handed = await resolveHandoffs(for: caller, from: resolved.count + 1)
+            resolved.append(contentsOf: handed.mentions)
+            blocks.append(contentsOf: handed.blocks)
+        }
         if !peek { commit(resolved.map(\.id)) }
-        return (resolved, context)
+        return (resolved, blocks.joined(separator: "\n"))
     }
 
-    /// Remove exactly these mentions (the ones whose context was delivered). Unknown ids are ignored.
+    /// Remove exactly these mentions (the ones whose context was delivered), from the tray and
+    /// from what agents handed to terminals. Unknown ids are ignored.
     public func commit(_ ids: [MentionID]) {
+        commitHandoffs(ids)
         let before = tray.count
         tray.removeAll { ids.contains($0.id) }
         if tray.count != before { trayChanged() }
@@ -605,9 +622,12 @@ public final class Board {
     /// other calls (parallel siblings, subagents) finish meanwhile; finishing one re-raises the
     /// next. `working` without a call (a new prompt) and `idle` end every wait. A finished call
     /// reported out of order (lower `seq`) still ends its own wait but changes nothing else.
-    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil) throws {
+    /// `final`: with `idle`, the last answer of the turn that just ended (`finalAnswers`), kept
+    /// until the next turn starts.
+    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
+        guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
         let key = "\(tile)|\(source ?? kind)"
         if let seq {
             if let last = lifecycleSeq[key], seq <= last {
@@ -637,8 +657,12 @@ public final class Board {
             // Going to working from idle, done, or no state is the user's next prompt reaching the
             // agent: a new turn. From blocked (an approval answered) it continues the same answer.
             let previous = terminal.props["lifecycle"]?["state"]?.string
-            if previous != LifecycleState.working.rawValue, previous != LifecycleState.blocked.rawValue { agentStartedTurn(tile) }
+            if previous != LifecycleState.working.rawValue, previous != LifecycleState.blocked.rawValue {
+                agentStartedTurn(tile)
+                finalAnswers[tile] = nil
+            }
         }
+        if state == .idle, let final, !final.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { finalAnswers[tile] = final }
         let effective: LifecycleState = state == .idle && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message { lifecycle["message"] = .string(message) }

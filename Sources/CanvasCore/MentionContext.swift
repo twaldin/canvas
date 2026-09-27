@@ -120,9 +120,12 @@ public enum MentionContext {
         return Resolved(id: mention.id, ref: "canvas:\(mention.id)\(rev)", label: mention.label, summary: lines.joined(separator: "\n"))
     }
 
-    public static func render(_ resolved: [Resolved], board: Board) -> String {
+    /// `from`/`header`: mentions another agent attached to its `agent.prompt` (`Handoff`) name
+    /// the sending terminal in the tag and say who attached them on the first line.
+    public static func render(_ resolved: [Resolved], board: Board, from: ObjectID? = nil, header: String? = nil) -> String {
         guard !resolved.isEmpty else { return "" }
-        var out = ["<canvas-mentions board=\"\(board.id)\" root=\"\(board.root.path)\">"]
+        var out = ["<canvas-mentions board=\"\(board.id)\" root=\"\(board.root.path)\"\(from.map { " from=\"\($0)\"" } ?? "")>"]
+        if let header { out.append(header) }
         out.append(contentsOf: resolved.map(\.summary))
         out.append("Read more with the canvas SDK or CLI: canvas get <id> --as graph; look with canvas render <id>")
         out.append("</canvas-mentions>")

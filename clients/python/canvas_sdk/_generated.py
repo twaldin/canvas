@@ -183,6 +183,12 @@ class ResolvedMention(TypedDict):
     summary: Required[str]
     graph: NotRequired[dict[str, Any]]
 
+class PromptMention(TypedDict):
+    """A board object `agent.prompt` attaches for the receiving agent, as a Hyper-click would mention it: a code tile's lines, an image tile's pixel, else the whole object"""
+    object: Required["Id"]
+    lines: NotRequired["LineRange"]
+    point: NotRequired[dict[str, Any]]
+
 class Agent(TypedDict):
     tile: Required["Id"]
     board: Required["Id"]
@@ -356,7 +362,7 @@ class TrayApi:
         return self._call("tray.unstage", params, [])
 
     def drain(self, *, board: "Id" | None = None, caller: "Id" | None = None, peek: bool | None = None) -> dict[str, Any]:
-        """Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets no mentions and an empty context, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title)."""
+        """Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets none of them, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. A `caller` also gets the mentions other agents attached for it with `agent.prompt` `mentions` (never shown in the tray), after the tray's, in a block per sending terminal (`<canvas-mentions … from="obj_…">` and a line naming it); `tray.commit` of their ids removes them too. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title)."""
         params = {"board": board, "caller": caller, "peek": peek}
         return self._call("tray.drain", params, ["board","caller"])
 
@@ -370,9 +376,9 @@ class AgentApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None) -> dict[str, Any]:
+    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None, final: str | None = None) -> dict[str, Any]:
         """Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. `working` without `call` (a new prompt) and `idle` end every wait."""
-        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call}
+        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call, "final": final}
         return self._call("agent.report", params, [])
 
     def report_session(self, *, tile: "Id", kind: str, session_id: str | None = None, session_path: str | None = None) -> dict[str, Any]:
@@ -390,19 +396,19 @@ class AgentApi:
         params = {}
         return self._call("agent.list", params, [])
 
-    def prompt(self, *, target: str, text: str, force: bool | None = None) -> dict[str, Any]:
-        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true."""
-        params = {"target": target, "text": text, "force": force}
-        return self._call("agent.prompt", params, [])
+    def prompt(self, *, target: str, text: str, mentions: list["PromptMention"] | None = None, caller: "Id" | None = None, force: bool | None = None) -> dict[str, Any]:
+        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`."""
+        params = {"target": target, "text": text, "mentions": mentions, "caller": caller, "force": force}
+        return self._call("agent.prompt", params, ["caller"])
 
     def wait(self, *, target: str, until: list[Literal["working", "blocked", "idle", "done", "unknown"]] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
         """Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited."""
         params = {"target": target, "until": until, "timeoutMs": timeout_ms}
         return self._call("agent.wait", params, [])
 
-    def read(self, *, target: str, lines: int | None = None, since: Literal["prompt"] | None = None) -> dict[str, Any]:
-        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line."""
-        params = {"target": target, "lines": lines, "since": since}
+    def read(self, *, target: str, lines: int | None = None, since: Literal["prompt"] | None = None, final: bool | None = None) -> dict[str, Any]:
+        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory)."""
+        params = {"target": target, "lines": lines, "since": since, "final": final}
         return self._call("agent.read", params, [])
 
 @_snake_case_hints

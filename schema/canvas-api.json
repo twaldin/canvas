@@ -375,6 +375,17 @@
       },
       "additionalProperties": false
     },
+    "PromptMention": {
+      "type": "object",
+      "required": ["object"],
+      "properties": {
+        "object": { "$ref": "#/definitions/Id", "description": "an object on the target terminal's board" },
+        "lines": { "$ref": "#/definitions/LineRange", "description": "code tiles only: these lines of its file (at its pinned commit, if any). Without it a code tile showing a range mentions that range" },
+        "point": { "type": "object", "required": ["x", "y"], "properties": { "x": { "type": "integer", "minimum": 0 }, "y": { "type": "integer", "minimum": 0 } }, "additionalProperties": false, "description": "image tiles only: a pixel of the picture, in the image's own pixels from its top-left" }
+      },
+      "additionalProperties": false,
+      "description": "A board object `agent.prompt` attaches for the receiving agent, as a Hyper-click would mention it: a code tile's lines, an image tile's pixel, else the whole object"
+    },
     "Agent": {
       "type": "object",
       "required": ["tile", "board", "root", "kind", "lifecycle"],
@@ -823,7 +834,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "tray.drain": {
-      "description": "Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets no mentions and an empty context, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title).",
+      "description": "Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets none of them, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. A `caller` also gets the mentions other agents attached for it with `agent.prompt` `mentions` (never shown in the tray), after the tray's, in a block per sending terminal (`<canvas-mentions … from=\"obj_…\">` and a line naming it); `tray.commit` of their ids removes them too. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title).",
       "params": {
         "type": "object",
         "properties": {
@@ -838,7 +849,7 @@
         "required": ["mentions", "context"],
         "properties": {
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/ResolvedMention" } },
-          "context": { "type": "string", "description": "ready-to-inject prompt context block; empty string when the tray was empty or its mentions are for another terminal" },
+          "context": { "type": "string", "description": "ready-to-inject prompt context: the tray's block, then one block per agent that attached mentions for the caller; empty string when there is nothing for the caller" },
           "held": { "type": "integer", "description": "present when the caller isn't the terminal the tray shows: the mentions left staged for it" },
           "target": { "$ref": "#/definitions/Id", "description": "with `held`: the terminal the tray shows, if any" }
         }
@@ -866,7 +877,8 @@
           "message": { "type": "string" },
           "seq": { "type": "integer" },
           "source": { "type": "string" },
-          "call": { "type": "string", "description": "identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input)" }
+          "call": { "type": "string", "description": "identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input)" },
+          "final": { "type": "string", "description": "only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts)" }
         },
         "additionalProperties": false
       },
@@ -903,13 +915,15 @@
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true.",
+      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`.",
       "params": {
         "type": "object",
         "required": ["target", "text"],
         "properties": {
           "target": { "type": "string", "description": "agent name or tile id" },
           "text": { "type": "string" },
+          "mentions": { "type": "array", "items": { "$ref": "#/definitions/PromptMention" }, "description": "objects on the target's board to attach, e.g. [{\"object\": \"obj_…\"}, {\"object\": \"obj_…\", \"lines\": {\"start\": 41, \"end\": 48}}]" },
+          "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal, named to the receiver with the mentions; clients fill from CANVAS_TILE_ID" },
           "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" }
         },
         "additionalProperties": false
@@ -920,7 +934,8 @@
         "properties": {
           "agent": { "$ref": "#/definitions/Agent", "description": "as it was when the prompt was submitted (its lifecycle is still the previous turn's)" },
           "submittedAt": { "type": "string", "format": "date-time" },
-          "waitable": { "type": "boolean", "description": "the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: \"prompt\"`" }
+          "waitable": { "type": "boolean", "description": "the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: \"prompt\"`" },
+          "mentions": { "type": "array", "items": { "$ref": "#/definitions/Mention" }, "description": "present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice)" }
         }
       }
     },
@@ -940,14 +955,15 @@
       "result": { "type": "object", "required": ["agent"], "properties": { "agent": { "$ref": "#/definitions/Agent" } } }
     },
     "agent.read": {
-      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line.",
+      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory).",
       "params": {
         "type": "object",
         "required": ["target"],
         "properties": {
           "target": { "type": "string", "description": "agent name or tile id" },
           "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "tail length; larger values are capped at 2000. With `since`: the last this many lines of the reply (default 2000)" },
-          "since": { "const": "prompt", "description": "only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started" }
+          "since": { "const": "prompt", "description": "only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started" },
+          "final": { "type": "boolean", "default": false, "description": "the last answer instead of the screen; takes no `lines` or `since`" }
         },
         "additionalProperties": false
       },

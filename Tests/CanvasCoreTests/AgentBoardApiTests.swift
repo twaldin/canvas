@@ -204,6 +204,112 @@ final class AgentBoardApiTests {
         guard process.terminationStatus == 0 else { throw CocoaError(.executableLoad, userInfo: [NSLocalizedDescriptionKey: "git \(arguments.joined(separator: " ")) failed"]) }
     }
 
+    // MARK: agent.prompt mentions, agent.read final
+
+    /// A terminal whose agent reports its lifecycle (as its integration does).
+    func agent(name: String) throws -> ObjectID {
+        let tile = terminal(name: name)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: nil, source: nil)
+        return tile
+    }
+
+    func showTray(to target: ObjectID?) {
+        router.viewState = { _ in
+            ViewState(viewport: Viewport(rect: Frame(x: 0, y: 0, w: 1000, h: 800), zoom: 1), promptTarget: target, focused: nil, selection: [], enteredGroup: nil, visible: true, appearance: "dark")
+        }
+    }
+
+    @Test func mentionsGivenToAPromptReachOnlyTheTargetsNextDrain() async throws {
+        let source = dir.appendingPathComponent("root/src/a.ts")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "import x\n\nexport function load() {\n  return 1\n}\n".write(to: source, atomically: true, encoding: .utf8)
+        let code = board.create(type: .code, props: .object(["path": "src/a.ts", "range": .object(["start": 3, "end": 5])])).id
+        let note = board.create(type: .note, props: .object(["markdown": "# Findings\n1. load returns a constant"])).id
+        let lead = try agent(name: "lead")
+        let reviewer = try agent(name: "reviewer")
+        let bystander = try agent(name: "bystander")
+        showTray(to: lead)
+        let own = try board.stage(.object(note))
+        router.submitToTerminal = { _, _, _ in true }
+
+        let mentions = #"[{"object":"\#(code)","lines":{"start":4,"end":4}},{"object":"\#(code)"},{"object":"\#(note)"}]"#
+        let sent = try await call("agent.prompt", #"{"target":"reviewer","text":"check the findings","caller":"\#(lead)","mentions":\#(mentions)}"#)
+        #expect(sent["result"]?["mentions"]?.array?.count == 3)
+        #expect(board.tray == [own], "the user's tray neither shows nor loses anything")
+
+        let theirs = try await call("tray.drain", #"{"caller":"\#(lead)","peek":true}"#)
+        #expect(theirs["result"]?["mentions"]?.array?.map { $0["id"] } == [.string(own.id)], "the sender's own prompt gets only the tray")
+        let others = try await call("tray.drain", #"{"caller":"\#(bystander)","peek":true}"#)
+        #expect(others["result"]?["context"] == .string(""))
+        let script = try await call("tray.drain", #"{"peek":true}"#)
+        #expect(script["result"]?["mentions"]?.array?.count == 1, "a script without a caller drains the tray only")
+
+        let drained = try #require(try await call("tray.drain", #"{"caller":"\#(reviewer)","peek":true}"#)["result"])
+        #expect(drained["held"] == .number(1), "the tray still waits for its own target")
+        let context = try #require(drained["context"]?.string)
+        #expect(context.hasPrefix("<canvas-mentions board=\"\(board.id)\" root=\"\(board.root.path)\" from=\"\(lead)\">\nAttached by terminal \(lead) \"lead\" to its prompt to you (agent.prompt):\n"))
+        #expect(context.contains("[1] code src/a.ts:4-4 · tile \(code)\n    1    import x\n"), "\(context)")
+        #expect(context.contains("  > 4      return 1\n"), "the given line, marked like a staged one")
+        #expect(context.contains("[2] code src/a.ts:3-5 · tile \(code)\n"), "a code tile without lines mentions the range it shows")
+        #expect(context.contains("[3] note \(note) \"# Findings\"\n    # Findings\n    1. load returns a constant\n"))
+
+        let ids = try #require(drained["mentions"]?.array?.compactMap { $0["id"]?.string })
+        #expect(ids.count == 3)
+        _ = try await call("tray.commit", #"{"ids":[\#(ids.map { "\"\($0)\"" }.joined(separator: ","))]}"#)
+        let again = try await call("tray.drain", #"{"caller":"\#(reviewer)","peek":true}"#)
+        #expect(again["result"]?["context"] == .string(""), "delivered once")
+        #expect(board.tray == [own])
+    }
+
+    @Test func promptMentionsAreRefusedWhereNothingWouldTakeThem() async throws {
+        let reviewer = try agent(name: "reviewer")
+        let shell = terminal(name: "shell")
+        let note = board.create(type: .note, props: .object(["markdown": "n"])).id
+        router.submitToTerminal = { _, _, _ in true }
+        func send(_ target: String, _ mentions: String) async throws -> JSONValue {
+            try await call("agent.prompt", #"{"target":"\#(target)","text":"x","mentions":\#(mentions)}"#)
+        }
+        #expect(try await send(shell, #"[{"object":"\#(note)"}]"#)["error"]?["code"] == .string("unavailable"), "a shell never drains")
+        #expect(try await send(reviewer, #"[{"object":"\#(note)","lines":{"start":1,"end":1}}]"#)["error"]?["code"] == .string("invalid_params"))
+        #expect(try await send(reviewer, #"[{"object":"\#(note)","range":1}]"#)["error"]?["code"] == .string("invalid_params"))
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("other"), withIntermediateDirectories: true)
+        let elsewhere = registry.open(root: dir.appendingPathComponent("other")).create(type: .note, props: .object(["markdown": "o"])).id
+        #expect(try await send(reviewer, #"[{"object":"\#(elsewhere)"}]"#)["error"]?["code"] == .string("not_found"), "objects come from the target's board")
+
+        router.submitToTerminal = { _, _, _ in false }
+        #expect(try await send(reviewer, #"[{"object":"\#(note)"}]"#)["error"]?["code"] == .string("unavailable"))
+        #expect(await board.drain(peek: true, caller: reviewer).mentions.isEmpty, "a prompt that never went in takes its mentions back")
+    }
+
+    @Test func readFinalReturnsTheLastReportedAnswerUntilTheNextTurn() async throws {
+        let tile = try agent(name: "reviewer")
+        let read = { try await self.call("agent.read", #"{"target":"reviewer","final":true}"#) }
+        #expect(try await read()["error"]?["code"] == .string("unavailable"), "never reported")
+
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .working, message: nil, seq: nil, source: nil)
+        let early = try await call("agent.report", #"{"tile":"\#(tile)","kind":"codex","state":"working","final":"x"}"#)
+        #expect(early["error"]?["code"] == .string("invalid_params"), "an answer comes only with idle")
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .idle, message: nil, seq: nil, source: nil, final: "Verdict: low.\nSee a.ts:4")
+        let answer = try await read()
+        #expect(answer["result"]?["text"] == .string("Verdict: low.\nSee a.ts:4"))
+        #expect(answer["result"]?["lines"] == .number(2))
+        #expect(answer["result"]?["agent"]?["tile"] == .string(tile))
+        #expect(try await call("agent.read", #"{"target":"reviewer","final":true,"lines":5}"#)["error"]?["code"] == .string("invalid_params"))
+
+        // A prompt sent but not yet started, then a turn in progress: the old answer is not this turn's.
+        router.submitToTerminal = { _, _, _ in true }
+        _ = try await call("agent.prompt", #"{"target":"reviewer","text":"again"}"#)
+        #expect(try await read()["error"]?["code"] == .string("unavailable"))
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .working, message: nil, seq: nil, source: nil)
+        #expect(try await read()["error"]?["message"]?.string?.contains("still in its turn") == true)
+        // An interrupted turn ends without an answer.
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .idle, message: nil, seq: nil, source: nil)
+        #expect(try await read()["error"]?["code"] == .string("unavailable"))
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .working, message: nil, seq: nil, source: nil)
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .idle, message: nil, seq: nil, source: nil, final: "second")
+        #expect(try await read()["result"]?["text"] == .string("second"))
+    }
+
     // MARK: board.export
 
     @Test func exportWritesAReadableSnapshotThatLoadsBack() async throws {

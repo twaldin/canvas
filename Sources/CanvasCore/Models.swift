@@ -89,7 +89,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         case .code: ["path", "range", "symbol", "caption", "diffBase", "followOf", "lastAction", "history", "pinnedCommit", "scale"]
         case .note: ["markdown", "title", "scale"]
         case .html: ["html", "title", "allowNetwork", "state", "scale"]
-        case .changes: ["base", "paths", "title", "reviewed", "scale"]
+        case .changes: ["root", "base", "paths", "title", "reviewed", "viewed", "scale"]
         case .image: ["path", "caption", "title", "scale"]
         case .shape: ["kind", "text", "points", "color", "fill", "scale"]
         case .arrow: ["from", "to", "relation", "label", "color", "route"]
@@ -149,21 +149,22 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     case object(ObjectID)
     /// `commit`: with `side` old or absent, the commit whose version of `path` holds `lines`
     /// (a deleted diff row, a pinned excerpt); with `side` new, the base the working-tree lines
-    /// were diffed against. Absent: the lines are in the working tree.
-    case code(object: ObjectID, path: String, lines: LineRange, side: String? = nil, symbol: String? = nil, commit: String? = nil)
+    /// were diffed against. Absent: the lines are in the working tree. `diff`: a changes tile's
+    /// word on the lines, e.g. `added line · unstaged hunk` (`ChangeSet.mentionDetail`).
+    case code(object: ObjectID, path: String, lines: LineRange, side: String? = nil, symbol: String? = nil, commit: String? = nil, diff: String? = nil)
     case dom(object: ObjectID, url: String, selector: String, text: String?)
     case terminal(object: ObjectID, text: String)
     case group(objects: [ObjectID], name: String?)
     /// A point on an image tile's picture, in the image's own pixels from its top-left.
     case image(object: ObjectID, path: String, x: Int, y: Int)
 
-    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, url, selector, text, objects, name, x, y }
+    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, diff, url, selector, text, objects, name, x, y }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         switch try c.decode(String.self, forKey: .kind) {
         case "code":
-            self = .code(object: try c.decode(String.self, forKey: .object), path: try c.decode(String.self, forKey: .path), lines: try c.decode(LineRange.self, forKey: .lines), side: try c.decodeIfPresent(String.self, forKey: .side), symbol: try c.decodeIfPresent(String.self, forKey: .symbol), commit: try c.decodeIfPresent(String.self, forKey: .commit))
+            self = .code(object: try c.decode(String.self, forKey: .object), path: try c.decode(String.self, forKey: .path), lines: try c.decode(LineRange.self, forKey: .lines), side: try c.decodeIfPresent(String.self, forKey: .side), symbol: try c.decodeIfPresent(String.self, forKey: .symbol), commit: try c.decodeIfPresent(String.self, forKey: .commit), diff: try c.decodeIfPresent(String.self, forKey: .diff))
         case "dom":
             self = .dom(object: try c.decode(String.self, forKey: .object), url: try c.decode(String.self, forKey: .url), selector: try c.decode(String.self, forKey: .selector), text: try c.decodeIfPresent(String.self, forKey: .text))
         case "terminal":
@@ -185,7 +186,7 @@ public enum MentionTarget: Codable, Equatable, Sendable {
         case .object(let id):
             try c.encode("object", forKey: .kind)
             try c.encode(id, forKey: .object)
-        case .code(let object, let path, let lines, let side, let symbol, let commit):
+        case .code(let object, let path, let lines, let side, let symbol, let commit, let diff):
             try c.encode("code", forKey: .kind)
             try c.encode(object, forKey: .object)
             try c.encode(path, forKey: .path)
@@ -193,6 +194,7 @@ public enum MentionTarget: Codable, Equatable, Sendable {
             try c.encodeIfPresent(side, forKey: .side)
             try c.encodeIfPresent(symbol, forKey: .symbol)
             try c.encodeIfPresent(commit, forKey: .commit)
+            try c.encodeIfPresent(diff, forKey: .diff)
         case .dom(let object, let url, let selector, let text):
             try c.encode("dom", forKey: .kind)
             try c.encode(object, forKey: .object)
@@ -220,7 +222,7 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     public var objectIDs: [ObjectID] {
         switch self {
         case .object(let id): [id]
-        case .code(let object, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _), .image(let object, _, _, _): [object]
+        case .code(let object, _, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _), .image(let object, _, _, _): [object]
         case .group(let objects, _): objects
         }
     }

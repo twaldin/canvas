@@ -69,7 +69,7 @@ public enum ObjectMeasure {
         case .changes:
             // The rows of every changed file, as wide as the longest line up to `width`.
             let set = await ChangeSet.load(root: root, spec: ChangesSpec(props), highlight: false)
-            size = ChangesMetrics.fit(set, maxWidth: natural)
+            size = ChangesMetrics.fit(set, maxWidth: natural, viewed: props["viewed"])
         case .image:
             // The picture at one point per pixel, scaled down to `width` (default 960), plus the
             // title bar and the caption strip.

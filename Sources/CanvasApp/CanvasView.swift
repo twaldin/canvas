@@ -344,10 +344,11 @@ final class CanvasView: NSScrollView {
             }
         }
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
-        // A clicked line: user navigation, like a terminal's ⌘-click (the keyboard stays put).
+        // A clicked line: user navigation, like a terminal's ⌘-click (the keyboard stays put);
+        // the least pan that shows the code tile keeps the diff in view too.
         (content as? ChangesTile)?.onOpenedCode = { [weak self] opened, created in
             if !created { self?.setSelection([opened]) }
-            self?.reveal(opened)
+            self?.reveal(opened, keeping: id)
         }
         (content as? BrowserTile)?.onOpenedTile = { [weak self] opened in
             self?.reveal(opened)
@@ -995,12 +996,33 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Review Changes: a changes tile for the board root's uncommitted work at a document point
-    /// (`createHere`), selected with the canvas holding the keyboard, so j/k step through hunks.
-    func createChanges(at point: NSPoint) {
-        let changes = createHere(.changes, props: .object(["base": .string("HEAD")]), at: point)
+    /// Review Changes: a changes tile for the uncommitted work of the board root, or of another
+    /// worktree of its repository (`root`), at a document point (`createHere`), selected with the
+    /// canvas holding the keyboard, so j/k step through hunks.
+    func createChanges(at point: NSPoint, root: String? = nil) {
+        var props: [String: JSONValue] = ["base": .string("HEAD")]
+        if let root { props["root"] = .string(root) }
+        let changes = createHere(.changes, props: .object(props), at: point)
         setSelection([changes.id])
         takeKeyboard(changes.id)
+    }
+
+    /// Review Changes in the empty canvas's menu: one item, or with several worktrees in the
+    /// board's repository a submenu of them by branch (the board's own first).
+    private func reviewChangesItem(at point: NSPoint) -> NSMenuItem {
+        let worktrees = GitWorktree.containing(board.root.path).map(\.siblings) ?? []
+        guard worktrees.count > 1, let own = GitWorktree.containing(board.root.path) else {
+            return MenuAction.item("Review Changes") { [weak self] in self?.createChanges(at: point) }
+        }
+        let submenu = NSMenu()
+        for worktree in [own] + worktrees.filter({ $0.gitDir != own.gitDir }) {
+            let isOwn = worktree.gitDir == own.gitDir
+            let title = "\(worktree.branch ?? "detached") — \(worktree.name)\(isOwn ? " (this board)" : "")"
+            submenu.addItem(MenuAction.item(title) { [weak self] in self?.createChanges(at: point, root: isOwn ? nil : worktree.toplevel) })
+        }
+        let item = NSMenuItem(title: "Review Changes", action: nil, keyEquivalent: "")
+        item.submenu = submenu
+        return item
     }
 
     /// The one selected tile when it is a changes tile.
@@ -1151,7 +1173,7 @@ final class CanvasView: NSScrollView {
         menu.addItem(MenuAction.item("New Terminal Here") { [weak self] in self?.createTerminal(at: point) })
         menu.addItem(MenuAction.item("New Note Here") { [weak self] in self?.createNote(at: point) })
         menu.addItem(MenuAction.item("New Browser Here") { [weak self] in self?.createBrowser(at: point) })
-        menu.addItem(MenuAction.item("Review Changes") { [weak self] in self?.createChanges(at: point) })
+        menu.addItem(reviewChangesItem(at: point))
         menu.addItem(.separator())
         menu.addItem(MenuAction.item("Clear Attention Markers", enabled: !board.attention.isEmpty) { [weak self] in self?.board.clearAllAttention() })
         if enteredGroup != nil {
@@ -1315,6 +1337,14 @@ final class CanvasView: NSScrollView {
     func reveal(_ id: ObjectID) {
         guard let rect = docFrame(id) else { return }
         let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification)
+        if jump != currentJump { apply(jump) }
+    }
+
+    /// `reveal`, keeping what shows of `anchor` (the tile it was opened from) in view too when
+    /// both fit.
+    func reveal(_ id: ObjectID, keeping anchor: ObjectID) {
+        guard let rect = docFrame(id), let kept = docFrame(anchor) else { return reveal(id) }
+        let jump = Layout.reveal(rect, keeping: kept, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification)
         if jump != currentJump { apply(jump) }
     }
 

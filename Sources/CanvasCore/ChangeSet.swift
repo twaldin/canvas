@@ -1,18 +1,27 @@
 import Foundation
 
-/// What a changes tile reviews (`ChangesProps`): the diff base (default `HEAD`: the uncommitted
-/// work, what an agent just did; `merge-base`; or a commit) and the files or directories it is
-/// limited to (board-relative or absolute; none: the board root).
+/// What a changes tile reviews (`ChangesProps`): the worktree (`root`: another worktree of the
+/// board's repository, absolute or board-relative; none: the board root), the diff base (default
+/// `HEAD`: the uncommitted work, what an agent just did; `merge-base`; or a commit) and the files
+/// or directories it is limited to (relative to `root` or absolute; none: all of `root`).
 public struct ChangesSpec: Equatable, Sendable {
+    public var root: String?
     public var baseProp: String
     public var paths: [String]
 
     public init(_ props: JSONValue) {
+        root = props["root"]?.string.flatMap { $0.isEmpty ? nil : $0 }
         baseProp = props["base"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "HEAD"
         paths = props["paths"]?.array?.compactMap(\.string).filter { !$0.isEmpty } ?? []
     }
 
     public var base: DiffBase { DiffBase(prop: baseProp) }
+
+    /// The directory reviewed: `root` resolved against the board root, else the board root.
+    public func directory(boardRoot: URL) -> URL {
+        guard let root else { return boardRoot }
+        return (root.hasPrefix("/") ? URL(fileURLWithPath: root) : boardRoot.appendingPathComponent(root)).standardizedFileURL
+    }
 }
 
 /// One row of a unified diff: an unchanged line around or between changes, a removed base line,
@@ -31,10 +40,15 @@ public struct ChangeLine: Equatable, Sendable {
     }
 }
 
-/// Whether the index holds a hunk: `unstaged` (the working tree differs from the index there),
-/// `staged` (the index has it), or `committed` (HEAD already has it: a base older than HEAD).
+/// Whether the index holds a hunk: `unstaged` (the working tree differs from the index there
+/// and the index is as HEAD there), `partial` (the index holds some of it: staged, then edited
+/// again), `staged` (the index has it), or `committed` (HEAD already has it: a base older than
+/// HEAD).
 public enum HunkStatus: String, Sendable, Equatable {
-    case unstaged, staged, committed
+    case unstaged, partial, staged, committed
+
+    /// Staging it would change the index.
+    public var stageable: Bool { self == .unstaged || self == .partial }
 }
 
 /// One hunk as `git diff -U3` groups it: changes at most 2 × 3 unchanged lines apart, with 3
@@ -43,6 +57,9 @@ public struct ChangeHunk: Equatable, Sendable {
     public var mappings: [LineRangeMapping]
     public var lines: [ChangeLine]
     public var status: HunkStatus
+    /// Stable across reloads while the hunk's lines stay the same (line numbers aside): a hash
+    /// of its path and its lines' kinds and text (`ChangeSet.load` sets it).
+    public var id = ""
     /// The span the lines cover on each side, as a patch header counts it: a zero count starts
     /// at the line before.
     public var oldStart: Int
@@ -65,6 +82,71 @@ public struct ChangeHunk: Equatable, Sendable {
     public var header: String {
         func span(_ start: Int, _ count: Int) -> String { count == 1 ? "\(start)" : "\(start),\(count)" }
         return "@@ -\(span(oldStart, oldCount)) +\(span(newStart, newCount)) @@"
+    }
+
+    /// How the tile names it: `Lines 15–46` (its working-tree lines), or `Removed lines 3–9`
+    /// when it has none (a deleted file).
+    public var label: String {
+        func span(_ start: Int, _ count: Int) -> String { count == 1 ? "\(start)" : "\(start)–\(start + count - 1)" }
+        if newCount > 0 { return "\(newCount == 1 ? "Line" : "Lines") \(span(newStart, newCount))" }
+        return "Removed \(oldCount == 1 ? "line" : "lines") \(span(oldStart, oldCount))"
+    }
+
+    /// The hunk as unified-diff lines (` `, `-`, `+` and the text, no line breaks) between
+    /// `old` and `new`, the first `limit`.
+    public func unified(old: SideText, new: SideText, limit: Int = .max) -> [String] {
+        lines.prefix(limit).map { line in
+            switch line.kind {
+            case .context: " " + Self.text(new, line.new)
+            case .removed: "-" + Self.text(old, line.old)
+            case .added: "+" + Self.text(new, line.new)
+            }
+        }
+    }
+
+    static func text(_ side: SideText, _ line: Int?) -> String {
+        guard let line, line >= 1, line <= side.lineCount else { return "" }
+        return side.line(line)
+    }
+
+    /// `id` for a hunk of `path`: FNV-1a over the path and the unified lines.
+    static func identity(path: String, unified: [String]) -> String {
+        var hash = StableHash()
+        hash.add(path)
+        for line in unified {
+            hash.add("\n")
+            hash.add(line)
+        }
+        return "h" + hash.hex
+    }
+
+    /// `rows` (indices into `lines`) with the other half of every replaced line in them: within
+    /// one change the n-th removed and n-th added line are a pair (an edited line), and picking
+    /// either picks the edit. Lines without a partner (a pure addition or deletion, the surplus
+    /// of a longer side) stay as they are.
+    public func pairedRows(_ rows: Set<Int>) -> Set<Int> {
+        var result = rows
+        var index = 0
+        while index < lines.count {
+            guard lines[index].kind != .context else {
+                index += 1
+                continue
+            }
+            var removed: [Int] = [], added: [Int] = []
+            while index < lines.count, lines[index].kind == .removed {
+                removed.append(index)
+                index += 1
+            }
+            while index < lines.count, lines[index].kind == .added {
+                added.append(index)
+                index += 1
+            }
+            for pair in 0..<min(removed.count, added.count) where rows.contains(removed[pair]) || rows.contains(added[pair]) {
+                result.insert(removed[pair])
+                result.insert(added[pair])
+            }
+        }
+        return result
     }
 
     public var added: Int { mappings.reduce(0) { $0 + $1.modified.count } }
@@ -115,16 +197,66 @@ public struct ChangeHunk: Equatable, Sendable {
     }
 
     /// The index's view of a hunk from the working-tree side (every range in working-tree
-    /// lines): `unstaged` where the index differs from the working tree over any of its changes
-    /// (`unstaged` = index → working tree changes; an untracked file is all unstaged), else
-    /// `staged` when HEAD differs there too (`head` = HEAD → working tree changes; nil when the
-    /// base is HEAD, whose hunks HEAD always lacks), else `committed`.
-    public static func status(of mappings: [LineRangeMapping], tracked: Bool, unstaged: [LineRangeMapping], head: [LineRangeMapping]?) -> HunkStatus {
+    /// lines): where the index differs from the working tree over any of its changes
+    /// (`unstaged` = index → working tree changes; an untracked file is all unstaged) it is
+    /// `partial` when the index also differs from HEAD there (`staged` = HEAD → index changes, in
+    /// index lines: staged, then edited again), else `unstaged`; where the index matches the
+    /// working tree, `staged` when HEAD differs there too (`head` = HEAD → working tree changes;
+    /// nil when the base is HEAD, whose hunks HEAD always lacks), else `committed`.
+    public static func status(of mappings: [LineRangeMapping], tracked: Bool, unstaged: [LineRangeMapping], staged: [LineRangeMapping] = [],
+                              head: [LineRangeMapping]?) -> HunkStatus {
         guard tracked else { return .unstaged }
         let ranges = mappings.map(\.modified)
-        if unstaged.contains(where: { change in ranges.contains { touches($0, change.modified) } }) { return .unstaged }
+        if unstaged.contains(where: { change in ranges.contains { touches($0, change.modified) } }) {
+            guard let first = ranges.first, let last = ranges.last else { return .unstaged }
+            // The hunk's span in index lines: working-tree lines past earlier unstaged changes
+            // shift by what those changes added; a boundary inside one widens to its index lines.
+            func indexLine(_ line: Int, upper: Bool) -> Int {
+                var shift = 0
+                for change in unstaged {
+                    let span = change.modified
+                    if span.isEmpty {
+                        // Index lines the working tree dropped: inside the hunk when they sit at its start.
+                        if span.lowerBound < line || (span.lowerBound == line && upper) {
+                            shift += change.original.count
+                            continue
+                        }
+                        if span.lowerBound == line { return change.original.lowerBound }
+                        break
+                    }
+                    if span.upperBound <= line {
+                        shift += change.original.count - span.count
+                        continue
+                    }
+                    if span.lowerBound < line { return upper ? change.original.upperBound : change.original.lowerBound }
+                    break
+                }
+                return line + shift
+            }
+            let start = indexLine(first.lowerBound, upper: false)
+            let span = start..<max(start, indexLine(last.upperBound, upper: true))
+            return staged.contains { touches(span, $0.modified) } ? .partial : .unstaged
+        }
         guard let head else { return .staged }
         return head.contains(where: { change in ranges.contains { touches($0, change.modified) } }) ? .staged : .committed
+    }
+}
+
+/// FNV-1a, 64 bits: a hash that is the same in every process (Swift's `Hasher` is seeded per
+/// launch), for ids and fingerprints stored in props.
+struct StableHash {
+    private var value: UInt64 = 0xcbf2_9ce4_8422_2325
+
+    mutating func add(_ text: String) {
+        for byte in text.utf8 {
+            value ^= UInt64(byte)
+            value &*= 0x0000_0100_0000_01b3
+        }
+    }
+
+    var hex: String {
+        let digits = String(value, radix: 16)
+        return String(repeating: "0", count: 16 - digits.count) + digits
     }
 }
 
@@ -164,6 +296,20 @@ public struct ChangedFile: Sendable {
     /// A hunk's changes a patch can carry: all of them for a created or deleted file (one hunk).
     public var mappings: [LineRangeMapping] { hunks.flatMap(\.mappings) }
 
+    /// What `props.viewed` records for the file: its diff as the user saw it (hunk ids,
+    /// status, notice), so an entry stops counting once the diff changes.
+    public var fingerprint: String {
+        var hash = StableHash()
+        hash.add(boardPath + "\u{0}" + status.rawValue + "\u{0}" + (notice ?? ""))
+        for hunk in hunks { hash.add("\u{0}" + hunk.id) }
+        return hash.hex
+    }
+
+    /// Marked Viewed in `viewed` (`props.viewed`: board path → fingerprint) for this very diff.
+    public func isViewed(in viewed: JSONValue?) -> Bool {
+        viewed?[boardPath]?.string == fingerprint
+    }
+
     /// The innermost declaration around a line of one side.
     public func symbol(line: Int, side: DiffSide) -> String? {
         (side == .old ? oldSymbols : newSymbols).filter { $0.lines.contains(line) }.min { $0.lines.count < $1.lines.count }?.name
@@ -184,14 +330,18 @@ public struct ChangeSet: Sendable {
     public var notice: String?
     /// Changed files past `maxFiles`, not loaded.
     public var omitted: Int
+    /// Another worktree of the board's repository (`props.root`), named for the header: its
+    /// directory (`PathLabel`) and branch, e.g. `wt-omp (feature)`. Nil for the board's own.
+    public var worktree: String?
 
-    public init(repository: URL? = nil, base: String? = nil, baseLabel: String = "", files: [ChangedFile] = [], notice: String? = nil, omitted: Int = 0) {
+    public init(repository: URL? = nil, base: String? = nil, baseLabel: String = "", files: [ChangedFile] = [], notice: String? = nil, omitted: Int = 0, worktree: String? = nil) {
         self.repository = repository
         self.base = base
         self.baseLabel = baseLabel
         self.files = files
         self.notice = notice
         self.omitted = omitted
+        self.worktree = worktree
     }
 
     /// Files a tile loads at most; the rest are counted in `omitted`.
@@ -202,37 +352,59 @@ public struct ChangeSet: Sendable {
     public var added: Int { files.reduce(0) { $0 + $1.added } }
     public var removed: Int { files.reduce(0) { $0 + $1.removed } }
 
-    /// The header's summary: `3 files · +40 −12 · vs HEAD 1a2b3c4`.
+    /// The header's summary: `Uncommitted changes · 3 files · +40 −12` against HEAD, else
+    /// `3 files · +40 −12 · vs merge-base with main 1a2b3c4`; another worktree's name first.
     public var summary: String {
-        if let notice { return notice }
-        let base = base.map { " · vs \(baseLabel) \($0.prefix(7))" } ?? ""
-        guard !files.isEmpty else { return "no changes\(base)" }
+        let place = worktree.map { "\($0) · " } ?? ""
+        if let notice { return place + notice }
+        let uncommitted = baseLabel == "HEAD" && base != nil
+        let lead = uncommitted ? "Uncommitted changes · " : ""
+        let against = uncommitted ? "" : base.map { " · vs \(baseLabel) \($0.prefix(7))" } ?? ""
+        guard !files.isEmpty else { return place + (uncommitted ? "No uncommitted changes" : "no changes\(against)") }
         let count = files.count + omitted
-        return "\(count) file\(count == 1 ? "" : "s") · +\(added) −\(removed)\(base)"
+        return "\(place)\(lead)\(count) file\(count == 1 ? "" : "s") · +\(added) −\(removed)\(against)"
+    }
+
+    /// The summary's tooltip: what the base is exactly.
+    public var baseDescription: String? {
+        guard let base else { return nil }
+        return baseLabel == "HEAD" ? "Against HEAD \(base.prefix(7)): the work not committed yet, staged or not" : "Against \(baseLabel) \(base.prefix(7))"
     }
 
     // MARK: Loading
 
     /// The changes between `spec`'s base and the working tree of the repository containing
-    /// `root`, limited to `spec.paths` (else `root`). `highlight` also parses both sides with
-    /// tree-sitter (tiles; measuring and `object.get` don't need it).
+    /// `root` (the board root), or of `spec.root` when that is another worktree of it (anything
+    /// else is refused), limited to `spec.paths` (else that directory). `highlight` also parses
+    /// both sides with tree-sitter (tiles; measuring and `object.get` don't need it).
     public static func load(root: URL, spec: ChangesSpec, highlight: Bool = true, engine: GitDiffEngine = .shared, runner: GitRunner = .shared) async -> ChangeSet {
-        let directory = GitDiffEngine.existingAncestor(of: root)
+        let reviewed = spec.directory(boardRoot: root)
+        var worktree: String?
+        if let prop = spec.root {
+            guard GitWorktree.sameRepository(reviewed.path, root.path) else {
+                return ChangeSet(notice: "\(prop) is not a worktree of this board's repository")
+            }
+            if let own = GitWorktree.containing(root.path), let other = GitWorktree.containing(reviewed.path), own.gitDir != other.gitDir {
+                worktree = PathLabel.short(reviewed.path) == reviewed.path ? other.name : PathLabel.short(reviewed.path)
+                if let branch = other.branch { worktree! += " (\(branch))" }
+            }
+        }
+        let directory = GitDiffEngine.existingAncestor(of: reviewed)
         guard let output = try? await runner.run(["rev-parse", "--path-format=absolute", "--show-toplevel"], in: directory),
               let top = String(decoding: output, as: UTF8.self).split(separator: "\n").first else {
-            return ChangeSet(notice: "not in a git repository")
+            return ChangeSet(notice: "not in a git repository", worktree: worktree)
         }
         let toplevel = URL(fileURLWithPath: String(top))
         let specs: [String]
         do {
-            specs = try pathspecs(spec.paths, root: root, toplevel: toplevel)
+            specs = try pathspecs(spec.paths, root: reviewed, toplevel: toplevel)
         } catch let failure as ChangesFailure {
-            return ChangeSet(repository: toplevel, notice: failure.message)
+            return ChangeSet(repository: toplevel, notice: failure.message, worktree: worktree)
         } catch {
-            return ChangeSet(repository: toplevel, notice: "\(error)")
+            return ChangeSet(repository: toplevel, notice: "\(error)", worktree: worktree)
         }
         let resolved = await GitDiffEngine.resolve(spec.base, in: toplevel, runner: runner)
-        guard let sha = resolved.sha else { return ChangeSet(repository: toplevel, baseLabel: resolved.label, notice: resolved.label) }
+        guard let sha = resolved.sha else { return ChangeSet(repository: toplevel, baseLabel: resolved.label, notice: resolved.label, worktree: worktree) }
         // Held while loading: the engine resolves the base and the repository once for all files.
         let held = await engine.retain(containing: toplevel.appendingPathComponent(".canvas-changes"))
         defer { if let held { Task { await engine.release(held) } } }
@@ -252,13 +424,14 @@ public struct ChangeSet: Sendable {
         entries.sort { $0.path < $1.path }
         let omitted = max(0, entries.count - maxFiles)
         let selected = Array(entries.prefix(maxFiles))
-        guard !selected.isEmpty else { return ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label) }
+        guard !selected.isEmpty else { return ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label, worktree: worktree) }
 
-        // Index → working tree, and HEAD → working tree for a base older than HEAD: which
-        // hunks the index already holds.
+        // Index → working tree, HEAD → index, and HEAD → working tree for a base older than
+        // HEAD: which hunks the index already holds, or part of.
         let paths = selected.map(\.path)
         let unstaged = await workingTreeChanges(against: nil, paths: paths, in: toplevel, runner: runner)
         let headSHA = await GitDiffEngine.resolve(.head, in: toplevel, runner: runner).sha
+        let staged = headSHA == nil ? [:] : await workingTreeChanges(against: nil, cached: true, paths: paths, in: toplevel, runner: runner)
         var head: [String: [LineRangeMapping]]?
         if let headSHA, headSHA != sha { head = await workingTreeChanges(against: headSHA, paths: paths, in: toplevel, runner: runner) }
         let headChanges = head
@@ -267,7 +440,7 @@ public struct ChangeSet: Sendable {
             for (index, entry) in selected.enumerated() {
                 group.addTask {
                     let file = await Self.file(entry, base: sha, diffBase: spec.base, root: root, toplevel: toplevel, engine: engine, runner: runner,
-                                               unstaged: unstaged[entry.path] ?? [], head: headChanges.map { $0[entry.path] ?? [] })
+                                               unstaged: unstaged[entry.path] ?? [], staged: staged[entry.path] ?? [], head: headChanges.map { $0[entry.path] ?? [] })
                     return (index, file)
                 }
             }
@@ -275,7 +448,7 @@ public struct ChangeSet: Sendable {
             for await (index, file) in group { if let file { found.append((index, file)) } }
             return found.sorted { $0.0 < $1.0 }.map(\.1)
         }
-        let set = ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label, files: files, omitted: omitted)
+        let set = ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label, files: files, omitted: omitted, worktree: worktree)
         return highlight ? await offPool { set.highlighted() } : set
     }
 
@@ -354,10 +527,10 @@ public struct ChangeSet: Sendable {
     }
 
     /// `-U0` changes per path between the index (`against` nil) or a commit and the working
-    /// tree, in working-tree lines.
-    static func workingTreeChanges(against commit: String?, paths: [String], in toplevel: URL, runner: GitRunner) async -> [String: [LineRangeMapping]] {
+    /// tree, in working-tree lines; `cached`: between HEAD and the index, in index lines.
+    static func workingTreeChanges(against commit: String?, cached: Bool = false, paths: [String], in toplevel: URL, runner: GitRunner) async -> [String: [LineRangeMapping]] {
         let args = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=histogram",
-                    "-U0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/"] + (commit.map { [$0] } ?? []) + ["--"] + paths
+                    "-U0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/"] + (cached ? ["--cached"] : []) + (commit.map { [$0] } ?? []) + ["--"] + paths
         guard let output = try? await runner.run(args, in: toplevel, maxOutput: 64 << 20) else { return [:] }
         return await offPool {
             GitDiffEngine.split(output).mapValues { UnifiedDiff.parse($0).mappings }
@@ -365,7 +538,7 @@ public struct ChangeSet: Sendable {
     }
 
     private static func file(_ entry: Entry, base sha: String, diffBase: DiffBase, root: URL, toplevel: URL, engine: GitDiffEngine, runner: GitRunner,
-                             unstaged: [LineRangeMapping], head: [LineRangeMapping]?) async -> ChangedFile? {
+                             unstaged: [LineRangeMapping], staged: [LineRangeMapping], head: [LineRangeMapping]?) async -> ChangedFile? {
         let url = toplevel.appendingPathComponent(entry.path)
         let diff: FileDiff
         if entry.status == .renamed, let oldPath = entry.oldPath {
@@ -388,9 +561,20 @@ public struct ChangeSet: Sendable {
         case .notRepository, .noBase, .pinned, .pinUnavailable: notice = diff.baseLabel ?? "not comparable"
         }
         let newMode = entry.newMode ?? (status == .deleted ? nil : Self.mode(of: url))
-        let hunks = notice == nil ? diff.hunks.map { hunk in
-            ChangeHunk(mappings: hunk.mappings, old: diff.old, new: diff.new,
-                       status: ChangeHunk.status(of: hunk.mappings, tracked: entry.tracked, unstaged: unstaged, head: head))
+        var ids: Set<String> = []
+        let hunks: [ChangeHunk] = notice == nil ? diff.hunks.map { hunk -> ChangeHunk in
+            var change = ChangeHunk(mappings: hunk.mappings, old: diff.old, new: diff.new,
+                                    status: ChangeHunk.status(of: hunk.mappings, tracked: entry.tracked, unstaged: unstaged, staged: staged, head: head))
+            let id = ChangeHunk.identity(path: entry.path, unified: change.unified(old: diff.old, new: diff.new))
+            // Two identical hunks in one file: the later ones numbered.
+            var unique = id, count = 1
+            while ids.contains(unique) {
+                count += 1
+                unique = "\(id)-\(count)"
+            }
+            ids.insert(unique)
+            change.id = unique
+            return change
         } : []
         func boardPath(_ path: String) -> String {
             let absolute = GitDiffEngine.realPath(toplevel.appendingPathComponent(path)).path
@@ -430,42 +614,51 @@ public struct ChangeSet: Sendable {
 
     // MARK: Summary
 
-    /// What `object.get` adds for a changes tile: the files and their hunks, board-relative.
-    public var json: JSONValue {
+    /// What `object.get` adds for a changes tile: the files and their hunks, board-relative,
+    /// with each file's Viewed mark from `viewed` (`props.viewed`).
+    public func json(viewed: JSONValue? = nil) -> JSONValue {
         var result: [String: JSONValue] = [
             "base": base.map(JSONValue.string) ?? .null,
             "baseLabel": .string(baseLabel),
             "added": .number(Double(added)),
             "removed": .number(Double(removed)),
-            "files": .array(files.map(\.json)),
+            "files": .array(files.map { $0.json(viewed: viewed) }),
         ]
         if let repository { result["repository"] = .string(repository.path) }
         if let notice { result["notice"] = .string(notice) }
         if omitted > 0 { result["omitted"] = .number(Double(omitted)) }
         return .object(result)
     }
+
+    /// Unified lines `object.get` gives per hunk at most; `truncated` says there were more.
+    public static let maxJSONLines = 200
 }
 
 extension ChangedFile {
-    public var json: JSONValue {
+    public func json(viewed: JSONValue? = nil) -> JSONValue {
         var result: [String: JSONValue] = [
             "path": .string(boardPath),
             "status": .string(status.rawValue),
             "added": .number(Double(added)),
             "removed": .number(Double(removed)),
             "hunks": .array(hunks.map { hunk in
-                .object([
+                var entry: [String: JSONValue] = [
+                    "id": .string(hunk.id),
                     "header": .string(hunk.header),
                     "old": .object(["start": .number(Double(hunk.oldStart)), "count": .number(Double(hunk.oldCount))]),
                     "new": .object(["start": .number(Double(hunk.newStart)), "count": .number(Double(hunk.newCount))]),
                     "added": .number(Double(hunk.added)),
                     "removed": .number(Double(hunk.removed)),
                     "status": .string(hunk.status.rawValue),
-                ])
+                    "lines": .array(hunk.unified(old: old, new: new, limit: ChangeSet.maxJSONLines).map(JSONValue.string)),
+                ]
+                if hunk.lines.count > ChangeSet.maxJSONLines { entry["truncated"] = .bool(true) }
+                return .object(entry)
             }),
         ]
         if let oldBoardPath { result["oldPath"] = .string(oldBoardPath) }
         if let notice { result["notice"] = .string(notice) }
+        if isViewed(in: viewed) { result["viewed"] = .bool(true) }
         return .object(result)
     }
 }

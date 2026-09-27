@@ -239,6 +239,18 @@ public enum Layout {
                                                 y: jump.origin.y + shift(target.minY, target.maxY, shownMin: shown.minY, shownMax: shown.maxY)))
     }
 
+    /// `reveal`, keeping what shows of `kept` (the tile something was opened from) in view too
+    /// when both fit; otherwise `rect` alone.
+    public static func reveal(_ rect: CGRect, keeping kept: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat) -> Jump {
+        let zoom = jump.zoom
+        let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        let visible = kept.intersection(shown)
+        guard !visible.isNull, !visible.isEmpty else { return reveal(rect, from: jump, clear: clear, padding: padding) }
+        let both = rect.union(visible)
+        guard both.width + 2 * padding <= shown.width, both.height + 2 * padding <= shown.height else { return reveal(rect, from: jump, clear: clear, padding: padding) }
+        return reveal(both, from: jump, clear: clear, padding: padding)
+    }
+
     /// Keyboard zoom levels (⌘= / ⌘-), browser-like: fine steps near 100%, coarse far out.
     public static let zoomLevels: [CGFloat] = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 3, 4]
 

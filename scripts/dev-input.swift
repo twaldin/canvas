@@ -17,6 +17,8 @@
 //   dev-input <pid> magnify <x> <y> <amount>         pinch at x,y: zoom × (1 + amount) per step (0.05 in, -0.05 out)
 //   dev-input <pid> perf [ms]                        an idle DevPerf span (CANVAS_DEV_PERF=1), default 5000 ms
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
+//   scroll --repeat N --gesture                      the burst as one phased trackpad gesture: began and ended
+//                                                    without movement, the steps between as changed
 import Foundation
 
 var args = Array(CommandLine.arguments.dropFirst())
@@ -32,6 +34,8 @@ let repeatCount = option("--repeat")
 let interval = option("--interval")
 let hold = args.contains("--hold")
 args.removeAll { $0 == "--hold" }
+let gesture = args.contains("--gesture")
+args.removeAll { $0 == "--gesture" }
 guard args.count >= 2 else {
     FileHandle.standardError.write(Data("usage: dev-input <pid> <kind> …  (see header of scripts/dev-input.swift)\n".utf8))
     exit(2)
@@ -71,6 +75,7 @@ if let clicks { info["clicks"] = clicks }
 if hold { info["hold"] = "1" }
 if let repeatCount { info["repeat"] = repeatCount }
 if let interval { info["interval"] = interval }
+if gesture { info["gesture"] = "1" }
 DistributedNotificationCenter.default().postNotificationName(Notification.Name("canvas.dev.input"), object: nil, userInfo: info, deliverImmediately: true)
 // Replayed events are queued; give the app a moment before the caller inspects state.
 usleep(150_000)

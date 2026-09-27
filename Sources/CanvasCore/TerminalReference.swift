@@ -132,7 +132,8 @@ extension Board {
 
     /// A code location the user opened from a tile (an HTML page's link, a changes tile's line):
     /// re-aims the topmost code tile already showing `path` (follow tiles excluded: they belong
-    /// to their agent), else creates one beside `tile` with `extra` props (e.g. the diff base).
+    /// to their agent), else creates one beside `tile` with `extra` props (e.g. the diff base),
+    /// shrunk (down to a follow tile's minimum) to land wholly in view when `tile` is on screen.
     @discardableResult
     public func showCode(path: String, range: LineRange?, symbol: String? = nil, beside tile: ObjectID, extra: [String: JSONValue] = [:]) throws -> (id: ObjectID, created: Bool) {
         let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
@@ -146,7 +147,7 @@ extension Board {
         var props = extra.merging(["path": .string(path), "range": rangeValue]) { $1 }
         if let symbol { props["symbol"] = .string(symbol) }
         let size = Board.defaultSize(.code)
-        let created = create(type: .code, props: .object(props.filter { $0.value != .null }), frame: place(width: size.w, height: size.h, near: tile))
+        let created = create(type: .code, props: .object(props.filter { $0.value != .null }), frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: Board.followMinimumSize))
         return (created.id, true)
     }
 }

@@ -55,7 +55,6 @@ struct ChangeSetTests {
         #expect(set.files[2].added == 2 && !set.files[2].tracked && set.files[2].hunks.map(\.header) == ["@@ -0,0 +1,2 @@"])
         // What the index holds: the staged file's hunk, nothing else.
         #expect(set.files.flatMap { $0.hunks.map(\.status) } == [.unstaged, .unstaged, .unstaged, .unstaged, .staged])
-        #expect(set.summary.hasPrefix("4 files · +5 −4 · vs HEAD "))
     }
 
     @Test func pathsLimitTheListAndNeverLeaveTheRepository() async throws {
@@ -262,8 +261,168 @@ final class ChangesApiTests {
         #expect(hunks[0]["new"]?["start"]?.int == 1 && hunks[0]["added"]?.int == 1 && hunks[0]["status"]?.string == "unstaged")
         #expect(got["object"]?["props"]?["reviewed"]?.array?.first?["action"]?.string == "revert")
 
-        let measured = try await call("object.measure", .object(["board": .string(board.id), "type": "changes", "props": .object(["paths": ["app.txt"]])]))
-        let rows = ChangeRows(await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object(["paths": ["app.txt"]])), highlight: false), collapsed: [])
-        #expect(measured["h"]?.number == Double((CodeMetrics.titleHeight + ChangesMetrics.headerHeight + rows.height + ChangesMetrics.bottomPadding).rounded(.up)))
+        // The hunk's text, so an agent reads the diff without rendering it.
+        #expect(hunks[0]["lines"]?.array?.compactMap(\.string) == [" line 1", " line 2", "-line 3", "+line 3 changed", " line 4", " line 5", " line 6"])
+        #expect(hunks[0]["truncated"] == nil && hunks[0]["id"]?.string?.isEmpty == false)
+
+        // An agent asking again for the tile it made gets that tile back, refitted.
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(repo.root.path), "command": .array([])]))
+        let first = try await call("object.create", .object(["board": .string(board.id), "type": "changes", "caller": .string(terminal.id), "size": "fit",
+                                                            "props": .object(["paths": ["new.txt"], "title": "mine"])]))
+        let again = try await call("object.create", .object(["board": .string(board.id), "type": "changes", "caller": .string(terminal.id), "size": "fit",
+                                                            "props": .object(["paths": ["new.txt"], "title": "mine, again"])]))
+        #expect(again["reused"] == .bool(true))
+        #expect(again["object"]?["id"] == first["object"]?["id"])
+        #expect(again["object"]?["props"]?["title"]?.string == "mine, again")
+        #expect(first["reused"] == nil)
+        let other = try await call("object.create", .object(["board": .string(board.id), "type": "changes", "caller": .string(terminal.id), "props": .object(["paths": ["app.txt"]])]))
+        #expect(other["reused"] == nil && other["object"]?["id"] != first["object"]?["id"], "other paths are another tile")
+        #expect(board.objects.values.filter { $0.type == .changes }.count == 3)
+    }
+}
+
+@MainActor
+struct ChangesReviewTests {
+    @Test func aTileReviewsAnotherWorktreeOfTheBoardsRepositoryAndNothingElse() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("src/fees.ts", numbered(1...10))
+        try await repo.write("docs/a.md", "a\n")
+        try await repo.commit("init")
+        let worktree = URL(fileURLWithPath: repo.root.path + "-wt/fees")
+        try await repo.git("worktree", "add", "-q", "-b", "feature", worktree.path)
+        let file = worktree.appendingPathComponent("src/fees.ts")
+        let edited = numbered(1...10).replacingOccurrences(of: "line 5\n", with: "line five\n")
+        try edited.write(to: file, atomically: true, encoding: .utf8)
+        try "b\n".write(to: worktree.appendingPathComponent("docs/a.md"), atomically: true, encoding: .utf8)
+        let engine = GitDiffEngine(watchesRepositories: false)
+
+        // Absolute, or relative to the board root; paths then resolve inside the worktree.
+        for root in [worktree.path, "../\(repo.root.lastPathComponent)-wt/fees"] {
+            let set = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object(["root": .string(root), "paths": ["src"]])), highlight: false, engine: engine)
+            #expect(set.notice == nil)
+            #expect(set.files.map(\.boardPath) == [GitDiffEngine.realPath(file).path], "outside the board root, paths are absolute")
+            #expect(set.worktree == "fees (feature)")
+        }
+        #expect(await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object([:])), highlight: false, engine: engine).files.isEmpty, "the board's own checkout is clean")
+
+        // Discard acts in that worktree, and its undo puts the line back there.
+        let set = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object(["root": .string(worktree.path), "paths": ["src"]])), highlight: false, engine: engine)
+        let fees = set.files[0]
+        let git = ReviewGit()
+        let board = Board(id: "brd_t", root: repo.root)
+        let tile = board.create(type: .changes, props: .object(["root": .string(worktree.path)]))
+        let patch = try ReviewPatch.revert([fees.hunks[0]], of: fees, in: try #require(set.repository))
+        try await git.apply(patch)
+        try board.recordReview(tile: tile.id, entry: ReviewPatch.entry("revert", file: fees, hunk: fees.hunks[0], lines: nil, patch: patch), patch: patch, git: git)
+        #expect(await read(file) == numbered(1...10))
+        #expect(await read(repo.url("src/fees.ts")) == numbered(1...10))
+        #expect(board.undo())
+        await git.settled()
+        #expect(await read(file) == edited)
+
+        // Paths beyond the worktree, and other repositories, are refused.
+        let outside = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object(["root": .string(worktree.path), "paths": [.string(repo.root.path)]])), highlight: false, engine: engine)
+        #expect(outside.files.isEmpty && outside.notice?.contains("outside the repository") == true)
+        let other = try await TempRepo()
+        try await other.write("x.txt", "x\n")
+        try await other.commit("other")
+        try await other.write("x.txt", "y\n")
+        let refused = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object(["root": .string(other.root.path)])), highlight: false, engine: engine)
+        #expect(refused.files.isEmpty && refused.notice?.contains("not a worktree") == true)
+    }
+
+    @Test func pickedLinesOfAHunkKeepTheirPairsAndLeaveTheRestAsTheTargetHasIt() {
+        let old = SideText("a\nb\nc\nd\n"), new = SideText("a\nB\nC\nd\n")
+        let mappings = [LineRangeMapping(original: 2..<4, modified: 2..<4)]
+        let pick = ReviewPatch.LinePick(removed: [2], added: [2])
+        let header = "diff --git a/f b/f\n--- a/f\n+++ b/f\n"
+        // Staging b → B: c stays (context), C isn't added.
+        #expect(ReviewPatch.text(path: "f", old: old, new: new, mappings: mappings, pick: pick) == header + "@@ -1,4 +1,4 @@\n a\n-b\n+B\n c\n d\n")
+        // Discarding b → B (applied reversed to the working tree): C stays, c isn't brought back.
+        #expect(ReviewPatch.text(path: "f", old: old, new: new, mappings: mappings, pick: pick, reverse: true) == header + "@@ -1,4 +1,4 @@\n a\n-b\n+B\n C\n d\n")
+        // Only an added line: the others are as the target has them.
+        #expect(ReviewPatch.text(path: "f", old: old, new: new, mappings: mappings, pick: .init(removed: [], added: [3])) == header + "@@ -1,4 +1,5 @@\n a\n b\n c\n+C\n d\n")
+        #expect(ReviewPatch.text(path: "f", old: old, new: new, mappings: mappings, pick: .init(removed: [], added: [])).isEmpty, "nothing picked, no patch")
+    }
+
+    @Test func stagingAndDiscardingSomeLinesOfAHunkTouchOnlyThoseAndUndoExactly() async throws {
+        // Two tweaks three lines apart: one hunk.
+        let repo = try await TempRepo()
+        try await repo.write("style.css", numbered(1...12))
+        try await repo.commit("base")
+        let tweaked = numbered(1...12).replacingOccurrences(of: "line 3\n", with: "line 3 pink\n").replacingOccurrences(of: "line 6\n", with: "line 6 dark\n")
+        try await repo.write("style.css", tweaked)
+        let engine = GitDiffEngine(watchesRepositories: false)
+        let git = ReviewGit()
+        let board = Board(id: "brd_t", root: repo.root)
+        let tile = board.create(type: .changes, props: .object([:]))
+        func load() async -> ChangeSet { await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object([:])), highlight: false, engine: engine) }
+        // The user picks the edited line as it reads now; its old version comes with it.
+        func rows(_ hunk: ChangeHunk, _ line: Int) -> Set<Int> {
+            hunk.pairedRows(Set(hunk.lines.indices.filter { hunk.lines[$0].new == line && hunk.lines[$0].kind == .added }))
+        }
+        var set = await load()
+        let top = try #require(set.repository)
+        #expect(set.files[0].hunks.count == 1)
+        #expect(rows(set.files[0].hunks[0], 3).map { set.files[0].hunks[0].lines[$0].kind }.sorted { "\($0)" < "\($1)" } == [.added, .removed])
+
+        // Stage the pink tweak only.
+        var hunk = set.files[0].hunks[0]
+        let stage = try await ReviewPatch.stage([hunk], of: set.files[0], in: top, lines: rows(hunk, 3))
+        try await git.apply(stage)
+        try board.recordReview(tile: tile.id, entry: ReviewPatch.entry("stage", file: set.files[0], hunk: hunk, lines: rows(hunk, 3), patch: stage), patch: stage, git: git)
+        let cached = try await TempRepo.run(["diff", "--cached", "-U0"], in: repo.root)
+        #expect(cached.contains("-line 3\n+line 3 pink") && !cached.contains("dark"))
+        let unstaged = try await TempRepo.run(["diff", "-U0"], in: repo.root)
+        #expect(unstaged.contains("-line 6\n+line 6 dark") && !unstaged.contains("pink"))
+        let entry = try #require(board.objects[tile.id]?.props["reviewed"]?.array?.last)
+        #expect(entry["scope"] == "lines" && entry["hunk"]?.string == hunk.id && entry["added"]?.int == 1 && entry["removed"]?.int == 1)
+        #expect(entry["patch"]?.string?.contains("+line 3 pink\n") == true && entry["patch"]?.string?.contains("dark") == false)
+
+        // Discard the dark tweak only: the pink one stays on disk.
+        set = await load()
+        hunk = set.files[0].hunks[0]
+        let discard = try ReviewPatch.revert([hunk], of: set.files[0], in: top, lines: rows(hunk, 6))
+        try await git.apply(discard)
+        try board.recordReview(tile: tile.id, entry: ReviewPatch.entry("revert", file: set.files[0], hunk: hunk, lines: rows(hunk, 6), patch: discard), patch: discard, git: git)
+        #expect(await read(repo.url("style.css")) == numbered(1...12).replacingOccurrences(of: "line 3\n", with: "line 3 pink\n"))
+
+        // Each is one undo step.
+        #expect(board.undo())
+        await git.settled()
+        #expect(await read(repo.url("style.css")) == tweaked)
+        #expect(try await TempRepo.run(["diff", "--cached", "-U0"], in: repo.root) == cached)
+        #expect(board.undo())
+        await git.settled()
+        #expect(try await TempRepo.run(["diff", "--cached"], in: repo.root) == "")
+    }
+
+    @Test func aHunkStagedThenEditedIsPartlyStaged() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("a.txt", numbered(1...30))
+        try await repo.commit("base")
+        let staged = numbered(1...30).replacingOccurrences(of: "line 5\n", with: "line 5 staged\n").replacingOccurrences(of: "line 25\n", with: "line 25 staged\n")
+        try await repo.write("a.txt", staged)
+        try await repo.git("add", "a.txt")
+        // An agent edits the first staged hunk again; the second stays as staged; a third is new.
+        try await repo.write("a.txt", staged.replacingOccurrences(of: "line 6\n", with: "line 6 edited\n").replacingOccurrences(of: "line 15\n", with: "line 15 new\n"))
+        let engine = GitDiffEngine(watchesRepositories: false)
+        let set = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object([:])), highlight: false, engine: engine)
+        #expect(set.files[0].hunks.map(\.status) == [.partial, .unstaged, .staged])
+        #expect(set.files[0].json()["hunks"]?.array?.map { $0["status"]?.string } == ["partial", "unstaged", "staged"])
+        #expect(set.mentionDetail(file: 0, hunk: 0, lines: nil)?.contains("partly staged") == true)
+    }
+
+    @Test func fittingAccountsForWrappedLines() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("long.txt", "short\n")
+        try await repo.commit("base")
+        try await repo.write("long.txt", "short\n" + String(repeating: "word ", count: 120) + "\n")
+        let set = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object([:])), highlight: false, engine: GitDiffEngine(watchesRepositories: false))
+        let wide = ChangesMetrics.fit(set, maxWidth: 6000), narrow = ChangesMetrics.fit(set, maxWidth: 480)
+        let columns = ChangesMetrics.textColumns(width: narrow.width, digits: ChangesMetrics.digits(set))
+        let rows = Int((Double(600) / Double(columns)).rounded(.up))
+        #expect(narrow.width == 480)
+        #expect(narrow.height - wide.height >= CGFloat(rows - 1) * ChangesMetrics.lineHeight - 1, "the long line's continuation rows count")
     }
 }

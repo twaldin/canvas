@@ -183,7 +183,9 @@ final class TileFrameView: NSView {
         case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map(PathLabel.short) ?? "Image"
         case .changes:
             let spec = ChangesSpec(props)
-            return props["title"]?.string ?? (spec.paths.isEmpty ? "Changes" : "Changes: \(spec.paths.map(PathLabel.short).joined(separator: ", "))")
+            if let title = props["title"]?.string { return title }
+            let parts = (spec.root.map { [($0 as NSString).lastPathComponent] } ?? []) + spec.paths.map(PathLabel.short)
+            return parts.isEmpty ? "Changes" : "Changes: \(parts.joined(separator: ", "))"
         default: return object.type.rawValue.capitalized
         }
     }

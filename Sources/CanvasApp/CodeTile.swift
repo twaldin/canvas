@@ -738,7 +738,7 @@ extension CodeTile {
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
-        guard case .code(_, let path, let lines, let side, _, _) = target, let document, showsCurrent, path == document.path,
+        guard case .code(_, let path, let lines, let side, _, _, _) = target, let document, showsCurrent, path == document.path,
               let rows = rowsView.painter?.rows else { return nil }
         let first: Int?, last: Int?
         if side == DiffSide.old.rawValue, document.side == .new {

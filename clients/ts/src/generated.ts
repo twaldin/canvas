@@ -882,12 +882,13 @@ export type LayoutCheckResult = {
     id: Id;
     y: number;
   }[];
-  truncated: {
+  /** text the frame's width cuts off with "…": a code tile's caption, or a note's table with more columns than the note has room for even with its cells wrapped */
+  truncated: ({
     id: Id;
-    what: "caption";
+    what: "caption" | "table";
     /** points of width missing to show all of it */
     x: number;
-  }[];
+  })[];
 };
 
 export type TrayListParams = {
@@ -1176,7 +1177,7 @@ export interface CanvasApi {
     translate(params: LayoutTranslateParams): Promise<LayoutTranslateResult>;
     /** Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups. */
     grid(params: LayoutGridParams): Promise<LayoutGridResult>;
-    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, note/text/html whose content doesn't fit its frame (`overflow`: points missing in x and y; html: its page's document laid out at the frame's width), code tiles whose range's rows are taller than the frame (`scrolls`: the tile scrolls to its range, fine for a viewer meant to scroll; refit with `size: "fit"` when the whole range should show), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated. */
+    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, note/text/html whose content doesn't fit its frame (`overflow`: points missing in x and y; html: its page's document laid out at the frame's width), code tiles whose range's rows are taller than the frame (`scrolls`: the tile scrolls to its range, fine for a viewer meant to scroll; refit with `size: "fit"` when the whole range should show), and code captions or note tables cut off by the frame (`truncated`; a note's table cells wrap within its width, so only a table with too many columns for it is cut). Follow tiles are fixed-size viewers and never count as overflow or truncated. */
     check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
   tray: {

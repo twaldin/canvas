@@ -14,11 +14,23 @@ public final class NoteRenderer {
     private let excerpts: [String: NoteExcerpt]
     /// Images by markdown destination (`NoteImages.load`); an image missing here shows as its alt text.
     private let images: [String: NSImage]
+    /// Where lines end: the text container's width less its line fragment padding. Tables fit
+    /// their columns into it.
+    private let lineWidth: CGFloat
     private let out = NSMutableAttributedString()
+    /// Whether the text depends on the width it was rendered at (a table's cells wrap to it).
+    public private(set) var fitsWidth = false
+    /// Points of width the text container lacks to show every table cell whole: 0 unless a table
+    /// has more columns than the note has room for even with its words broken, when its rows
+    /// run past the edge and are cut with "…" (`layout.check` reports it as `truncated`).
+    public private(set) var tableShortfall: CGFloat = 0
 
-    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:]) {
+    /// `width`: the text container's width, the note's width less `ObjectMeasure.noteInset` on
+    /// each side, as the display, renders, and `ObjectMeasure` lay it out.
+    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:], width: CGFloat) {
         self.excerpts = excerpts
         self.images = images
+        lineWidth = max(1, width - 2 * ObjectMeasure.noteLineFragmentPadding)
     }
 
     /// Nesting state for block rendering.
@@ -233,6 +245,15 @@ public final class NoteRenderer {
 
     // MARK: Tables
 
+    /// Room between table columns.
+    static let columnGap: CGFloat = 18
+    /// Narrowest a column is squeezed to (unless its content is narrower) before the table no
+    /// longer fits and is cut: below its longest word or link a column breaks inside words.
+    static let minColumnWidth: CGFloat = 36
+
+    /// A table as tab-aligned rows, one paragraph per row, each cell wrapped to its column
+    /// (`columnWidths`): a cell's lines stack in its column, separated by line separators, so a
+    /// row stays one block (its band, its markdown line, its mention) however many lines it takes.
     private func table(_ table: Table, context: Context, line: Int?) {
         let header = Array(table.head.cells)
         let rows = [header] + table.body.rows.map { Array($0.cells) }
@@ -246,25 +267,35 @@ public final class NoteRenderer {
                 return text
             }
         }
-        var widths = [CGFloat](repeating: 0, count: columns)
-        for cells in rendered {
-            for (column, cell) in cells.enumerated() { widths[column] = max(widths[column], ceil(cell.size().width)) }
-        }
+        let left = context.indent + 4
+        // A point of slack: TextKit must never find the last column a hair too wide and wrap it.
+        let layout = Self.columnWidths(rendered, columns: columns, available: lineWidth - left - CGFloat(columns - 1) * Self.columnGap - 1)
+        fitsWidth = true
+        tableShortfall = max(tableShortfall, layout.shortfall)
         var stops: [NSTextTab] = []
-        var x = context.indent + 4
-        for width in widths.dropLast() {
-            x += width + 18
+        var x = left
+        for width in layout.widths.dropLast() {
+            x += width + Self.columnGap
             stops.append(NSTextTab(textAlignment: .left, location: x))
         }
         for (index, cells) in rendered.enumerated() {
             let style = style(context, spacing: index == rendered.count - 1 ? 8 : 2)
-            style.firstLineHeadIndent = context.indent + 4
+            style.firstLineHeadIndent = left
+            style.headIndent = left
             style.tabStops = stops
-            style.lineBreakMode = .byTruncatingTail
+            // A table too wide for the note even with its words broken keeps a line per row, cut
+            // with "…" at the note's edge.
+            let cut = layout.shortfall > 0
+            style.lineBreakMode = cut ? .byTruncatingTail : .byWordWrapping
+            let wrapped = cells.enumerated().map { column, cell in cut ? [cell] : Self.wrap(cell, width: layout.widths[column]) }
             let start = out.length
-            for (column, cell) in cells.enumerated() {
-                if column > 0 { append("\t", [.font: Self.bodyFont]) }
-                out.append(cell)
+            for row in 0..<(wrapped.map(\.count).max() ?? 1) {
+                if row > 0 { append("\u{2028}", [.font: Self.bodyFont]) }
+                let last = wrapped.lastIndex { row < $0.count } ?? 0
+                for column in 0...last where column < wrapped.count {
+                    if column > 0 { append("\t", [.font: Self.bodyFont]) }
+                    if row < wrapped[column].count { out.append(wrapped[column][row]) }
+                }
             }
             append("\n", [.font: Self.bodyFont])
             var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: style]
@@ -273,6 +304,128 @@ public final class NoteRenderer {
             if let line { attributes[.noteMarkdownLine] = line + index + (index > 0 ? 1 : 0) }
             out.addAttributes(attributes, range: NSRange(location: start, length: out.length - start))
         }
+    }
+
+    /// Column widths for `rows` of cells in `available` points (the gaps already taken out), as a
+    /// browser lays out an automatic table: every column as wide as its widest cell when they all
+    /// fit; else each keeps its longest unbreakable run (a word, or a whole link or code span, so a
+    /// `path:line` stays on one line) and the room left goes to the columns with the most text
+    /// to wrap; else the widest runs break inside, down to `minColumnWidth`; past that it is cut
+    /// (columns as wide as their widest cell, rows unwrapped) and `shortfall` says how much more
+    /// room would let it wrap instead.
+    static func columnWidths(_ rows: [[NSAttributedString]], columns: Int, available: CGFloat) -> (widths: [CGFloat], shortfall: CGFloat) {
+        var natural = [CGFloat](repeating: 0, count: columns)
+        var unbreakable = [CGFloat](repeating: 0, count: columns)
+        for cells in rows {
+            for (column, cell) in cells.enumerated() {
+                natural[column] = max(natural[column], measure(cell))
+                for run in runs(of: cell) { unbreakable[column] = max(unbreakable[column], measure(cell.attributedSubstring(from: run))) }
+            }
+        }
+        let least = natural.map { min($0, minColumnWidth) }
+        let minimum = zip(unbreakable, least).map { max($0, $1) }
+        /// `from` widths, each grown toward its `to` by a share of `room` proportional to its gap.
+        func grow(_ from: [CGFloat], toward to: [CGFloat], room: CGFloat) -> [CGFloat] {
+            let gaps = zip(to, from).map { $0 - $1 }
+            let total = gaps.reduce(0, +)
+            guard total > 0 else { return from }
+            return zip(from, gaps).map { ($0 + $1 * room / total).rounded(.down) }
+        }
+        let sum = { (widths: [CGFloat]) in widths.reduce(0, +) }
+        if sum(natural) <= available { return (natural, 0) }
+        if sum(minimum) <= available { return (grow(minimum, toward: natural, room: available - sum(minimum)), 0) }
+        if sum(least) <= available {
+            // The widest runs break first: each column keeps its longest run up to a cap as high
+            // as the room allows, so a long citation breaks before a timestamp does.
+            let capped = { (cap: CGFloat) in zip(least, minimum).map { max($0, min($1, cap)) } }
+            var low: CGFloat = 0
+            var high = minimum.max() ?? 0
+            for _ in 0..<24 {
+                let cap = (low + high) / 2
+                if sum(capped(cap)) <= available { low = cap } else { high = cap }
+            }
+            return (capped(low).map { $0.rounded(.down) }, 0)
+        }
+        return (natural, (sum(least) - available).rounded(.up))
+    }
+
+    /// Width `text` draws at on one line.
+    private static func measure(_ text: NSAttributedString) -> CGFloat {
+        ceil(text.size().width)
+    }
+
+    /// The runs of a cell a line may not break inside, in order: words between spaces, where a
+    /// link or a code span counts as one word with the text touching it (`(a/b.py:3),`).
+    static func runs(of cell: NSAttributedString) -> [NSRange] {
+        let text = cell.string as NSString
+        var protected = IndexSet()
+        cell.enumerateAttributes(in: NSRange(location: 0, length: cell.length)) { attributes, range, _ in
+            if attributes[.noteLink] != nil || attributes[.backgroundColor] != nil { protected.insert(integersIn: range.location..<NSMaxRange(range)) }
+        }
+        var runs: [NSRange] = []
+        var start: Int?
+        for index in 0..<text.length {
+            let breaks = !protected.contains(index) && CharacterSet.whitespacesAndNewlines.contains(Unicode.Scalar(text.character(at: index)) ?? "x")
+            if breaks {
+                if let open = start { runs.append(NSRange(location: open, length: index - open)) }
+                start = nil
+            } else if start == nil {
+                start = index
+            }
+        }
+        if let open = start { runs.append(NSRange(location: open, length: text.length - open)) }
+        return runs
+    }
+
+    /// `cell` in lines at most `width` wide: whole runs (`runs(of:)`) while they fit, a run wider
+    /// than the column broken after its last `/`, `.`, `-`, `_`, `:` or `,` that fits, else
+    /// between characters. Every line keeps its text's attributes: a wrapped link links on both.
+    static func wrap(_ cell: NSAttributedString, width: CGFloat) -> [NSAttributedString] {
+        let text = cell.string as NSString
+        var lines: [NSAttributedString] = []
+        var line: NSRange?
+        for run in runs(of: cell) {
+            if let open = line {
+                let joined = NSRange(location: open.location, length: NSMaxRange(run) - open.location)
+                if measure(cell.attributedSubstring(from: joined)) <= width {
+                    line = joined
+                    continue
+                }
+                lines.append(cell.attributedSubstring(from: open))
+            }
+            var rest = run
+            while measure(cell.attributedSubstring(from: rest)) > width {
+                let cut = breakOffset(in: rest, of: cell, text: text, width: width)
+                lines.append(cell.attributedSubstring(from: NSRange(location: rest.location, length: cut)))
+                rest = NSRange(location: rest.location + cut, length: rest.length - cut)
+            }
+            line = rest
+        }
+        if let line { lines.append(cell.attributedSubstring(from: line)) }
+        return lines.isEmpty ? [NSAttributedString()] : lines
+    }
+
+    /// Length of the longest start of `range` that fits `width` (at least one character), cut
+    /// back to just after a path or word separator when one lies in its latter two thirds.
+    private static func breakOffset(in range: NSRange, of cell: NSAttributedString, text: NSString, width: CGFloat) -> Int {
+        var ends: [Int] = []
+        var index = range.location
+        while index < NSMaxRange(range) {
+            index = NSMaxRange(text.rangeOfComposedCharacterSequence(at: index))
+            ends.append(index - range.location)
+        }
+        var low = 0
+        var high = ends.count - 1
+        while low < high {
+            let middle = (low + high + 1) / 2
+            if measure(cell.attributedSubstring(from: NSRange(location: range.location, length: ends[middle]))) <= width { low = middle } else { high = middle - 1 }
+        }
+        let fits = ends[low]
+        let separators = CharacterSet(charactersIn: "/.-_:,\\")
+        for length in stride(from: fits, to: fits / 3, by: -1) where length < range.length {
+            if let scalar = Unicode.Scalar(text.character(at: range.location + length - 1)), separators.contains(scalar) { return length }
+        }
+        return fits
     }
 
     // MARK: Fences

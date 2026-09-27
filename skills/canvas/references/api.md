@@ -111,7 +111,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   `labelOverlaps` (`{arrow, label, frame, overlaps}`: the arrow's label text, placed as drawn at `frame` (an arrow's own frame leaves its label out), lies on these tiles, text, or filled shapes, its own ends included, or on these arrows' labels; widen the gap, shorten the label, or move the tile),
   `overflow` (`{id, x, y}`: points of note/text/HTML content beyond the frame; for HTML, its page laid out at the frame's width),
   `scrolls` (`{id, y}`: code tiles whose range's rows, wrapped at the frame's width, are `y` points taller than the frame, so the tile scrolls to the range; fine for a viewer meant to scroll, refit with `size: "fit"` when the whole range should show),
-  `truncated` (`{id, what: "caption", x}`: a code caption the frame cuts off, `x` points short).
+  `truncated` (`{id, what, x}`, `x` points short: `caption`, a code caption the frame cuts off; `table`, a note table with too many columns for the note's width even with its cells wrapped: widen the note or split the table).
   A group and its members, and an unfilled rect around what it contains, are not overlaps. Follow tiles are fixed-size viewers and are never reported.
   With `ids` or `rect`, arrows through the checked objects and labels on them count too, whichever arrow it is: check a new tile by its id to find labels it covers.
   It judges what is drawn (whole tile frames, routes and line-bound ends as drawn), so an empty report means a clean picture. Run it after a layout pass instead of screenshots.

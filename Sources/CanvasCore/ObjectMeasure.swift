@@ -51,14 +51,7 @@ public enum ObjectMeasure {
             size = code(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption, follow: props["followOf"]?.string != nil,
                         maxWidth: natural ?? CodeMetrics.defaultFitWidth)
         case .note:
-            let markdown = props["markdown"]?.string ?? ""
-            let document = NoteMarkdown.parse(markdown)
-            var excerpts: [String: NoteExcerpt] = [:]
-            for fence in NoteMarkdown.anchoredFences(in: document) {
-                excerpts[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
-            }
-            let images = await NoteImages.load(NoteImages.sources(in: document), root: root)
-            size = note(document, width: natural ?? defaultNoteWidth, excerpts: excerpts, images: images)
+            size = await note(props, width: natural, root: root).size
         case .shape:
             guard let spec = ShapeSpec(props) else { throw Failure.invalidParams("shape props need a kind") }
             return try shape(spec, width: width.map { CGFloat($0) })
@@ -151,11 +144,22 @@ public enum ObjectMeasure {
         return (ceil(width) + 2 * CodeMetrics.captionInset + 4 + 1).rounded(.up)
     }
 
-    /// A note of `width` points whose rendered markdown fits without scrolling.
-    public static func note(_ document: Document, width: CGFloat, excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:]) -> CGSize {
-        let text = NoteRenderer(excerpts: excerpts, images: images).render(document, placeholder: notePlaceholder)
+    /// A note `width` points wide (default a new note's) whose rendered markdown fits without
+    /// scrolling, its live fences resolved against `root`, and how many points wider it would
+    /// have to be to show every table cell whole (`NoteRenderer.tableShortfall`; 0: nothing cut).
+    /// Natural points: unscaled.
+    public static func note(_ props: JSONValue, width: CGFloat?, root: URL) async -> (size: CGSize, tableShortfall: CGFloat) {
+        let document = NoteMarkdown.parse(props["markdown"]?.string ?? "")
+        var excerpts: [String: NoteExcerpt] = [:]
+        for fence in NoteMarkdown.anchoredFences(in: document) {
+            excerpts[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
+        }
+        let images = await NoteImages.load(NoteImages.sources(in: document), root: root)
+        let width = width ?? defaultNoteWidth
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: width - 2 * noteInset.width)
+        let text = renderer.render(document, placeholder: notePlaceholder)
         let height = noteTextHeight(text, width: width - 2 * noteInset.width)
-        return CGSize(width: width, height: (CodeMetrics.titleHeight + 2 * noteInset.height + height).rounded(.up))
+        return (CGSize(width: width, height: (CodeMetrics.titleHeight + 2 * noteInset.height + height).rounded(.up)), renderer.tableShortfall)
     }
 
     /// What an empty note shows (and so how tall it is).

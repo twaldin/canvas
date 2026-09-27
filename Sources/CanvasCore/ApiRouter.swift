@@ -1229,7 +1229,7 @@ public final class ApiRouter {
     /// `layout.check`: accidental overlaps, arrows through tiles, labels on tiles or labels,
     /// content that doesn't fit its frame (`overflow`; a code tile's rows past its frame are
     /// `scrolls`: it wraps at its width and scrolls to its range, so only its height can be
-    /// short, and a fixed-height viewer is often meant), and truncated captions, for `ids`, for
+    /// short, and a fixed-height viewer is often meant), and truncated captions and note tables, for `ids`, for
     /// what intersects `rect`, or for the whole board. Follow tiles are fixed-size viewers:
     /// never reported. The board is judged as it was when the call arrived: files are read
     /// concurrently and routes computed off the main actor on that snapshot (a whole-board check
@@ -1334,8 +1334,17 @@ public final class ApiRouter {
             } else if object.type == .html {
                 guard let measured = htmlSizes[object.id] else { continue }
                 size = measured
+            } else if object.type == .note {
+                // Wrapped at the frame's (natural) width; a table too wide for it even with its
+                // cells wrapped is cut, `truncated`.
+                let scale = CGFloat(object.scale)
+                let measured = await ObjectMeasure.note(object.props, width: CGFloat(object.naturalFrame.w), root: root)
+                size = CGSize(width: measured.size.width * scale, height: measured.size.height * scale)
+                if measured.tableShortfall >= 1 {
+                    truncated.append(.object(["id": .string(object.id), "what": .string("table"), "x": .number((measured.tableShortfall * scale).rounded(.up))]))
+                }
             } else {
-                // Notes and text wrap at the frame's width.
+                // Text wraps at the frame's width.
                 guard let measured = try? await ObjectMeasure.size(type: object.type, props: object.props, width: current.w, root: root) else { continue }
                 size = measured
             }

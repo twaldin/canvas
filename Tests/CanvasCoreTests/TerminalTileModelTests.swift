@@ -101,6 +101,16 @@ struct TerminalBoardTests {
         #expect(!board.raiseTerminalNotice("obj_missing", message: "Bell", bell: true))
     }
 
+    @Test func noticesFromAReportingAgentRaiseNothingUntilItExits() throws {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["command": .array([])]))
+        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .done, message: nil, seq: 1, source: "canvas-omp")
+        #expect(!board.raiseTerminalNotice(terminal.id, message: "omp: Complete", bell: false), "its badge already says done")
+        #expect(board.attention[terminal.id] == nil)
+        try board.releaseAgent(tile: terminal.id)
+        #expect(board.raiseTerminalNotice(terminal.id, message: "Build: done", bell: false), "a plain shell again")
+    }
+
     @Test func noticeMessages() {
         #expect(Board.noticeMessage(title: "Claude", body: "Needs permission") == "Claude: Needs permission")
         #expect(Board.noticeMessage(title: "", body: "Build finished") == "Build finished")

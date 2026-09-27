@@ -355,7 +355,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// Board shortcuts taken ahead of the focused view (see `CanvasWindow`). ⌘W closes the
     /// selection or the focused terminal and, with neither, goes on to the window's own close;
-    /// ⌘F finds in a code tile and otherwise stays with the terminal or page.
+    /// ⌘F finds in a code tile and otherwise stays with the terminal or page. Hyper-V pastes the
+    /// tray's mentions; a focused terminal would otherwise send the chord to its program as an
+    /// encoded key (zsh prints it at the prompt).
     func handleKeyEquivalent(_ event: NSEvent) -> Bool {
         if let action = Self.navigationAction(for: event) {
             perform(action, with: self)
@@ -365,7 +367,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             canvas.moveToNeighbor(heading)
             return true
         }
-        guard event.type == .keyDown, event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command, window?.attachedSheet == nil else { return false }
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if event.type == .keyDown, modifiers == [.command, .shift, .option, .control], event.charactersIgnoringModifiers?.lowercased() == "v", window?.attachedSheet == nil {
+            pasteMentions(nil)
+            return true
+        }
+        guard event.type == .keyDown, modifiers == .command, window?.attachedSheet == nil else { return false }
         switch event.charactersIgnoringModifiers {
         case "w": return canvas.closeSelectionOrFocused()
         case "f": return canvas.findInCodeTile()

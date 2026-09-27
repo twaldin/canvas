@@ -48,7 +48,8 @@ Read these before you build anything; each one cost earlier agents a round trip.
   from canvas_sdk import canvas
   board = canvas.board.get()                      # manifest of every object
   note = canvas.object.create(type="note", props={"markdown": "# Plan"})["object"]
-  canvas.object.get(id=note["id"], as_="graph")   # Python keywords take a trailing underscore
+  canvas.object.get(id=note["id"], as_="graph")   # reserved words take a trailing underscore
+  canvas.agent.wait(target="reviewer", timeout_ms=600000)   # Python keywords are snake_case (CLI: --timeoutMs)
   ```
   omp's `eval` kernel does not inherit `CANVAS_*` (omp gives it an allowlisted environment), so connect explicitly there.
   Your system prompt has the exact line, or read the values with `echo $CANVAS_SOCKET $CANVAS_TILE_ID $CANVAS_BOARD_ID` in bash:
@@ -330,8 +331,10 @@ canvas view.attention --id obj_… --clear                         # take it bac
 
 Markers are keyed by the object (raising again replaces the message); the user selecting or looking at the object clears it too.
 Raise one marker per thing your answer points at; they stay together until the user looks, even across app restarts.
-A long job outside any agent can flag its terminal without the API: `printf '\e]777;notify;Build;done\a'` (or OSC 9, or a bell) raises a marker there unless the user is typing in it.
-Your next marker after the user's next prompt clears your earlier turns' markers (the result lists them in `cleared`), so don't clear old ones yourself.
+A job in a terminal with no agent integration can flag it without the API: `printf '\e]777;notify;Build;done\a'` (or OSC 9, or a bell) raises a marker there unless the user is typing in it.
+Terminals whose agent reports a lifecycle (omp, Claude Code, Codex) show done and blocked themselves, so their notifications raise nothing.
+Your next marker after the user's next prompt clears your earlier turns' markers (the result lists them in `cleared`): don't clear old ones yourself, and never re-raise the cleared ones.
+The user saw them with your last answer; markers left from old turns pile up into clutter.
 
 ## Whose objects are whose
 

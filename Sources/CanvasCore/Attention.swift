@@ -65,10 +65,13 @@ extension Board {
     /// `notify`) or a bell. The marker goes on the terminal itself, raised by the app rather than
     /// an agent (no `raisedBy`, so no turn ever clears it; looking at the terminal does). Repeats
     /// coalesce: the same message again changes nothing, and a bell never replaces a marker already
-    /// on the terminal, whose message says more. False when nothing changed.
+    /// on the terminal, whose message says more. A terminal whose agent reports a lifecycle already
+    /// shows done and blocked itself, so its notifications (omp posts "Complete" after every turn)
+    /// raise nothing. False when nothing changed.
     @discardableResult
     public func raiseTerminalNotice(_ tile: ObjectID, message: String, bell: Bool) -> Bool {
-        guard objects[tile]?.type == .terminal else { return false }
+        guard let terminal = objects[tile], terminal.type == .terminal else { return false }
+        if let state = terminal.props["lifecycle"]?["state"]?.string, state != LifecycleState.unknown.rawValue { return false }
         if let current = attention[tile], bell || current.message == message { return false }
         _ = try? raiseAttention(tile, message: message, caller: nil)
         return true

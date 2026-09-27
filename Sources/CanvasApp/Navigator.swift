@@ -561,10 +561,6 @@ private final class NavigatorCell: NSTableCellView {
         didSet { applyColors() }
     }
 
-    /// Only the highlighted row is where Return goes; AppKit reported every cell focused (the
-    /// rows draw emphasized while the field keeps the keyboard).
-    override func isAccessibilityFocused() -> Bool { backgroundStyle == .emphasized }
-
     private func applyColors() {
         let selected = backgroundStyle == .emphasized
         title.textColor = selected ? .alternateSelectedControlTextColor : muted ? .secondaryLabelColor : .labelColor

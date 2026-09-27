@@ -103,6 +103,37 @@ final class LoginShellTests {
         #expect(await offPool { login.resolve("ls") } == nil)
         #expect(start.duration(to: .now) < .seconds(3))
     }
+
+    /// The rust study: rust-analyzer installed by nvim's mason, not on the login PATH, was
+    /// "not installed", and the hint's rustup fix wouldn't have put it on PATH either.
+    @Test func serversAreFoundByTheVariableThenPathThenInstallDirectoriesThenLocators() async throws {
+        func tool(_ directory: String) throws -> String {
+            try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+            let path = directory + "/fake-ls"
+            try "#!/bin/sh\n".write(toFile: path, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+            return path
+        }
+        let home = dir.path + "/home"
+        let mason = try tool(home + "/.local/share/nvim/mason/bin")
+        let onPath = try tool(dir.path + "/bin")
+        let named = try tool(dir.path + "/elsewhere")
+        let located = try tool(dir.path + "/toolchain")
+        let config = LanguageServerConfig(language: "fake", command: "fake-ls", languageIDs: [:], rootMarkers: [], locators: ["echo \(located)"])
+        func locate(path: String, variable: String? = nil, home: String = home, _ config: LanguageServerConfig = config) async throws -> String? {
+            let exported = variable.map { "export CANVAS_LSP_FAKE=\($0)\n" } ?? ""
+            let login = LoginShell(shell: try shell("PATH=\(path)\n\(exported)eval \"$2\""), home: home)
+            return await offPool { login.locate(config) }?.path
+        }
+        let system = "/usr/bin:/bin"
+        #expect(try await locate(path: "\(dir.path)/bin:\(system)") == onPath)
+        #expect(try await locate(path: "\(dir.path)/bin:\(system)", variable: named) == named, "the variable wins over PATH")
+        #expect(try await locate(path: system) == mason, "mason's bin when PATH lacks it")
+        #expect(try await locate(path: system, home: "/nonexistent") == located, "the locator last")
+        var bare = config
+        bare.locators = []
+        #expect(try await locate(path: system, home: "/nonexistent", bare) == nil)
+    }
 }
 
 /// Temp projects driven through the real language servers installed on this machine. Not on the
@@ -276,7 +307,7 @@ final class LanguageServiceTests: Sendable {
         let file = try write("main.swift", "let x = 1\n")
         let config = LanguageServerConfig(language: "swift", command: "canvas-no-such-language-server", languageIDs: ["swift": "swift"], rootMarkers: [])
         let service = LanguageService(configs: [config])
-        await #expect(throws: LSPError.unavailable("canvas-no-such-language-server is not installed (not found on the login shell's PATH)")) {
+        await #expect(throws: LSPError.unavailable(config.notFound)) {
             try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 4))
         }
         await #expect(throws: LSPError.unsupportedLanguage(".txt files")) {

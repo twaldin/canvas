@@ -146,14 +146,10 @@ public actor LanguageService {
         if let existing = servers[key] {
             server = existing
         } else {
-            // The login shell is a blocking subprocess (once per binary, then cached).
+            // The login shell is a blocking subprocess (once per server, then cached).
             let shell = shell
-            let command = config.command
-            let (found, environment) = await offPool { (shell.resolve(command), shell.environment) }
-            guard let executable = found else {
-                let missing = "\(config.command) is not installed (not found on the login shell's PATH)"
-                throw LSPError.unavailable(config.installHint.map { "\(missing). \($0)" } ?? missing)
-            }
+            let (found, environment) = await offPool { (shell.locate(config), shell.environment) }
+            guard let executable = found else { throw LSPError.unavailable(config.notFound) }
             // Another request may have created the server while the shell ran.
             if let existing = servers[key] {
                 touch(key)

@@ -4,7 +4,8 @@ import Foundation
 public struct LanguageServerConfig: Sendable, Equatable {
     /// Registry key, e.g. "swift".
     public var language: String
-    /// Binary name looked up on the login PATH, or an absolute path.
+    /// Binary name found by `LoginShell.locate` (the override variable, the login PATH, then
+    /// `directories` and `locators`), or an absolute path.
     public var command: String
     public var arguments: [String]
     /// File extension (lowercased, no dot) → LSP languageId.
@@ -14,11 +15,18 @@ public struct LanguageServerConfig: Sendable, Equatable {
     public var initializationOptions: JSONValue?
     /// Shown with an empty definition/references answer: why the server may not know yet.
     public var emptyResultHint: String?
-    /// How to install the server, shown when its binary isn't on the login PATH.
+    /// How to install the server, shown when it isn't found.
     public var installHint: String?
+    /// Install directories to look in when the login PATH lacks `command` (`~` is the home
+    /// directory), after `toolDirectories`: installers that don't put their binaries on PATH.
+    public var directories: [String]
+    /// Shell commands, run in the login shell after the directories, that print the binary's
+    /// path (`rustup which rust-analyzer`).
+    public var locators: [String]
 
     public init(language: String, command: String, arguments: [String] = [], languageIDs: [String: String], rootMarkers: [String],
-                initializationOptions: JSONValue? = nil, emptyResultHint: String? = nil, installHint: String? = nil) {
+                initializationOptions: JSONValue? = nil, emptyResultHint: String? = nil, installHint: String? = nil,
+                directories: [String] = [], locators: [String] = []) {
         self.language = language
         self.command = command
         self.arguments = arguments
@@ -27,6 +35,27 @@ public struct LanguageServerConfig: Sendable, Equatable {
         self.initializationOptions = initializationOptions
         self.emptyResultHint = emptyResultHint
         self.installHint = installHint
+        self.directories = directories
+        self.locators = locators
+    }
+
+    /// Where editors install servers for any language without putting them on PATH: nvim's mason.
+    public static let toolDirectories = ["~/.local/share/nvim/mason/bin"]
+
+    /// The environment variable naming this language's server binary, ahead of any lookup
+    /// (`CANVAS_LSP_RUST=/path/to/rust-analyzer`), read in the login shell, so a line in the
+    /// shell profile sets it without putting the binary's directory on PATH.
+    public var overrideVariable: String { "CANVAS_LSP_" + language.uppercased() }
+
+    /// Why the server can't run, for navigation panels: where Canvas looked, how to install it,
+    /// and how to point Canvas at a binary elsewhere.
+    public var notFound: String {
+        var places = ["on the login shell's PATH"]
+        let searched = Self.toolDirectories + directories
+        places.append("in " + searched.joined(separator: ", "))
+        places += locators.map { "with `\($0)`" }
+        let looked = places.dropLast().joined(separator: ", ") + (places.count > 1 ? " and " : "") + places.last!
+        return "\(command) not found (Canvas looked \(looked)). " + (installHint.map { "\($0). " } ?? "") + "Or set \(overrideVariable) to its path in your shell profile."
     }
 
     public static let defaults: [LanguageServerConfig] = [
@@ -46,9 +75,11 @@ public struct LanguageServerConfig: Sendable, Equatable {
                              rootMarkers: ["tsconfig.json", "jsconfig.json", "package.json"],
                              installHint: "Install it with: npm install -g typescript-language-server typescript@5 (TypeScript 7 has no tsserver, which the server needs)"),
         LanguageServerConfig(language: "go", command: "gopls", languageIDs: ["go": "go"], rootMarkers: ["go.work", "go.mod"],
-                             installHint: "Install it with: go install golang.org/x/tools/gopls@latest"),
+                             installHint: "Install it with: go install golang.org/x/tools/gopls@latest", directories: ["~/go/bin"]),
+        // rustup puts a component in its toolchain, reachable on PATH only through ~/.cargo/bin's
+        // proxies (whose rust-analyzer fails until the component is added); `rustup which` finds it.
         LanguageServerConfig(language: "rust", command: "rust-analyzer", languageIDs: ["rs": "rust"], rootMarkers: ["Cargo.toml"],
-                             installHint: "Install it with: rustup component add rust-analyzer"),
+                             installHint: "Install it with: rustup component add rust-analyzer", locators: ["rustup which rust-analyzer"]),
     ]
 
     public func languageID(for file: URL) -> String? {
@@ -72,34 +103,63 @@ public struct LanguageServerConfig: Sendable, Equatable {
 
 /// GUI apps start with launchd's minimal PATH, while language servers live on the login shell's
 /// (Homebrew, npm, pyenv) and some are scripts that need it too (pyright is `#!/usr/bin/env node`).
-/// Each binary is resolved once through the login shell and cached, and so is that PATH.
+/// Binaries are looked up through the login shell and cached, and so is that PATH; a binary
+/// not found is looked for again after `missRetry`, so installing one needs no restart.
 public final class LoginShell: @unchecked Sendable {
     public static let shared = LoginShell()
+    public static let missRetry: Duration = .seconds(30)
 
     private let shell: String
+    private let home: String
     private let timeout: Duration
     private let lock = NSLock()
-    private var resolved: [String: URL?] = [:]
+    private var resolved: [String: (url: URL?, at: ContinuousClock.Instant)] = [:]
     private var cachedPath: String?
     private var cachedEditor: String??
 
-    public init(shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", timeout: Duration = .seconds(10)) {
+    /// `home` is what a leading `~` in a server's install directories stands for.
+    public init(shell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh", home: String = NSHomeDirectory(), timeout: Duration = .seconds(10)) {
         self.shell = shell
+        self.home = home
         self.timeout = timeout
     }
 
     /// Absolute path of `command` on the login PATH, or nil when it isn't installed.
     public func resolve(_ command: String) -> URL? {
-        if command.hasPrefix("/") {
-            return FileManager.default.isExecutableFile(atPath: command) ? URL(fileURLWithPath: command) : nil
+        if command.hasPrefix("/") { return Self.executable(command) }
+        return cached("command:\(command)") {
+            run("command -v \(Self.quote(command))").split(whereSeparator: \.isNewline).last.flatMap { Self.executable(String($0)) }
         }
-        if let cached = lock.withLock({ resolved[command] }) { return cached }
-        let found = run("command -v \(Self.quote(command))")
-            .split(whereSeparator: \.isNewline).last
-            .map(String.init)
-            .flatMap { $0.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: $0) ? URL(fileURLWithPath: $0) : nil }
-        lock.withLock { resolved[command] = .some(found) }
+    }
+
+    /// A language server's binary: the one its override variable names (`CANVAS_LSP_RUST`), else
+    /// `command` on the login PATH, else in the install directories (`toolDirectories`, then the
+    /// language's own), else what its locators print (`rustup which rust-analyzer`). One login
+    /// shell answers the variable, PATH, and locators together. Nil when none is executable.
+    public func locate(_ config: LanguageServerConfig) -> URL? {
+        if config.command.hasPrefix("/") { return Self.executable(config.command) }
+        return cached("server:\(config.language):\(config.command)") {
+            let marker = "__CANVAS_FOUND__"
+            let probes = ["${\(config.overrideVariable)-}", "$(command -v \(Self.quote(config.command)))"] + config.locators.map { "$(\($0) 2>/dev/null)" }
+            let script = probes.map { "printf '\\n\(marker)%s' \"\($0)\"" }.joined(separator: "; ")
+            // Anything rc files print comes before the first marker.
+            let answers = run(script).components(separatedBy: "\n" + marker).dropFirst().map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let directories = (LanguageServerConfig.toolDirectories + config.directories).map { directory in
+                (directory.hasPrefix("~/") ? home + directory.dropFirst() : directory) + "/" + config.command
+            }
+            return (Array(answers.prefix(2)) + directories + Array(answers.dropFirst(2))).lazy.compactMap(Self.executable).first
+        }
+    }
+
+    private func cached(_ key: String, _ find: () -> URL?) -> URL? {
+        if let known = lock.withLock({ resolved[key] }), known.url != nil || known.at.duration(to: .now) < Self.missRetry { return known.url }
+        let found = find()
+        lock.withLock { resolved[key] = (found, .now) }
         return found
+    }
+
+    private static func executable(_ path: String) -> URL? {
+        path.hasPrefix("/") && FileManager.default.isExecutableFile(atPath: path) ? URL(fileURLWithPath: path) : nil
     }
 
     /// The app environment with the login shell's PATH, for server processes.

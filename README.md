@@ -32,6 +32,13 @@ A native macOS infinite canvas for coding agents. Agents run unmodified in real 
    mkdir -p ~/.omp/agent/extensions
    ln -sf /Applications/Canvas.app/Contents/Resources/extensions/omp/canvas.ts ~/.omp/agent/extensions/canvas.ts
    ```
+5. Optional, for code navigation: install the language servers you want (sourcekit-lsp comes with Xcode or the Command Line Tools; `npm install -g pyright`, `npm install -g typescript-language-server typescript@5`, `go install golang.org/x/tools/gopls@latest`, `rustup component add rust-analyzer`). Without one, Go to Definition, Find References and Outline answer by text search. Canvas finds a server through your login shell:
+   1. the path in `CANVAS_LSP_<LANGUAGE>` (`CANVAS_LSP_SWIFT`, `_PYTHON`, `_TYPESCRIPT`, `_GO`, `_RUST`), if set;
+   2. the command on your login shell's PATH;
+   3. nvim's mason (`~/.local/share/nvim/mason/bin`), and `~/go/bin` for gopls;
+   4. `rustup which rust-analyzer` for rust-analyzer.
+
+   A server elsewhere (Zed's, a custom build) needs the variable, e.g. in `~/.zprofile`: `export CANVAS_LSP_RUST=/path/to/rust-analyzer`. Canvas looks again 30 seconds after a miss, so a server installed while it runs is picked up without a restart; a navigation panel without a server says where Canvas looked.
 
 Requires macOS 14 or later on Apple silicon.
 

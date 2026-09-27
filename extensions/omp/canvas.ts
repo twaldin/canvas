@@ -203,6 +203,7 @@ function canvasGuidance(tile: string): string {
     `- canvas: ${description}`,
     "</skills>",
     `Before reading or changing the canvas, or when the user refers to things on it, you MUST read ${SKILL_PATH} with the read tool. Its relative references (e.g. references/html-explainers.md) live in ${dirname(SKILL_PATH)}/.`,
+    "When your answer is something the user will come back to (a plan, a walkthrough across several files, a comparison), put it on the canvas or offer to; one-off answers stay in the terminal.",
     `Canvas connection: CANVAS_SOCKET=${socket} CANVAS_TILE_ID=${tile} CANVAS_BOARD_ID=${board}. The bash tool inherits these; the eval Python kernel does not, so connect there explicitly:`,
     `  from canvas_sdk import connect; canvas = connect(socket=${JSON.stringify(socket)}, tile=${JSON.stringify(tile)}, board=${JSON.stringify(board)})`,
     "Subprocesses started from eval (e.g. the `canvas` CLI) need those three variables in their env.",

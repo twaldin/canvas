@@ -570,15 +570,26 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// Tiles and drawn objects wholly inside a document rect.
+    /// Tiles and drawn objects wholly inside a document rect, with the groups it encloses and
+    /// the arrows between what it selects (`SelectionScope.marquee`).
     func objects(inDocRect rect: NSRect) -> [ObjectID] {
-        selectableRects().filter { rect.contains($0.rect) }.map(\.id).sorted()
+        marqueeSelection { rect.contains($0) }
     }
 
-    /// Tiles and drawn objects wholly inside a lasso drawn in document coordinates.
+    /// Tiles and drawn objects wholly inside a lasso drawn in document coordinates, with the
+    /// groups it encloses and the arrows between what it selects.
     func objects(inLasso points: [NSPoint]) -> [ObjectID] {
         let lasso = Lasso(points: points.map { (Double($0.x), Double($0.y)) })
-        return selectableRects().filter { lasso.contains(Frame(x: $0.rect.minX, y: $0.rect.minY, w: $0.rect.width, h: $0.rect.height)) }.map(\.id).sorted()
+        return marqueeSelection { lasso.contains(Frame(x: $0.minX, y: $0.minY, w: $0.width, h: $0.height)) }
+    }
+
+    private func marqueeSelection(encloses: (NSRect) -> Bool) -> [ObjectID] {
+        let enclosed = Set(selectableRects().filter { encloses($0.rect) }.map(\.id))
+        let scopeGroups = groups.values.map { SelectionScope.Group(id: $0.objectID, members: $0.members, enclosed: !$0.isHidden && !$0.region.isEmpty && encloses($0.region)) }
+        let arrows = board.objects.values.compactMap { object in
+            ArrowSpec(object.props).flatMap { object.type == .arrow ? SelectionScope.Arrow(id: object.id, from: $0.from.objectID, to: $0.to.objectID) : nil }
+        }
+        return SelectionScope.marquee(enclosed: enclosed, groups: scopeGroups, arrows: arrows).sorted()
     }
 
     // MARK: Mouse
@@ -1494,12 +1505,13 @@ final class CanvasView: NSScrollView {
     }
 
     /// Markers, blocked terminals' bubbles, and edge pills live in window space: re-placed on
-    /// every pan and pinch step (`boundsChanged`), whenever objects move, and on every scene
-    /// pass, around their objects' rects as they are on screen now. `PillLayout` keeps them off
-    /// each other and off blocked terminals, a bubble off other tiles where it can, and all of
-    /// them in the area the chrome leaves clear (`clearArea`, what jumps aim at). An object in
-    /// view shows its bubble; one out of view gets an edge pill instead (a blocked terminal's
-    /// says why it is blocked, even when it is also marked).
+    /// every pan and pinch step (`boundsChanged`), whenever objects move, on every scene pass,
+    /// and when a terminal takes the keyboard, around their objects' rects as they are on screen
+    /// now. `PillLayout` keeps them off each other, off blocked terminals and the tile with the
+    /// keyboard (above all its cursor's row), a bubble off other tiles where it can, and all of
+    /// them off title bars where they can and in the area the chrome leaves clear (`clearArea`,
+    /// what jumps aim at). An object in view shows its bubble; one out of view gets an edge pill
+    /// instead (a blocked terminal's says why it is blocked, even when it is also marked).
     private func layoutPills() {
         guard !markers.isEmpty || !blocked.isEmpty || !edges.subviews.isEmpty else { return }
         let visible = documentVisibleRect
@@ -1522,19 +1534,23 @@ final class CanvasView: NSScrollView {
                 continue
             }
             let shown = attention.convert(rect, from: document)
-            // Title bar plus the content's own controls strip (a browser's address bar), live or card.
-            let header: CGFloat = if let tile = tiles[view.objectID] { (TileFrameView.titleHeight + tile.content.headerHeight) * tile.scale * zoom }
-                else if groups[view.objectID] != nil { CGFloat(GroupSpec.titleHeight) * zoom } else { 0 }
+            let header = headerOnScreen(view.objectID, zoom: zoom)
             let ringWidth = shown.width + 2 * AttentionMarker.inset
             shownRects[ObjectIdentifier(view)] = shown
             shownMarkers.append(.init(id: view.objectID, target: shown, ringInset: AttentionMarker.inset,
                                       size: CGSize(width: PillLayout.bubbleWidth(natural: view.naturalWidth, ringWidth: ringWidth), height: AttentionMarker.bubbleHeight),
                                       header: header, blocked: view.style == .blocked))
         }
-        let onScreen = tiles.values.filter { $0.frame.intersects(visible) }.map { (id: $0.objectID, rect: attention.convert($0.frame, from: document)) }
+        let onScreen = tiles.values.filter { $0.frame.intersects(visible) }.map {
+            PillLayout.Tile(id: $0.objectID, rect: attention.convert($0.frame, from: document), header: headerOnScreen($0.objectID, zoom: zoom))
+        }
+        let focused = focusedTile
+        let caret = focused.flatMap { tiles[$0]?.content as? TerminalTile }.flatMap { terminal in
+            terminal.caretRow.map { attention.convert($0, from: terminal.terminal) }
+        }
         let clear = clearArea
         let placement = PillLayout.place(markers: shownMarkers, edges: pointers.values.map { .init(id: $0.id, target: $0.target, size: AttentionEdgeView.size(for: $0.message, style: $0.style)) },
-                                         tiles: onScreen, clear: clear)
+                                         tiles: onScreen, focused: focused, caret: caret, clear: clear)
         for view in views {
             let bubble = view.style == .blocked ? placement.blocked[view.objectID] : placement.bubbles[view.objectID]
             if let bubble, let shown = shownRects[ObjectIdentifier(view)] { view.place(around: shown, bubble: bubble) }
@@ -1544,6 +1560,13 @@ final class CanvasView: NSScrollView {
             pointer.frame = placement.edges[pointer.id] ?? .zero
             return pointer
         })
+    }
+
+    /// Height of an object's header on screen: a tile's title bar plus its content's controls
+    /// strip (a browser's address bar), live or card; a group's title band.
+    private func headerOnScreen(_ id: ObjectID, zoom: CGFloat) -> CGFloat {
+        if let tile = tiles[id] { return (TileFrameView.titleHeight + tile.content.headerHeight) * tile.scale * zoom }
+        return groups[id] != nil ? CGFloat(GroupSpec.titleHeight) * zoom : 0
     }
 
     // MARK: Nothing in view

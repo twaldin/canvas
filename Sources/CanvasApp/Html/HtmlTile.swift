@@ -23,6 +23,9 @@ final class HtmlTile: NSView, TileContent {
     private var readyWaiters: [@MainActor () -> Void] = []
     /// Page scroll reported by the kit, restored after re-renders and re-attachment.
     private var scrollY: Double = 0
+    /// The page's own background luminance (`PageSurface`); nil while it leaves it transparent
+    /// (the tile's own background shows through).
+    fileprivate var pageLuminance: Double?
     private var hovered: WebMentions.Element?
     private var hoverInFlight = false
     private var queuedHover: NSPoint?
@@ -469,6 +472,7 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        probeSurface(webView)
         guard scrollY > 0 else { return }
         let y = scrollY
         Task { _ = try? await webView.callAsyncJavaScript("window.canvasKit?.restoreScroll(y)", arguments: ["y": y], contentWorld: .page) }
@@ -480,5 +484,18 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         nil
+    }
+}
+
+extension HtmlTile {
+    var surfaceLuminance: Double? { pageLuminance }
+
+    /// Reads the page's background for drawings over the tile.
+    fileprivate func probeSurface(_ webView: WKWebView) {
+        Task { @MainActor [weak self] in
+            guard let probe = await PageSurface.probe(webView), let self, probe.luminance != self.pageLuminance else { return }
+            self.pageLuminance = probe.luminance
+            NotificationCenter.default.post(name: .tileSurfaceChanged, object: self)
+        }
     }
 }

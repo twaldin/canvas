@@ -65,6 +65,9 @@ final class ShapeLayer: NSView {
     private(set) weak var toolbar: NSView?
 
     private(set) var items: [ObjectID: DrawnItem] = [:]
+    /// Each tile's frame and z as last seen, so a tile that moves or restacks redraws the
+    /// default-ink drawings over where it was and where it is (`surfaceChanged`).
+    var surfaceFrames: [ObjectID: (frame: Frame, z: Double)] = [:]
     /// Item ids in paint order (ascending z); rebuilt lazily after inserts and z changes.
     private var paintOrder: [ObjectID] = []
     private var paintOrderStale = true
@@ -111,6 +114,14 @@ final class ShapeLayer: NSView {
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(toolbar)
         layer.toolbar = toolbar
+        NotificationCenter.default.addObserver(forName: .tileSurfaceChanged, object: nil, queue: .main) { [weak layer] note in
+            // The content view itself isn't Sendable; its identity is.
+            guard let sender = note.object.map({ ObjectIdentifier($0 as AnyObject) }) else { return }
+            MainActor.assumeIsolated {
+                guard let layer, let tile = layer.canvas.tiles.values.first(where: { ObjectIdentifier($0.content) == sender }) else { return }
+                layer.surfaceChanged(tile.frame)
+            }
+        }
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
             toolbar.centerXAnchor.constraint(equalTo: container.centerXAnchor),
@@ -179,6 +190,7 @@ final class ShapeLayer: NSView {
     // MARK: Board events
 
     func apply(_ event: BoardEvent) {
+        tileMoved(event)
         switch event {
         case .objectCreated(let object), .objectUpdated(let object):
             if object.type != .arrow, object.type != .group { rerouteAvoiding() }
@@ -422,10 +434,10 @@ final class ShapeLayer: NSView {
             if offset != .zero {
                 context.saveGState()
                 context.translateBy(x: offset.width, y: offset.height)
-                item.draw(in: context)
+                item.draw(in: context, ink: ink(for: item))
                 context.restoreGState()
             } else {
-                item.draw(in: context)
+                item.draw(in: context, ink: ink(for: item))
             }
         }
         drawGesture(in: context)
@@ -445,7 +457,7 @@ final class ShapeLayer: NSView {
         var drawn: [(object: CanvasObject, bounds: NSRect)] = []
         for id in ordered {
             guard let item = items[id], !excluded.hides(item.object), item.bounds.intersects(docRect) else { continue }
-            item.draw(in: context)
+            item.draw(in: context, ink: ink(for: item, excluding: excluded))
             drawn.append((item.object, item.bounds))
         }
         return drawn

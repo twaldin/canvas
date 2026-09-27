@@ -163,6 +163,7 @@ protocol TileContent: NSView {
     func mentionTarget(at point: NSPoint) -> MentionTarget?      // what a Hyper-click here mentions (element level)
     func outline(for target: MentionTarget) -> NSRect?           // hover highlight, in this view's coordinates
     var takesKeyboardFocus: Bool { get }                         // terminal, browser: true; code, note, HTML: false
+    var surfaceLuminance: Double? { get }                        // what default-ink drawings over it contrast with (page background, image, terminal theme); nil: the app's own (default); post .tileSurfaceChanged on change
     func update(_ object: CanvasObject)                          // a new revision of the backing object
 }
 ```
@@ -244,7 +245,7 @@ Mentions: a diff line is a `code` mention of its side's line (`side: new` for co
 
 ## Export
 
-The object menu's Copy as Image and Save as PNG… draw the selection with `view.render` (`CanvasView.render`, `.objects(selection)` at 2 px/pt: tiles, drawings and groups under it, no app chrome) and put the PNG (plus TIFF) on the general pasteboard, or write it where a save sheet says (default: the board root). An HTML tile adds Save as HTML… and Open in Browser (see HTML tiles). Save panels run out of process, so replayed input can't type into them; `input key return` on one saves under its suggested name.
+The object menu's Copy as Image and Save as PNG… draw the selection with `view.render` (`CanvasView.render`, `.objects(selection)` plus every group whose members are all selected, `SelectionScope.export`, at 2 px/pt: tiles, drawings and groups under it, no app chrome) and put the PNG (plus TIFF) on the general pasteboard, or write it where a save sheet says (default: the folder last saved into, `canvas.exportDirectory` in user defaults, unless it is gone or inside the board root; else `~/Downloads`; name `ExportFile.name`). An HTML tile adds Save as HTML… and Open in Browser (see HTML tiles). Save panels run out of process, so replayed input can't type into them; `input key return` on one saves under its suggested name.
 
 ## Drawing layer
 

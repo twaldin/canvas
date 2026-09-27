@@ -42,6 +42,33 @@ public enum DrawingStyle {
         return NSColor(srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255, blue: CGFloat(value & 0xFF) / 255, alpha: 1)
     }
 
+    /// Whether `name` draws in the default ink ("black", no color, or a name that is no color),
+    /// which is drawn dark or light by what lies under it (`InkContrast`) rather than following
+    /// the window's appearance: "black" in dark mode would otherwise be white on a white page.
+    public static func isDefaultInk(_ name: String?) -> Bool {
+        guard let name, name != "black" else { return true }
+        if palette.contains(where: { $0.name == name }) { return false }
+        let hex = name.hasPrefix("#") ? String(name.dropFirst()) : name
+        return !(hex.count == 6 && UInt32(hex, radix: 16) != nil)
+    }
+
+    /// The default ink as resolved against its surface.
+    public static func color(_ ink: InkContrast.Ink) -> NSColor {
+        ink == .dark ? darkInk : lightInk
+    }
+    private static let darkInk = NSColor(srgbRed: 0.11, green: 0.11, blue: 0.12, alpha: 1)
+    private static let lightInk = NSColor(srgbRed: 0.93, green: 0.93, blue: 0.94, alpha: 1)
+
+    /// Relative luminance of a color as `appearance` draws it; nil when it has no RGB form.
+    public static func luminance(_ color: NSColor, in appearance: NSAppearance) -> Double? {
+        var result: Double?
+        appearance.performAsCurrentDrawingAppearance {
+            guard let rgb = color.usingColorSpace(.sRGB) else { return }
+            result = InkContrast.luminance(red: rgb.redComponent, green: rgb.greenComponent, blue: rgb.blueComponent)
+        }
+        return result
+    }
+
     public static func text(_ string: String, size: CGFloat, color: NSColor, alignment: NSTextAlignment = .left) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = alignment

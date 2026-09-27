@@ -8,24 +8,49 @@ extension CanvasView {
     /// Pixels per canvas point for exported pictures: sharp on Retina screens and in documents.
     static let exportScale = 2.0
 
-    /// The selection drawn offscreen (tiles, drawings, groups under it; no app chrome), as PNG.
+    /// The selection drawn offscreen (tiles, drawings, groups under it; no app chrome), as PNG,
+    /// with the groups whose members are all selected (`SelectionScope.export`), so their titles
+    /// and borders aren't cut.
     private func selectionPNG() async throws -> Data {
-        let ids = selection.sorted()
-        guard !ids.isEmpty else { throw ExportFailure("nothing is selected") }
+        guard !selection.isEmpty else { throw ExportFailure("nothing is selected") }
+        let groups = board.objects.values.compactMap { object in
+            object.type == .group ? GroupSpec(object.props).map { SelectionScope.Group(id: object.id, members: $0.members) } : nil
+        }
+        let ids = SelectionScope.export(selection: selection, groups: groups).sorted()
         return try await render(RenderRequest(target: .objects(ids), scale: Self.exportScale, padding: 0), format: .png).image
     }
 
-    /// A file name for the selection: the one object's title, else "Canvas selection".
+    /// A file name for the selection: the one object's title, else "Canvas selection"
+    /// (`ExportFile.name`).
     private func exportName(_ ext: String) -> String {
-        let title = selection.count == 1 ? selection.first.flatMap { board.objects[$0] }.map(TileFrameView.title(for:)) : nil
-        var name = title ?? "Canvas selection"
+        var title = selection.count == 1 ? selection.first.flatMap { board.objects[$0] }.map(TileFrameView.title(for:)) : nil
         // An image tile's title is its file name: `chart.png` saves as `chart.png`, not `chart.png.png`.
-        if LocalImage.extensions.contains((name as NSString).pathExtension.lowercased()) || (name as NSString).pathExtension.lowercased() == "html" {
-            name = ((name as NSString).lastPathComponent as NSString).deletingPathExtension
+        if let name = title, LocalImage.extensions.contains((name as NSString).pathExtension.lowercased()) || (name as NSString).pathExtension.lowercased() == "html" {
+            title = ((name as NSString).lastPathComponent as NSString).deletingPathExtension
         }
-        let base = name.components(separatedBy: CharacterSet(charactersIn: "/:\\\0\n\r\t")).joined(separator: " ")
-            .trimmingCharacters(in: .whitespaces)
-        return "\(base.isEmpty ? "Canvas selection" : String(base.prefix(80))).\(ext)"
+        return ExportFile.name(title, ext: ext)
+    }
+
+    private static let exportDirectoryKey = "canvas.exportDirectory"
+
+    /// A save sheet for an export: named for the selection, opening in the folder the user last
+    /// saved one into, else Downloads, never the board's directory (`ExportFile.directory`).
+    private func exportPanel(_ type: UTType, ext: String) -> NSSavePanel {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [type]
+        panel.nameFieldStringValue = exportName(ext)
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSHomeDirectory())
+        let last = UserDefaults.standard.string(forKey: Self.exportDirectoryKey).map { URL(fileURLWithPath: $0, isDirectory: true) }
+        panel.directoryURL = ExportFile.directory(lastUsed: last, boardRoot: board.root, downloads: downloads) { url in
+            var directory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &directory) && directory.boolValue
+        }
+        return panel
+    }
+
+    /// Remembers where the user saved an export, for the next save sheet.
+    private static func rememberExportDirectory(of url: URL) {
+        UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: exportDirectoryKey)
     }
 
     /// Copy as Image: PNG (and TIFF, for apps that only read that) on the general pasteboard.
@@ -49,12 +74,10 @@ extension CanvasView {
     /// Save as PNG…: a save sheet on the window, then the same picture as Copy as Image.
     func saveSelectionAsPNG() {
         guard let window else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.png]
-        panel.nameFieldStringValue = exportName("png")
-        panel.directoryURL = board.root
+        let panel = exportPanel(.png, ext: "png")
         panel.beginSheetModal(for: window) { [weak self, panel] response in
             guard let self, response == .OK, let url = panel.url else { return }
+            Self.rememberExportDirectory(of: url)
             Task { @MainActor in
                 do {
                     try await Self.write(try await self.selectionPNG(), to: url)
@@ -69,12 +92,10 @@ extension CanvasView {
     /// Save as HTML…: the HTML tile's page as it renders, in one file (`HtmlTile.exportDocument`).
     func saveHTML(_ id: ObjectID) {
         guard let window, let tile = tiles[id]?.content as? HtmlTile else { return }
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.html]
-        panel.nameFieldStringValue = exportName("html")
-        panel.directoryURL = board.root
+        let panel = exportPanel(.html, ext: "html")
         panel.beginSheetModal(for: window) { [weak self, panel] response in
             guard let self, response == .OK, let url = panel.url else { return }
+            Self.rememberExportDirectory(of: url)
             Task { @MainActor in
                 do {
                     try await Self.write(Data(try await tile.exportDocument().utf8), to: url)

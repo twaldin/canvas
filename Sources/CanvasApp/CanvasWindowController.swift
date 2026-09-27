@@ -11,6 +11,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let nothingHere = NothingHerePill(frame: .zero)
     private let emptyHint = EmptyBoardHint()
     private let undoHUD = UndoHUD()
+    private let basics = BasicsPanel()
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
@@ -67,7 +68,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
         }
         // Above the toolbar and tray, so the navigator is never covered.
-        for view in [nothingHere, undoHUD, navigator] {
+        for view in [nothingHere, undoHUD, basics, navigator] {
             view.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(view)
         }
@@ -83,6 +84,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             navigator.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
             navigatorWidth,
             navigator.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
+        ])
+        let basicsHeight = basics.heightAnchor.constraint(equalToConstant: 620)
+        basicsHeight.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            basics.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
+            basics.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            basics.widthAnchor.constraint(equalToConstant: BasicsPanel.width),
+            basicsHeight,
+            basics.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
         ])
         navigator.onGo = { [weak self] target in
             switch target {
@@ -302,6 +312,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             navigator.open(rows: canvas.navigatorRows(), files: files.index)
             files.refresh { [weak self] index in self?.navigator.update(files: index) }
         }
+    }
+
+    /// Help › Canvas Basics opens (or closes) the legend over this board.
+    @objc func toggleBasics(_ sender: Any?) {
+        if basics.isOpen { basics.close() } else { basics.open() }
     }
 
     /// Go to's file, symbol and Recent rows: a code tile in view already showing the lines, else
@@ -584,6 +599,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(copyObjectIDs(_:)):
             item.title = selection.count > 1 ? "Copy Object IDs" : "Copy Object ID"
             return !selection.isEmpty
+        case #selector(toggleBasics(_:)):
+            item.state = basics.isOpen ? .on : .off
+            return true
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
         case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selectedHTMLTile != nil

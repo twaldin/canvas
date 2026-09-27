@@ -4,7 +4,7 @@ The full rules behind SKILL.md's summary.
 
 - `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "…", "fill": "none" | "semi" | "solid"}` with a `frame`.
   A rect drawn around tiles *encloses* them.
-  - `color`: `black` (the default ink; white in dark mode), `grey`, `blue`, `green`, `orange`, `red`, `violet`, or `#rrggbb`. Arrows take `color` too.
+  - `color`: `black` (the default ink, drawn to contrast with what is under it: dark over a white page, an image or the light canvas, light over the dark canvas or a dark page, on screen and in renders), `grey`, `blue`, `green`, `orange`, `red`, `violet`, or `#rrggbb`. Arrows take `color` too.
   - `fill` (rect/ellipse): `none` (default; the interior passes clicks through), `semi` (a 14% wash of the color, for regions), `solid` (85%).
   - Text sizing: a `text` shape draws its text in 20 pt handwriting from the frame's top-left, wrapping at the frame width;
     one line needs about 30 pt of height (`h ≈ 30 × lines`).

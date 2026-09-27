@@ -686,6 +686,23 @@ final class TerminalTile: NSView, TileContent {
                                    cell: CGSize(width: CGFloat(metrics.cellWidthPixels) / scale, height: CGFloat(metrics.cellHeightPixels) / scale))
     }
 
+    /// The row the cursor is on (the line being typed), across the terminal's width, in the
+    /// terminal view's coordinates: what attention pills keep off while the terminal has the
+    /// keyboard. Nil until the surface attaches and lays out.
+    var caretRow: NSRect? {
+        guard let handle = surface?.handle, let grid else { return nil }
+        var x = 0.0, y = 0.0, width = 0.0, height = 0.0
+        // Top-left origin; `y` is the bottom of the cursor's cell.
+        ghostty_surface_ime_point(handle, &x, &y, &width, &height)
+        let rowHeight = max(CGFloat(height), grid.cell.height)
+        return NSRect(x: 0, y: terminal.bounds.height - CGFloat(y), width: terminal.bounds.width, height: rowHeight)
+    }
+
+    /// The terminal's theme background (a light Ghostty theme draws the default ink dark).
+    var surfaceLuminance: Double? {
+        DrawingStyle.luminance(TerminalConfig.shared.style(for: effectiveAppearance).background, in: effectiveAppearance)
+    }
+
     /// The session's styled screen text: the last `rows` lines of `zmx history --vt` and the
     /// row the cursor ends on. Blocks until zmx exits; nil when zmx or the session is missing.
     nonisolated static func styledHistory(session: String, rows: Int) -> (lines: [TerminalLine], cursorRow: Int?)? {

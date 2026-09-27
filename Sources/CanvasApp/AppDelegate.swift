@@ -261,6 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func zoomIn(_ sender: Any?) { keyController?.zoomIn(sender) }
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
     @objc func toggleNavigator(_ sender: Any?) { keyController?.toggleNavigator(sender) }
+    @objc func toggleBasics(_ sender: Any?) { keyController?.toggleBasics(sender) }
     @objc func toggleLassoSelection(_ sender: Any?) { keyController?.toggleLassoSelection(sender) }
     @objc func exitGroup(_ sender: Any?) { keyController?.exitGroup(sender) }
     @objc func undoCanvas(_ sender: Any?) { keyController?.undoCanvas(sender) }
@@ -432,8 +433,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), ""),
         ])
-        // The Help menu gets AppKit's menu search (⌘?), which finds every item above.
-        NSApp.helpMenu = submenu("Help", [])
+        // The Help menu gets AppKit's menu search (⌘?), which finds every item above, and the
+        // legend of what the canvas shows (`BasicsPanel`).
+        NSApp.helpMenu = submenu("Help", [
+            item("Canvas Basics", #selector(toggleBasics(_:)), ""),
+        ])
         return main
     }
 }

@@ -111,6 +111,11 @@ protocol TileContent: NSView {
     /// Height of the controls strip at the top of the content (a browser's address bar, a code
     /// tile's header), which attention bubbles keep off, like the title bar above it.
     var headerHeight: CGFloat { get }
+    /// Relative luminance (0 black … 1 white) of what the content shows: a web page's
+    /// background, an image, a terminal's theme. Drawings in the default ink over the tile are
+    /// drawn to contrast with it (`InkContrast`). Nil when it is the app's own text background
+    /// (code, notes, changes); post `.tileSurfaceChanged` when it changes.
+    var surfaceLuminance: Double? { get }
     /// Whether clicking into the tile should take keyboard focus.
     var takesKeyboardFocus: Bool { get }
     /// Return (or Tab) on the selected tile while the canvas has the keyboard: the tile takes it
@@ -134,6 +139,8 @@ extension TileContent {
     func pageElements(in rect: NSRect) async -> PageElements? { nil }
 
     var headerHeight: CGFloat { 0 }
+
+    var surfaceLuminance: Double? { nil }
 
     func showSnapshot(_ show: Bool) {}
 

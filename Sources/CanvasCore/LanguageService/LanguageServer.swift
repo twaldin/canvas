@@ -71,10 +71,11 @@ public actor LanguageServer {
         })
     }
 
-    public func references(_ file: URL, at position: LSPPosition, includeDeclaration: Bool) async throws -> [LSPLocation] {
+    /// References including the declaration.
+    public func references(_ file: URL, at position: LSPPosition) async throws -> [LSPLocation] {
         LSPLocation.list(try await request("textDocument/references", file) { uri in
             .object(["textDocument": .object(["uri": .string(uri)]), "position": position.json,
-                     "context": .object(["includeDeclaration": .bool(includeDeclaration)])])
+                     "context": .object(["includeDeclaration": .bool(true)])])
         })
     }
 

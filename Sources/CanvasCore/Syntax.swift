@@ -42,11 +42,6 @@ public enum SyntaxStyle: String, Sendable, CaseIterable {
 public struct SyntaxSpan: Sendable, Equatable {
     public var range: NSRange
     public var style: SyntaxStyle
-
-    public init(range: NSRange, style: SyntaxStyle) {
-        self.range = range
-        self.style = style
-    }
 }
 
 /// A declaration and the 1-based lines it spans; `name` is qualified by its enclosing
@@ -80,11 +75,6 @@ public struct SyntaxAnalysis: Sendable {
     public var symbols: [SyntaxSymbol]
 
     public static let empty = SyntaxAnalysis(spans: [], symbols: [])
-
-    /// The innermost declaration containing all of `lines`, e.g. `CodeTile.reload`.
-    public func enclosingSymbol(lines: LineRange) -> String? {
-        symbols.innermost(around: lines)
-    }
 }
 
 extension Sequence<SyntaxSymbol> {

@@ -19,6 +19,8 @@ final class LSPConnection: @unchecked Sendable {
     private let lock = NSLock()
     private var nextID = 0
     private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
+    /// Each pending request's timeout, cancelled when it is answered or abandoned.
+    private var timeouts: [Int: DispatchWorkItem] = [:]
     private var exitWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     private var exited = false
     private var exitReason = ""
@@ -94,18 +96,16 @@ final class LSPConnection: @unchecked Sendable {
         }
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                let expiry = timeout.map { _ in DispatchWorkItem { [weak self] in self?.abandon(id, with: LSPError.timedOut(method)) } }
                 let refusal: Error? = lock.withLock {
                     if exited { return LSPError.serverExited(exitReason) }
                     if Task.isCancelled { return CancellationError() }
                     pending[id] = continuation
+                    timeouts[id] = expiry
                     return nil
                 }
                 if let refusal { return continuation.resume(throwing: refusal) }
-                if let timeout {
-                    DispatchQueue.global().asyncAfter(deadline: .now() + timeout.seconds) { [weak self] in
-                        self?.abandon(id, with: LSPError.timedOut(method))
-                    }
-                }
+                if let timeout, let expiry { DispatchQueue.global().asyncAfter(deadline: .now() + timeout.seconds, execute: expiry) }
                 send(.object(["jsonrpc": .string("2.0"), "id": .number(Double(id)), "method": .string(method), "params": params]))
             }
         } onCancel: {
@@ -121,9 +121,17 @@ final class LSPConnection: @unchecked Sendable {
 
     /// Fails a pending request and tells the server to stop working on it.
     private func abandon(_ id: Int, with error: Error) {
-        guard let continuation = lock.withLock({ pending.removeValue(forKey: id) }) else { return }
+        guard let continuation = take(id) else { return }
         continuation.resume(throwing: error)
         notify("$/cancelRequest", .object(["id": .number(Double(id))]))
+    }
+
+    /// The request waiting on `id`, no longer pending; its timeout goes with it.
+    private func take(_ id: Int) -> CheckedContinuation<JSONValue, Error>? {
+        lock.withLock {
+            timeouts.removeValue(forKey: id)?.cancel()
+            return pending.removeValue(forKey: id)
+        }
     }
 
     /// Queues a message; never blocks. EPIPE and friends surface through the exit handler.
@@ -162,7 +170,7 @@ final class LSPConnection: @unchecked Sendable {
             } else if method == "$/progress" {
                 track(message["params"])
             } else if let id = message["id"]?.int {
-                guard let continuation = lock.withLock({ pending.removeValue(forKey: id) }) else { continue }
+                guard let continuation = take(id) else { continue }
                 if let error = message["error"] {
                     continuation.resume(throwing: LSPError.response(code: error["code"]?.int ?? 0, message: error["message"]?.string ?? "error"))
                 } else {
@@ -253,6 +261,8 @@ final class LSPConnection: @unchecked Sendable {
             exitReason = "\(name) exited with status \(status)\(lastLine)"
             let taken = (Array(pending.values), Array(exitWaiters.values), exitReason)
             pending.removeAll()
+            timeouts.values.forEach { $0.cancel() }
+            timeouts.removeAll()
             exitWaiters.removeAll()
             writer?.close(flags: .stop)
             return taken

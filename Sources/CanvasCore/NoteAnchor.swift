@@ -277,14 +277,15 @@ public enum NoteAnchor {
         return found
     }
 
-    static let declarationKeywords = "func|function|def|class|struct|enum|protocol|interface|type|typealias|trait|impl|fn|fun|mod|module|extension|actor|record|object|namespace|macro|union|package"
+    /// Declaration keywords but the bindings, which make a weaker pattern of their own.
+    static let declarationKeywords = DeclarationKeywords.alternation(DeclarationKeywords.kinds.keys.filter { !DeclarationKeywords.bindings.contains($0) })
 
     /// Declaration patterns for `name`, strongest first. `%@` is the escaped name.
     static let declarationPatterns = [
         // `func name`, `export async function name`, `class Name`, `func (r *T) Name` (Go), `def name`
         #"(?:^|[^\w.$])(?:"# + declarationKeywords + #")\s+(?:\([^)]*\)\s*)?\*?\s*%@(?![\w$])"#,
         // `const name =`, `let name:`, `var name =`
-        #"(?:^|[^\w.$])(?:const|let|var|val)\s+%@\s*[:=]"#,
+        #"(?:^|[^\w.$])(?:"# + DeclarationKeywords.alternation(DeclarationKeywords.bindings) + #")\s+%@\s*[:=]"#,
         // `name = (…) =>`, `name: function`, object and class methods `async name(…) {`
         #"^\s*(?:(?:export|public|private|protected|static|async|override|default)\s+)*%@\s*(?:[:=]\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*(?::[^=]*)?=>|\w+\s*=>)|\([^)]*\)?\s*(?::[^{]*)?\{\s*$)"#,
         // C-like definitions: `static int name(…) {` (a call ends in `;`, a definition doesn't;

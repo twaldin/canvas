@@ -69,6 +69,12 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private var generation = 0
     private var events: FileEvents?
     private var reloadWork: DispatchWorkItem?
+    /// The FSEvents id current when the last load started: that listing already shows every
+    /// event up to it (the tile's own Stage or Discard, reloaded at once), so they reload nothing.
+    private var loadedThrough: FSEventStreamEventId = 0
+    /// The repository this tile holds in the git engine while live, as code tiles do: its bases
+    /// stay resolved and watched across listings.
+    private var heldRepository: String?
     /// A Stage or Discard is being applied; others wait for it (they'd be built from old rows).
     private var acting = false
     /// The listing after an action: its current hunk scrolls into view.
@@ -96,6 +102,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
+
+    deinit {
+        if let heldRepository { Task { await GitDiffEngine.shared.release(heldRepository) } }
+    }
 
     nonisolated override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -133,12 +143,15 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
 
     private var spec: ChangesSpec { ChangesSpec(object.props) }
 
-    /// Posted off the main thread by the git engine, or on it after a patch applied.
+    /// Posted off the main thread by the git engine, or on it after a patch applied. The tile's
+    /// own stream sees HEAD and ref moves of its repository, so the engine's word on them only
+    /// counts while it has none.
     @objc nonisolated private func repositoryChanged(_ note: Notification) {
-        let path = note.object as? String
+        let path = note.object as? String, baseMoved = note.name == .gitDiffBaseChanged
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, path == nil || path == self.set?.repository?.path || self.set?.repository == nil else { return }
+                if baseMoved, self.events != nil, path != nil, path == self.heldRepository { return }
                 self.scheduleReload(after: 0.05)
             }
         }
@@ -186,12 +199,21 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         }
         needsLoad = false
         generation += 1
+        loadedThrough = FSEventsGetCurrentEventId()
         let current = generation, root = board.root, spec = spec
         loadTask = Task { [weak self] in
             let set = await ChangeSet.load(root: root, spec: spec)
+            let engine = GitDiffEngine.shared
+            var held: String?
+            if let repository = set.repository { held = await engine.retain(containing: repository.appendingPathComponent(".canvas-changes")) }
             await MainTurns.next()
-            guard let self, current == self.generation, self.isLive else { return }
+            guard let self, current == self.generation, self.isLive else {
+                if let held { await engine.release(held) }
+                return
+            }
             self.loadTask = nil
+            if let previous = self.heldRepository { Task { await engine.release(previous) } }
+            self.heldRepository = held
             let previous = self.set
             self.install(set)
             self.watch(set.repository)
@@ -301,8 +323,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         }
         guard events?.directories != directories else { return }
         events = FileEvents(directories: directories, latency: 0.3) { [weak self] paths in
-            guard paths.contains(where: Self.matters) else { return }
-            self?.scheduleReload(after: 0.2)
+            guard let self, paths.contains(where: Self.matters), (self.events?.latestEventId ?? .max) > self.loadedThrough else { return }
+            self.scheduleReload(after: 0.2)
         }
     }
 
@@ -933,8 +955,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             loadTask = nil
             reloadWork?.cancel()
             reloadWork = nil
-            // Nothing watched, laid out, or tracked while the card covers the tile.
+            // Nothing watched, held, laid out, or tracked while the card covers the tile.
             events = nil
+            if let heldRepository { Task { await GitDiffEngine.shared.release(heldRepository) } }
+            heldRepository = nil
             needsLoad = true
             cache.removeAll()
             removeFilterField()

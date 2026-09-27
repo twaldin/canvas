@@ -113,10 +113,20 @@ final class CodeHeaderBar: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil, controls == nil else { return }
-        controls = Controls(in: self)
-        refreshControls()
+        occlusionObserver.map(NotificationCenter.default.removeObserver)
+        occlusionObserver = window.map { window in
+            NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.applyIfShown() }
+            }
+        }
+        guard window != nil else { return }
+        if controls == nil { controls = Controls(in: self) }
+        applyIfShown()
     }
+
+    /// What the controls show changed while nobody could see them (see `refreshControls`).
+    private var controlsStale = true
+    private var occlusionObserver: NSObjectProtocol?
 
     var height: CGFloat {
         CodeMetrics.chromeHeight(caption: captionText != nil, history: !history.isEmpty) - CodeMetrics.titleHeight
@@ -155,9 +165,22 @@ final class CodeHeaderBar: NSView {
         refreshControls()
     }
 
-    /// Pushes what the header shows into its controls, once they exist.
+    /// Pushes what the header shows into its controls, once they exist and can be seen. A follow
+    /// tile's header changes with every re-aim of a working agent, and rebuilding and laying out
+    /// its controls cost ~10 ms each time even in a minimized window or an offscreen tile (not in
+    /// the window): that waits until the header is shown or drawn for a card.
     private func refreshControls() {
-        guard let controls else { return }
+        controlsStale = true
+        applyIfShown()
+    }
+
+    private func applyIfShown() {
+        guard controlsStale, let controls, window?.occlusionState.contains(.visible) == true else { return }
+        apply(controls)
+    }
+
+    private func apply(_ controls: Controls) {
+        controlsStale = false
         if controls.base.itemTitles != baseChoices {
             controls.base.removeAllItems()
             controls.base.addItems(withTitles: baseChoices)
@@ -178,15 +201,18 @@ final class CodeHeaderBar: NSView {
         }
         if controls.stripShown.history != history || controls.stripShown.current != current {
             controls.stripShown = (history, current)
-            controls.strip.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            // Re-aims shift the same few locations along: retitle the buttons already there.
+            let buttons = controls.strip.arrangedSubviews.compactMap { $0 as? NSButton }
+            for extra in buttons.dropFirst(history.count) { extra.removeFromSuperview() }
             for (index, location) in history.enumerated() {
-                let button = NSButton(title: location.title, target: self, action: #selector(locationClicked(_:)))
+                let button = index < buttons.count ? buttons[index] : NSButton(title: "", target: self, action: #selector(locationClicked(_:)))
                 button.tag = index
                 button.isBordered = false
+                button.title = location.title
                 button.font = location == current ? .boldSystemFont(ofSize: 11) : .systemFont(ofSize: 11)
                 button.contentTintColor = location == current ? .labelColor : .linkColor
                 button.toolTip = location.path
-                controls.strip.addArrangedSubview(button)
+                if index >= buttons.count { controls.strip.addArrangedSubview(button) }
             }
         }
         needsLayout = true
@@ -234,10 +260,8 @@ final class CodeHeaderBar: NSView {
     /// controls, built if it never entered a window, laid out, so the image is exactly what the
     /// live header shows.
     func prepareForSnapshot() {
-        if controls == nil {
-            controls = Controls(in: self)
-            refreshControls()
-        }
+        if controls == nil { controls = Controls(in: self) }
+        if controlsStale, let controls { apply(controls) }
         layoutSubtreeIfNeeded()
     }
 

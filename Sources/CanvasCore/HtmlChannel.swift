@@ -57,21 +57,10 @@ public enum HtmlChannel {
         return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
-    /// Re-aims the topmost code tile already showing `path` (follow tiles excluded: they belong
-    /// to their agent), else creates one to the right of the HTML tile. The click is the user's.
+    /// Re-aims the topmost code tile already showing `path`, else creates one to the right of the
+    /// HTML tile (`Board.showCode`). The click is the user's.
     static func openCode(path: String, range: LineRange?, symbol: String?, beside tile: ObjectID, on board: Board) throws -> JSONValue {
-        let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
-        let existing = board.objects.values
-            .filter { $0.type == .code && $0.props["path"]?.string == path && $0.props["followOf"] == nil }
-            .max { $0.z < $1.z }
-        if let existing {
-            try board.update(existing.id, props: .object(["range": rangeValue, "symbol": symbol.map(JSONValue.string) ?? .null]))
-            return .object(["tile": .string(existing.id), "created": .bool(false)])
-        }
-        var props: [String: JSONValue] = ["path": .string(path), "range": rangeValue]
-        if let symbol { props["symbol"] = .string(symbol) }
-        let size = Board.defaultSize(.code)
-        let created = board.create(type: .code, props: .object(props.filter { $0.value != .null }), frame: board.place(width: size.w, height: size.h, near: tile))
-        return .object(["tile": .string(created.id), "created": .bool(true)])
+        let opened = try board.showCode(path: path, range: range, symbol: symbol, beside: tile)
+        return .object(["tile": .string(opened.id), "created": .bool(opened.created)])
     }
 }

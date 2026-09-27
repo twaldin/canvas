@@ -64,6 +64,10 @@ public enum ObjectMeasure {
             // `width` wide (what the page wraps at), as tall as the document up to the cap.
             let extent = try await htmlExtent(props, width: width, root: root)
             return CGSize(width: CGFloat(width ?? Board.defaultSize(.html).w), height: min(extent.height, CGFloat(maxHtmlFitHeight)))
+        case .changes:
+            // The rows of every changed file, as wide as the longest line up to `width`.
+            let set = await ChangeSet.load(root: root, spec: ChangesSpec(props), highlight: false)
+            size = ChangesMetrics.fit(set, maxWidth: natural)
         case .browser, .terminal, .arrow, .group:
             throw Failure.unsupported("\(type.rawValue) objects have no intrinsic size")
         }

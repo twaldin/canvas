@@ -101,6 +101,26 @@ extension Board {
         let created = create(type: .code, props: .object(["path": .string(stored), "range": range]), frame: place(width: size.w, height: size.h, near: tile))
         return (created.id, true)
     }
+
+    /// A code location the user opened from a tile (an HTML page's link, a changes tile's line):
+    /// re-aims the topmost code tile already showing `path` (follow tiles excluded: they belong
+    /// to their agent), else creates one beside `tile` with `extra` props (e.g. the diff base).
+    @discardableResult
+    public func showCode(path: String, range: LineRange?, symbol: String? = nil, beside tile: ObjectID, extra: [String: JSONValue] = [:]) throws -> (id: ObjectID, created: Bool) {
+        let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
+        let existing = objects.values
+            .filter { $0.type == .code && $0.props["path"]?.string == path && $0.props["followOf"] == nil }
+            .max { $0.z < $1.z }
+        if let existing {
+            try update(existing.id, props: .object(["range": rangeValue, "symbol": symbol.map(JSONValue.string) ?? .null]))
+            return (existing.id, false)
+        }
+        var props = extra.merging(["path": .string(path), "range": rangeValue]) { $1 }
+        if let symbol { props["symbol"] = .string(symbol) }
+        let size = Board.defaultSize(.code)
+        let created = create(type: .code, props: .object(props.filter { $0.value != .null }), frame: place(width: size.w, height: size.h, near: tile))
+        return (created.id, true)
+    }
 }
 
 /// How a terminal whose session is gone (after a reboot) resumes the agent it recorded

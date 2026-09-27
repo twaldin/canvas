@@ -163,6 +163,7 @@ public enum MentionContext {
         case .code: return props["path"]?.string ?? ""
         case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["markdown"]?.string?.split(separator: "\n").first.map(String.init) ?? ""
         case .html: return props["title"]?.string ?? "html"
+        case .changes: return props["title"]?.string ?? "changes vs \(ChangesSpec(props).baseProp)"
         case .shape: return props["text"]?.string ?? props["kind"]?.string ?? ""
         case .arrow: return props["label"]?.string ?? props["relation"]?.string ?? ""
         case .group: return props["title"]?.string ?? ""
@@ -176,7 +177,13 @@ public enum MentionContext {
         guard let commit else { return side == DiffSide.old.rawValue ? " · old side of diff" : "" }
         let sha = commit.prefix(7)
         guard side != nil else { return " · at \(sha)" }
-        let kind = board.objects[object].map { $0.type == .code ? DiffBase(prop: $0.props["diffBase"]?.string).name + " " : "" } ?? ""
+        let kind = board.objects[object].map { tile -> String in
+            switch tile.type {
+            case .code: DiffBase(prop: tile.props["diffBase"]?.string).name + " "
+            case .changes: ChangesSpec(tile.props).base.name + " "
+            default: ""
+            }
+        } ?? ""
         return " · diff vs \(kind)\(sha)\(side == DiffSide.old.rawValue ? ", old side" : "")"
     }
 

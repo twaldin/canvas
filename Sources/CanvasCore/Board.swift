@@ -368,6 +368,7 @@ public final class Board {
         case .code: (640, 446)
         case .note: (280, 266)
         case .html: (640, 506)
+        case .changes: (820, 620)
         case .shape: (160, 100)
         case .arrow, .group: (0, 0)
         }

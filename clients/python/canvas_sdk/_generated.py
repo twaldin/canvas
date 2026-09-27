@@ -165,7 +165,7 @@ class CanvasObject(TypedDict):
     updatedAt: Required[str]
     props: Required[dict[str, Any]]
 
-MentionTarget = Union[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
+MentionTarget = Union[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
 
 class Mention(TypedDict):
     id: Required["Id"]

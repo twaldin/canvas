@@ -124,7 +124,8 @@ final class LayoutApiTests {
         let small = try await result("object.create", .object(["type": "code", "props": props(["range": range, "symbol": "evaluate"]),
                                                                 "frame": .object(["x": 0, "y": 0, "w": 344, "h": 124])]))
         let check = try await result("layout.check", .object(["ids": [try #require(small["object"]?["id"])]]))
-        #expect(check["overflow"]?.array?.first?["y"]?.number ?? 0 > 600, "a tile far shorter than its range overflows")
+        #expect(check["scrolls"]?.array?.first?["y"]?.number ?? 0 > 600, "a tile far shorter than its range scrolls to it")
+        #expect(check["overflow"] == .array([]))
     }
 
     @Test func unmeasurableContentSaysWhy() async throws {
@@ -358,10 +359,10 @@ final class LayoutApiTests {
         let crossings = report["arrowCrossings"]?.array ?? []
         #expect(crossings.contains(.object(["arrow": .string(through.id), "crosses": .array([.string(b.id)])])))
         #expect(!crossings.contains { $0["arrow"] == .string(around.id) }, "an avoid route goes around b")
-        let overflow = try #require(report["overflow"]?.array?.first { $0["id"] == .string(tiny.id) })
-        // Code wraps at its tile's width: at 300 pt (32 columns) line 12's 64 columns take 3 rows.
-        #expect(overflow["x"]?.number == 0)
-        #expect(overflow["y"]?.number == Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - 100)
+        // Code wraps at its tile's width: at 300 pt (32 columns) line 12's 64 columns take 3 rows,
+        // which the tile scrolls through; that's `scrolls`, not content cut off.
+        #expect(report["scrolls"]?.array?.first { $0["id"] == .string(tiny.id) } == .object(["id": .string(tiny.id), "y": .number(Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - 100)]))
+        #expect(report["overflow"]?.array?.contains { $0["id"] == .string(tiny.id) } == false)
 
         let scoped = try await result("layout.check", .object(["ids": .array([.string(c.id)])]))
         #expect(scoped["overlaps"] == .array([]) && scoped["arrowCrossings"] == .array([]))
@@ -459,9 +460,25 @@ final class LayoutApiTests {
 
         let tiny = board.create(type: .code, props: Self.code(1, 30).merging(.object(["scale": 2])), frame: Frame(x: 0, y: 600, w: 600, h: 200))
         let report = try await result("layout.check", .object(["ids": .array([.string(tiny.id)])]))
-        let overflow = try #require(report["overflow"]?.array?.first { $0["id"] == .string(tiny.id) })
-        #expect(overflow["x"]?.number == 0)
-        #expect(overflow["y"]?.number == 2 * (Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - 100))
+        let scrolled = try #require(report["scrolls"]?.array?.first { $0["id"] == .string(tiny.id) })
+        #expect(scrolled["y"]?.number == 2 * (Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - 100))
+    }
+
+    /// A scaled tile's natural width comes back a hair under the points it was fitted at
+    /// (frame.w ÷ scale): checking it must not lose a column, wrap the longest line, and report
+    /// the fitted tile a row short (presenter study: "overflow y=19" on fit tiles at 1.1–1.25).
+    @Test func scaledFitCodeTilesCheckClean() async throws {
+        var ids: [String] = []
+        for (index, scale) in [1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.45, 1.7, 2.3].enumerated() {
+            for (row, range) in [(10, 19), (45, 60), (1, 12)].enumerated() {
+                let props = Self.code(range.0, range.1).merging(.object(["scale": .number(scale)]))
+                let created = try await result("object.create", .object(["type": "code", "props": props,
+                                                                          "frame": .object(["x": .number(Double(index) * 2000), "y": .number(Double(row) * 2000)]), "size": "fit"]))
+                ids.append(try #require(created["object"]?["id"]?.string))
+            }
+        }
+        let report = try await result("layout.check", .object(["ids": .array(ids.map(JSONValue.string))]))
+        #expect(report["scrolls"] == .array([]) && report["overflow"] == .array([]))
     }
 
     @Test func scaleIsClampedAndOnlyTilesAndTextTakeIt() {
@@ -490,7 +507,7 @@ final class LayoutApiTests {
         let cut = board.create(type: .code, props: Self.code(10, 19, caption: long), frame: Frame(x: 0, y: 0, w: Double(rows.width), h: Double(wide.height)))
         let report = try await result("layout.check", .object(["ids": .array([.string(cut.id)])]))
         #expect(report["truncated"] == .array([.object(["id": .string(cut.id), "what": "caption", "x": .number(Double(wide.width - rows.width))])]))
-        #expect(report["overflow"] == .array([]), "the rows fit; only the caption is cut")
+        #expect(report["overflow"] == .array([]) && report["scrolls"] == .array([]), "the rows fit; only the caption is cut")
         _ = try board.update(cut.id, frame: Frame(x: 0, y: 0, w: Double(wide.width), h: Double(wide.height)))
         #expect(try await result("layout.check", .object(["ids": .array([.string(cut.id)])]))["truncated"] == .array([]))
     }
@@ -554,8 +571,8 @@ final class LayoutApiTests {
         let follow = try #require(try board.follow(tile: terminal.id, path: "src.txt", range: LineRange(start: 1, end: 80), action: "read"))
         let plain = board.create(type: .code, props: Self.code(1, 80), frame: follow.frame)
         let report = try await result("layout.check", .object(["ids": .array([.string(follow.id), .string(plain.id)])]))
-        let overflowing = Set(report["overflow"]?.array?.compactMap { $0["id"]?.string } ?? [])
-        #expect(overflowing == [plain.id], "80 rows don't fit either frame; only the ordinary tile is a layout problem")
+        let scrolling = Set(report["scrolls"]?.array?.compactMap { $0["id"]?.string } ?? [])
+        #expect(scrolling == [plain.id], "80 rows don't fit either frame; only the ordinary tile is reported")
     }
 
     /// `layout.check` reads each file once and wraps it once per width, off the main actor: its

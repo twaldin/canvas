@@ -940,14 +940,24 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
 
     var takesKeyboardFocus: Bool { false }
 
+    /// Whether `set` is the listing as it is now: a live tile watches its worktree and git
+    /// directory, and nothing is pending. Off screen or zoomed out nothing is watched (and a
+    /// props change waits for the tile to be live), so a render lists afresh.
+    private var listingIsCurrent: Bool {
+        isLive && !needsLoad && loadTask == nil && reloadWork == nil && events != nil && set != nil
+    }
+
     func render(_ request: TileRenderRequest) async -> TileRender {
         var loaded = set
-        if loaded == nil {
+        if !listingIsCurrent {
+            let spec = spec
             let fresh = await ChangeSet.load(root: board.root, spec: spec)
             guard !Task.isCancelled else { return .placeholder(request, "cancelled") }
-            if set == nil {
+            guard spec == self.spec else { return .placeholder(request, "the tile changed while loading") }
+            // A live tile's own load installs (and grows a fitted frame); one that isn't live
+            // keeps this listing for its card and revalidates the next time it is.
+            if !isLive || set == nil {
                 install(fresh)
-                // Not live: revalidate the next time it is.
                 if !isLive { needsLoad = true }
             }
             loaded = fresh

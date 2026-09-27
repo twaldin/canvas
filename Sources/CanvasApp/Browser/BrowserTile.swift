@@ -71,6 +71,12 @@ final class BrowserTile: NSView, TileContent {
     fileprivate var documentFailure: PageLogEntry?
     /// The badge's list of the page's errors, while open.
     fileprivate var problemsList: PageProblemsView?
+    /// The page that didn't load, shown in place of a blank page (`BrowserLoadFailure`), the
+    /// failed loads of that address in a row, and the pending automatic retry.
+    private(set) var loadFailure: BrowserLoadFailure?
+    private let failureView = BrowserFailureView()
+    private var failedLoads: (url: URL, count: Int)?
+    private var retryWork: DispatchWorkItem?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -95,6 +101,7 @@ final class BrowserTile: NSView, TileContent {
         chrome.onReload = { [weak self] in
             guard let self else { return }
             self.credit.user()
+            if self.loadFailure != nil { return self.retryFailedLoad(restart: true) }
             if let webView = self.webView, webView.isLoading { return webView.stopLoading() }
             self.track(self.ensureWebView().reload())
         }
@@ -103,6 +110,12 @@ final class BrowserTile: NSView, TileContent {
         cover.imageScaling = .scaleAxesIndependently
         cover.autoresizingMask = [.width, .height]
         cover.isHidden = true
+        failureView.isHidden = true
+        failureView.onRetry = { [weak self] in
+            self?.credit.user()
+            self?.retryFailedLoad(restart: true)
+        }
+        addSubview(failureView)
         addSubview(cover)
         layoutParts()
     }
@@ -148,6 +161,7 @@ final class BrowserTile: NSView, TileContent {
     private func layoutParts() {
         chrome.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.chromeHeight)
         cover.frame = pageFrame
+        failureView.frame = pageFrame
         webView?.frame = webViewFrame
         placeProblems()
     }
@@ -276,7 +290,7 @@ final class BrowserTile: NSView, TileContent {
         } else if isLive {
             guard webView.superview !== self else { return }
             webView.frame = webViewFrame
-            addSubview(webView, positioned: .below, relativeTo: cover)
+            addSubview(webView, positioned: .below, relativeTo: failureView)
         } else if webView.superview != nil {
             webView.removeFromSuperview()
             scheduleRelease()
@@ -299,6 +313,9 @@ final class BrowserTile: NSView, TileContent {
         releaseTimer = nil
         drivenTimer?.invalidate()
         drivenTimer = nil
+        // A failed page stays failed until the web view comes back and tries again.
+        retryWork?.cancel()
+        retryWork = nil
         guard let webView else { return }
         observations = []
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
@@ -381,7 +398,7 @@ final class BrowserTile: NSView, TileContent {
     private func refreshOcclusion(_ webView: WKWebView) {
         guard webView.superview === self else { return }
         webView.removeFromSuperview()
-        addSubview(webView, positioned: .below, relativeTo: cover)
+        addSubview(webView, positioned: .below, relativeTo: failureView)
     }
 
     func load(_ address: String) {
@@ -422,6 +439,60 @@ final class BrowserTile: NSView, TileContent {
     private func commitTitle(_ title: String?) {
         guard let title, !title.isEmpty, title != object.props["pageTitle"]?.string else { return }
         try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .string(title)]))
+    }
+
+    // MARK: Pages that don't load
+
+    /// A main-frame load failed: the page area says so ("Can't reach localhost:5391 ·
+    /// Connection refused", a Retry button) instead of staying blank, the old page's title
+    /// goes (the title bar falls back to the address), and a local address tries again by
+    /// itself (`BrowserLoadFailure.retryDelays`). Quiet: no alert, no marker.
+    private func loadFailed(_ error: Error, webView: WKWebView) {
+        let error = error as NSError
+        let failing = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? webView.url ?? object.props["url"]?.string.flatMap(BrowserURL.normalize)
+        guard let url = failing else { return }
+        let count = failedLoads.map { $0.url == url ? $0.count + 1 : 1 } ?? 1
+        guard let failure = BrowserLoadFailure(url: url, domain: error.domain, code: error.code, description: error.localizedDescription, attempt: count) else { return }
+        failedLoads = (url, count)
+        loadFailure = failure
+        failureView.show(failure)
+        failureView.isHidden = false
+        if !chrome.isEditing { chrome.setAddress(url.absoluteString) }
+        if object.props["pageTitle"] != nil { try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .null])) }
+        NSLog("Canvas: browser %@ %@", objectID, failure.summary)
+        retryWork?.cancel()
+        retryWork = nil
+        guard let delay = failure.retryDelay else { return }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.retryWork = nil
+                self?.retryFailedLoad(restart: false)
+            }
+        }
+        retryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Loads the failed address again; the failure stays up until the page commits, so a
+    /// retry that fails again never flashes a blank page. `restart` (Retry, Reload, the tile
+    /// coming back into view) begins a fresh round of automatic retries.
+    private func retryFailedLoad(restart: Bool) {
+        guard let failure = loadFailure else { return }
+        if restart { failedLoads = nil }
+        retryWork?.cancel()
+        retryWork = nil
+        failureView.showRetrying()
+        load(failure.url.absoluteString)
+    }
+
+    /// The page committed (or another address was asked for): the failure is over.
+    private func clearLoadFailure() {
+        retryWork?.cancel()
+        retryWork = nil
+        failedLoads = nil
+        guard loadFailure != nil else { return }
+        loadFailure = nil
+        failureView.isHidden = true
     }
 
     /// A new tile beside this one (⌘-click, `target=_blank`, `window.open`), credited like a
@@ -618,6 +689,8 @@ final class BrowserTile: NSView, TileContent {
         isLive = live
         if live {
             attach()
+            // Back in view after its retries ran out (a dev server that took longer): try again.
+            if loadFailure != nil, retryWork == nil, webView?.isLoading != true { retryFailedLoad(restart: true) }
         } else {
             readyWaiters.removeAll()
             setPageActivity(false)
@@ -646,6 +719,8 @@ final class BrowserTile: NSView, TileContent {
     /// a background tab), loads in the stage and is waited for until the render's deadline.
     func render(_ request: TileRenderRequest) async -> TileRender {
         await markDriven()
+        // A page that failed is asked again (its server may be up by now) before it's drawn.
+        if loadFailure != nil, webView?.isLoading != true { retryFailedLoad(restart: true) }
         if let webView { await settle(webView) }
         return await capture(request)
     }
@@ -671,9 +746,21 @@ final class BrowserTile: NSView, TileContent {
         await presented(webView, within: 1)
     }
 
-    /// The address bar and the page as loaded now; a page not loaded yet shows its last capture.
+    /// The address bar and the page as loaded now; a page not loaded yet shows its last capture,
+    /// and one that failed to load shows what the tile shows (`loadFailure`), with the reason.
     private func capture(_ request: TileRenderRequest) async -> TileRender {
         let bar = request.image(of: chrome)
+        if let loadFailure {
+            if failureView.frame.size != pageFrame.size { failureView.frame = pageFrame }
+            let failed = request.image(of: failureView)
+            let image = request.image { bounds in
+                NSColor.textBackgroundColor.setFill()
+                bounds.fill()
+                bar?.drawUpright(in: NSRect(x: 0, y: 0, width: bounds.width, height: Self.chromeHeight))
+                failed?.drawUpright(in: NSRect(x: 0, y: Self.chromeHeight, width: bounds.width, height: max(0, bounds.height - Self.chromeHeight)))
+            }
+            return TileRender(image: image, contentSize: request.size, state: .rendered, reason: loadFailure.summary)
+        }
         var page: NSImage?
         var reason: String?
         if let webView, webView.window != nil, !webView.isLoading, webView.bounds.width > 0, webView.bounds.height > 0 {
@@ -694,7 +781,8 @@ final class BrowserTile: NSView, TileContent {
     }
 
     func showSnapshot(_ show: Bool) {
-        let covering = show && webView?.superview === self && cachedImage != nil
+        // A failed page's state is drawn by AppKit, which `cacheDisplay` captures as it is.
+        let covering = show && loadFailure == nil && webView?.superview === self && cachedImage != nil
         cover.image = covering ? cachedImage : nil
         cover.isHidden = !covering
     }
@@ -761,6 +849,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         uncommittedNavigations.removeAll { $0 === navigation }
+        clearLoadFailure()
         commitURL()
         signalChange()
     }
@@ -782,6 +871,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         finished(navigation)
         checkReady()
         if !chrome.isEditing, let url = webView.url?.absoluteString { chrome.setAddress(url) }
+        loadFailed(error, webView: webView)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -1088,4 +1178,69 @@ private final class PageLogMessages: NSObject, WKScriptMessageHandler {
               count.isFinite, count >= 0, count < 1e9 else { return }
         tile?.pageReported(errors: Int(count))
     }
+}
+
+/// What a browser tile's page area shows when its page didn't load (`BrowserLoadFailure`):
+/// "Can't reach localhost:5391", the reason and the automatic retry under it, and Retry. Quiet,
+/// like the blank page it replaces: no icon, no alert colour.
+@MainActor
+private final class BrowserFailureView: NSView {
+    var onRetry: (() -> Void)?
+    private let headline = NSTextField(labelWithString: "")
+    private let detail = NSTextField(labelWithString: "")
+    private let retry = NSButton(title: "Retry", target: nil, action: nil)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        headline.font = .systemFont(ofSize: 15, weight: .semibold)
+        headline.textColor = .labelColor
+        detail.font = .systemFont(ofSize: 12)
+        detail.textColor = .secondaryLabelColor
+        for label in [headline, detail] {
+            label.alignment = .center
+            label.lineBreakMode = .byTruncatingMiddle
+            label.maximumNumberOfLines = 1
+            addSubview(label)
+        }
+        retry.bezelStyle = .rounded
+        retry.controlSize = .small
+        retry.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        retry.target = self
+        retry.action = #selector(retryClicked)
+        addSubview(retry)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    nonisolated override var isFlipped: Bool { true }
+
+    /// Drawn, not a layer colour, so renders and cards (`cacheDisplay`) show it too.
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.textBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+
+    func show(_ failure: BrowserLoadFailure) {
+        headline.stringValue = failure.headline
+        detail.stringValue = failure.detail
+        toolTip = failure.url.absoluteString
+        needsLayout = true
+        resizeSubviews(withOldSize: bounds.size)
+    }
+
+    func showRetrying() {
+        detail.stringValue = "Trying again…"
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        retry.sizeToFit()
+        let width = max(0, bounds.width - 32)
+        let block: CGFloat = 20 + 6 + 16 + 12 + retry.frame.height
+        let top = max(12, (bounds.height - block) / 2 - 12)
+        headline.frame = NSRect(x: 16, y: top, width: width, height: 20)
+        detail.frame = NSRect(x: 16, y: top + 26, width: width, height: 16)
+        retry.frame.origin = NSPoint(x: ((bounds.width - retry.frame.width) / 2).rounded(), y: top + 54)
+    }
+
+    @objc private func retryClicked() { onRetry?() }
 }

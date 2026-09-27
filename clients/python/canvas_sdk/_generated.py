@@ -375,7 +375,7 @@ class LayoutApi:
         return self._call("layout.grid", params, ["caller"])
 
     def check(self, *, board: "Id" | None = None, ids: list["Id"] | None = None, rect: "Frame" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text/html whose content doesn't fit its frame (points missing in x and y; code: its range's rows; html: its page's document laid out at the frame's width), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated."""
+        """Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, note/text/html whose content doesn't fit its frame (`overflow`: points missing in x and y; html: its page's document laid out at the frame's width), code tiles whose range's rows are taller than the frame (`scrolls`: the tile scrolls to its range, fine for a viewer meant to scroll; refit with `size: "fit"` when the whole range should show), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated."""
         params = {"board": board, "ids": ids, "rect": rect, "caller": caller}
         return self._call("layout.check", params, ["board","caller"])
 
@@ -414,9 +414,9 @@ class AgentApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None, final: str | None = None, serial: bool | None = None) -> dict[str, Any]:
+    def report(self, *, tile: "Id", kind: str, state: Literal["working", "blocked", "idle", "unknown"], message: str | None = None, seq: int | None = None, source: str | None = None, call: str | None = None, final: str | None = None, serial: bool | None = None, error: str | None = None) -> dict[str, Any]:
         """Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. With `serial`, a `blocked` call replaces every earlier wait (agents that ask one approval at a time), so the message always names the request on screen. `working` without `call` (a new prompt) and `idle` end every wait."""
-        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call, "final": final, "serial": serial}
+        params = {"tile": tile, "kind": kind, "state": state, "message": message, "seq": seq, "source": source, "call": call, "final": final, "serial": serial, "error": error}
         return self._call("agent.report", params, [])
 
     def report_session(self, *, tile: "Id", kind: str, session_id: str | None = None, session_path: str | None = None) -> dict[str, Any]:

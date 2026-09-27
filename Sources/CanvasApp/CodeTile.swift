@@ -45,6 +45,10 @@ final class CodeTile: NSView, TileContent {
     private var findBar: CodeFindBar?
     /// Who had the keyboard before ⌘F, to get it back on Esc.
     private weak var findPreviousResponder: NSResponder?
+    /// Pending recheck of a file that vanished (`fileVanished`).
+    private var vanishCheck: Task<Void, Never>?
+    /// Where the follow tile stepped back to after its file was deleted: no edit flash there.
+    private var steppedBackTo: String?
 
     static let flashDuration: TimeInterval = 3
 
@@ -293,14 +297,22 @@ final class CodeTile: NSView, TileContent {
         }
     }
 
+    /// Whether `document` is the file as it is now: a live tile watches its file and bases, and
+    /// nothing is pending. Off screen or zoomed out nothing is watched, so a render or card
+    /// reloads (a view.render of an offscreen tile must show the file on disk, never the last
+    /// thing drawn).
+    private var documentIsCurrent: Bool {
+        isLive && !needsLoad && loadTask == nil && reloadWork == nil && showsCurrent && loadedSource == source && document != nil
+    }
+
     /// The model without holding the repository, for renders and cards of tiles that aren't live.
     private func loadOffscreen() async -> CodeDocument? {
-        if showsCurrent, loadedSource == source, let document { return document }
+        if documentIsCurrent, let document { return document }
         let path = displayed.path, source = source
         let document = await source.document(path: path, url: board.absoluteURL(path))
         await MainTurns.next()
         guard path == displayed.path, source == self.source else { return nil }
-        if !showsCurrent || loadedSource != source || self.document?.text != document.text {
+        if !showsCurrent || loadedSource != source || self.document?.text != document.text || self.document?.signs != document.signs {
             install(document, source: source)
             // Not live: the next time it is, revalidate against the watched file and bases.
             if !isLive { needsLoad = true }
@@ -345,11 +357,40 @@ final class CodeTile: NSView, TileContent {
         }
         navigation?.contentChanged()
         refreshHeader()
+        if document.diff.state == .missing, document.path == displayed.path { fileVanished(document.path) }
+    }
+
+    /// The file is on neither the disk nor the diff base (an agent wrote a scratch file and
+    /// removed it): a follow tile steps back through its history, a ⌘-click preview closes
+    /// (`Board.codeFileVanished`; the user's own tiles stay). Checked again a moment later, so
+    /// a save that deletes and re-creates the file isn't taken for a delete.
+    private func fileVanished(_ path: String) {
+        guard vanishCheck == nil else { return }
+        let url = board.absoluteURL(path)
+        let candidates = FollowFallback.candidates(object.props["history"]?.array ?? [], vanished: path).map { ($0, board.absoluteURL($0)) }
+        vanishCheck = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            let found = await offPool { () -> (gone: Bool, existing: Set<String>) in
+                let files = FileManager.default
+                return (!files.fileExists(atPath: url.path), Set(candidates.filter { files.fileExists(atPath: $0.1.path) }.map(\.0)))
+            }
+            guard let self else { return }
+            self.vanishCheck = nil
+            guard found.gone, self.document?.path == path, self.document?.diff.state == .missing, self.displayed.path == path else { return }
+            if case .steppedBack(let back) = self.board.codeFileVanished(self.object.id, path: path, existing: found.existing) {
+                self.steppedBackTo = back
+            }
+        }
     }
 
     /// An agent's edit to a file the tile wasn't showing has no earlier load to compare with:
-    /// flash the change around the reported line (a whole new file for writes).
+    /// flash the change around the reported line (a whole new file for writes). Not when the
+    /// tile stepped back to it because the file it showed was deleted.
     private func flashFollowedEdit(in document: CodeDocument) {
+        if let back = steppedBackTo, back == document.path {
+            steppedBackTo = nil
+            return
+        }
         guard followOf != nil, displayed == propsAim, let action = object.props["lastAction"]?.string, action == "edit" || action == "write" else { return }
         if let line = displayed.range?.start, let sign = document.sign(at: line), !document.signs[sign].lines.isEmpty {
             startFlash([document.signs[sign].lines])
@@ -911,7 +952,7 @@ extension CodeTile {
         Task { [weak self] in
             await MainTurns.next()
             guard let self else { return deliver(nil) }
-            if self.showsCurrent, self.loadedSource == self.source, let document = self.document {
+            if self.documentIsCurrent, let document = self.document {
                 return deliver(self.image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image)
             }
             guard let document = await self.loadOffscreen() else { return deliver(nil) }

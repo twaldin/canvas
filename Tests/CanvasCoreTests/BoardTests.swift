@@ -244,6 +244,53 @@ struct BoardTests {
         #expect(board.objects[back.id] != nil && board.objects[terminal.id]?.props["follow"] == .bool(true), "turning it off is one undo step")
     }
 
+    /// vim study: omp wrote tests/zz_probe.rs and removed it with `rm`; its follow tile sat on
+    /// "file not found". A deleted file steps the tile back to the newest place still there,
+    /// and drops the entries that are gone; nothing left closes it with following still on.
+    @Test func aFollowTileWhoseFileVanishedStepsBackToTheNewestPlaceStillThere() throws {
+        let board = makeBoard()
+        for name in ["a.ts", "b.ts", "c.ts", "probe.rs", "scratch.ts"] { try "x\ny\n".write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8) }
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]))
+        _ = try board.follow(tile: terminal.id, path: "a.ts", range: LineRange(start: 1, end: 2), action: "read")
+        _ = try board.follow(tile: terminal.id, path: "b.ts", range: nil, action: "edit")
+        _ = try board.follow(tile: terminal.id, path: "scratch.ts", range: nil, action: "write")
+        _ = try board.follow(tile: terminal.id, path: "c.ts", range: nil, action: "read")
+        let follow = try #require(try board.follow(tile: terminal.id, path: "probe.rs", range: nil, action: "write"))
+        let steps = board.history.undoSteps.count
+
+        // probe.rs and scratch.ts are gone; the newest place left is c.ts.
+        #expect(board.codeFileVanished(follow.id, path: "probe.rs", existing: ["a.ts", "b.ts", "c.ts"]) == .steppedBack(path: "c.ts"))
+        let back = try board.object(follow.id)
+        #expect(back.props["path"] == "c.ts" && back.props["range"] == nil && back.props["lastAction"] == "read")
+        #expect(back.props["history"]?.array?.compactMap { $0["path"]?.string } == ["c.ts", "b.ts", "a.ts"], "dead entries dropped, order kept")
+        #expect(board.codeFileVanished(follow.id, path: "probe.rs", existing: ["a.ts"]) == .kept, "it no longer shows the vanished file")
+
+        _ = try board.follow(tile: terminal.id, path: "a.ts", range: LineRange(start: 1, end: 2), action: "read")
+        #expect(board.codeFileVanished(follow.id, path: "a.ts", existing: ["b.ts"]) == .steppedBack(path: "b.ts"))
+        #expect(try board.object(follow.id).props["lastAction"] == "edit", "what the agent did there")
+
+        #expect(board.codeFileVanished(follow.id, path: "b.ts", existing: []) == .closed)
+        #expect(board.objects[follow.id] == nil)
+        #expect(board.objects[terminal.id]?.props["follow"] == nil, "still following: the next report brings the tile back")
+        #expect(try board.follow(tile: terminal.id, path: "c.ts", range: nil, action: "read") != nil)
+        #expect(board.history.undoSteps.count == steps, "nobody chose any of it: no undo step")
+
+        // The user's own tile showing a missing file stays as it is.
+        let mine = board.create(type: .code, props: .object(["path": "gone.ts"]))
+        #expect(board.codeFileVanished(mine.id, path: "gone.ts", existing: []) == .kept && board.objects[mine.id] != nil)
+    }
+
+    @Test func aCommandClickPreviewWhoseFileVanishedClosesButAKeptOneStays() throws {
+        let board = makeBoard()
+        for name in ["a.ts", "b.ts"] { try "x\n".write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8) }
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]))
+        let preview = board.openCode(path: root.appendingPathComponent("a.ts").path, lines: LineRange(start: 1, end: 1), beside: terminal.id)
+        #expect(board.codeFileVanished(preview.id, path: "a.ts", existing: []) == .closed && board.objects[preview.id] == nil)
+        let kept = board.openCode(path: root.appendingPathComponent("b.ts").path, lines: LineRange(start: 1, end: 1), beside: terminal.id)
+        board.keepCode(kept.id)
+        #expect(board.codeFileVanished(kept.id, path: "b.ts", existing: []) == .kept && board.objects[kept.id] != nil)
+    }
+
     @Test func deletingATerminalDeletesItsFollowTileInTheSameUndoStep() throws {
         let board = makeBoard()
         try "x\n".write(to: root.appendingPathComponent("a.ts"), atomically: true, encoding: .utf8)

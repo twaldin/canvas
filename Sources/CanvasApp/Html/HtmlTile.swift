@@ -287,7 +287,11 @@ final class HtmlTile: NSView, TileContent {
     /// (`ObjectMeasure.html`). The page loads offscreen exactly as `render(_:)` loads it, in a
     /// throwaway tile (the object may not exist yet) whose `<canvas-code>` excerpts read `root`.
     /// It is laid out 1 pt tall, so the document height is the content's, not the viewport's.
+    /// A page loads in ~350 ms, so the same props at the same width reuse their extent for
+    /// `measureReuse` (an agent's `layout.check` loop re-checks unchanged pages).
     static func measure(props: JSONValue, width: CGFloat, root: URL) async throws -> CGSize {
+        let key = measureKey(props: props, width: width, root: root)
+        if let key, let known = measured[key], ContinuousClock.now - known.at < measureReuse { return known.size }
         while measuring >= maxMeasuring {
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(30))
@@ -300,9 +304,26 @@ final class HtmlTile: NSView, TileContent {
         guard await tile.beginOffscreen() else { throw ObjectMeasure.Failure.unavailable("the page is busy") }
         defer { tile.endOffscreen() }
         switch await tile.loadOffscreen(size: CGSize(width: width, height: 1), appearance: NSApp.effectiveAppearance, limit: measureLimit) {
-        case .success(let extent): return extent
+        case .success(let extent):
+            if let key {
+                if measured.count >= 64 { measured = measured.filter { ContinuousClock.now - $0.value.at < measureReuse } }
+                measured[key] = (extent, ContinuousClock.now)
+            }
+            return extent
         case .failure(.rules(let reason)), .failure(.unsettled(let reason)): throw ObjectMeasure.Failure.unavailable("cannot measure the page: \(reason)")
         }
+    }
+
+    /// How long a measured extent stands for the same page: long enough for a check loop, short
+    /// enough that a `<canvas-code>` file edited meanwhile is measured again soon.
+    static let measureReuse: Duration = .seconds(30)
+    private static var measured: [String: (size: CGSize, at: ContinuousClock.Instant)] = [:]
+
+    private static func measureKey(props: JSONValue, width: CGFloat, root: URL) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let json = try? encoder.encode(props) else { return nil }
+        return "\(width)|\(root.path)|\(String(decoding: json, as: UTF8.self))"
     }
 
     /// Loads the page offscreen exactly as `render(_:)` does (never the user's live page) and runs

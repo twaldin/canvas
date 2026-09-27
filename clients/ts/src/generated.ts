@@ -797,6 +797,11 @@ export type LayoutCheckResult = {
     x: number;
     y: number;
   }[];
+  /** code tiles whose range's rows (wrapped at the frame's width) are `y` points taller than the frame: they scroll to the range */
+  scrolls: {
+    id: Id;
+    y: number;
+  }[];
   truncated: {
     id: Id;
     what: "caption";
@@ -859,6 +864,8 @@ export type AgentReportParams = {
   final?: string;
   /** with `blocked` and `call`: the agent asks one approval at a time (Codex), so this request ends every earlier wait (an approval answered whose completion never matched or hasn't arrived yet) */
   serial?: boolean;
+  /** only with `idle`: the turn ended on this error instead of finishing (an API error such as `overloaded_error`, an abort, the output token limit). The tile goes `idle` with it as its message, never `done`, and `agent.read` `final` reports the answer as cut off (`cutOff`) */
+  error?: string;
 };
 export type AgentReportResult = Record<string, unknown>;
 
@@ -933,6 +940,8 @@ export type AgentReadResult = {
   truncated?: boolean;
   /** with `block`: the command whose output this is */
   command?: TerminalCommand;
+  /** with `final`: the turn ended on this error (its agent reported it), so `text` is the answer as far as it got */
+  cutOff?: string;
 };
 
 export type FollowReportParams = {
@@ -1082,7 +1091,7 @@ export interface CanvasApi {
     translate(params: LayoutTranslateParams): Promise<LayoutTranslateResult>;
     /** Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups. */
     grid(params: LayoutGridParams): Promise<LayoutGridResult>;
-    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text/html whose content doesn't fit its frame (points missing in x and y; code: its range's rows; html: its page's document laid out at the frame's width), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated. */
+    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, note/text/html whose content doesn't fit its frame (`overflow`: points missing in x and y; html: its page's document laid out at the frame's width), code tiles whose range's rows are taller than the frame (`scrolls`: the tile scrolls to its range, fine for a viewer meant to scroll; refit with `size: "fit"` when the whole range should show), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated. */
     check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
   tray: {

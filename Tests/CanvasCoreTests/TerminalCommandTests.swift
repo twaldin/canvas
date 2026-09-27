@@ -41,15 +41,33 @@ struct TerminalCommandTests {
         tracker.title("zsh in app", at: t0.addingTimeInterval(0.05), promptTitle: "~/src/app")
         tracker.title("go test ./...", at: t0.addingTimeInterval(2), promptTitle: "~/src/app")
         tracker.title("vim main.go", at: t0.addingTimeInterval(3), promptTitle: "~/src/app")
-        let first = tracker.finished(exit: 1, durationNanos: 42_000_000_000, at: t0.addingTimeInterval(44))
+        let first = tracker.finished(exit: 1, durationNanos: 42_000_000_000, at: t0.addingTimeInterval(44), shellAtPrompt: true, agentReporting: false)
         #expect(first == TerminalCommand(command: "go test ./...", exit: 1, durationMs: 42_000))
         // The framework's prompt title again, well after the prompt (a redraw): still not a command.
         tracker.title("zsh in app", at: t0.addingTimeInterval(44.01), promptTitle: "~/src/app")
         tracker.title("zsh in app", at: t0.addingTimeInterval(50), promptTitle: "~/src/app")
         tracker.running(program: "make")
-        #expect(tracker.finished(exit: 0, durationNanos: 1_000_000, at: t0.addingTimeInterval(60)).command == "make", "no title: the program seen running")
+        #expect(tracker.finished(exit: 0, durationNanos: 1_000_000, at: t0.addingTimeInterval(60), shellAtPrompt: true, agentReporting: false)?.command == "make",
+                "no title: the program seen running")
         #expect(TerminalCommandTracker.promptTitle(cwd: "/Users/me/src/app", home: "/Users/me") == "~/src/app")
         #expect(TerminalCommandTracker.promptTitle(cwd: "/tmp/x", home: "/Users/me") == "/tmp/x")
+    }
+
+    @Test func anAgentTUIsOwnMarksAndSpinnerTitlesAreNotCommandsButTheShellsFailureStillIs() {
+        var tracker = TerminalCommandTracker()
+        let t0 = Date()
+        tracker.prompt(at: t0)
+        tracker.title("omp", at: t0.addingTimeInterval(2), promptTitle: "~/src/app")
+        tracker.title("π ⠸ Find where Click decides boolean flags", at: t0.addingTimeInterval(5), promptTitle: "~/src/app")
+        // omp's own C/D pair while it holds the foreground, and one while it reports a lifecycle.
+        #expect(tracker.finished(exit: 0, durationNanos: 0, at: t0.addingTimeInterval(6), shellAtPrompt: false, agentReporting: false) == nil)
+        #expect(tracker.finished(exit: 0, durationNanos: 0, at: t0.addingTimeInterval(7), shellAtPrompt: true, agentReporting: true) == nil)
+        // omp exits and released its lifecycle: the shell's D names the command it started.
+        #expect(tracker.finished(exit: 0, durationNanos: 90_000_000_000, at: t0.addingTimeInterval(92), shellAtPrompt: true, agentReporting: false)
+                == TerminalCommand(command: "omp", exit: 0, durationMs: 90_000))
+        tracker.title("false", at: t0.addingTimeInterval(95), promptTitle: "~/src/app")
+        #expect(tracker.finished(exit: 1, durationNanos: 3_000_000, at: t0.addingTimeInterval(95.01), shellAtPrompt: true, agentReporting: false)
+                == TerminalCommand(command: "false", exit: 1, durationMs: 3))
     }
 
     @Test func statusShowsOnlyFailuresAndLongRunsAndTheMarkerSaysWhatRan() {

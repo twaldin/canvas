@@ -879,7 +879,7 @@
       }
     },
     "layout.check": {
-      "description": "Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text/html whose content doesn't fit its frame (points missing in x and y; code: its range's rows; html: its page's document laid out at the frame's width), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated.",
+      "description": "Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, note/text/html whose content doesn't fit its frame (`overflow`: points missing in x and y; html: its page's document laid out at the frame's width), code tiles whose range's rows are taller than the frame (`scrolls`: the tile scrolls to its range, fine for a viewer meant to scroll; refit with `size: \"fit\"` when the whole range should show), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated.",
       "params": {
         "type": "object",
         "properties": {
@@ -892,7 +892,7 @@
       },
       "result": {
         "type": "object",
-        "required": ["overlaps", "arrowCrossings", "labelOverlaps", "overflow", "truncated"],
+        "required": ["overlaps", "arrowCrossings", "labelOverlaps", "overflow", "scrolls", "truncated"],
         "properties": {
           "overlaps": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "minItems": 2, "maxItems": 2 } },
           "arrowCrossings": {
@@ -906,6 +906,11 @@
           "overflow": {
             "type": "array",
             "items": { "type": "object", "required": ["id", "x", "y"], "properties": { "id": { "$ref": "#/definitions/Id" }, "x": { "type": "number" }, "y": { "type": "number" } }, "additionalProperties": false }
+          },
+          "scrolls": {
+            "type": "array",
+            "description": "code tiles whose range's rows (wrapped at the frame's width) are `y` points taller than the frame: they scroll to the range",
+            "items": { "type": "object", "required": ["id", "y"], "properties": { "id": { "$ref": "#/definitions/Id" }, "y": { "type": "number" } }, "additionalProperties": false }
           },
           "truncated": {
             "type": "array",
@@ -980,7 +985,8 @@
           "source": { "type": "string" },
           "call": { "type": "string", "description": "identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input)" },
           "final": { "type": "string", "description": "only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts)" },
-          "serial": { "type": "boolean", "default": false, "description": "with `blocked` and `call`: the agent asks one approval at a time (Codex), so this request ends every earlier wait (an approval answered whose completion never matched or hasn't arrived yet)" }
+          "serial": { "type": "boolean", "default": false, "description": "with `blocked` and `call`: the agent asks one approval at a time (Codex), so this request ends every earlier wait (an approval answered whose completion never matched or hasn't arrived yet)" },
+          "error": { "type": "string", "description": "only with `idle`: the turn ended on this error instead of finishing (an API error such as `overloaded_error`, an abort, the output token limit). The tile goes `idle` with it as its message, never `done`, and `agent.read` `final` reports the answer as cut off (`cutOff`)" }
         },
         "additionalProperties": false
       },
@@ -1078,7 +1084,8 @@
           "text": { "type": "string" },
           "lines": { "type": "integer", "description": "number of lines returned" },
           "truncated": { "type": "boolean", "description": "with `since`: the reply has more lines than returned; with `block`: the output has" },
-          "command": { "$ref": "#/definitions/TerminalCommand", "description": "with `block`: the command whose output this is" }
+          "command": { "$ref": "#/definitions/TerminalCommand", "description": "with `block`: the command whose output this is" },
+          "cutOff": { "type": "string", "description": "with `final`: the turn ended on this error (its agent reported it), so `text` is the answer as far as it got" }
         }
       }
     },

@@ -87,6 +87,10 @@ public final class Board {
     /// turn, as its integration reported it with `idle` (`agent.read` `final`). A new turn clears
     /// it; in memory only.
     public internal(set) var finalAnswers: [ObjectID: String] = [:]
+    /// The error each terminal's last turn ended on (an API error, an abort, the output limit),
+    /// as its integration reported it with `idle`: that turn's `finalAnswers` entry is cut off.
+    /// A new turn clears it; in memory only.
+    public internal(set) var turnErrors: [ObjectID: String] = [:]
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -667,11 +671,15 @@ public final class Board {
     /// request is the one on screen and every earlier wait is over (an approval answered whose
     /// completion never matched or hasn't arrived): the message is always the current request's.
     /// `final`: with `idle`, the last answer of the turn that just ended (`finalAnswers`), kept
-    /// until the next turn starts.
-    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil, serial: Bool = false) throws {
+    /// until the next turn starts. `error`: with `idle`, the turn ended on this error (omp: an
+    /// API error such as `overloaded_error`, an abort): the tile goes `idle`, never `done`, with
+    /// the error as its message, and the answer is known to be cut off (`turnErrors`).
+    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil,
+                                serial: Bool = false, error: String? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
+        guard error == nil || state == .idle else { throw BoardError.invalidParams("error comes only with state idle: what the turn that just ended stopped on") }
         let key = "\(tile)|\(source ?? kind)"
         if let seq {
             if let last = lifecycleSeq[key], seq <= last {
@@ -705,10 +713,17 @@ public final class Board {
             if previous != LifecycleState.working.rawValue, previous != LifecycleState.blocked.rawValue {
                 agentStartedTurn(tile)
                 finalAnswers[tile] = nil
+                turnErrors[tile] = nil
             }
         }
         if state == .idle, let final, !final.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { finalAnswers[tile] = final }
-        let effective: LifecycleState = state == .idle && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
+        let failed = error.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+        if state == .idle, let failed {
+            turnErrors[tile] = failed
+            if message == nil { message = failed }
+        }
+        // A turn that died on an error isn't done: the user reads why in its message.
+        let effective: LifecycleState = state == .idle && failed == nil && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message { lifecycle["message"] = .string(message) }
         let agent = (terminal.props["agent"] ?? .object([:])).merging(.object(["kind": .string(kind)]))
@@ -823,6 +838,50 @@ public final class Board {
     /// The code tiles following `terminal` (one, unless an undo or a copy made more).
     public func followTiles(of terminal: ObjectID) -> [CanvasObject] {
         objects.values.filter { $0.type == .code && $0.props["followOf"]?.string == terminal }
+    }
+
+    /// What `codeFileVanished` did with the tile.
+    public enum VanishedFile: Equatable, Sendable {
+        /// A follow tile stepped back to the newest history entry whose file still exists.
+        case steppedBack(path: String)
+        /// A follow tile with nowhere left to go, or a ⌘-click preview, closed.
+        case closed
+        /// Not a follow tile or an unkept preview (the user's tiles stay as they are), or it no
+        /// longer shows `path`.
+        case kept
+    }
+
+    /// Code tile `id` shows `path`, which is on neither the disk nor the diff base (an agent
+    /// wrote a scratch file and removed it). A follow tile never shows "file not found": it
+    /// steps back to the newest history entry whose file still exists (`existing`, the history
+    /// paths found on disk) and drops the entries that don't; with none left it closes, and the
+    /// terminal keeps following (its next report brings the tile back). A ⌘-click preview the
+    /// user hasn't kept closes. Neither is an undo step; the activity log credits the system.
+    @discardableResult
+    public func codeFileVanished(_ id: ObjectID, path: String, existing: Set<String>) -> VanishedFile {
+        guard let tile = objects[id], tile.type == .code, tile.props["path"]?.string == path else { return .kept }
+        let isPreview = codePreviews.values.contains { $0.tile == id }
+        guard tile.props["followOf"]?.string != nil || isPreview else { return .kept }
+        let remaining = FollowFallback.prune(tile.props["history"]?.array ?? [], vanished: path, existing: existing)
+        activityMuted = true
+        defer { activityMuted = false }
+        guard tile.props["followOf"]?.string != nil, let back = remaining.first, let backPath = back["path"]?.string else {
+            keepCode(id)
+            // Deleted as a replay would: a closed follow tile otherwise turns its terminal's
+            // following off, and nobody chose this.
+            unrecorded {
+                history.replaying = true
+                defer { history.replaying = false }
+                try? delete(id)
+            }
+            activity.record(.deleted, actor: .system, rev: revision, id: id, type: .code, summary: "closed \(ActivityLog.describe(tile)): \(path) was deleted")
+            return .closed
+        }
+        let props: JSONValue = .object(["path": .string(backPath), "range": back["range"] ?? .null,
+                                        "lastAction": back["action"] ?? .string("read"), "history": .array(remaining)])
+        _ = try? update(id, props: props, actor: .system)
+        activity.record(.follow, actor: .system, rev: revision, id: id, type: .code, summary: "follow tile stepped back to \(backPath): \(path) was deleted")
+        return .steppedBack(path: backPath)
     }
 
     /// Turns a terminal's follow mode on (the next report creates its tile) or off (its follow

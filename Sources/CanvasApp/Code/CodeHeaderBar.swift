@@ -222,6 +222,8 @@ final class CodeHeaderBar: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.CodeHeaderBar", since: perfStart) }
         NSColor.windowBackgroundColor.setFill()
         bounds.intersection(dirtyRect).fill()
         NSColor.separatorColor.setFill()

@@ -1038,6 +1038,8 @@ final class CanvasView: NSScrollView {
     // MARK: Scene pass (zoom LOD, offscreen culling, chevrons, seen)
 
     @objc private func boundsChanged() {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("scene.boundsChanged", since: perfStart) }
         // Every pan and pinch step, not coalesced: the grid is one layer move, markers a few.
         updateGrid()
         layoutMarkers()
@@ -1101,6 +1103,8 @@ final class CanvasView: NSScrollView {
     }
 
     private func updateScene() {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("scene.pass", since: perfStart) }
         if geometryDirty {
             geometryDirty = false
             objectsMoved()

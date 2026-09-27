@@ -86,7 +86,7 @@ launch() {
     "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space=7 manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
   open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
-    --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_ROOT="$root" "$app"
+    --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_DEV_PERF=1 --env CANVAS_ROOT="$root" "$app"
   i=0
   while [ ! -S "$CANVAS_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
   [ -S "$CANVAS_SOCKET" ] || { echo "Canvas did not open its socket; see $home/app.log" >&2; exit 1; }

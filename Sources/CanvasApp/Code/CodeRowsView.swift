@@ -56,6 +56,8 @@ final class CodeRowsView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.CodeRowsView", since: perfStart) }
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         guard let painter else {
             NSColor.textBackgroundColor.setFill()

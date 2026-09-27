@@ -60,6 +60,7 @@ enum DevInput {
                 var timer: DispatchSourceTimer?
             }
             let burst = Burst()
+            DevPerf.begin("burst of \(count) \(fields["kind"] ?? "")", phase: "gesture", window: frontWindow())
             let timer = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
             burst.timer = timer
             timer.schedule(deadline: .now(), repeating: interval, leeway: .nanoseconds(0))
@@ -83,17 +84,20 @@ enum DevInput {
                     NSLog("DevInput: burst of %d %@ took %.0f ms (scheduled %.0f ms), longest gap %.1f ms before step %d, mean lateness %.1f ms",
                           count, fields["kind"] ?? "", Date().timeIntervalSince(burst.start) * 1000, interval * 1000 * Double(count - 1),
                           burst.gap, burst.gapStep, burst.lateness / Double(count))
+                    DevPerf.phase("settle")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + DevPerf.settle) { MainActor.assumeIsolated { DevPerf.end() } }
                 }
             }
             timer.resume()
             return
         }
-        // The front board window: with tabs, the selected tab (the others are ordered out).
-        guard let window = NSApp.orderedWindows.first(where: { window in
-                  window.isVisible && window.windowController is CanvasWindowController
-                      && (window.tabGroup.map { $0.selectedWindow === window } ?? true)
-              }),
-              let content = window.contentView else { return }
+        if fields["kind"] == "perf" {
+            // A performance probe span over an idle stretch (DevPerf): what redraws and runs while
+            // nobody touches the app, also with the window minimized or covered (no frames then).
+            let window = frontWindow() ?? NSApp.windows.first { $0.windowController is CanvasWindowController }
+            return DevPerf.idle(ms: Double(fields["ms"] ?? "") ?? 5000, window: window)
+        }
+        guard let window = frontWindow(), let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])
         func number(_ key: String) -> CGFloat { CGFloat(Double(fields[key] ?? "") ?? 0) }
         /// Window content points with a top-left origin → window coordinates.
@@ -189,13 +193,11 @@ enum DevInput {
             let screen = window.convertPoint(toScreen: at)
             cg.location = CGPoint(x: screen.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y)
             cg.flags = CGEventFlags(rawValue: UInt64(flags.rawValue))
-            // A phased, continuous event is a trackpad gesture step; a phaseless one is a mouse
-            // wheel notch, which AppKit animates as a smooth scroll.
-            let phases: [String: Int64] = ["began": 1, "changed": 2, "ended": 4]
-            if let phase = fields["phase"].flatMap({ phases[$0] }) {
-                cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-                cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
-            }
+            // A burst step is a continuous (trackpad-precise) delta without a gesture phase: on
+            // macOS 26 a replayed phased gesture only moves the view by its first step (NSScrollView
+            // tracks the rest of a real gesture itself and drops directly delivered steps). A
+            // single step is a phaseless wheel notch, which AppKit animates as a smooth scroll.
+            if fields["phase"] != nil { cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1) }
             // A window-less event's locationInWindow is its screen location, which only matches the
             // window near the primary display's origin; hand it to the view under the point instead
             // of relying on sendEvent's hit test (windows on other displays got nothing).
@@ -234,6 +236,14 @@ enum DevInput {
             }
         default:
             NSLog("DevInput: unknown kind \(fields["kind"] ?? "nil")")
+        }
+    }
+
+    /// The front board window: with tabs, the selected tab (the others are ordered out).
+    static func frontWindow() -> NSWindow? {
+        NSApp.orderedWindows.first { window in
+            window.isVisible && window.windowController is CanvasWindowController
+                && (window.tabGroup.map { $0.selectedWindow === window } ?? true)
         }
     }
 }

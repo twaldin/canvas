@@ -38,6 +38,8 @@ final class SceneOverlay: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.SceneOverlay", since: perfStart) }
         if let holes = focusHoles {
             let dim = NSBezierPath(rect: dirtyRect)
             for hole in holes { dim.append(NSBezierPath(roundedRect: hole.insetBy(dx: -12, dy: -12), xRadius: 10, yRadius: 10)) }

@@ -70,6 +70,8 @@ final class GroupView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.GroupView", since: perfStart) }
         let box = bounds.insetBy(dx: 1, dy: 1)
         let tint = isSelected ? NSColor.controlAccentColor : self.tint
         let path = NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12)

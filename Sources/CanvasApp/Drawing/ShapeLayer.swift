@@ -378,6 +378,8 @@ final class ShapeLayer: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.ShapeLayer", since: perfStart) }
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.setLineCap(.round)
         context.setLineJoin(.round)

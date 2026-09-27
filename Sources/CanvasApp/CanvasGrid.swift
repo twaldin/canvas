@@ -76,6 +76,8 @@ final class CanvasGrid: NSView {
 
     /// `cacheDisplay` (view.snapshot) draws views rather than compositing layers.
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.CanvasGrid", since: perfStart) }
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         context.translateBy(x: origin.x, y: origin.y)

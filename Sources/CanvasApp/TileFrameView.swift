@@ -196,8 +196,10 @@ final class TileFrameView: NSView {
     private func revealWhenReady() {
         guard !card.isHidden || !cardTitle.isHidden else { return }
         let request = cardRequest
+        let asked = DevPerf.mark()
         let reveal: @MainActor () -> Void = { [weak self] in
             guard let self, self.isLive, self.cardRequest == request else { return }
+            if !self.card.isHidden || !self.cardTitle.isHidden { DevPerf.record("live.reveal.\(type(of: self.content))", since: asked) }
             self.card.image = nil
             self.card.isHidden = true
             self.cardTitle.isHidden = true
@@ -232,12 +234,18 @@ final class TileFrameView: NSView {
 
     private func requestCard() {
         let request = cardRequest
-        content.cardSnapshot { [weak self] image in
-            guard let self, !self.isLive, self.cardRequest == request else { return }
-            self.card.image = image.map { self.cardImage($0) }
-            self.card.isHidden = self.card.image == nil
-            self.cardTitle.isHidden = self.card.image != nil
-            self.showContent(false)
+        let asked = DevPerf.mark()
+        DevPerf.time("card.call.\(type(of: content))") {
+            content.cardSnapshot { [weak self] image in
+                guard let self, !self.isLive, self.cardRequest == request else { return }
+                DevPerf.record("card.latency.\(type(of: self.content))", since: asked)
+                DevPerf.time("card.install.\(type(of: self.content))") {
+                    self.card.image = image.map { self.cardImage($0) }
+                    self.card.isHidden = self.card.image == nil
+                    self.cardTitle.isHidden = self.card.image != nil
+                    self.showContent(false)
+                }
+            }
         }
         // A card that never comes (a page that won't load) mustn't keep the content's
         // resources: after a second the tile goes to its title card.
@@ -261,7 +269,7 @@ final class TileFrameView: NSView {
         guard live != contentLive else { return }
         contentLive = live
         content.isHidden = !live
-        content.setLive(live)
+        DevPerf.time("content.\(live ? "live" : "unlive").\(type(of: content))") { content.setLive(live) }
     }
 
     /// The card at the body's size and card resolution (content renders at that resolution
@@ -369,6 +377,8 @@ private final class CardTint: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.CardTint", since: perfStart) }
         color.withAlphaComponent(0.3).setFill()
         bounds.fill()
         let border = NSBezierPath(rect: bounds.insetBy(dx: 8, dy: 8))

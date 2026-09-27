@@ -580,6 +580,12 @@ final class NoteDisplayView: NSTextView {
     func wholeTextViewport(_ controller: NSTextViewportLayoutController) -> CGRect {
         bounds
     }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.NoteDisplayView", since: perfStart) }
+        super.draw(dirtyRect)
+    }
 }
 
 /// The raw-markdown editor: ⌘↩ commits, Esc cancels, losing focus commits.

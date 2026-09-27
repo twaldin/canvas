@@ -70,6 +70,8 @@ final class AttentionMarker: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.AttentionMarker", since: perfStart) }
         let path = NSBezierPath(roundedRect: ringRect, xRadius: 12, yRadius: 12)
         path.lineWidth = Self.stroke
         NSColor.systemOrange.setStroke()
@@ -169,6 +171,8 @@ private final class EdgeChevron: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let perfStart = DevPerf.mark()
+        defer { DevPerf.record("draw.EdgeChevron", since: perfStart) }
         let pill = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
         NSColor.systemOrange.setFill()
         pill.fill()

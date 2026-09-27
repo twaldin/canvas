@@ -17,6 +17,14 @@ public final class SocketServer: @unchecked Sendable {
         /// Only the connection's handler touches it, and handlers run one request at a time.
         public var authenticated = false
         private let writeLock = NSLock()
+        /// Writes happen here, in call order, so a client that stops reading (a full socket
+        /// buffer blocks `write`) never blocks the caller: event broadcasts and waiter replies run
+        /// on the main thread, and a blocked cooperative thread would starve request handling.
+        fileprivate let outbox = DispatchQueue(label: "canvas.socket.outbox")
+        /// Bytes queued but not yet written; guarded by `writeLock`.
+        private var pending = 0
+        /// A client this far behind is stuck: drop it rather than buffer without bound.
+        static let maxPending = 32 << 20
 
         init(fd: Int32) {
             self.fd = fd
@@ -32,14 +40,14 @@ public final class SocketServer: @unchecked Sendable {
             return true
         }
 
-        /// Writes one JSON line. Safe from any thread; returns false once the peer is gone.
+        /// Queues one JSON line. Safe from any thread; returns false once the peer is gone.
         @discardableResult
         public func send(_ value: JSONValue) -> Bool {
             guard let data = try? JSONEncoder().encode(value) else { return false }
             return write(data)
         }
 
-        /// Writes one plain-text line (protocols that answer some commands outside JSON).
+        /// Queues one plain-text line (protocols that answer some commands outside JSON).
         @discardableResult
         public func send(line: String) -> Bool {
             write(Data(line.utf8))
@@ -49,20 +57,37 @@ public final class SocketServer: @unchecked Sendable {
             var data = line
             data.append(0x0A)
             writeLock.lock()
-            defer { writeLock.unlock() }
-            guard isOpen else { return false }
-            return data.withUnsafeBytes { raw -> Bool in
-                var offset = 0
-                while offset < raw.count {
-                    let written = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
-                    if written < 0 {
-                        if errno == EINTR { continue }
-                        return false
-                    }
-                    offset += written
-                }
-                return true
+            guard isOpen else {
+                writeLock.unlock()
+                return false
             }
+            pending += data.count
+            let stuck = pending > Self.maxPending
+            writeLock.unlock()
+            if stuck {
+                shutdown(fd, SHUT_RDWR)
+                return false
+            }
+            outbox.async { [self] in
+                let written = data.withUnsafeBytes { raw -> Bool in
+                    var offset = 0
+                    while offset < raw.count {
+                        let written = Darwin.write(fd, raw.baseAddress! + offset, raw.count - offset)
+                        if written < 0 {
+                            if errno == EINTR { continue }
+                            return false
+                        }
+                        offset += written
+                    }
+                    return true
+                }
+                writeLock.lock()
+                pending -= data.count
+                writeLock.unlock()
+                // A failed write means the peer is gone; the read source sees EOF and closes.
+                if !written { shutdown(fd, SHUT_RDWR) }
+            }
+            return true
         }
     }
 
@@ -133,7 +158,9 @@ public final class SocketServer: @unchecked Sendable {
         let connection = Connection(fd: fd)
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self, connection] in self?.read(connection) }
-        source.setCancelHandler { close(fd) }
+        // Queued writes finish (or fail) before the fd closes, so its number can't be reused
+        // under a write still waiting in the outbox.
+        source.setCancelHandler { [connection] in connection.outbox.async { close(fd) } }
         connection.source = source
         connections[fd] = connection
         let handler = self.handler

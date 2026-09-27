@@ -130,6 +130,19 @@ final class ApiRouterTests {
         #expect(opened.count == 2)
     }
 
+    @Test(.timeLimit(.minutes(1))) func aSubscriberThatStopsReadingDoesNotStallTheBoardOrOtherClients() async throws {
+        let stalled = try connect()
+        stalled.send(#"{"id":"s","method":"events.subscribe","params":{}}"#)
+        #expect(try await stalled.next()["ok"] == .bool(true))
+        // It never reads again, while the board emits far more than a socket buffer holds: the
+        // broadcasts run on the main actor, which a blocking write would freeze for good.
+        let text = String(repeating: "x", count: 4000)
+        for index in 0..<400 { board.create(type: .note, props: .object(["markdown": .string("\(index) \(text)")])) }
+        let other = try connect()
+        other.send(#"{"id":"p","method":"system.ping","params":{}}"#)
+        #expect(try await other.next()["id"] == .string("p"))
+    }
+
     @Test func pipelinedRequestsAreAnsweredInOrder() async throws {
         let note = board.create(type: .note, props: .object(["markdown": .string("a")]))
         let client = try connect()

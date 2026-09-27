@@ -32,6 +32,8 @@ final class DrawingToolbar: NSVisualEffectView {
             button.target = self
             button.action = #selector(pickTool(_:))
             button.tag = ShapeLayer.Tool.allCases.firstIndex(of: tool)!
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 6
             toolButtons[tool] = button
             stack.addArrangedSubview(button)
         }
@@ -88,10 +90,13 @@ final class DrawingToolbar: NSVisualEffectView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// The active tool sits on an accent pill, so a drawing tool left on is hard to miss.
     private func refresh() {
         for (tool, button) in toolButtons {
-            button.state = tool == shapeLayer.tool ? .on : .off
-            button.contentTintColor = tool == shapeLayer.tool ? .controlAccentColor : .secondaryLabelColor
+            let active = tool == shapeLayer.tool
+            button.state = active ? .on : .off
+            button.contentTintColor = active ? .white : .secondaryLabelColor
+            button.layer?.backgroundColor = active ? NSColor.controlAccentColor.cgColor : nil
         }
         for swatch in swatches {
             let selected = swatch.name == shapeLayer.color

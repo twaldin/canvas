@@ -96,8 +96,9 @@ public final class Board {
     var pendingRefits: [(member: ObjectID, actor: ActivityActor, caller: ObjectID?)] = []
     /// Called after any persisted change; BoardStore debounces saves.
     public var onChange: (() -> Void)?
-    /// Viewport center in canvas coordinates, for user-created objects without a frame.
-    public var viewportCenter: () -> (x: Double, y: Double) = { (0, 0) }
+    /// The canvas rect the board's window shows (canvas coordinates); nil without a window.
+    /// Placement prefers slots inside it.
+    public var viewport: () -> Frame? = { nil }
     /// An arrow's route as currently drawn (canvas coordinates), so deleting what it points at
     /// keeps its end exactly where the user saw it. Without it, routes come from object frames.
     public var arrowRoute: ((ObjectID) -> (start: CGPoint, end: CGPoint)?)?
@@ -320,7 +321,7 @@ public final class Board {
     /// Frame size a new object gets without one; a tile's includes its title bar.
     public static func defaultSize(_ type: ObjectType) -> (w: Double, h: Double) {
         switch type {
-        case .terminal: (820, 546)
+        case .terminal: (1000, 620)
         case .browser: (1000, 726)
         case .code: (640, 446)
         case .note: (280, 266)
@@ -330,22 +331,80 @@ public final class Board {
         }
     }
 
-    /// Next free slot to the right of the caller's tile, stacking downward. Without a caller: the
-    /// viewport center, slid right past any tiles it would cover. Drawings never block placement.
+    /// Room kept between a placed object and its neighbours.
+    public static let placementGap = 24.0
+
+    /// Where a new object goes when nobody gave it a frame: the free slot nearest the caller's
+    /// tile, touching it at `placementGap` when there's room (right first, then below, left,
+    /// above), else nearest the viewport center. See `place(_:)` for what counts as free.
     public func place(width: Double, height: Double, near caller: ObjectID?) -> Frame {
-        let gap = 24.0
-        func blocker(_ frame: Frame) -> CanvasObject? {
-            objects.values.first { ![.arrow, .shape, .group].contains($0.type) && $0.frame.intersects(frame) }
+        if let caller, let anchor = objects[caller] { return freeSlot(width: width, height: height, anchor: anchor.frame, beside: true) }
+        let view = viewport() ?? Frame(x: 0, y: 0, w: 0, h: 0)
+        return place(Frame(x: view.x + view.w / 2 - width / 2, y: view.y + view.h / 2 - height / 2, w: width, h: height))
+    }
+
+    /// The free slot nearest `ideal` (a frame of the object's size, e.g. at a click point). A slot
+    /// is free when it keeps `placementGap` from every object but drawings and arrows (other
+    /// agents' tiles and groups included). While the ideal spot (or the caller's tile) is on
+    /// screen, slots wholly inside the viewport win over nearer ones outside it. Origins are whole
+    /// points.
+    public func place(_ ideal: Frame) -> Frame {
+        freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false)
+    }
+
+    /// `beside`: the slot goes next to `anchor` (an object), nearest by the gap between them;
+    /// otherwise it replaces `anchor`, nearest by origin.
+    private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool) -> Frame {
+        let gap = Self.placementGap
+        let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape }
+            .map { Frame(x: $0.frame.x - gap, y: $0.frame.y - gap, w: $0.frame.w + 2 * gap, h: $0.frame.h + 2 * gap) }
+        let screen = viewport().flatMap { view in
+            view.intersects(anchor) && view.w > 2 * gap && view.h > 2 * gap ? Frame(x: view.x + gap, y: view.y + gap, w: view.w - 2 * gap, h: view.h - 2 * gap) : nil
         }
-        guard let caller, let anchor = objects[caller] else {
-            let center = viewportCenter()
-            var candidate = Frame(x: center.x - width / 2, y: center.y - height / 2, w: width, h: height)
-            while let covered = blocker(candidate) { candidate.x = covered.frame.maxX + gap }
-            return candidate
+        // Edges a best slot can rest against: the anchor's, each blocker's, and the viewport's.
+        var xs: Set<Double> = [anchor.x.rounded(), (anchor.maxX - w).rounded()]
+        var ys: Set<Double> = [anchor.y.rounded(), (anchor.maxY - h).rounded()]
+        for frame in blocked {
+            xs.formUnion([frame.maxX.rounded(.up), (frame.x - w).rounded(.down)])
+            ys.formUnion([frame.maxY.rounded(.up), (frame.y - h).rounded(.down)])
         }
-        var candidate = Frame(x: anchor.frame.maxX + gap, y: anchor.frame.y, w: width, h: height)
-        while let covered = blocker(candidate) { candidate.y = covered.frame.maxY + gap }
-        return candidate
+        if let screen {
+            xs.formUnion([screen.x.rounded(.up), (screen.maxX - w).rounded(.down)])
+            ys.formUnion([screen.y.rounded(.up), (screen.maxY - h).rounded(.down)])
+        }
+        // Offscreen, then distance to the anchor, then side (right, below, left, above), then
+        // distance from where that side's slot would ideally start; ties go top-left first.
+        typealias Cost = (Int, Double, Int, Double, Double, Double)
+        func cost(_ slot: Frame) -> Cost {
+            let outside = screen.map { $0.contains(slot) ? 0 : 1 } ?? 0
+            guard beside else { return (outside, 0, 0, hypot(slot.x - anchor.x, slot.y - anchor.y), slot.y, slot.x) }
+            let dx = max(0, anchor.x - slot.maxX, slot.x - anchor.maxX)
+            let dy = max(0, anchor.y - slot.maxY, slot.y - anchor.maxY)
+            let side: Int
+            let ideal: (x: Double, y: Double)
+            if slot.x >= anchor.maxX {
+                (side, ideal) = (0, (anchor.maxX + gap, anchor.y))
+            } else if slot.y >= anchor.maxY {
+                (side, ideal) = (1, (anchor.x, anchor.maxY + gap))
+            } else if slot.maxX <= anchor.x {
+                (side, ideal) = (2, (anchor.x - w - gap, anchor.y))
+            } else {
+                (side, ideal) = (3, (anchor.x, anchor.y - h - gap))
+            }
+            return (outside, hypot(dx, dy).rounded(), side, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
+        }
+        var best: (slot: Frame, cost: Cost)?
+        for x in xs {
+            for y in ys {
+                let slot = Frame(x: x, y: y, w: w, h: h)
+                let slotCost = cost(slot)
+                if let best, !(slotCost < best.cost) { continue }
+                if blocked.contains(where: { $0.intersects(slot) }) { continue }
+                best = (slot, slotCost)
+            }
+        }
+        // Unreachable: right of the rightmost blocker is always free.
+        return best?.slot ?? Frame(x: anchor.x.rounded(), y: anchor.y.rounded(), w: w, h: h)
     }
 
     // MARK: Tray

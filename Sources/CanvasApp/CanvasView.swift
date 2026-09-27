@@ -201,7 +201,7 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(magnifyEnded), name: NSScrollView.didEndLiveMagnifyNotification, object: self)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
-        board.viewportCenter = { [weak self] in self?.viewportCenter() ?? (0, 0) }
+        board.viewport = { [weak self] in self?.viewport.rect }
         for object in board.snapshot.objects { add(object) }
         restack()
         refreshGroups()
@@ -246,11 +246,6 @@ final class CanvasView: NSScrollView {
 
     static func canvasFrame(_ rect: NSRect) -> Frame {
         Frame(x: rect.minX - CanvasDocumentView.origin.x, y: rect.minY - CanvasDocumentView.origin.y, w: rect.width, h: rect.height)
-    }
-
-    func viewportCenter() -> (x: Double, y: Double) {
-        let visible = documentVisibleRect
-        return (visible.midX - CanvasDocumentView.origin.x, visible.midY - CanvasDocumentView.origin.y)
     }
 
     /// Where an object is on screen right now, in document coordinates, including an in-flight drag.
@@ -747,10 +742,11 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// A new terminal (at a document point, else beside the viewport center) with keyboard focus.
+    /// A new terminal with keyboard focus: at a document point (its top-left), else at the
+    /// viewport center, either way moved to the nearest free spot on whole points (`Board.place`).
     func createTerminal(at point: NSPoint? = nil) {
         let size = Board.defaultSize(.terminal)
-        let frame = point.map { Frame(x: $0.x - CanvasDocumentView.origin.x, y: $0.y - CanvasDocumentView.origin.y, w: size.w, h: size.h) }
+        let frame = point.map { board.place(Frame(x: $0.x - CanvasDocumentView.origin.x, y: $0.y - CanvasDocumentView.origin.y, w: size.w, h: size.h)) }
         let object = board.create(type: .terminal, props: .object(["cwd": .string(board.root.path), "command": .array([])]), frame: frame)
         DispatchQueue.main.async { [weak self] in
             (self?.tiles[object.id]?.content as? TerminalTile)?.focus()

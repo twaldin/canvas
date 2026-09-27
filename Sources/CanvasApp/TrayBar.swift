@@ -6,7 +6,7 @@ import CanvasCore
 final class TrayBar: NSVisualEffectView {
     private let stack = NSStackView()
     private let target = NSTextField(labelWithString: "")
-    private let hint = NSTextField(labelWithString: "Hyper-click anything to mention it")
+    private let hint = NSTextField(labelWithString: "Hyper-click (⌃⌥⇧⌘-click) anything to point your agent at it")
     var onUnstage: ((MentionID) -> Void)?
 
     override init(frame: NSRect) {
@@ -35,16 +35,17 @@ final class TrayBar: NSVisualEffectView {
             target.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             target.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
-        show([], targetTitle: nil)
+        show([], targetTitle: nil, hasTerminal: false)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
-    func show(_ mentions: [Mention], targetTitle: String?) {
+    /// `targetTitle` is the prompt target's; without one, the hint says how to get one.
+    func show(_ mentions: [Mention], targetTitle: String?, hasTerminal: Bool) {
         for view in stack.arrangedSubviews { view.removeFromSuperview() }
         if mentions.isEmpty { stack.addArrangedSubview(hint) }
         for mention in mentions { stack.addArrangedSubview(chip(for: mention)) }
-        target.stringValue = targetTitle.map { "→ \($0)" } ?? "→ click a terminal to target it"
+        target.stringValue = targetTitle.map { "→ \($0)" } ?? (hasTerminal ? "→ click a terminal to target it" : "→ no terminal yet (⌘T)")
     }
 
     private func chip(for mention: Mention) -> NSView {

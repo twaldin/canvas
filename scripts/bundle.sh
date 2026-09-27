@@ -14,7 +14,7 @@ swift build -j 4 -c "$config" --product Canvas
 bin="$(swift build -c "$config" --show-bin-path)"
 app="${CANVAS_BUNDLE_APP:-$repo/.build/Canvas.app}"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/clients/ts"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/clients/ts" "$app/Contents/Resources/clients/python"
 cp "$bin/Canvas" "$app/Contents/MacOS/Canvas"
 for bundle in "$bin"/*.bundle; do
   [ -e "$bundle" ] && cp -R "$bundle" "$app/Contents/Resources/"
@@ -23,7 +23,10 @@ done
 cp -R schema bin cli skills extensions LICENSE THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"
 [ -d resources ] && cp -R resources "$app/Contents/Resources/resources"
 cp -R clients/ts/src "$app/Contents/Resources/clients/ts/src"
-cp -R clients/python "$app/Contents/Resources/clients/python"
+# Tiles put clients/python on PYTHONPATH: only the SDK, so no other package (its tests) shadows
+# the user's, and no stale bytecode.
+cp -R clients/python/canvas_sdk clients/python/pyproject.toml "$app/Contents/Resources/clients/python/"
+find "$app/Contents/Resources/clients/python" -name __pycache__ -prune -exec rm -rf {} +
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

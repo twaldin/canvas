@@ -29,6 +29,9 @@ _canvas_source() {
   fi
   # Zsh reads rc files only when readable, and treats an unset ZDOTDIR as HOME.
   'builtin' 'typeset' _canvas_file="${ZDOTDIR-$HOME}/$1"
+  # macOS's /etc/zshrc, run while ZDOTDIR is here, puts history in this directory (inside the
+  # app): the user's ZDOTDIR or HOME instead, before their file, which may choose its own.
+  [[ "${HISTFILE-}" != "$_canvas_zdotdir"/* ]] || HISTFILE="${ZDOTDIR-$HOME}/${HISTFILE:t}"
   [[ ! -r "$_canvas_file" ]] || 'builtin' 'source' '--' "$_canvas_file"
   # The user's file may have set its own ZDOTDIR (e.g. ~/.config/zsh); zsh reads the rest there.
   if [[ -n "${ZDOTDIR+X}" ]]; then

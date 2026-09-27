@@ -252,7 +252,8 @@ public final class NoteRenderer {
             append("\n", [.font: Self.bodyFont])
             var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: style]
             if index == 0 { attributes[.noteBlock] = NoteBlock.tableHeader.rawValue }
-            if let line { attributes[.noteMarkdownLine] = line + index }
+            // Body rows follow the delimiter row.
+            if let line { attributes[.noteMarkdownLine] = line + index + (index > 0 ? 1 : 0) }
             out.addAttributes(attributes, range: NSRange(location: start, length: out.length - start))
         }
     }

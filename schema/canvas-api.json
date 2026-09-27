@@ -348,6 +348,20 @@
             "y": { "type": "integer", "description": "from its top edge" }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "object", "block", "headings", "lines", "text"],
+          "description": "a block of a note (a Hyper-click in its body): the paragraph, list item with its nested items, quote, table row, fence, or heading with its section, as it read when staged; the drain re-finds it by its text in the note as it is then",
+          "properties": {
+            "kind": { "const": "note" },
+            "object": { "$ref": "#/definitions/Id" },
+            "block": { "enum": ["paragraph", "item", "heading", "quote", "code", "row", "html"] },
+            "headings": { "type": "array", "items": { "type": "string" }, "description": "the headings of the sections it sits in, outermost first" },
+            "lines": { "$ref": "#/definitions/LineRange", "description": "its lines in the note's markdown when staged" },
+            "text": { "type": "string", "description": "its markdown when staged (indentation removed), at most 40 lines and 2000 characters" }
+          },
+          "additionalProperties": false
         }
       ]
     },

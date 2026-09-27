@@ -283,6 +283,16 @@ export type MentionTarget = {
   x: number;
   /** from its top edge */
   y: number;
+} | {
+  kind: "note";
+  object: Id;
+  block: "paragraph" | "item" | "heading" | "quote" | "code" | "row" | "html";
+  /** the headings of the sections it sits in, outermost first */
+  headings: string[];
+  /** its lines in the note's markdown when staged */
+  lines: LineRange;
+  /** its markdown when staged (indentation removed), at most 40 lines and 2000 characters */
+  text: string;
 };
 
 export type Mention = {

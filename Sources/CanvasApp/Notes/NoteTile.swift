@@ -568,16 +568,50 @@ final class NoteTile: NSView, TileContent {
         return TileRender(image: image, contentSize: contentSize, state: image == nil ? .failed : .rendered, reason: image == nil ? "bitmap allocation failed" : nil)
     }
 
+    /// An excerpt row mentions its code line; any other paragraph the markdown block it came
+    /// from (`NoteItem`); the title bar, margins, and rules mention the whole note.
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
+        hoveredRow = nil
         guard !isEditing, let fragment = fragment(at: point), let offset = offset(of: fragment.rangeInElement.location),
-              let storage = display.textStorage, offset < storage.length,
-              let row = storage.attribute(.noteCodeRow, at: offset, effectiveRange: nil) as? NoteCodeRow else {
-            hoveredRow = nil
+              let storage = display.textStorage, offset < storage.length else {
             return .object(object.id)
         }
-        let target = MentionTarget.code(object: object.id, path: row.path, lines: LineRange(start: row.line, end: row.line), side: nil, symbol: row.symbol, commit: row.commit)
-        hoveredRow = (target, rect(of: fragment))
-        return target
+        if let row = storage.attribute(.noteCodeRow, at: offset, effectiveRange: nil) as? NoteCodeRow {
+            let target = MentionTarget.code(object: object.id, path: row.path, lines: LineRange(start: row.line, end: row.line), side: nil, symbol: row.symbol, commit: row.commit)
+            hoveredRow = (target, rect(of: fragment))
+            return target
+        }
+        guard let line = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int, let item = item(at: line) else {
+            return .object(object.id)
+        }
+        return .note(object: object.id, item: item)
+    }
+
+    /// The block last looked up: holding Hyper asks on every mouse move.
+    private var itemCache: (rev: Int, line: Int, item: NoteItem?)?
+
+    private func item(at line: Int) -> NoteItem? {
+        if let itemCache, itemCache.rev == object.rev, itemCache.line == line { return itemCache.item }
+        let item = NoteItem.at(line: line, in: markdown)
+        itemCache = (object.rev, line, item)
+        return item
+    }
+
+    /// Every paragraph rendered from markdown `lines`, as one rect.
+    private func rect(ofLines lines: LineRange) -> NSRect? {
+        guard let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }
+        var union: NSRect?
+        storage.enumerateAttribute(.noteMarkdownLine, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let line = value as? Int, (lines.start...lines.end).contains(line),
+                  let start = content.location(content.documentRange.location, offsetBy: range.location) else { return }
+            layout.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+                guard let offset = self.offset(of: fragment.rangeInElement.location), offset < NSMaxRange(range) else { return false }
+                let rect = self.rect(of: fragment)
+                if !rect.isEmpty { union = union.map { $0.union(rect) } ?? rect }
+                return true
+            }
+        }
+        return union
     }
 
     /// The row last hovered and its outline: a proposal's added row mentions the real line it
@@ -591,6 +625,7 @@ final class NoteTile: NSView, TileContent {
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
+        if case .note(_, let item) = target { return rect(ofLines: item.lines) ?? bounds }
         guard case .code(_, let path, let lines, _, let symbol, let commit, _) = target else { return bounds }
         if let hoveredRow, hoveredRow.target == target { return hoveredRow.rect }
         let wanted = NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)

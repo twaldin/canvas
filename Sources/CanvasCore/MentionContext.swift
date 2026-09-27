@@ -38,6 +38,9 @@ public enum MentionContext {
 
     static let maxExcerptLines = 12
     static let contextLines = 3
+    /// A whole note mention carries the note up to this many lines and characters.
+    static let maxNoteLines = 80
+    static let maxNoteCharacters = 4000
 
     public static func label(for target: MentionTarget, on board: Board) -> String {
         switch target {
@@ -59,6 +62,11 @@ public enum MentionContext {
             return name ?? "\(objects.count) objects"
         case .image(_, let path, let x, let y):
             return "\(PathLabel.short(path)) at (\(x), \(y))"
+        case .note(let object, let item):
+            // Short enough that the chip shows it whole: the item's words matter most.
+            let note = board.objects[object].map { clip(title(of: $0), 14) } ?? object
+            let summary = item.summary
+            return "note \(note) › \(summary.isEmpty ? item.kind.noun : clip(summary, 24))"
         case .object(let id):
             guard let object = board.objects[id] else { return id }
             let name = object.type == .code ? PathLabel.short(title(of: object)) : title(of: object)
@@ -105,11 +113,13 @@ public enum MentionContext {
             let size = await offPool { LocalImage.naturalSize(of: file) }
             let extent = size.map { " of \(Int($0.width))×\(Int($0.height))" } ?? " (file unreadable)"
             lines.append("[\(index)] image \(path) · pixel (\(x), \(y))\(extent), from its top-left · tile \(object)\(edited)")
+        case .note(let object, let item):
+            lines.append(contentsOf: noteItemLines(item, of: object, index: index, edited: edited, on: board))
         case .object(let id):
             if let object = board.objects[id] {
                 lines.append("[\(index)] \(describe(object, on: board, caller: caller))\(edited)")
                 if object.type == .note, let markdown = object.props["markdown"]?.string {
-                    lines.append(contentsOf: markdown.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
+                    lines.append(contentsOf: noteLines(markdown, of: id))
                 }
                 lines.append(contentsOf: await pageLines(under: object, on: board, indent: "    "))
             } else {
@@ -247,7 +257,11 @@ public enum MentionContext {
         case .terminal: return nonEmpty("name") ?? nonEmpty("title") ?? props["agent"]?["kind"]?.string ?? "terminal"
         case .browser: return nonEmpty("title") ?? nonEmpty("pageTitle") ?? props["url"]?.string ?? ""
         case .code: return props["path"]?.string ?? ""
-        case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["markdown"]?.string?.split(separator: "\n").first.map(String.init) ?? ""
+        case .note:
+            // Without a title, its first line, as it reads (a heading without its `#`s).
+            return nonEmpty("title") ?? props["markdown"]?.string?.split(separator: "\n").first.map {
+                String($0.drop { $0 == "#" }).trimmingCharacters(in: .whitespaces)
+            } ?? ""
         case .html: return props["title"]?.string ?? "html"
         case .changes: return props["title"]?.string ?? "changes vs \(ChangesSpec(props).baseProp)"
         case .image: return props["title"]?.string ?? props["path"]?.string ?? "image"
@@ -290,6 +304,39 @@ public enum MentionContext {
             return marker + String(number).padding(toLength: 5, withPad: " ", startingAt: 0) + text.line(number)
         }
         if range.end > to { lines.append("    …") }
+        return lines
+    }
+
+    /// A whole note: its markdown up to `maxNoteLines` lines and `maxNoteCharacters` characters.
+    static func noteLines(_ markdown: String, of id: ObjectID) -> [String] {
+        var lines: [String] = []
+        var count = 0
+        let source = NoteSource.lines(of: markdown)
+        for line in source.prefix(maxNoteLines) {
+            guard count + line.count <= maxNoteCharacters else { break }
+            lines.append("    \(line)")
+            count += line.count + 1
+        }
+        if source.count > lines.count { lines.append("    … \(source.count - lines.count) more lines (canvas get \(id))") }
+        return lines
+    }
+
+    /// A block of a note, as the note reads now: re-found by its text (it may have moved, or
+    /// grown), else as it read when mentioned, saying so.
+    static func noteItemLines(_ item: NoteItem, of id: ObjectID, index: Int, edited: String, on board: Board) -> [String] {
+        guard let note = board.objects[id] else { return ["[\(index)] note \(id) (deleted)"] }
+        let found = NoteItem.find(item.text, near: item.lines.start, in: note.props["markdown"]?.string ?? "")
+        let current = found?.item ?? item
+        let range = current.lines.start == current.lines.end ? "line \(current.lines.start)" : "lines \(current.lines.start)-\(current.lines.end)"
+        let path = current.headings.isEmpty ? "" : " · in \(current.headings.joined(separator: " › "))"
+        var lines = ["[\(index)] note \(id) \"\(clip(title(of: note), 60))\" · \(current.kind.noun), markdown \(range)\(path)\(edited)"]
+        switch found {
+        case nil: lines.append("    (no longer in the note; as it read when mentioned:)")
+        case let found? where !found.unchanged: lines.append("    (changed since it was mentioned; as it reads now:)")
+        default: break
+        }
+        lines.append(contentsOf: NoteSource.lines(of: current.text).map { "    \($0)" })
+        if current.omittedLines > 0 { lines.append("    … \(current.omittedLines) more lines (canvas get \(id))") }
         return lines
     }
 

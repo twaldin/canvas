@@ -18,6 +18,27 @@ public enum NoteMarkdown {
         Document(parsing: markdown, options: [.disableSmartOpts])
     }
 
+    /// A section heading: its 1-based markdown line, level (1–6), and plain text.
+    public struct Heading: Equatable, Sendable {
+        public var line: Int
+        public var level: Int
+        public var title: String
+
+        public init(line: Int, level: Int, title: String) {
+            self.line = line
+            self.level = level
+            self.title = title
+        }
+    }
+
+    /// The note's top-level headings in order (the sections a block sits in, what Go to lists).
+    public static func headings(in document: Document) -> [Heading] {
+        document.children.compactMap { child in
+            guard let heading = child as? Markdown.Heading, let line = heading.range?.lowerBound.line else { return nil }
+            return Heading(line: line, level: heading.level, title: heading.plainText)
+        }
+    }
+
     public static func anchoredFences(in document: Document) -> [AnchoredFence] {
         var out: [AnchoredFence] = []
         var index: [String: Int] = [:]

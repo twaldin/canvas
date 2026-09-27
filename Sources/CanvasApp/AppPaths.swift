@@ -1,3 +1,4 @@
+import CanvasCore
 import Foundation
 
 /// Filesystem locations the app depends on (docs/contracts.md).
@@ -15,6 +16,11 @@ enum AppPaths {
     /// tiles get it in their environment. Without it the socket relies on its 0600 mode.
     static let cmuxPassword: String? = ProcessInfo.processInfo.environment["CMUX_SOCKET_PASSWORD"].flatMap { $0.isEmpty ? nil : $0 }
     static let boards = support.appendingPathComponent("boards", isDirectory: true)
+    /// Browser pages frozen by Snapshot to Image, kept with the board (beside its
+    /// `<boardId>.json`), so they outlive the temp directory and the page changing.
+    static func pageSnapshots(of board: BoardID) -> URL {
+        boards.appendingPathComponent(board, isDirectory: true).appendingPathComponent("snapshots", isDirectory: true)
+    }
     /// Roots of the boards open as tabs, in tab order, reopened at the next launch.
     static let openBoards = support.appendingPathComponent("open-boards.json")
 

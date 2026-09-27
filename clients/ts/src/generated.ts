@@ -91,7 +91,7 @@ export type CodeProps = {
 };
 
 export type NoteProps = {
-  /** Markdown. Code fence info strings pick a mode: ```ts file=path#L10-40``` (or symbol=Name, optionally with file=) is a live excerpt of the file; add `propose` to render the fence body as a diff against that range; file=path@<sha>#L10-40 pins to a commit; anchor="first line text" re-finds the range when lines move. Any other fence is free-written; path:line references in it are clickable. */
+  /** Markdown. Code fence info strings pick a mode: ```ts file=path#L10-40``` (or symbol=Name, optionally with file=) is a live excerpt of the file; add `propose` to render the fence body as a diff against that range; file=path@<sha>#L10-40 pins to a commit; anchor="first line text" re-finds the range when lines move. Any other fence is free-written. path:line references are clickable wherever they appear: prose, headings, table cells, inline code, free-written fences. */
   markdown: string;
   /** shown in the tile's title bar (default "Note") and Go to */
   title?: string;

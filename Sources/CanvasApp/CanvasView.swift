@@ -947,13 +947,22 @@ final class CanvasView: NSScrollView {
     /// A new object the user asked for without saying where (File › Open File, New Note, New
     /// Browser Tile, ⌘T, Go to's file rows, Edit Here's terminal `near` its code tile): the free
     /// spot nearest the viewport center or that tile, in view when there's room (`Board.place`),
-    /// revealed with the least pan otherwise, selected, and given the keyboard.
+    /// revealed with the least pan otherwise, selected, and given the keyboard (an empty note
+    /// starts editing, `editNewNote`).
     func openForUser(_ type: ObjectType, props: JSONValue, near anchor: ObjectID? = nil) {
         let size = Board.defaultSize(type)
         let object = board.create(type: type, props: props, frame: board.place(width: size.w, height: size.h, near: anchor))
         reveal(object.id)
         setSelection([object.id])
-        takeKeyboard(object.id)
+        if !editNewNote(object) { takeKeyboard(object.id) }
+    }
+
+    /// An empty note the user just made starts editing (as Return would), so what they type
+    /// right away goes into it; Esc then leaves it selected with the canvas holding the
+    /// keyboard. False for anything else.
+    private func editNewNote(_ object: CanvasObject) -> Bool {
+        guard object.type == .note, object.props["markdown"]?.string?.isEmpty != false else { return false }
+        return enterSelection()
     }
 
     /// Keyboard focus for a tile the keyboard just went to: a terminal takes it itself (on the
@@ -1101,9 +1110,11 @@ final class CanvasView: NSScrollView {
         return true
     }
 
-    /// An empty note at a document point (`createHere`).
+    /// An empty note at a document point (`createHere`), editing (`editNewNote`).
     func createNote(at point: NSPoint) {
-        setSelection([createHere(.note, props: .object(["markdown": .string("")]), at: point).id])
+        let note = createHere(.note, props: .object(["markdown": .string("")]), at: point)
+        setSelection([note.id])
+        _ = editNewNote(note)
     }
 
     /// An empty browser tile at a document point (`createHere`), with the address field focused
@@ -1273,6 +1284,7 @@ final class CanvasView: NSScrollView {
             menu.addItem(MenuAction.item("Open in Browser") { [weak self] in self?.openHTMLInBrowser(id) })
         }
         if count == 1, let browser = tiles[id]?.content as? BrowserTile {
+            menu.addItem(MenuAction.item("Snapshot to Image") { [weak self] in self?.snapshotPage(id) })
             menu.addItem(MenuAction.item("Inspect Element", enabled: browser.canShowInspector) { [weak browser] in browser?.showInspector() })
         }
         menu.addItem(.separator())
@@ -1443,6 +1455,13 @@ final class CanvasView: NSScrollView {
                      w: clear.width / zoom, h: clear.height / zoom)
     }
 
+    /// The part of `view` in the viewport clear of the toolbar and tray, in `view`'s
+    /// coordinates; empty when none of it is.
+    func clearVisibleRect(of view: NSView) -> NSRect {
+        guard let document = documentView else { return .zero }
+        return view.visibleRect.intersection(view.convert(Self.docRect(clearViewport), from: document))
+    }
+
     /// ⌘0: 100%. With a selection, the selection at 100%, centered clear of the chrome (its top
     /// when taller than the view); without one, around the viewport's center.
     func zoomToActualSize() {
@@ -1494,6 +1513,24 @@ final class CanvasView: NSScrollView {
         }
         setSelection([id])
         takeKeyboard(id)
+    }
+
+    /// Go to's heading row: the note gone to, then (once it is live and laid out, the next
+    /// turn) the view moved so the section from the heading down is fitted like Go to fits a
+    /// tile: a long note shows its width with the heading at the top. One Back entry.
+    func go(to id: ObjectID, heading line: Int) {
+        let from = viewport
+        navigationDepth += 1
+        go(to: id)
+        navigationDepth -= 1
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if let note = self.tiles[id]?.content as? NoteTile, let heading = note.reveal(heading: line), let frame = self.docFrame(id) {
+                let top = self.document.convert(heading, from: note).minY
+                self.fit(NSRect(x: frame.minX, y: top, width: frame.width, height: max(1, frame.maxY - top)), readable: true)
+            }
+            self.recordNavigation(from: from)
+        }
     }
 
     /// What Go to Next Needs-You visited last, as it was then.

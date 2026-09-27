@@ -64,7 +64,8 @@ final class NoticePill: NSVisualEffectView {
 extension CanvasView {
     /// Says `text` for a moment at the bottom center of the view, above the tray and the
     /// "Nothing here" pill: for a command that found nothing to act on (⌃⌘R with no code tile,
-    /// ⌘J with nothing pending), so a key press never does silently nothing.
+    /// ⌘J with nothing pending), so a key press never does silently nothing, and for what a key
+    /// did that nothing else shows (Esc keeping theirs over a conflicting note edit).
     func showNotice(_ text: String) {
         let pill = subviews.lazy.compactMap { $0 as? NoticePill }.first ?? {
             let pill = NoticePill(frame: .zero)

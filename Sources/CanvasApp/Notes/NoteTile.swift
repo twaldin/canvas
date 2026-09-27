@@ -3,9 +3,10 @@ import CanvasCore
 import Markdown
 
 /// A markdown note (docs/design.md "Notes"). Displays rendered markdown with live code fences;
-/// double-click edits the raw markdown, ⌘↩ or clicking away commits, Esc cancels. The note
-/// holds keyboard focus only while editing, then hands it back to the prompt-target terminal.
-/// A conflicting change by someone else is only overwritten by an explicit ⌘↩.
+/// double-click edits the raw markdown, ⌘↩, clicking away or Esc commits. The note holds
+/// keyboard focus only while editing, then hands it back to the prompt-target terminal. A
+/// conflicting change by someone else is only overwritten by an explicit ⌘↩; Esc keeps theirs,
+/// the user's text one ⌘Z away.
 @MainActor
 final class NoteTile: NSView, TileContent {
     static let placeholder = ObjectMeasure.notePlaceholder
@@ -66,16 +67,21 @@ final class NoteTile: NSView, TileContent {
         editor.textColor = .labelColor
         editor.backgroundColor = .textBackgroundColor
         editor.textContainerInset = NSSize(width: 6, height: 8)
+        // Misspellings are underlined, but nothing is changed as the user types: markdown and
+        // code want their quotes, dashes and words as typed.
+        editor.isContinuousSpellCheckingEnabled = true
+        editor.isAutomaticSpellingCorrectionEnabled = false
+        editor.isAutomaticTextCompletionEnabled = false
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false
-        editor.isAutomaticSpellingCorrectionEnabled = false
         editor.autoresizingMask = [.width]
         editor.onCommit = { [weak self] in self?.endEditing(.confirmed) }
-        // Esc leaves like a click away (saving), except that with a conflict shown it keeps theirs.
+        // Esc leaves like a click away (saving), except that with a conflict shown it keeps
+        // theirs, the user's text one ⌘Z away.
         editor.onCancel = { [weak self] in
             guard let self else { return }
-            self.endEditing(self.banner.isHidden ? .implicit : .cancel)
+            self.endEditing(self.session?.conflicted == true ? .keepTheirs : .implicit)
         }
         // Focus is already moving elsewhere; don't pull it to the prompt target mid-change.
         editor.onResign = { [weak self] in self?.endEditing(.implicit, returningFocus: false) }
@@ -115,7 +121,7 @@ final class NoteTile: NSView, TileContent {
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
-        banner.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 32)
+        placeBanner()
     }
 
     var markdown: String { object.props["markdown"]?.string ?? "" }
@@ -442,12 +448,17 @@ final class NoteTile: NSView, TileContent {
         case confirmed
         /// Clicking away or focus moving elsewhere: save unless there is a conflict.
         case implicit
-        case cancel
+        /// Esc with a conflict shown: their version stays; the user's text is one ⌘Z away.
+        case keepTheirs
     }
 
     private func endEditing(_ end: EditEnd, returningFocus: Bool = true) {
         guard let session else { return }
-        if end != .cancel {
+        if end == .keepTheirs {
+            if session.keepTheirs(discarding: editor.string, on: board) {
+                canvas?.showNotice("Kept their version of the note · ⌘Z puts yours back")
+            }
+        } else {
             do {
                 if try session.commit(editor.string, confirmed: end == .confirmed, on: board) == .conflict {
                     // Keep the user's text in the editor until they choose (⌘↩ or Esc).
@@ -465,7 +476,7 @@ final class NoteTile: NSView, TileContent {
         session = nil
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
-        banner.isHidden = true
+        hideBanner()
         let hadFocus = window?.firstResponder === editor
         editorScroll.isHidden = true
         displayScroll.isHidden = false
@@ -475,13 +486,15 @@ final class NoteTile: NSView, TileContent {
     }
 
     private func showConflict() {
-        showBanner("Changed by someone else while you were editing. ⌘↩ saves yours over it; Esc keeps theirs.")
+        showBanner("Someone else changed this note while you were editing. ⌘↩ saves yours over theirs; Esc keeps theirs (⌘Z then puts yours back).")
     }
+
+    private var canvas: CanvasView? { enclosingScrollView as? CanvasView }
 
     /// Keyboard focus goes back to the canvas with the note selected after an edit started with
     /// Return, else to where prompts go.
     private func returnFocus() {
-        let canvas = enclosingScrollView as? CanvasView
+        let canvas = canvas
         if enteredByKeyboard, let canvas {
             canvas.leaveTile(object.id)
         } else if let canvas, let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile {
@@ -491,10 +504,37 @@ final class NoteTile: NSView, TileContent {
         }
     }
 
+    /// Re-places the banner as the canvas pans and zooms while it shows.
+    private var viewportObserver: NSObjectProtocol?
+
+    /// The banner sits at the top of the part of the note in view clear of the toolbar, so on
+    /// a note taller than the window it is where the user is editing, not thousands of points
+    /// below at the note's end; it follows every pan and zoom while shown.
     private func showBanner(_ text: String) {
         banner.stringValue = text
-        banner.frame = NSRect(x: 0, y: 0, width: bounds.width, height: 32)
         banner.isHidden = false
+        placeBanner()
+        guard viewportObserver == nil, let clip = canvas?.contentView else { return }
+        viewportObserver = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.placeBanner() }
+        }
+    }
+
+    private func hideBanner() {
+        banner.isHidden = true
+        if let viewportObserver { NotificationCenter.default.removeObserver(viewportObserver) }
+        viewportObserver = nil
+    }
+
+    private func placeBanner() {
+        guard !banner.isHidden else { return }
+        // As tall as its (at most two) wrapped lines, plus a little room below them.
+        let text = banner.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: bounds.width, height: 1000)).height ?? 28
+        let height = min(ceil(text) + 4, 36)
+        let shown = canvas?.clearVisibleRect(of: self) ?? .zero
+        // Unflipped: the visible top is `maxY`. With none of the note in view, its top.
+        let top = shown.isEmpty ? bounds.maxY : shown.maxY
+        banner.frame = NSRect(x: 0, y: max(bounds.minY, top - height), width: bounds.width, height: height)
     }
 
     // MARK: TileContent
@@ -654,6 +694,24 @@ final class NoteTile: NSView, TileContent {
         return rect
     }
 
+    /// Go to's heading row: where the heading rendered from markdown `line` is, in this view's
+    /// coordinates, the rendered note scrolled to it first when its text overflows the tile.
+    /// Nil while editing, while it holds no text (not live), or with no such heading.
+    func reveal(heading line: Int) -> NSRect? {
+        guard !isEditing, let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }
+        var found: NSTextLayoutFragment?
+        storage.enumerateAttribute(.noteMarkdownLine, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
+            guard value as? Int == line, let start = content.location(content.documentRange.location, offsetBy: range.location) else { return }
+            found = layout.textLayoutFragment(for: start)
+            stop.pointee = true
+        }
+        guard let frame = found?.layoutFragmentFrame else { return nil }
+        let inText = NSRect(x: 0, y: frame.minY + display.textContainerOrigin.y, width: display.bounds.width, height: frame.height)
+        if display.frame.height > displayScroll.contentSize.height + 1 { display.scroll(inText.origin) }
+        let rect = convert(inText, from: display).intersection(bounds)
+        return rect.isEmpty ? nil : rect
+    }
+
     var takesKeyboardFocus: Bool { isEditing }
 }
 
@@ -687,7 +745,7 @@ final class OverlayScrollView: NSScrollView {
     }
 }
 
-/// The raw-markdown editor: ⌘↩ commits, Esc cancels, losing focus commits.
+/// The raw-markdown editor: ⌘↩ commits, Esc (`onCancel`) and losing focus leave it.
 final class NoteEditor: NSTextView {
     var onCommit: (() -> Void)?
     var onCancel: (() -> Void)?

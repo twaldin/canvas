@@ -10,6 +10,8 @@ struct NavigatorRow {
         /// A file under the board root (repo-relative), at `lines` when the query named a line
         /// or the row is a symbol: opens a code tile for it.
         case file(String, lines: LineRange?)
+        /// A note's heading, by its markdown line: the note shown from there.
+        case heading(ObjectID, line: Int)
         /// A line that says what's going on ("Searching symbols…"); choosing it does nothing.
         case status
     }
@@ -29,9 +31,12 @@ struct NavigatorRow {
     /// Also matched by typing, shown or not: a code tile's caption, a terminal's name.
     var terms: [String] = []
     var toolTip: String? = nil
+    /// Listed only once something is typed: a note's headings, which would bury the tiles.
+    var searchOnly = false
 
     func matches(_ query: String) -> Bool {
-        query.isEmpty || title.localizedCaseInsensitiveContains(query) || kind.localizedCaseInsensitiveContains(query)
+        guard !query.isEmpty else { return !searchOnly }
+        return title.localizedCaseInsensitiveContains(query) || kind.localizedCaseInsensitiveContains(query)
             || subtitle?.localizedCaseInsensitiveContains(query) == true || terms.contains { $0.localizedCaseInsensitiveContains(query) }
     }
 }
@@ -40,8 +45,9 @@ extension CanvasView {
     /// Tiles that need the user first (blocked agents, marked tiles, then done agents not seen
     /// yet: `NeedsYouItem`, flagged, and found by "blocked", "marked", "done", "needs"), then the
     /// Recent locations navigation landed on (`recentNavigatorRows`), then "All content", then
-    /// groups, then the other tiles, each in reading order (top to bottom, then left to right).
-    /// Drawn objects (shapes, arrows) aren't listed.
+    /// groups, then the other tiles, each in reading order (top to bottom, then left to right),
+    /// a note followed by its headings (listed while typing: a long note's sections are
+    /// reachable by name). Drawn objects (shapes, arrows) aren't listed.
     func navigatorRows() -> [NavigatorRow] {
         var groups: [(NSRect, NavigatorRow)] = []
         var tiles: [(NSRect, NavigatorRow)] = []
@@ -82,7 +88,20 @@ extension CanvasView {
             first.append((rank, row))
         }
         let all = NavigatorRow(target: .allContent, title: "All content", kind: "Zoom to Fit", dot: nil)
-        return first.sorted { $0.0 < $1.0 }.map(\.1) + recentNavigatorRows() + [all] + groups.sorted(by: readingOrder).map(\.1) + rest.sorted(by: readingOrder).map(\.1)
+        func withHeadings(_ row: NavigatorRow) -> [NavigatorRow] {
+            guard case .object(let id) = row.target, let object = board.objects[id], object.type == .note else { return [row] }
+            return [row] + Self.headingRows(of: object, in: row.title)
+        }
+        return first.sorted { $0.0 < $1.0 }.flatMap { withHeadings($0.1) } + recentNavigatorRows() + [all] + groups.sorted(by: readingOrder).map(\.1)
+            + rest.sorted(by: readingOrder).flatMap { withHeadings($0.1) }
+    }
+
+    /// A note's headings as rows that go to them, found by their text or the note's title (the
+    /// heading the note's row is already named after isn't listed again).
+    private static func headingRows(of note: CanvasObject, in title: String) -> [NavigatorRow] {
+        NoteMarkdown.headings(in: NoteMarkdown.parse(note.props["markdown"]?.string ?? "")).filter { $0.title != title }.map { heading in
+            NavigatorRow(target: .heading(note.id, line: heading.line), title: heading.title, kind: "Heading", dot: nil, subtitle: title, searchOnly: true)
+        }
     }
 
     private static func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }

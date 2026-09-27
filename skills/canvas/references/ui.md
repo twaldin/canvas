@@ -65,10 +65,11 @@ Point the user at Help › Canvas Basics for the same text in the app.
 
 - ⌘9 fits everything (or the largest cluster); ⌘0 is 100% (the selection at 100%); ⌘= and ⌘- step 10–100%.
   Below about 30% (terminals 15%) tiles show as cards; zooming in brings them back live. ⌥-drag a corner scales a tile.
-- ⌘P Go to (tiles, files, `@symbols`); ⌘T new terminal; ⌘W close the selection; ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
+- ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings); ⌘T new terminal; ⌘W close the selection; ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
   In a terminal Esc belongs to the program: ⌘Esc (View › Leave Tile) leaves any tile.
 - A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.
 - Save as PNG…, Save as HTML… and Export Selection (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.
   Export Selection keeps the titles and borders of groups whose tiles are all selected; a marquee around groups selects them and the arrows between what it selects.
-  Its picture is at most 8000 px on its longest side, named after the one tile or group selected.
+  Its picture is at most 8000 px on its longest side, named after the one tile or group selected, and drawn without canvas chrome (no author marks, × buttons, dot grid or selection), as View › Hide Canvas Chrome shows it; Copy as Image too.
+- A browser tile's menu has Snapshot to Image: the page as it shows now becomes an image tile beside it ("<page title> · <time>", its address as the caption), kept with the board.

@@ -2,22 +2,23 @@ import AppKit
 import CanvasCore
 import UniformTypeIdentifiers
 
-/// Sharing what's on the board: the selection as a picture (drawn by `view.render`, so it looks
-/// exactly as an agent's render does), and an HTML tile as a self-contained page.
+/// Sharing what's on the board: the selection as a picture (drawn by `view.render` as View ›
+/// Hide Canvas Chrome shows it), and an HTML tile as a self-contained page.
 extension CanvasView {
     /// Pixels per canvas point for exported pictures: sharp on Retina screens and in documents.
     static let exportScale = 2.0
 
-    /// The selection drawn offscreen (tiles, drawings, groups under it; no app chrome), as PNG,
-    /// with the groups whose members are all selected (`SelectionScope.export`), so their titles
-    /// and borders aren't cut; at a scale that keeps its longest side within
-    /// `ExportFile.maxPixels`.
+    /// The selection drawn offscreen (tiles, drawings, groups under it) as PNG, without canvas
+    /// chrome (`RenderRequest.chrome`: no author marks, close buttons, dot grid or selection),
+    /// since it leaves the app; with the groups whose members are all selected
+    /// (`SelectionScope.export`), so their titles and borders aren't cut; at a scale that keeps
+    /// its longest side within `ExportFile.maxPixels`.
     private func selectionPNG() async throws -> Data {
         guard !selection.isEmpty else { throw ExportFailure("nothing is selected") }
         let ids = SelectionScope.export(selection: selection, groups: selectionGroups).sorted()
         let bounds = RenderMath.union(ids.compactMap { outline(of: $0) })
         let scale = bounds.map { ExportFile.scale(Self.exportScale, for: CGSize(width: $0.w, height: $0.h)) } ?? Self.exportScale
-        return try await render(RenderRequest(target: .objects(ids), scale: scale, padding: 0), format: .png).image
+        return try await render(RenderRequest(target: .objects(ids), scale: scale, padding: 0, chrome: false), format: .png).image
     }
 
     private var selectionGroups: [SelectionScope.Group] {
@@ -134,6 +135,40 @@ extension CanvasView {
                 }
             } catch {
                 self?.exportFailed("Open in Browser", error)
+            }
+        }
+    }
+
+    /// Snapshot to Image (a browser tile's menu, File › Snapshot Page to Image): the page as it
+    /// shows now, frozen as an image tile beside the browser tile at its width, titled with the
+    /// page's title and the time and captioned with its address. The PNG is kept with the board
+    /// (`AppPaths.pageSnapshots`), never in the temp directory: a before/after pair stays true
+    /// after the page changes. The new tile is selected, the browser still in view.
+    func snapshotPage(_ id: ObjectID) {
+        guard let browser = tiles[id]?.content as? BrowserTile, let source = board.objects[id] else { return }
+        let taken = Date()
+        Task { @MainActor [weak self] in
+            do {
+                guard let page = await browser.pageImage()?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                      let png = await offPool({ Self.encode(page, format: .png) }) else { throw ExportFailure("The page has nothing to show yet.") }
+                guard let self else { return }
+                let stamp = DateFormatter()
+                stamp.locale = Locale(identifier: "en_US_POSIX")
+                stamp.dateFormat = "yyyyMMdd-HHmmss"
+                let url = AppPaths.pageSnapshots(of: self.board.id).appendingPathComponent("\(id)-\(stamp.string(from: taken)).png")
+                try await Self.write(png, to: url)
+                var props: [String: JSONValue] = [
+                    "path": .string(url.path),
+                    "title": .string("\(TileFrameView.title(for: source)) · \(DateFormatter.localizedString(from: taken, dateStyle: .none, timeStyle: .short))"),
+                ]
+                if let address = browser.pageURL, !address.isEmpty { props["caption"] = .string(address) }
+                let size = try await ObjectMeasure.size(type: .image, props: .object(props), width: source.frame.w, root: self.board.root)
+                let image = self.board.create(type: .image, props: .object(props), frame: self.board.place(width: Double(size.width), height: Double(size.height), near: id))
+                self.reveal(image.id, keeping: id)
+                self.setSelection([image.id])
+                NSLog("Canvas: snapshot of %@ saved as %@", id, url.path)
+            } catch {
+                self?.exportFailed("Snapshot to Image", error)
             }
         }
     }

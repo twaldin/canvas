@@ -2,7 +2,8 @@ import Foundation
 
 /// One edit of a note's markdown by the user. A conflict is someone else changing the markdown
 /// after the edit began; it is never resolved implicitly (clicking away, focus moving to a
-/// terminal). Only an explicit confirmation, given while the conflict is shown, saves over it.
+/// terminal). Only an explicit confirmation, given while the conflict is shown, saves over it;
+/// keeping theirs instead leaves the user's text one ⌘Z away (`keepTheirs`).
 @MainActor
 public final class NoteEditSession {
     public enum Outcome: Equatable {
@@ -48,5 +49,20 @@ public final class NoteEditSession {
         base = text
         conflicted = false
         return .saved
+    }
+
+    /// Esc with the conflict shown: their markdown stays, and the user's `text` becomes the
+    /// board's latest undo step, as if theirs had replaced it: ⌘Z puts `text` over theirs, ⇧⌘Z
+    /// theirs back. Returns whether there was anything of the user's to keep (an edit that
+    /// changed nothing, or matches theirs, records nothing).
+    @discardableResult
+    public func keepTheirs(discarding text: String, on board: Board) -> Bool {
+        guard let current = board.objects[objectID] else { return false }
+        let theirs = current.props["markdown"]?.string ?? ""
+        guard text != base, text != theirs else { return false }
+        var yours = current
+        yours.props = current.props.merging(.object(["markdown": .string(text)]))
+        board.history.record(.updated(before: yours, after: current))
+        return true
     }
 }

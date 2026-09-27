@@ -122,6 +122,7 @@ The app writes replies and events through a per-connection queue, in order, and 
 | Path | Holds | Owner |
 | --- | --- | --- |
 | `~/Library/Application Support/Canvas/boards/<boardId>.json` | Stored boards, with the tray and unseen attention markers (`CANVAS_HOME` relocates the whole directory) | App |
+| `~/Library/Application Support/Canvas/boards/<boardId>/snapshots/<tileId>-<yyyyMMdd-HHmmss>.png` | Browser pages frozen by Snapshot to Image, shown by image tiles (`AppPaths.pageSnapshots`); kept with the board, never deleted by the app | App |
 | `~/Library/Application Support/Canvas/open-boards.json` | Roots of the boards open as tabs, in tab order; reopened behind the initial board at launch (quitting keeps it; closing a tab removes its root) | App |
 | `<board root>/.canvas/board.json` | `board.export` snapshot (default path), for committing with the repo | Written on request only |
 | `clients/python/canvas_sdk/builtin_compositions/`, `clients/ts/src/builtin_compositions/` | Shipped compositions, installed with each client (wheel, bundle, checkout) | Canvas |
@@ -256,7 +257,9 @@ Mentions: a diff line is a `code` mention of its side's line (`side: new` for co
 
 ## Export
 
-The object menu's Copy as Image and Save as PNG… draw the selection with `view.render` (`CanvasView.render`, `.objects(selection)` plus every group whose members are all selected, `SelectionScope.export`, at 2 px/pt: tiles, drawings and groups under it, no app chrome) and put the PNG (plus TIFF) on the general pasteboard, or write it where a save sheet says (default: the folder last saved into, `canvas.exportDirectory` in user defaults, unless it is gone or inside the board root; else `~/Downloads`; name `ExportFile.name`). An HTML tile adds Save as HTML… and Open in Browser (see HTML tiles). Save panels run out of process, so replayed input can't type into them; `input key return` on one saves under its suggested name.
+The object menu's Copy as Image and Save as PNG… draw the selection with `view.render` (`CanvasView.render`, `.objects(selection)` plus every group whose members are all selected, `SelectionScope.export`, at 2 px/pt: tiles, drawings and groups under it, no app chrome) with `RenderRequest.chrome` false: as View › Hide Canvas Chrome shows the board, without author marks, close glyphs or the dot grid (a plain canvas background; `view.render` itself keeps them). They put the PNG (plus TIFF) on the general pasteboard, or write it where a save sheet says (default: the folder last saved into, `canvas.exportDirectory` in user defaults, unless it is gone or inside the board root; else `~/Downloads`; name `ExportFile.name`). An HTML tile adds Save as HTML… and Open in Browser (see HTML tiles). Save panels run out of process, so replayed input can't type into them; `input key return` on one saves under its suggested name.
+
+A browser tile's Snapshot to Image (its object menu; File › Snapshot Page to Image for the focused or selected one; `CanvasView.snapshotPage`) takes the page as it shows (`WKWebView.takeSnapshot`, the screen's pixels; a released page its last capture), writes it as a PNG under the board's directory (On-disk locations) and creates an image tile with its absolute path, titled `<tile title> · <time>` and captioned with the page's address, as wide as the browser tile (`ObjectMeasure` image size), placed beside it (`Board.place`) and selected. Deleting the tile leaves the file, so ⌘Z brings it back whole.
 
 ## Drawing layer
 

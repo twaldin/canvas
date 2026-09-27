@@ -151,9 +151,13 @@ final class TileFrameView: NSView {
 
     func update(_ object: CanvasObject) {
         if title.isEmpty || object.type != .terminal { setTitle(Self.title(for: object, branch: branch)) }
-        // A file outside the board root shows a short label; the tooltip has its full path.
-        let path = object.type == .code ? object.props["path"]?.string : nil
-        titleLabel.toolTip = path.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
+        // A file outside the board root shows a short label, an image its file name; the
+        // tooltip has the path.
+        switch object.type {
+        case .code: titleLabel.toolTip = object.props["path"]?.string.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
+        case .image: titleLabel.toolTip = object.props["path"]?.string.flatMap { ($0 as NSString).lastPathComponent == $0 ? nil : $0 }
+        default: titleLabel.toolTip = nil
+        }
         z = object.z
         let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
         badge.isHidden = object.type != .terminal
@@ -264,7 +268,8 @@ final class TileFrameView: NSView {
         case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "Note"
         case .browser: return [props["title"], props["pageTitle"], props["url"]].lazy.compactMap { $0?.string }.first { !$0.isEmpty } ?? "Browser"
         case .html: return props["title"]?.string ?? "HTML"
-        case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map(PathLabel.short) ?? "Image"
+        // The file name wherever the file is (`ImageProps.title`); the path is the tooltip's.
+        case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map { ($0 as NSString).lastPathComponent } ?? "Image"
         case .changes:
             let spec = ChangesSpec(props)
             if let title = props["title"]?.string { return title }

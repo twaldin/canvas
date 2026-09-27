@@ -14,7 +14,7 @@ This page covers the conventions the catalog doesn't spell out.
 | Error | raises `CanvasError` (`.code`) | `code: message` on stderr, exit 1 |
 | Props per type | `help(canvas.object.create)`; the schema's `CodeProps`, `NoteProps`, … | `canvas methods CodeProps` |
 
-Error codes: `not_found` (no such object/agent/board), `conflict` (stale `rev`: re-read, re-apply, retry),
+Error codes: `not_found` (no such object/agent/board; a code tile's file or `pinnedCommit` that isn't there), `conflict` (stale `rev`: re-read, re-apply, retry),
 `invalid_params`, `unavailable` (e.g. a terminal without a running session, or the app isn't running), `unsupported`, `timeout` (`agent.wait`).
 
 ## Reading the board

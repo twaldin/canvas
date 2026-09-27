@@ -17,13 +17,18 @@ public enum FollowFilter {
     public static let tempDirectories = [NSTemporaryDirectory(), "/tmp", "/var/tmp"]
 
     /// Whether follow mode shows `path` (absolute): it lies inside one of `projects` (the board
-    /// root, the terminal's cwd); it isn't under a temp directory unless that project is too
-    /// (scratch files outside a project that lives in the temp directory); it exists, is a
-    /// regular file, and isn't binary (by extension, or a NUL byte in its first 8000 bytes, git's
-    /// own test).
+    /// root, the terminal's cwd) or in another worktree of a project's repository (an agent
+    /// working in a `git worktree` of the board's repo: same common git directory); it isn't
+    /// under a temp directory unless that project is too (scratch files outside a project that
+    /// lives in the temp directory); it exists, is a regular file, and isn't binary (by
+    /// extension, or a NUL byte in its first 8000 bytes, git's own test).
     public static func follows(_ path: String, projects: [String], tempDirectories: [String] = tempDirectories) -> Bool {
         let file = URL(fileURLWithPath: path).standardizedFileURL
-        let containing = projects.map { URL(fileURLWithPath: $0).standardizedFileURL.path }.filter { contains($0, file.path) }
+        var containing = projects.map { URL(fileURLWithPath: $0).standardizedFileURL.path }.filter { contains($0, file.path) }
+        if containing.isEmpty, let worktree = GitWorktree.containing(file.path),
+           projects.contains(where: { GitWorktree.containing($0)?.commonDir == worktree.commonDir }) {
+            containing = [worktree.toplevel]
+        }
         guard !containing.isEmpty, !binaryExtensions.contains(file.pathExtension.lowercased()) else { return false }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue else { return false }

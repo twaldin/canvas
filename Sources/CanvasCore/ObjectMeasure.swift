@@ -13,6 +13,9 @@ public enum ObjectMeasure {
         case unsupported(String)
         /// The content can't be read right now (a code range that doesn't resolve).
         case unavailable(String)
+        /// What the props name isn't there: no such file, on disk or at the pinned commit, or
+        /// no such commit.
+        case notFound(String)
         case invalidParams(String)
     }
 
@@ -87,7 +90,7 @@ public enum ObjectMeasure {
         let fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: range == nil ? props["symbol"]?.string : nil)
         let excerpt = await NoteSource.excerpt(for: fence, root: root, captured: nil)
         guard excerpt.range != nil else {
-            if case .stale(let reason) = excerpt.status { throw Failure.unavailable(reason) }
+            if case .stale(let reason) = excerpt.status { throw excerpt.missing ? Failure.notFound(reason) : Failure.unavailable(reason) }
             throw Failure.unavailable("cannot resolve \(path)")
         }
         return excerpt

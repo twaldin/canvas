@@ -162,6 +162,7 @@ public final class ApiRouter {
             switch failure {
             case .unsupported(let message): return Self.error(id, Failure("unsupported", message))
             case .unavailable(let message): return Self.error(id, Failure("unavailable", message))
+            case .notFound(let message): return Self.error(id, Failure("not_found", message))
             case .invalidParams(let message): return Self.error(id, Failure("invalid_params", message))
             }
         } catch {
@@ -845,6 +846,7 @@ public final class ApiRouter {
         case BoardError.invalidParams(let message): return Failure("invalid_params", prefix + message)
         case ObjectMeasure.Failure.unsupported(let message): return Failure("unsupported", prefix + message)
         case ObjectMeasure.Failure.unavailable(let message): return Failure("unavailable", prefix + message)
+        case ObjectMeasure.Failure.notFound(let message): return Failure("not_found", prefix + message)
         case ObjectMeasure.Failure.invalidParams(let message): return Failure("invalid_params", prefix + message)
         default: return Failure("invalid_params", prefix + String(describing: error))
         }

@@ -5,10 +5,18 @@ import WebKit
 /// The WebKit side of the cmux subset: runs validated commands against a browser tile's page.
 /// Commands work whether or not the tile is on screen; a released page is rebuilt from its URL.
 extension BrowserTile {
-    func perform(_ command: CmuxBrowserCommand) async throws -> JSONValue {
+    /// `driver`: the terminal sending the command (`CmuxRouter.driver`), nil when unknown. A
+    /// command that can act on the page (navigate, click, type, run script) takes the credit
+    /// for what the page does next, as it starts and again as it ends (`NavigationCredit`).
+    func perform(_ command: CmuxBrowserCommand, driver: ObjectID?) async throws -> JSONValue {
         let webView = ensureWebView()
         await markDriven()
-        defer { scheduleSnapshotRefresh() }
+        let acts = Self.acts(command)
+        if acts { credit.agent(driver) }
+        defer {
+            if acts { credit.agent(driver) }
+            scheduleSnapshotRefresh()
+        }
         switch command {
         case .navigate(let url):
             load(url)
@@ -46,6 +54,14 @@ extension BrowserTile {
         case .wait(let condition, let timeoutMs):
             try await wait(for: condition, deadline: Date().addingTimeInterval(Double(timeoutMs) / 1000))
             return .object(location(ensureWebView()))
+        }
+    }
+
+    /// Whether a command can change the page's location or open a tile.
+    private static func acts(_ command: CmuxBrowserCommand) -> Bool {
+        switch command {
+        case .navigate, .back, .forward, .reload, .eval, .element, .type, .fill, .press: true
+        case .urlGet, .snapshot, .screenshot, .scroll, .wait: false
         }
     }
 

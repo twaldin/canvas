@@ -9,8 +9,9 @@ public final class CmuxRouter {
     public let registry: BoardRegistry
     /// When set, every connection must send `auth <password>` before any request.
     public let password: String?
-    /// Runs a validated command in a browser tile; the result gains `surface_id`.
-    public var perform: (@MainActor (Board, CanvasObject, CmuxBrowserCommand) async throws -> JSONValue)?
+    /// Runs a validated command in a browser tile; the result gains `surface_id`. The last
+    /// argument is the terminal driving it (`driver(of:on:connection:)`), nil when unknown.
+    public var perform: (@MainActor (Board, CanvasObject, CmuxBrowserCommand, ObjectID?) async throws -> JSONValue)?
 
     public init(registry: BoardRegistry, password: String? = nil) {
         self.registry = registry
@@ -72,11 +73,7 @@ public final class CmuxRouter {
         case "surface.list": return try list(params)
         case "surface.close":
             let (board, browser) = try browserSurface(params)
-            // omp sends only the browser's id: credit the terminal this connection opened splits
-            // from, else the terminal that opened this tile (omp closes only surfaces it opened).
-            let opener: ObjectID? = if case .agent(let tile) = browser.createdBy { tile } else { nil }
-            let caller = connection.caller.flatMap { board.objects[$0] != nil ? $0 : nil } ?? opener
-            try board.delete(browser.id, caller: caller)
+            try board.delete(browser.id, caller: driver(of: browser, on: board, connection: connection))
             return .object(["surface_id": .string(browser.id), "workspace_id": .string(board.id)])
         default:
             guard let command = try CmuxBrowserCommand.parse(method: method, params: params) else {
@@ -84,10 +81,18 @@ public final class CmuxRouter {
             }
             let (board, browser) = try browserSurface(params)
             guard let perform else { throw CmuxError("unavailable", "browser tiles are not available") }
-            var result = try await perform(board, browser, command).object ?? [:]
+            var result = try await perform(board, browser, command, driver(of: browser, on: board, connection: connection)).object ?? [:]
             result["surface_id"] = .string(browser.id)
             return .object(result)
         }
+    }
+
+    /// The terminal a command on `browser` comes from. omp sends only the browser's id: the
+    /// terminal this connection opened splits from, else the terminal that opened the tile
+    /// (omp drives and closes the surfaces it opened).
+    private func driver(of browser: CanvasObject, on board: Board, connection: SocketServer.Connection) -> ObjectID? {
+        let opener: ObjectID? = if case .agent(let tile) = browser.createdBy { tile } else { nil }
+        return connection.caller.flatMap { board.objects[$0] != nil ? $0 : nil } ?? opener
     }
 
     /// A new browser tile beside the calling terminal (`surface_id`), else in the viewport of

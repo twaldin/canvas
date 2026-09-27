@@ -318,6 +318,10 @@ final class CanvasView: NSScrollView {
             }
         }
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
+        (content as? BrowserTile)?.onOpenedTile = { [weak self] opened in
+            self?.reveal(opened)
+            self?.setSelection([opened])
+        }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
         tile.onFrameCommit = { [weak self] rect, scale in
             guard let self, let object = self.board.objects[id] else { return }
@@ -855,6 +859,18 @@ final class CanvasView: NSScrollView {
         setSelection([note.id])
     }
 
+    /// An empty browser tile at a document point (its top-left) moved to the nearest free spot,
+    /// with the address field focused for the user to type where to go.
+    func createBrowser(at point: NSPoint) {
+        let size = Board.defaultSize(.browser)
+        let frame = board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h))
+        let browser = board.create(type: .browser, props: .object(["url": .string("about:blank")]), frame: frame)
+        setSelection([browser.id])
+        DispatchQueue.main.async { [weak self] in
+            (self?.tiles[browser.id]?.content as? BrowserTile)?.focusAddress()
+        }
+    }
+
     // MARK: Context menus
 
     func objectMenu(for id: ObjectID) -> NSMenu {
@@ -933,6 +949,7 @@ final class CanvasView: NSScrollView {
         let menu = NSMenu()
         menu.addItem(MenuAction.item("New Terminal Here") { [weak self] in self?.createTerminal(at: point) })
         menu.addItem(MenuAction.item("New Note Here") { [weak self] in self?.createNote(at: point) })
+        menu.addItem(MenuAction.item("New Browser Here") { [weak self] in self?.createBrowser(at: point) })
         if enteredGroup != nil {
             menu.addItem(.separator())
             menu.addItem(MenuAction.item("Exit Group") { [weak self] in self?.exitGroup() })
@@ -1253,6 +1270,9 @@ final class CanvasView: NSScrollView {
         }
     }
 
+    /// The zoom the last scene pass outside a pinch saw.
+    private var settledMagnification: CGFloat = 0
+
     private func updateScene() {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("scene.pass", since: perfStart) }
@@ -1266,6 +1286,11 @@ final class CanvasView: NSScrollView {
             for tile in tiles.values {
                 tile.setLive(shouldBeLive(tile, scale: scale))
                 tile.zoomedOut = scale * tile.scale < Self.liveThreshold
+            }
+            // A web page's viewport follows its view's device-pixel size (`BrowserTile.webViewFrame`).
+            if scale != settledMagnification {
+                settledMagnification = scale
+                for tile in tiles.values { (tile.content as? BrowserTile)?.zoomChanged() }
             }
         }
         updateEdges()

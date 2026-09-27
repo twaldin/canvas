@@ -126,6 +126,9 @@ final class TileFrameView: NSView {
 
     func update(_ object: CanvasObject) {
         if title.isEmpty || object.type != .terminal { setTitle(Self.title(for: object)) }
+        // A file outside the board root shows a short label; the tooltip has its full path.
+        let path = object.type == .code ? object.props["path"]?.string : nil
+        titleLabel.toolTip = path.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
         z = object.z
         let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
         badge.isHidden = object.type != .terminal
@@ -161,7 +164,7 @@ final class TileFrameView: NSView {
         switch object.type {
         case .terminal: return props["title"]?.string ?? props["agent"]?["kind"]?.string ?? "Terminal"
         case .code:
-            let path = props["path"]?.string ?? "code"
+            let path = props["path"].flatMap(\.string).map(PathLabel.short) ?? "code"
             return props["followOf"] != nil ? "↳ \(path)" : path
         case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "Note"
         case .browser: return props["title"]?.string ?? props["url"]?.string ?? "Browser"

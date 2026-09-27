@@ -383,7 +383,7 @@ class FollowApi:
         self._call = call
 
     def report(self, *, tile: "Id", path: str, action: Literal["read", "edit", "write", "lsp", "search"], range: "LineRange" | None = None) -> dict[str, Any]:
-        """Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root and the terminal's cwd, scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file."""
+        """Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root, the terminal's cwd, and the other worktrees of their repositories (a worktree file keeps its absolute path and its own gutter), scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file."""
         params = {"tile": tile, "path": path, "range": range, "action": action}
         return self._call("follow.report", params, [])
 

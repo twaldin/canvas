@@ -414,7 +414,7 @@ struct NoteSourceTests {
 
     @Test func missingFileIsStale() async {
         let excerpt = await NoteSource.excerpt(for: NoteFence(info: "file=nope.ts#L1"), root: root, captured: nil)
-        #expect(excerpt.status == .stale("cannot read nope.ts"))
+        #expect(excerpt.status == .stale("no file nope.ts"))
     }
 
     @Test func proposalDiffAndInsertionLinesComeWithTheExcerpt() async throws {
@@ -504,7 +504,7 @@ struct NoteSourceTests {
         let live = await NoteSource.excerpt(for: NoteFence(info: "ts file=src/a.ts#L1-2"), root: root, captured: nil)
         #expect(live.lines == ["new 1", "new 2"])
         let bogus = await NoteSource.excerpt(for: NoteFence(info: "ts file=src/a.ts@0000000#L1"), root: root, captured: nil)
-        #expect(bogus.status == .stale("cannot read src/a.ts at 0000000"))
+        #expect(bogus.status == .stale("unknown commit 0000000"))
     }
 
     @Test func workspaceSymbolSearchFindsTheDeclaringFile() async throws {

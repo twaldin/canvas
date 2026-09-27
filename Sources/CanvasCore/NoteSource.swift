@@ -15,6 +15,9 @@ public struct NoteExcerpt: Equatable, Sendable {
     /// Lines in the file, so a proposal row appended past its range knows whether a real line
     /// follows it.
     public var fileLineCount = 0
+    /// Nothing to read: the file doesn't exist (on disk, or at the pinned commit), or the
+    /// pinned commit doesn't. A stale anchor on a file that is there is not missing.
+    public var missing = false
 
     public var isStale: Bool {
         if case .stale = status { true } else { false }
@@ -52,13 +55,22 @@ public enum NoteSource {
             return NoteExcerpt(path: "", range: nil, lines: captured ?? [], status: .stale("symbol \(fence.symbol ?? "") not found in the workspace"))
         }
         let text: String
+        func failed(_ reason: String, missing: Bool) -> NoteExcerpt {
+            NoteExcerpt(path: path, range: nil, lines: captured ?? [], status: .stale(reason), missing: missing)
+        }
         do {
             text = try await read(path, commit: fence.commit, root: root)
         } catch NoteSourceError.invalidRevision(let commit) {
-            return NoteExcerpt(path: path, range: nil, lines: captured ?? [], status: .stale("\"\(commit)\" is not a commit"))
+            return failed("\"\(commit)\" is not a commit", missing: false)
+        } catch NoteSourceError.unknownCommit(let commit) {
+            return failed("unknown commit \(commit)", missing: true)
+        } catch NoteSourceError.notAtCommit(let commit) {
+            return failed("\(path) does not exist at \(commit)", missing: true)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return failed("no file \(path)", missing: true)
         } catch {
             let place = fence.commit.map { "\(path) at \($0)" } ?? path
-            return NoteExcerpt(path: path, range: nil, lines: captured ?? [], status: .stale("cannot read \(place)"))
+            return failed("cannot read \(place)", missing: false)
         }
         let source = lines(of: text)
         let resolution = NoteAnchor.resolve(fence, in: source, captured: captured, body: body)
@@ -70,25 +82,41 @@ public enum NoteSource {
         return NoteExcerpt(path: path, range: range, lines: shown, status: resolution.status, diff: diff, fileLineCount: source.count)
     }
 
-    /// File text; a pinned commit reads through `git show <commit>:./<path>` so the path stays
-    /// relative to the board root rather than the repository root.
+    /// File text; a pinned commit reads through `git show` (see `showCommand`). A failed show
+    /// tells a commit that lacks the file from one that doesn't exist.
     static func read(_ path: String, commit: String?, root: URL) async throws -> String {
         let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
         guard let commit else { return try await offPool { Result { try String(contentsOf: url, encoding: .utf8) } }.get() }
-        let data = try await GitRunner.shared.run(try showArguments(path, commit: commit, root: root), in: root, maxOutput: maxOutput, timeout: timeout)
+        let show = try showCommand(path, commit: commit, root: root)
+        let data: Data
+        do {
+            data = try await GitRunner.shared.run(show.arguments, in: show.directory, maxOutput: maxOutput, timeout: timeout)
+        } catch GitError.failed {
+            let exists = try? await GitRunner.shared.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(commit)^{commit}"], in: show.directory, timeout: timeout)
+            throw exists == nil ? NoteSourceError.unknownCommit(commit) : NoteSourceError.notAtCommit(commit)
+        }
         guard let text = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         return text
     }
 
-    /// `git show --end-of-options <commit>:./<path>`. The revision comes from markdown anyone can
-    /// write, so it may not look like an option or carry its own `:path`.
-    static func showArguments(_ path: String, commit: String, root: URL) throws -> [String] {
+    /// `git show --end-of-options <commit>:./<path>` and where to run it. A path under the board
+    /// root runs in the root, relative to it (the root may be a subdirectory of the repository).
+    /// A file elsewhere, typically in another worktree of the repository, runs in its own
+    /// worktree with the path relative to that: every worktree shares the object database, but
+    /// only its own top level makes the path mean something. The revision comes from markdown
+    /// anyone can write, so it may not look like an option or carry its own `:path`.
+    static func showCommand(_ path: String, commit: String, root: URL) throws -> (arguments: [String], directory: URL) {
         guard isRevision(commit) else { throw NoteSourceError.invalidRevision(commit) }
         let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
         let rootPath = root.standardizedFileURL.path
         let absolute = url.standardizedFileURL.path
-        let relative = absolute.hasPrefix(rootPath + "/") ? String(absolute.dropFirst(rootPath.count + 1)) : path
-        return ["show", "--end-of-options", "\(commit):./\(relative)"]
+        if absolute.hasPrefix(rootPath + "/") {
+            return (["show", "--end-of-options", "\(commit):./\(absolute.dropFirst(rootPath.count + 1))"], root)
+        }
+        guard let worktree = GitWorktree.containing(absolute), let relative = worktree.relativePath(of: absolute) else {
+            throw NoteSourceError.notAtCommit(commit)
+        }
+        return (["show", "--end-of-options", "\(commit):./\(relative)"], URL(fileURLWithPath: worktree.toplevel))
     }
 
     static func isRevision(_ text: String) -> Bool {
@@ -129,4 +157,8 @@ public enum NoteSource {
 public enum NoteSourceError: Error, Equatable {
     /// A pinned fence's `commit=` doesn't look like a revision (e.g. it looks like an option).
     case invalidRevision(String)
+    /// The pinned commit doesn't exist in the file's repository.
+    case unknownCommit(String)
+    /// The commit exists but has no file at the path (or the path is in no repository).
+    case notAtCommit(String)
 }

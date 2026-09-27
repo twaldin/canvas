@@ -17,7 +17,8 @@ public enum MentionContext {
         switch target {
         case .code(_, let path, let lines, let side, let symbol, _):
             let range = lines.start == lines.end ? "\(lines.start)" : "\(lines.start)-\(lines.end)"
-            let location = side == DiffSide.old.rawValue ? "\(path):\(range) (old)" : "\(path):\(range)"
+            let file = PathLabel.short(path)
+            let location = side == DiffSide.old.rawValue ? "\(file):\(range) (old)" : "\(file):\(range)"
             return symbol.map { "\(location) \($0)" } ?? location
         case .dom(let object, _, let selector, let text):
             // What a person recognizes first; the CSS path last, where the chip truncates.
@@ -32,7 +33,8 @@ public enum MentionContext {
             return name ?? "\(objects.count) objects"
         case .object(let id):
             guard let object = board.objects[id] else { return id }
-            return "\(object.type.rawValue) \(clip(title(of: object), 28))"
+            let name = object.type == .code ? PathLabel.short(title(of: object)) : title(of: object)
+            return "\(object.type.rawValue) \(clip(name, 28))"
         }
     }
 

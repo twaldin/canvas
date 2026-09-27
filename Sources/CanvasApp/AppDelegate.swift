@@ -88,11 +88,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             NSLog("Canvas: cannot listen on \(AppPaths.apiSocket): \(error)")
         }
-        cmux.perform = { [weak self] board, object, command in
+        cmux.perform = { [weak self] board, object, command, driver in
             guard let tile = self?.controllers[board.id]?.canvas.tiles[object.id]?.content as? BrowserTile else {
                 throw CmuxError("unavailable", "browser surface \(object.id) is not open in a window")
             }
-            return try await tile.perform(command)
+            return try await tile.perform(command, driver: driver)
         }
         let cmux = cmux
         let cmuxServer = SocketServer(path: AppPaths.cmuxSocket, acceptsTextLines: true) { request, connection in

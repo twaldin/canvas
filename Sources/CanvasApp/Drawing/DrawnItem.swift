@@ -24,8 +24,14 @@ struct DrawnItem {
     let labelRect: NSRect?
     /// Ink's painted outline polygon (document coordinates), kept for hit testing.
     var inkOutline: [CGPoint] = []
+    /// A shape's label in the default ink resolved dark and light (`InkContrast`), built with the
+    /// item so a redraw only picks one.
+    var inkLabels: (dark: NSAttributedString, light: NSAttributedString)?
 
     var color: NSColor { DrawingStyle.color(colorName) }
+
+    /// Drawn in the default ink, which the canvas resolves against what lies under it.
+    var usesDefaultInk: Bool { DrawingStyle.isDefaultInk(colorName) }
 
     private var colorName: String? {
         switch kind {
@@ -84,8 +90,17 @@ struct DrawnItem {
         if let stroke { bounds = bounds.union(stroke.boundingBoxOfPath.insetBy(dx: -2, dy: -2)) }
         if let fill { bounds = bounds.union(fill.boundingBoxOfPath.insetBy(dx: -2, dy: -2)) }
         if let labelRect { bounds = bounds.union(labelRect) }
-        return DrawnItem(object: object, kind: .shape(spec), frame: frame, bounds: bounds, stroke: stroke, fill: fill, fillAlpha: fillAlpha,
-                         label: label, labelRect: labelRect, inkOutline: inkOutline)
+        var item = DrawnItem(object: object, kind: .shape(spec), frame: frame, bounds: bounds, stroke: stroke, fill: fill, fillAlpha: fillAlpha,
+                             label: label, labelRect: labelRect, inkOutline: inkOutline)
+        if let label, DrawingStyle.isDefaultInk(spec.color) {
+            func recolored(_ ink: InkContrast.Ink) -> NSAttributedString {
+                let copy = NSMutableAttributedString(attributedString: label)
+                copy.addAttribute(.foregroundColor, value: DrawingStyle.color(ink), range: NSRange(location: 0, length: copy.length))
+                return copy
+            }
+            item.inkLabels = (recolored(.dark), recolored(.light))
+        }
+        return item
     }
 
     /// An arrow along a routed polyline. The label sits beside the route, on the `labelSide`
@@ -140,8 +155,10 @@ struct DrawnItem {
 
     // MARK: Drawing and hit testing
 
-    func draw(in context: CGContext) {
-        let color = self.color
+    /// `ink`: the default ink resolved against what lies under the item (nil: the item's own
+    /// color, for explicit colors). An arrow's caption keeps its canvas-colored chip and text.
+    func draw(in context: CGContext, ink: InkContrast.Ink? = nil) {
+        let color = ink.map(DrawingStyle.color) ?? self.color
         if let fill {
             context.addPath(fill)
             context.setFillColor(color.withAlphaComponent(fillAlpha).cgColor)
@@ -159,7 +176,8 @@ struct DrawnItem {
                 context.addPath(CGPath(roundedRect: labelRect, cornerWidth: 4, cornerHeight: 4, transform: nil))
                 context.fillPath()
             }
-            label.draw(with: labelRect, options: [.usesLineFragmentOrigin])
+            let shown = ink.flatMap { ink in inkLabels.map { ink == .dark ? $0.dark : $0.light } } ?? label
+            shown.draw(with: labelRect, options: [.usesLineFragmentOrigin])
         }
     }
 

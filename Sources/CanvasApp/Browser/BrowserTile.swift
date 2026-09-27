@@ -32,6 +32,8 @@ final class BrowserTile: NSView, TileContent {
     let board: Board
     private(set) var object: CanvasObject
     private(set) var webView: WKWebView?
+    /// The loaded page's background luminance (`PageSurface`), kept while the page is detached.
+    fileprivate var pageLuminance: Double?
     private let chrome = BrowserChrome()
     /// Covers the web view while `view.snapshot` renders (WebKit draws outside `cacheDisplay`).
     private let cover = NSImageView()
@@ -728,6 +730,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         commitURL()
         scheduleSnapshotRefresh()
         checkReady()
+        probeSurface(webView)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -893,5 +896,21 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         isEditing = false
         onEscape?()
         return true
+    }
+}
+
+extension BrowserTile {
+    var surfaceLuminance: Double? { pageLuminance }
+
+    /// Reads the loaded page's background (a transparent page is WebKit's white, or its dark
+    /// default for a page that asks for dark colors) for drawings over the tile.
+    fileprivate func probeSurface(_ webView: WKWebView) {
+        Task { @MainActor [weak self] in
+            guard let probe = await PageSurface.probe(webView), let self else { return }
+            let luminance = probe.luminance ?? (probe.darkDefault ? 0.01 : 1)
+            guard luminance != self.pageLuminance else { return }
+            self.pageLuminance = luminance
+            NotificationCenter.default.post(name: .tileSurfaceChanged, object: self)
+        }
     }
 }

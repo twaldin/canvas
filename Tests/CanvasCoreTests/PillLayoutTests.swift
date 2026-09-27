@@ -25,7 +25,7 @@ struct PillLayoutTests {
 
     @Test func aBubbleSitsAboveItsObjectWhenThatCoversNothing() {
         let tile = CGRect(x: 200, y: 300, width: 640, height: 400)
-        let placed = PillLayout.place(markers: [marker("a", tile)], edges: [], tiles: [("a", tile)], clear: clear)
+        let placed = PillLayout.place(markers: [marker("a", tile)], edges: [], tiles: [.init(id: "a", rect: tile)], clear: clear)
         #expect(placed.bubbles["a"] == CGRect(x: 190, y: 256, width: 300, height: 28), "above the ring, left-aligned with it")
     }
 
@@ -34,7 +34,7 @@ struct PillLayoutTests {
         // sit on the upper one's last rows.
         let upper = CGRect(x: 200, y: 100, width: 400, height: 300)
         let lower = CGRect(x: 200, y: 412, width: 400, height: 300)
-        let placed = PillLayout.place(markers: [marker("lower", lower, header: 9)], edges: [], tiles: [("upper", upper), ("lower", lower)], clear: clear)
+        let placed = PillLayout.place(markers: [marker("lower", lower, header: 9)], edges: [], tiles: [.init(id: "upper", rect: upper), .init(id: "lower", rect: lower)], clear: clear)
         #expect(placed.bubbles["lower"] == CGRect(x: 616, y: 402, width: 300, height: 28), "right of the ring, level with its top")
     }
 
@@ -45,12 +45,12 @@ struct PillLayoutTests {
         let browser = CGRect(x: 60, y: 90, width: 420, height: 800)
         let terminal = CGRect(x: 500, y: 90, width: 850, height: 560)
         let header = CGRect(x: browser.minX, y: browser.minY, width: browser.width, height: 58)
-        let placed = PillLayout.place(markers: [marker("b", browser, header: 58)], edges: [], tiles: [("b", browser), ("t", terminal)], clear: clear)
+        let placed = PillLayout.place(markers: [marker("b", browser, header: 58)], edges: [], tiles: [.init(id: "b", rect: browser), .init(id: "t", rect: terminal)], clear: clear)
         let rect = try! #require(placed.bubbles["b"])
         #expect(!rect.intersects(header), "\(rect) covers the tile's controls")
         #expect(clear.contains(rect))
 
-        let alone = PillLayout.place(markers: [marker("b", browser, header: 58)], edges: [], tiles: [("b", browser)], clear: clear)
+        let alone = PillLayout.place(markers: [marker("b", browser, header: 58)], edges: [], tiles: [.init(id: "b", rect: browser)], clear: clear)
         #expect(alone.bubbles["b"] == CGRect(x: 496, y: 80, width: 300, height: 28), "with room beside it, outside the tile")
     }
 
@@ -60,7 +60,7 @@ struct PillLayoutTests {
         let right = CGRect(x: 800, y: 400, width: 300, height: 260)
         let below = CGRect(x: 400, y: 680, width: 380, height: 150)
         let markers = [marker("left", left, width: 480), marker("right", right, width: 480), marker("below", below, width: 480)]
-        let tiles = [("left", left), ("right", right), ("below", below)].map { (id: $0.0, rect: $0.1) }
+        let tiles = [("left", left), ("right", right), ("below", below)].map { PillLayout.Tile(id: $0.0, rect: $0.1) }
         let placed = PillLayout.place(markers: markers, edges: [], tiles: tiles, clear: clear)
         #expect(placed.bubbles.count == 3)
         assertApart(Array(placed.bubbles.values))
@@ -72,7 +72,7 @@ struct PillLayoutTests {
         let high = CGRect(x: 100, y: 20, width: 500, height: 300)
         let low = CGRect(x: 700, y: 700, width: 500, height: 400)
         let placed = PillLayout.place(markers: [marker("high", high), marker("low", low)], edges: [.init(id: "off", target: CGPoint(x: 700, y: 3000), size: CGSize(width: 200, height: 32))],
-                                      tiles: [(id: "high", rect: high), (id: "low", rect: low)], clear: clear)
+                                      tiles: [.init(id: "high", rect: high), .init(id: "low", rect: low)], clear: clear)
         for rect in Array(placed.bubbles.values) + Array(placed.edges.values) { #expect(clear.contains(rect), "\(rect) is under the chrome") }
         #expect(placed.edges["off"]?.maxY == clear.maxY, "an object below the view: its pill on the bottom edge")
     }
@@ -82,7 +82,7 @@ struct PillLayoutTests {
         // bubble (y 436…464) sits on the right edge where their pills would go.
         let tile = CGRect(x: 1050, y: 480, width: 330, height: 200)
         let edges = (0..<3).map { PillLayout.Edge(id: "e\($0)", target: CGPoint(x: 5000, y: 440 + CGFloat($0) * 4), size: CGSize(width: 220, height: 32)) }
-        let placed = PillLayout.place(markers: [marker("m", tile, width: 300)], edges: edges, tiles: [(id: "m", rect: tile)], clear: clear)
+        let placed = PillLayout.place(markers: [marker("m", tile, width: 300)], edges: edges, tiles: [.init(id: "m", rect: tile)], clear: clear)
         let all = Array(placed.bubbles.values) + Array(placed.edges.values)
         #expect(all.count == 4)
         assertApart(all)
@@ -100,7 +100,7 @@ struct PillLayoutTests {
         let tile = CGRect(x: 100, y: 470, width: 304, height: 212)
         let neighbour = CGRect(x: 414, y: 470, width: 238, height: 212)
         let note = CGRect(x: 1002, y: 327, width: 133, height: 43)
-        let tiles = [("t", terminal), ("tile", tile), ("n", neighbour), ("note", note)].map { (id: $0.0, rect: $0.1) }
+        let tiles = [("t", terminal), ("tile", tile), ("n", neighbour), ("note", note)].map { PillLayout.Tile(id: $0.0, rect: $0.1) }
         let placed = PillLayout.place(markers: [marker("tile", tile, width: 324, header: 12), marker("note", note, width: 160)], edges: [], tiles: tiles, clear: clear)
         #expect(placed.bubbles["tile"] == CGRect(x: 90, y: 698, width: 324, height: 28), "below the ring, left-aligned with it")
     }
@@ -112,11 +112,8 @@ struct PillLayoutTests {
         let terminal = CGRect(x: 330, y: 100, width: 400, height: 400)
         let note = CGRect(x: 100, y: 512, width: 133, height: 43)
         let neighbour = CGRect(x: 240, y: 512, width: 460, height: 300)
-        let tiles = [("t", terminal), ("note", note), ("n", neighbour)].map { (id: $0.0, rect: $0.1) }
+        let tiles = [("t", terminal), ("note", note), ("n", neighbour)].map { PillLayout.Tile(id: $0.0, rect: $0.1) }
         let noteMarker = marker("note", note, width: 300, header: 12)
-
-        let unblocked = PillLayout.place(markers: [noteMarker], edges: [], tiles: tiles, clear: clear)
-        #expect(try! #require(unblocked.bubbles["note"]).intersects(terminal), "an ordinary tile: a sliver of it is the cheapest to hide")
 
         var blocked = marker("t", terminal, width: 240)
         blocked.blocked = true
@@ -136,7 +133,7 @@ struct PillLayoutTests {
         var blocked = marker("t", terminal, width: 240)
         blocked.blocked = true
         let placed = PillLayout.place(markers: [blocked], edges: [.init(id: "note", target: CGPoint(x: 720, y: 2000), size: CGSize(width: 200, height: 32))],
-                                      tiles: [(id: "t", rect: terminal)], clear: clear)
+                                      tiles: [.init(id: "t", rect: terminal)], clear: clear)
         let pill = try! #require(placed.edges["note"])
         #expect(pill.maxY == clear.maxY, "still on the bottom edge")
         #expect(!pill.intersects(terminal.insetBy(dx: -10, dy: -10)), "\(pill) covers the blocked terminal")
@@ -147,5 +144,67 @@ struct PillLayoutTests {
         #expect(PillLayout.bubbleWidth(natural: 900, ringWidth: 60) == PillLayout.minBubbleWidth, "a tiny object still gets a readable bubble")
         #expect(PillLayout.bubbleWidth(natural: 900, ringWidth: 2000) == PillLayout.maxBubbleWidth)
         #expect(PillLayout.bubbleWidth(natural: 120, ringWidth: 2000) == 120, "a short message keeps its own width")
+    }
+
+    @Test func aBubbleSlidesAlongASideRatherThanCoverATilesTitleBar() {
+        // Warp study 4 / JetBrains 6: every side of the marked tile has a neighbour. Above, the
+        // bubble would hide the upper tile's last rows; right of the ring, level with its top,
+        // the right-hand tile's title bar; below, the lower tile's. Slid up along the right side
+        // it covers nothing.
+        let tile = CGRect(x: 300, y: 300, width: 500, height: 300)
+        let above = CGRect(x: 300, y: 100, width: 500, height: 190)
+        let right = CGRect(x: 826, y: 300, width: 500, height: 400)
+        let below = CGRect(x: 300, y: 630, width: 500, height: 200)
+        let left = CGRect(x: 0, y: 290, width: 280, height: 400)
+        let tiles = [("m", tile), ("above", above), ("right", right), ("below", below), ("left", left)].map { PillLayout.Tile(id: $0.0, rect: $0.1, header: 26) }
+        let placed = PillLayout.place(markers: [marker("m", tile)], edges: [], tiles: tiles, clear: clear)
+        let rect = try! #require(placed.bubbles["m"])
+        for other in tiles where other.id != "m" { #expect(!rect.intersects(other.rect), "\(rect) covers \(other.id)") }
+        #expect(rect.insetBy(dx: -40, dy: -40).intersects(tile.insetBy(dx: -10, dy: -10)), "\(rect) strays from its tile")
+    }
+
+    @Test func noBubbleCoversTheTileWithTheKeyboard() {
+        // A marked note in the view's top-left corner, a wide terminal beside it (20 pt away)
+        // and a tile below it: every spot beside the note hides some of the terminal, the least
+        // a sliver of its left edge. While the user types in the terminal, the bubble goes past
+        // it instead.
+        let note = CGRect(x: 20, y: 120, width: 200, height: 60)
+        let terminal = CGRect(x: 240, y: 72, width: 760, height: 770)
+        let below = CGRect(x: 20, y: 200, width: 200, height: 642)
+        let tiles = [PillLayout.Tile(id: "note", rect: note, header: 12), .init(id: "t", rect: terminal, header: 26), .init(id: "b", rect: below, header: 26)]
+        let noteMarker = marker("note", note, width: 300, header: 12)
+
+        let unfocused = PillLayout.place(markers: [noteMarker], edges: [], tiles: tiles, clear: clear)
+        #expect(try! #require(unfocused.bubbles["note"]).intersects(terminal), "an ordinary tile: a sliver of it is the cheapest to hide")
+
+        let focused = PillLayout.place(markers: [noteMarker], edges: [], tiles: tiles, focused: "t", clear: clear)
+        let bubble = try! #require(focused.bubbles["note"])
+        #expect(!bubble.intersects(terminal), "\(bubble) covers the focused terminal")
+        #expect(clear.contains(bubble))
+    }
+
+    @Test func anEdgePillNeverCoversTheLineBeingTyped() {
+        // Warp study 4: a focused shell fills the left of the view, its prompt on the row at
+        // y 800…820; the marked object offscreen to the left is level with that row.
+        let terminal = CGRect(x: 0, y: 72, width: 900, height: 770)
+        let caret = CGRect(x: 0, y: 800, width: 900, height: 20)
+        let placed = PillLayout.place(markers: [], edges: [.init(id: "off", target: CGPoint(x: -3000, y: 810), size: CGSize(width: 150, height: 24))],
+                                      tiles: [.init(id: "t", rect: terminal, header: 26)], focused: "t", caret: caret, clear: clear)
+        let pill = try! #require(placed.edges["off"])
+        #expect(pill.minX == clear.minX + PillLayout.edgeMargin, "still on the left edge")
+        #expect(!pill.intersects(caret), "\(pill) covers the prompt")
+    }
+
+    @Test func anEdgePillSlidesOffATilesTitleBar() {
+        // Auditor F4: a code tile reaching past the right edge, its title bar where the pill for
+        // an object far right would sit.
+        let tile = CGRect(x: 1000, y: 440, width: 600, height: 300)
+        let titleBar = CGRect(x: 1000, y: 440, width: 600, height: 26)
+        let placed = PillLayout.place(markers: [], edges: [.init(id: "off", target: CGPoint(x: 5000, y: 440), size: CGSize(width: 150, height: 24))],
+                                      tiles: [.init(id: "code", rect: tile, header: 26)], clear: clear)
+        let pill = try! #require(placed.edges["off"])
+        #expect(pill.maxX == clear.maxX - PillLayout.edgeMargin, "still on the right edge")
+        #expect(!pill.intersects(titleBar), "\(pill) covers the title bar")
+        #expect(abs(pill.midY - 454) < 60, "\(pill) strays from where its object is")
     }
 }

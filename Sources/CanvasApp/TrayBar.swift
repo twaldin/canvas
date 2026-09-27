@@ -24,6 +24,7 @@ final class TrayBar: NSVisualEffectView {
         target.textColor = .secondaryLabelColor
         target.font = .systemFont(ofSize: 12, weight: .medium)
         target.alignment = .right
+        target.toolTip = CanvasBasics.trayTarget
         for view in [stack, target] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)

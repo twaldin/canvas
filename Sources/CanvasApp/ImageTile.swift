@@ -15,6 +15,9 @@ final class ImageTile: NSView, TileContent {
     private var live = true
     /// The loaded picture and its natural size (pixels for bitmaps, points for SVG and PDF).
     private var picture: (image: NSImage, size: CGSize)?
+    /// The picture's mean relative luminance, nil when it is mostly transparent (the tile's
+    /// background shows): what drawings in the default ink over it contrast with.
+    private(set) var surfaceLuminance: Double?
     /// Why there is no picture: the file is missing or unreadable.
     private var failure: String?
     private var loaded = false
@@ -63,9 +66,37 @@ final class ImageTile: NSView, TileContent {
                 self.picture = nil
                 self.failure = path.isEmpty ? "no image path" : FileManager.default.fileExists(atPath: file.path) ? "not a readable image: \(path)" : "image not found: \(path)"
             }
+            let luminance = self.picture.flatMap { Self.meanLuminance($0.image) }
+            if luminance != self.surfaceLuminance {
+                self.surfaceLuminance = luminance
+                NotificationCenter.default.post(name: .tileSurfaceChanged, object: self)
+            }
             self.needsDisplay = true
         }
         watch()
+    }
+
+    /// Mean relative luminance of an image drawn into 8×8 pixels; nil when most of it is
+    /// transparent.
+    private static func meanLuminance(_ image: NSImage) -> Double? {
+        let side = 8
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        guard drawn else { return nil }
+        var red = 0.0, green = 0.0, blue = 0.0, alpha = 0.0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            red += Double(pixels[index]); green += Double(pixels[index + 1]); blue += Double(pixels[index + 2]); alpha += Double(pixels[index + 3])
+        }
+        guard alpha / Double(side * side * 255) >= 0.5 else { return nil }
+        // Premultiplied: divide by the coverage for the opaque parts' color.
+        return InkContrast.luminance(red: red / alpha, green: green / alpha, blue: blue / alpha)
     }
 
     /// One FSEvents stream on the directory holding the file while live (the nearest existing

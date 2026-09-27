@@ -18,6 +18,11 @@ enum AttentionStyle {
     func text(_ message: String?) -> NSString {
         (message?.isEmpty == false ? message! : self == .blocked ? "Needs you" : "Look here") as NSString
     }
+    /// A bubble's tooltip: its whole message when truncated, then what the bubble is.
+    func toolTip(_ message: String?, truncated: Bool) -> String {
+        let about = self == .blocked ? CanvasBasics.blockedBubble : CanvasBasics.marker
+        return truncated ? "\(text(message))\n\n\(about)" : about
+    }
 }
 
 /// Something on screen that needs the user: a pulsing ring around the object and a bubble beside
@@ -25,7 +30,10 @@ enum AttentionStyle {
 /// lifecycle message, e.g. "approve Bash?", until it stops being blocked). Lives in window space
 /// above the canvas (`AttentionLayer`) and is re-placed on every pan and pinch step, so it keeps
 /// its on-screen size at any zoom and follows the zoom smoothly while everything on the canvas
-/// scales. Only the bubble takes clicks.
+/// scales. Only the bubble takes clicks. The view spans its layer and draws nothing itself: the
+/// ring and the bubble are views of their own, each sized to what it draws (the ring clipped to
+/// the window), so moving one never leaves a stale copy of the other behind (a bubble clamped
+/// at the window's edge while its object's ring reached past it once showed twice).
 @MainActor
 final class AttentionMarker: NSView {
     static let inset: CGFloat = 10
@@ -39,19 +47,17 @@ final class AttentionMarker: NSView {
         didSet {
             guard message != oldValue else { return }
             naturalWidth = Self.naturalWidth(message, style: style)
-            needsDisplay = true
+            bubble.text = style.text(message)
             // New news: draw the eye again.
             ring.pulse()
         }
     }
     var onClick: (() -> Void)?
-    /// The ring and bubble in this view's coordinates, from `place(around:bubble:)`.
-    private var ringRect = NSRect.zero
-    private var bubbleRect = NSRect.zero
     /// The bubble's width with its whole message; `PillLayout.bubbleWidth` caps it.
     private(set) var naturalWidth: CGFloat
     /// The ring, in its own view so it can pulse while the bubble's text stays fully opaque.
     private let ring: MarkerRing
+    private let bubble: MarkerBubble
 
     init(objectID: ObjectID, message: String?, style: AttentionStyle = .marker) {
         self.objectID = objectID
@@ -59,9 +65,11 @@ final class AttentionMarker: NSView {
         self.style = style
         naturalWidth = Self.naturalWidth(message, style: style)
         ring = MarkerRing(color: style.color)
+        bubble = MarkerBubble(style: style, text: style.text(message))
         super.init(frame: .zero)
-        wantsLayer = true
         addSubview(ring)
+        addSubview(bubble)
+        bubble.onClick = { [weak self] in self?.onClick?() }
         ring.pulse()
     }
 
@@ -69,7 +77,7 @@ final class AttentionMarker: NSView {
 
     nonisolated override var isFlipped: Bool { true }
 
-    private static let bubbleAttributes: [NSAttributedString.Key: Any] = {
+    fileprivate static let bubbleAttributes: [NSAttributedString.Key: Any] = {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
         return [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
@@ -80,46 +88,67 @@ final class AttentionMarker: NSView {
 
     /// Places the marker: the ring hugs `target` (the object's rect in the superview's
     /// coordinates) at a fixed on-screen inset, and the bubble goes where `PillLayout` put it
-    /// (`bubble`, same coordinates). Panning only moves the view; a zoom step resizes the ring
-    /// and redraws it.
-    func place(around target: NSRect, bubble: NSRect) {
-        let ring = target.insetBy(dx: -Self.inset, dy: -Self.inset)
-        let frame = ring.union(bubble).insetBy(dx: -Self.stroke / 2, dy: -Self.stroke / 2)
-        let ringRect = ring.offsetBy(dx: -frame.minX, dy: -frame.minY)
-        let bubbleRect = bubble.offsetBy(dx: -frame.minX, dy: -frame.minY)
-        if ringRect != self.ringRect || bubbleRect != self.bubbleRect || frame.size != self.frame.size { needsDisplay = true }
-        if bubbleRect != self.bubbleRect {
-            // A truncated message reads whole in the bubble's tooltip.
-            removeAllToolTips()
-            if bubble.width < naturalWidth { addToolTip(bubbleRect, owner: style.text(message), userData: nil) }
+    /// (`bubble`, same coordinates). The view spans its superview, so both are placed in its
+    /// coordinates; the ring's view covers only the part of the ring near the window.
+    func place(around target: NSRect, bubble rect: NSRect) {
+        guard let superview else { return }
+        if frame != superview.bounds { frame = superview.bounds }
+        let ringRect = target.insetBy(dx: -Self.inset, dy: -Self.inset)
+        let pad = Self.stroke
+        let shown = ringRect.insetBy(dx: -pad, dy: -pad).intersection(bounds.insetBy(dx: -pad, dy: -pad))
+        let ringFrame = shown.isNull ? .zero : shown.integral
+        if ring.frame != ringFrame { ring.frame = ringFrame }
+        ring.rect = ringRect.offsetBy(dx: -ringFrame.minX, dy: -ringFrame.minY)
+        if bubble.frame != rect {
+            bubble.frame = rect
+            // A truncated message reads whole in the bubble's tooltip, with what the bubble is.
+            let tip = style.toolTip(message, truncated: rect.width < naturalWidth)
+            if bubble.toolTip != tip { bubble.toolTip = tip }
         }
-        self.ringRect = ringRect
-        self.bubbleRect = bubbleRect
-        if self.frame != frame { self.frame = frame }
-        self.ring.frame = bounds
-        self.ring.rect = ringRect
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let superview else { return nil }
-        return bubbleRect.contains(convert(point, from: superview)) ? self : nil
+        return bubble.frame.contains(convert(point, from: superview)) ? bubble : nil
     }
+}
+
+/// A marker's bubble: the message on a pill of the marker's color. It redraws only when its
+/// text or size changes; moving it moves its layer.
+@MainActor
+private final class MarkerBubble: NSView {
+    let style: AttentionStyle
+    var text: NSString {
+        didSet { if text != oldValue { needsDisplay = true } }
+    }
+    var onClick: (() -> Void)?
+
+    init(style: AttentionStyle, text: NSString) {
+        self.style = style
+        self.text = text
+        super.init(frame: .zero)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .duringViewResize
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    nonisolated override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("draw.AttentionMarker", since: perfStart) }
-        let pill = NSBezierPath(roundedRect: bubbleRect, xRadius: bubbleRect.height / 2, yRadius: bubbleRect.height / 2)
+        let pill = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
         style.color.setFill()
         pill.fill()
-        var textX = bubbleRect.minX + 12
+        var textX = bounds.minX + 12
         if let glyph = style.glyph {
-            glyph.draw(in: NSRect(x: textX, y: bubbleRect.midY - glyph.size.height / 2, width: glyph.size.width, height: glyph.size.height),
+            glyph.draw(in: NSRect(x: textX, y: bounds.midY - glyph.size.height / 2, width: glyph.size.width, height: glyph.size.height),
                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             textX += AttentionStyle.glyphWidth
         }
-        let text = style.text(message)
-        let size = text.size(withAttributes: Self.bubbleAttributes)
-        text.draw(in: NSRect(x: textX, y: bubbleRect.midY - size.height / 2, width: bubbleRect.maxX - 12 - textX, height: size.height), withAttributes: Self.bubbleAttributes)
+        let size = text.size(withAttributes: AttentionMarker.bubbleAttributes)
+        text.draw(in: NSRect(x: textX, y: bounds.midY - size.height / 2, width: bounds.maxX - 12 - textX, height: size.height), withAttributes: AttentionMarker.bubbleAttributes)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -140,6 +169,9 @@ private final class MarkerRing: NSView {
         self.color = color
         super.init(frame: .zero)
         wantsLayer = true
+        // Unclipping at the window's edge resizes the view with the ring where it was: redraw,
+        // never stretch the old image.
+        layerContentsRedrawPolicy = .duringViewResize
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -220,7 +252,8 @@ final class AttentionEdgeView: NSView {
             chevron.objectID = pointer.id
             chevron.message = pointer.message
             chevron.style = pointer.style
-            let tip = pointer.style.text(pointer.message) as String
+            // The pill shows the start of its message: the whole of it, and where the pill leads.
+            let tip = "\(pointer.style.text(pointer.message))\n\n\(pointer.style == .blocked ? "An agent waiting for you" : "Something to look at") is off screen that way: click to go there."
             if chevron.toolTip != tip { chevron.toolTip = tip }
             chevron.onClick = { [weak self] in self?.onReveal?(pointer.id) }
             chevron.angle = atan2(pointer.target.y - pointer.frame.midY, pointer.target.x - pointer.frame.midX)
@@ -230,6 +263,8 @@ final class AttentionEdgeView: NSView {
     }
 }
 
+/// An edge pill: compact (an arrow toward its object and the start of its message, the whole
+/// message in its tooltip), so it hides little of the tiles along the view's edge.
 @MainActor
 private final class EdgeChevron: NSView {
     var objectID: ObjectID = ""
@@ -242,15 +277,17 @@ private final class EdgeChevron: NSView {
     private static let attributes: [NSAttributedString.Key: Any] = {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingTail
-        return [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
+        return [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
     }()
+    /// The most of its message a pill shows.
+    private static let maxTextWidth: CGFloat = 120
     private var text: NSString { style.text(message) }
 
     nonisolated override var isFlipped: Bool { true }
 
     static func size(for message: String?, style: AttentionStyle) -> NSSize {
-        let width = min(style.text(message).size(withAttributes: attributes).width, 240)
-        return NSSize(width: (44 + (style.glyph == nil ? 0 : AttentionStyle.glyphWidth) + width + 12).rounded(.up), height: 32)
+        let width = min(style.text(message).size(withAttributes: attributes).width, maxTextWidth)
+        return NSSize(width: (28 + (style.glyph == nil ? 0 : AttentionStyle.glyphWidth) + width + 10).rounded(.up), height: 24)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -260,27 +297,27 @@ private final class EdgeChevron: NSView {
         style.color.setFill()
         pill.fill()
         // Chevron glyph rotated toward the target.
-        let center = NSPoint(x: 18, y: bounds.midY)
+        let center = NSPoint(x: 14, y: bounds.midY)
         var transform = AffineTransform(translationByX: center.x, byY: center.y)
         transform.rotate(byRadians: angle)
         let arrow = NSBezierPath()
-        arrow.move(to: NSPoint(x: -4, y: -7))
-        arrow.line(to: NSPoint(x: 5, y: 0))
-        arrow.line(to: NSPoint(x: -4, y: 7))
+        arrow.move(to: NSPoint(x: -3, y: -5))
+        arrow.line(to: NSPoint(x: 4, y: 0))
+        arrow.line(to: NSPoint(x: -3, y: 5))
         arrow.transform(using: transform)
-        arrow.lineWidth = 3
+        arrow.lineWidth = 2.5
         arrow.lineCapStyle = .round
         arrow.lineJoinStyle = .round
         NSColor.white.setStroke()
         arrow.stroke()
-        var textX: CGFloat = 36
+        var textX: CGFloat = 28
         if let glyph = style.glyph {
             glyph.draw(in: NSRect(x: textX, y: bounds.midY - glyph.size.height / 2, width: glyph.size.width, height: glyph.size.height),
                        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             textX += AttentionStyle.glyphWidth
         }
         let size = text.size(withAttributes: Self.attributes)
-        text.draw(in: NSRect(x: textX, y: bounds.midY - size.height / 2, width: bounds.width - 12 - textX, height: size.height), withAttributes: Self.attributes)
+        text.draw(in: NSRect(x: textX, y: bounds.midY - size.height / 2, width: bounds.width - 10 - textX, height: size.height), withAttributes: Self.attributes)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

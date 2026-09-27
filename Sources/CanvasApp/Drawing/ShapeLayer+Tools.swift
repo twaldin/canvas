@@ -275,7 +275,7 @@ extension ShapeLayer {
     }
 
     func drawGesture(in context: CGContext) {
-        let ink = DrawingStyle.color(color)
+        let ink = inkColor(color, over: gestureBounds)
         switch gesture {
         case .box(let tool, let start, let current):
             let rect = Self.rect(start, current)

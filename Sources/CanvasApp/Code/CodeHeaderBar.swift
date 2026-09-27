@@ -4,6 +4,9 @@ import CanvasCore
 /// Controls above a code tile: the diff base (merge-base | HEAD), previous/next change, the
 /// status line and any warning, and for follow tiles "N new ▸" (while the user holds the tile),
 /// Pin, and a strip of recent locations. An optional caption strip sits under the first row.
+/// A file without changes against its base shows only a quiet "no changes" there until the
+/// pointer is over the header, which brings the base picker back (a board of read-only diagram
+/// tiles repeated "merge-base ⌄ ⌃⌄ no changes · …" on every one).
 /// The rightmost `reservedTrailing` points stay free for tile-level buttons the language
 /// service adds. Heights follow `CodeMetrics`.
 @MainActor
@@ -42,6 +45,12 @@ final class CodeHeaderBar: NSView {
     private var diffs = true
     private var follow = false
     private var missed = 0
+    private var warned = false
+    /// The pointer is over the header: a quiet header shows its controls.
+    private var hovering = false
+    private var hoverArea: NSTrackingArea?
+    /// Nothing to step through or warn about: the base picker and arrows wait for a hover.
+    private var quiet: Bool { diffs && !changes && !warned && !hovering }
     private var history: [Location] = []
     /// Per history entry: the agent edited or wrote it there (a pencil on its chip).
     private var edited: [Bool] = []
@@ -161,6 +170,7 @@ final class CodeHeaderBar: NSView {
         self.changes = changes
         self.follow = follow
         self.missed = missed
+        warned = warning != nil
         refreshControls()
     }
 
@@ -201,12 +211,17 @@ final class CodeHeaderBar: NSView {
             controls.base.addItems(withTitles: baseChoices)
         }
         controls.base.selectItem(at: baseSelected)
-        controls.status.attributedStringValue = statusLine
+        controls.status.attributedStringValue = quiet ? Self.quietLine(statusLine.string) : statusLine
         controls.status.toolTip = statusLine.string
         controls.previous.isEnabled = changes
         controls.next.isEnabled = changes
-        for control in [controls.base, controls.previous, controls.next] as [NSView] { control.isHidden = !diffs }
+        for control in [controls.base, controls.previous, controls.next] as [NSView] { control.isHidden = !diffs || quiet }
         controls.pin.isHidden = !follow
+        // A follow tile explains itself where it differs from a code tile.
+        let followTip = follow ? CanvasBasics.followTile : nil
+        if toolTip != followTip { toolTip = followTip }
+        let historyTip = follow ? CanvasBasics.followHistory : nil
+        if controls.strip.toolTip != historyTip { controls.strip.toolTip = historyTip }
         controls.pending.isHidden = missed == 0
         controls.pending.title = "\(missed) new ▸"
         if controls.captionShown != captionText {
@@ -257,7 +272,7 @@ final class CodeHeaderBar: NSView {
             view.frame = NSRect(x: x, y: (middle - height / 2).rounded(), width: width, height: height)
             x += width + 2
         }
-        if diffs {
+        if diffs && !quiet {
             place(controls.base, width: controls.base.fittingSize.width)
             place(controls.previous, width: 20)
             place(controls.next, width: 20)
@@ -306,6 +321,31 @@ final class CodeHeaderBar: NSView {
         bounds.intersection(dirtyRect).fill()
         NSColor.separatorColor.setFill()
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+    }
+
+    /// The status's first part ("no changes"), dimmed.
+    private static func quietLine(_ status: String) -> NSAttributedString {
+        let head = status.components(separatedBy: " · ").first ?? status
+        return NSAttributedString(string: head, attributes: [.foregroundColor: NSColor.tertiaryLabelColor, .font: NSFont.systemFont(ofSize: 11)])
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: NSRect(x: 0, y: 0, width: bounds.width, height: CodeMetrics.headerHeight),
+                                  options: [.mouseEnteredAndExited, .activeInActiveApp], owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        refreshControls()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        refreshControls()
     }
 
     /// Readies the header to be drawn offscreen (`cacheDisplay`) for cards and renders: its own

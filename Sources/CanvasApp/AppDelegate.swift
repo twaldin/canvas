@@ -269,6 +269,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openDefinitionInNewTile(_ sender: Any?) { keyController?.openDefinitionInNewTile(sender) }
     @objc func findReferences(_ sender: Any?) { keyController?.findReferences(sender) }
     @objc func showOutline(_ sender: Any?) { keyController?.showOutline(sender) }
+    @objc func copyAsImage(_ sender: Any?) { keyController?.copyAsImage(sender) }
+    @objc func saveAsPNG(_ sender: Any?) { keyController?.saveAsPNG(sender) }
+    @objc func saveHTMLTile(_ sender: Any?) { keyController?.saveHTMLTile(sender) }
+    @objc func openHTMLTileInBrowser(_ sender: Any?) { keyController?.openHTMLTileInBrowser(sender) }
 
     /// The tab bar's + button: open another board as a tab.
     @objc func newWindowForTab(_ sender: Any?) { openBoard(sender) }
@@ -320,6 +324,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("New HTML Tile", #selector(newHtmlTile(_:)), "H", [.command, .shift]),
             item("Review Changes", #selector(reviewChanges(_:)), "R", [.command, .shift]),
             .separator(),
+            item("Export Selection as PNG…", #selector(saveAsPNG(_:)), "E", [.command, .shift]),
+            item("Save HTML Tile as HTML…", #selector(saveHTMLTile(_:)), ""),
+            item("Open HTML Tile in Browser", #selector(openHTMLTileInBrowser(_:)), ""),
+            .separator(),
             // The board window takes ⌘W first to close the selection or the focused terminal
             // (CanvasWindowController.handleKeyEquivalent); with neither, the tab or window closes.
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
@@ -329,6 +337,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Redo", #selector(redoCanvas(_:)), "Z", [.command, .shift]),
             .separator(),
             item("Copy", #selector(NSText.copy(_:)), "c"),
+            item("Copy as Image", #selector(copyAsImage(_:)), "C", [.command, .shift]),
             item("Paste", #selector(NSText.paste(_:)), "v"),
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
             item("Delete Selection", #selector(deleteSelection(_:)), "\u{8}"),

@@ -450,6 +450,18 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.copyIDs()
     }
 
+    @objc func copyAsImage(_ sender: Any?) { canvas.copySelectionAsImage() }
+    @objc func saveAsPNG(_ sender: Any?) { canvas.saveSelectionAsPNG() }
+    @objc func saveHTMLTile(_ sender: Any?) { selectedHTMLTile.map(canvas.saveHTML) }
+    @objc func openHTMLTileInBrowser(_ sender: Any?) { selectedHTMLTile.map(canvas.openHTMLInBrowser) }
+
+    /// The one selected object, when it is an HTML tile (Save as HTML, Open in Browser).
+    private var selectedHTMLTile: ObjectID? {
+        let selection = canvas.selection
+        guard selection.count == 1, let id = selection.first, board.objects[id]?.type == .html else { return nil }
+        return id
+    }
+
     @objc func enterGroup(_ sender: Any?) {
         guard let group = canvas.selectedGroup else { return }
         canvas.enter(group: group)
@@ -478,6 +490,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return !selection.isEmpty
         case #selector(goToNextNeedsYou(_:)): return canvas.somethingNeedsYou
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
+        case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
+        case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selectedHTMLTile != nil
         case #selector(toggleFollowFiles(_:)):
             guard let terminal = canvas.followTerminal else {
                 item.state = .off

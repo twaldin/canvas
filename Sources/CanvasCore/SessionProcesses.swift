@@ -73,28 +73,53 @@ public struct SessionProcesses: Equatable, Sendable {
     /// "Closing it ends omp and 1 background process (next dev)."
     public static func closingText(_ sessions: [SessionProcesses?]) -> String {
         let one = sessions.count == 1
-        var parts: [String] = []
+        let tally = Tally(sessions)
+        var parts = tally.programs
+        if tally.idle > 0 { parts.append(one ? "its shell" : tally.idle == 1 ? "1 idle shell" : "\(tally.idle) idle shells") }
+        if let background = tally.backgroundPart { parts.append(background) }
+        let subject = one ? "it" : "them"
+        if tally.unknown > 0 { parts.append(one ? "anything running in it" : "anything running in the other\(tally.unknown == 1 ? "" : "s")") }
+        if one, tally.idle == 1, tally.background.isEmpty { return "Closing \(subject) ends its shell; nothing else is running in it." }
+        return "Closing \(subject) ends \(list(parts))."
+    }
+
+    /// What keeps running when a board's tab or window closes with these sessions:
+    /// "omp, codex and 1 idle shell keep running", "omp keeps running".
+    public static func keepRunningText(_ sessions: [SessionProcesses?]) -> String {
+        let tally = Tally(sessions)
+        var parts = tally.programs
+        if tally.idle > 0 { parts.append(tally.idle == 1 ? "1 idle shell" : "\(tally.idle) idle shells") }
+        if let background = tally.backgroundPart { parts.append(background) }
+        if tally.unknown > 0 { parts.append(tally.unknown == 1 ? "1 terminal" : "\(tally.unknown) terminals") }
+        let count = tally.programs.count + tally.idle + tally.background.count + tally.unknown
+        return "\(list(parts)) \(count == 1 ? "keeps" : "keep") running"
+    }
+
+    /// The sessions' foreground programs, idle shells, background processes, and unknowns.
+    private struct Tally {
+        var programs: [String] = []
         var idle = 0, unknown = 0
         var background: [String] = []
-        for session in sessions {
-            guard let session else {
-                unknown += 1
-                continue
+
+        init(_ sessions: [SessionProcesses?]) {
+            for session in sessions {
+                guard let session else {
+                    unknown += 1
+                    continue
+                }
+                if let program = session.program { programs.append(program) } else { idle += 1 }
+                background += session.background
             }
-            if let program = session.program { parts.append(program) } else { idle += 1 }
-            background += session.background
         }
-        if idle > 0 { parts.append(one ? "its shell" : idle == 1 ? "1 idle shell" : "\(idle) idle shells") }
-        if !background.isEmpty {
+
+        /// "2 background processes (next dev, vite)", the first three names.
+        var backgroundPart: String? {
+            guard !background.isEmpty else { return nil }
             var names: [String] = []
             for name in background where !names.contains(name) { names.append(name) }
             let shown = names.prefix(3).joined(separator: ", ") + (names.count > 3 ? ", …" : "")
-            parts.append("\(background.count) background process\(background.count == 1 ? "" : "es") (\(shown))")
+            return "\(background.count) background process\(background.count == 1 ? "" : "es") (\(shown))"
         }
-        let subject = one ? "it" : "them"
-        if unknown > 0 { parts.append(one ? "anything running in it" : "anything running in the other\(unknown == 1 ? "" : "s")") }
-        if one, idle == 1, background.isEmpty { return "Closing \(subject) ends its shell; nothing else is running in it." }
-        return "Closing \(subject) ends \(list(parts))."
     }
 
     private static func list(_ parts: [String]) -> String {

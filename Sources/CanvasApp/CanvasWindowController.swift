@@ -296,6 +296,32 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// The board's tab or window closed (not app quit, which closes nothing).
     var onClose: (() -> Void)?
 
+    /// Closing the tab or window ends nothing: its terminals' sessions keep running (agents go
+    /// on working, headless) and come back when the folder is opened again. With any terminal on
+    /// the board a sheet says so first, naming what keeps running: Keep Running (Return), End
+    /// Sessions (⌘⌫: its terminals close as in the close-terminal sheet, then the tab), Cancel (Esc).
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        let terminals = canvas.tiles.values.compactMap { $0.content as? TerminalTile }.sorted { $0.objectID < $1.objectID }
+        guard !terminals.isEmpty else { return true }
+        let place = (sender.tabbedWindows?.count ?? 1) > 1 ? "tab" : "window"
+        let alert = NSAlert()
+        alert.messageText = "Close “\(board.root.lastPathComponent)” and keep \(terminals.count == 1 ? "its terminal" : "its terminals") running?"
+        alert.informativeText = "\(SessionProcesses.keepRunningText(terminals.map { $0.sessionProcesses() })) in the background after the \(place) closes; opening this folder again (File › Open Board…) shows the board as you left it. End Sessions closes the board's terminals first."
+        alert.addButton(withTitle: "Keep Running")
+        let end = alert.addButton(withTitle: "End Sessions")
+        end.keyEquivalent = "\u{8}"
+        end.keyEquivalentModifierMask = .command
+        end.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        let ids = terminals.map(\.objectID)
+        alert.beginSheetModal(for: sender) { [weak self, weak sender] response in
+            guard let self, let sender, response != .alertThirdButtonReturn else { return }
+            if response == .alertSecondButtonReturn { self.canvas.remove(ids.filter { self.board.objects[$0] != nil }) }
+            sender.close()
+        }
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         onClose?()
     }

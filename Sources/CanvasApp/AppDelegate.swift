@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.resume()
         terminationSignal = termination
         DevInput.install()
+        // Canvas's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
+        Housekeeping.pruneAtLaunch()
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }
         registry.onEvent = { [weak self] board, event in
             self?.controllers[board.id]?.apply(event)
@@ -314,6 +316,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openHTMLTileInBrowser(_ sender: Any?) { keyController?.openHTMLTileInBrowser(sender) }
     @objc func showWebInspector(_ sender: Any?) { keyController?.showWebInspector(sender) }
     @objc func snapshotPage(_ sender: Any?) { keyController?.snapshotPage(sender) }
+    @objc func clearBrowsingData(_ sender: Any?) {
+        guard let controller = keyController, let window = controller.window else { return }
+        BrowserProfile.confirmClear(in: window) { [weak controller] in controller?.canvas.showNotice("Browsing data cleared") }
+    }
 
     /// The tab bar's + button: open another board as a tab.
     @objc func newWindowForTab(_ sender: Any?) { openBoard(sender) }
@@ -353,7 +359,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.keyEquivalentModifierMask = modifiers
             return item
         }
-        submenu("Canvas", [item("Quit Canvas", #selector(NSApplication.terminate(_:)), "q")])
+        submenu("Canvas", [
+            // Every browser tile's cookies, storage and caches (`BrowserProfile`), after a sheet.
+            item("Clear Browsing Data…", #selector(clearBrowsingData(_:)), ""),
+            .separator(),
+            item("Quit Canvas", #selector(NSApplication.terminate(_:)), "q"),
+        ])
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
             item("New Note", #selector(newNote(_:)), "n"),

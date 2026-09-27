@@ -35,6 +35,22 @@ A native macOS infinite canvas for coding agents. Agents run unmodified in real 
 
 Requires macOS 14 or later on Apple silicon.
 
+Quitting Canvas, or closing a board's tab, doesn't stop your terminals: agents and shells keep running in their zmx sessions and are back when you open the folder again. Closing a terminal tile ends its session. To see or end them without the app: `zmx list` (Canvas's are named `canvas-obj_…`), `zmx kill <name>`.
+
+## Uninstall
+
+1. End the terminal sessions first, or they keep running: `zmx list`, then `zmx kill <name>` for each `canvas-obj_…` session.
+2. Delete `/Applications/Canvas.app`.
+3. Delete `~/Library/Application Support/Canvas/` (boards, including archived ones, `open-boards.json`).
+4. Delete the browser profile: `~/Library/WebKit/net.waldin.canvas/`, `~/Library/Caches/net.waldin.canvas/`, `~/Library/HTTPStorages/net.waldin.canvas*` (or first use Canvas › Clear Browsing Data…).
+5. `defaults delete net.waldin.canvas` (export folder, lasso setting, window frames).
+6. Delete `$(getconf DARWIN_USER_CACHE_DIR)net.waldin.canvas` and, in `$(getconf DARWIN_USER_TEMP_DIR)`, `net.waldin.canvas`, `canvas-renders`, `canvas-exports`, `canvas-gemini`.
+7. Delete `~/.local/state/zmx/logs/canvas-obj_*.log`.
+8. Remove the omp extension symlink `~/.omp/agent/extensions/canvas.ts`, and `~/.claude/plugins/data/canvas-inline` if you used Claude Code.
+9. Optional, the agents' own: Codex's `trust_level` entries for your repos in `~/.codex/config.toml`, and `~/.canvas/compositions` if you or your agents wrote any.
+
+Canvas edits no shell, agent or Ghostty config: Codex's hooks are a per-session override, not written to `~/.codex`. [docs/contracts.md](docs/contracts.md) "On-disk locations" lists every path.
+
 ## Build from source
 
 The Command Line Tools are enough; Xcode is not required.

@@ -319,6 +319,10 @@ public enum PageCapture {
         responses.records.push(record);
         if (responses.records.length > OMP_RECORDS) responses.records.splice(0, responses.records.length - OMP_RECORDS);
       };
+      // A request that got no response (a resource that failed to load, a fetch that never got
+      // an answer) is a record too, status 0, so omp's `requests()` lists what the page log does.
+      const rememberFailure = (method, resourceType, url, reason, started) => remember({ ts: started, method, resourceType, url,
+        status: 0, statusText: reason, headers: {}, requestHeaders: {}, body: '', durationMs: Math.max(0, now() - started) });
 
       // MARK: Text
       const preview = (value, depth) => {
@@ -411,6 +415,7 @@ public enum PageCapture {
               if (!url) return;
               const tag = target.tagName.toLowerCase();
               push({ kind: 'request', level: 'error', text: `${tag} ${url} failed to load`, url, resource: tag });
+              rememberFailure('GET', tag, url, 'failed to load', now());
               return;
             }
             const error = event.error;
@@ -492,6 +497,7 @@ public enum PageCapture {
             try {
               if (!error || error.name !== 'AbortError') {
                 push({ kind: 'request', level: 'error', text: `${method} ${url} failed: ${error && error.message || error}`, method, url, resource: 'fetch' });
+                rememberFailure(method, 'fetch', url, String(error && error.message || error), started);
               }
             } catch {}
             throw error;

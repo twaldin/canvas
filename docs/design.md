@@ -93,7 +93,7 @@ Getting lost on a big board must always have a one-step way back.
   - Proposed change: same anchor plus `propose`, rendered as a diff against the real range.
   - Free-written: plain fence, highlighted; `file:line` links resolve, identifiers get best-effort workspace-symbol navigation.
   - Anchors prefer symbols, re-find line anchors by content, show a stale badge when lost, and can be pinned to a commit.
-- **HTML**: sandboxed WKWebView with a throwaway data store, network blocked by default (content rule list, per-tile allowlist), no native bridge except a validated message channel for tile state. Approvals never render inside generated tiles. Every tile preloads a locally served kit: Tailwind (themed to the app), Mermaid, and canvas web components (`<canvas-code>`, `<canvas-link>`, `<canvas-decisions>`, `<canvas-compare>`).
+- **HTML**: sandboxed WKWebView with a throwaway data store, network blocked by default (content rule list, per-tile allowlist), no native bridge except a validated message channel for tile state. Approvals never render inside generated tiles. Every tile preloads a locally served kit: Tailwind (themed to the app), Mermaid, and canvas web components (`<canvas-code>`, `<canvas-link>`, `<canvas-decisions>`, `<canvas-compare>`). `size: "fit"` lays the page out offscreen at the tile's width and takes its document height (up to 4000 pt), and `layout.check` reports a page taller than its tile.
 
 ### Agent layer
 

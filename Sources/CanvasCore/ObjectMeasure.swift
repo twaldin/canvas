@@ -4,8 +4,8 @@ import Markdown
 /// Intrinsic sizes: the full object frame (tile title bar included) that shows an object's
 /// content without scrolling or clipping. Code follows `CodeMetrics`, notes lay out the note
 /// tile's own `NoteRenderer` output with TextKit 2 at a width, text shapes use the drawing
-/// layer's font. Other types (HTML, browser, terminal, ink, arrows, groups) have no intrinsic
-/// size.
+/// layer's font, HTML pages are laid out by the app's WebKit (`html`). Other types (browser,
+/// terminal, ink, arrows, groups) have no intrinsic size.
 @MainActor
 public enum ObjectMeasure {
     public enum Failure: Error, Equatable {
@@ -23,6 +23,13 @@ public enum ObjectMeasure {
     public static var defaultNoteWidth: CGFloat { Board.defaultSize(.note).w }
     /// Room around the label of a rect (an ellipse scales it to its inscribed box).
     static let shapeLabelPadding = CGSize(width: 16, height: 12)
+    /// Tallest frame `size: "fit"` gives an HTML tile, in canvas points (title bar included); a
+    /// longer page scrolls inside it, and `layout.check` reports the rest as overflow.
+    public static let maxHtmlFitHeight: Double = 4000
+    /// The app's WebKit measurer: the document extent (scroll width and height, CSS px = points)
+    /// of an HTML tile's page with these props laid out `width` points wide, `<canvas-code>`
+    /// excerpts read against `root`. Nil in CanvasCore alone, where HTML is `unsupported`.
+    public static var html: ((_ props: JSONValue, _ width: CGFloat, _ root: URL) async throws -> CGSize)?
 
     /// `width` wraps notes and text (a note defaults to a new note's width; text defaults to
     /// one unwrapped line per paragraph); for code it is the widest the frame may get (default
@@ -50,10 +57,26 @@ public enum ObjectMeasure {
         case .shape:
             guard let spec = ShapeSpec(props) else { throw Failure.invalidParams("shape props need a kind") }
             return try shape(spec, width: width.map { CGFloat($0) })
-        case .html, .browser, .terminal, .arrow, .group:
+        case .html:
+            // `width` wide (what the page wraps at), as tall as the document up to the cap.
+            let extent = try await htmlExtent(props, width: width, root: root)
+            return CGSize(width: CGFloat(width ?? Board.defaultSize(.html).w), height: min(extent.height, CGFloat(maxHtmlFitHeight)))
+        case .browser, .terminal, .arrow, .group:
             throw Failure.unsupported("\(type.rawValue) objects have no intrinsic size")
         }
         return CGSize(width: size.width * scale, height: size.height * scale)
+    }
+
+    /// The frame an HTML tile needs to show its whole document with the page laid out `width`
+    /// canvas points wide (default a new HTML tile's width) at `width / scale`: as wide as that or
+    /// the document's scroll width, as tall as the title bar plus the document, uncapped.
+    public static func htmlExtent(_ props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
+        guard let html else { throw Failure.unsupported("html objects are measured by the app's WebKit") }
+        let scale = CGFloat(ObjectScale.of(props))
+        let natural = CGFloat(width ?? Board.defaultSize(.html).w) / scale
+        let document = try await html(props, natural, root)
+        return CGSize(width: max(natural, document.width.rounded(.up)) * scale,
+                      height: (CGFloat(RenderMath.tileTitleHeight) + document.height.rounded(.up)) * scale)
     }
 
     /// The lines a code tile's `range` (or symbol, or whole file) resolves to, read from disk.

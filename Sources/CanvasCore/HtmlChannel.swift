@@ -6,8 +6,9 @@ import Foundation
 public enum HtmlChannel {
     public static let maxStateBytes = 256 * 1024
 
+    /// `tile` need only be on `board` for state messages: a page measured before its tile exists
+    /// (`HtmlTile.measure`) reads excerpts against the board's root.
     public static func handle(_ message: HtmlMessage, tile: ObjectID, board: Board) async throws -> JSONValue {
-        let object = try board.object(tile)
         switch message {
         case .excerpt(let path, let lines, let symbol):
             let file = try HtmlKit.boardFile(path, root: board.root)
@@ -29,11 +30,10 @@ public enum HtmlChannel {
             return try openCode(path: file.relative, range: range, symbol: symbol, beside: tile, on: board)
 
         case .getState(let key):
-            let state = object.props["state"] ?? .object([:])
-            return .object(["value": key.map { state[$0] ?? .null } ?? state])
+            return state(try board.object(tile).props, key: key)
 
         case .setState(let key, let value):
-            var state = object.props["state"]?.object ?? [:]
+            var state = try board.object(tile).props["state"]?.object ?? [:]
             if value == .null { state.removeValue(forKey: key) } else { state[key] = value }
             let size = (try? JSONEncoder().encode(state).count) ?? Int.max
             guard size <= maxStateBytes else { throw HtmlError.tooLarge(size, limit: maxStateBytes) }
@@ -43,6 +43,12 @@ public enum HtmlChannel {
         case .rendered:
             return .object([:])
         }
+    }
+
+    /// The `state.get` reply for a tile with `props`: one key's value, or the whole state.
+    public static func state(_ props: JSONValue, key: String?) -> JSONValue {
+        let state = props["state"] ?? .object([:])
+        return .object(["value": key.map { state[$0] ?? .null } ?? state])
     }
 
     /// File reads run off the main actor and stop early when the requesting page goes away.

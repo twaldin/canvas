@@ -108,10 +108,53 @@ final class LayoutApiTests {
     }
 
     @Test func unmeasurableContentSaysWhy() async throws {
-        let html = try await call("object.measure", .object(["type": "html", "props": .object(["html": "<p>hi</p>"])]))
-        #expect(html["error"]?["code"] == .string("unsupported"))
+        let browser = try await call("object.measure", .object(["type": "browser", "props": .object(["url": "https://example.com"])]))
+        #expect(browser["error"]?["code"] == .string("unsupported"))
         let past = try await call("object.measure", .object(["type": "code", "props": Self.code(150, 160)]))
         #expect(past["error"]?["code"] == .string("unavailable"))
+    }
+
+    /// HTML is laid out by the app's WebKit; this stand-in reflows like a page of prose, whose
+    /// height is inversely proportional to its width (`html` characters × 1000 / width).
+    static func proseHeight(_ props: JSONValue, _ width: CGFloat) -> CGFloat {
+        CGFloat(props["html"]?.string?.count ?? 0) * 1000 / width
+    }
+
+    @Test func htmlFitsItsPageHeightAtItsWidthUpToTheCapAndCheckReportsOverflow() async throws {
+        ObjectMeasure.html = { props, width, _ in CGSize(width: width, height: Self.proseHeight(props, width)) }
+        defer { ObjectMeasure.html = nil }
+        let page: JSONValue = .object(["html": .string(String(repeating: "x", count: 320))])
+        let title = CGFloat(RenderMath.tileTitleHeight)
+
+        // Default width: a new HTML tile's; the height is the title bar plus the document.
+        let measured = Self.size(try await result("object.measure", .object(["type": "html", "props": page])))
+        #expect(measured == CGSize(width: 640, height: title + 500))
+        let narrow = Self.size(try await result("object.measure", .object(["type": "html", "props": page, "width": 400])))
+        #expect(narrow == CGSize(width: 400, height: title + 800))
+
+        // Fit on create at a width, and at a scale (laid out at width ÷ scale, drawn scale times).
+        let fitted = try await result("object.create", .object(["type": "html", "props": page, "frame": .object(["x": 0, "y": 0, "w": 400]), "size": "fit"]))
+        let id = try #require(fitted["object"]?["id"]?.string)
+        #expect(try #require(fitted["object"]?["frame"]).decode(Frame.self) == Frame(x: 0, y: 0, w: 400, h: Double(title + 800)))
+        var scaledProps = page.object ?? [:]
+        scaledProps["scale"] = 2
+        let scaled = Self.size(try await result("object.measure", .object(["type": "html", "props": .object(scaledProps), "width": 800])))
+        #expect(scaled == CGSize(width: 800, height: (title + 800) * 2))
+
+        // A re-fit keeps the tile's width; a page taller than the cap stops at it.
+        let longer = try await result("object.update", .object(["id": .string(id), "props": .object(["html": .string(String(repeating: "x", count: 640))]), "size": "fit"]))
+        #expect(try #require(longer["object"]?["frame"]).decode(Frame.self).h == Double(title + 1600))
+        let huge = try await result("object.update", .object(["id": .string(id), "props": .object(["html": .string(String(repeating: "x", count: 4000))]), "size": "fit"]))
+        #expect(try #require(huge["object"]?["frame"]).decode(Frame.self) == Frame(x: 0, y: 0, w: 400, h: ObjectMeasure.maxHtmlFitHeight))
+
+        // layout.check measures pages at their frame's width: the capped tile overflows, a fitted one doesn't.
+        let fits = try await result("object.create", .object(["type": "html", "props": page, "frame": .object(["x": 1000, "y": 0, "w": 400]), "size": "fit"]))
+        let short = board.create(type: .html, props: page, frame: Frame(x: 2000, y: 0, w: 640, h: 300))
+        let report = try await result("layout.check", .object([:]))
+        let overflow = Dictionary(uniqueKeysWithValues: (report["overflow"]?.array ?? []).compactMap { entry in entry["id"]?.string.map { ($0, entry) } })
+        #expect(overflow[id]?["y"] == .number(Double(title) + 10_000 - ObjectMeasure.maxHtmlFitHeight))
+        #expect(overflow[short.id]?["y"] == .number(Double(title) + 500 - 300))
+        #expect(overflow[try #require(fits["object"]?["id"]?.string)] == nil)
     }
 
     @Test func noteHeightFollowsItsWrapWidthAndResolvedFences() async throws {

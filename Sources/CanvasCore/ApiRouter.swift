@@ -841,8 +841,19 @@ public final class ApiRouter {
         let rows = await Self.lineRows(of: lineBound.filter { excerpts[$0] != nil }.compactMap { objects[$0] }, excerpts: excerpts, root: root)
         let measurable = objects.values
             .filter { scope?.contains($0.id) ?? true }
-            .filter { $0.type == .code && $0.props["followOf"]?.string == nil || $0.type == .note || ($0.type == .shape && ShapeSpec($0.props)?.kind == .text) }
+            .filter { $0.type == .code && $0.props["followOf"]?.string == nil || $0.type == .note || ($0.type == .shape && ShapeSpec($0.props)?.kind == .text)
+                || ($0.type == .html && ObjectMeasure.html != nil) }
             .sorted { $0.id < $1.id }
+        // HTML: each page laid out at its frame's width by the app's WebKit, concurrently.
+        let htmlSizes = await withTaskGroup(of: (ObjectID, CGSize?).self) { group in
+            for object in measurable where object.type == .html {
+                let props = object.props, width = object.frame.w
+                group.addTask { (object.id, try? await ObjectMeasure.htmlExtent(props, width: width, root: root)) }
+            }
+            var sizes: [ObjectID: CGSize] = [:]
+            for await (id, size) in group { sizes[id] = size }
+            return sizes
+        }
         // Code: the rows' own extent, wrapped at the frame's (natural) width, so only the height
         // can overflow, scaled like the tile; a caption too long for the frame is `truncated`.
         let code = measurable.filter { $0.type == .code }
@@ -871,6 +882,9 @@ public final class ApiRouter {
                 if let missing = captionMissing[object.id], missing >= 1 {
                     truncated.append(.object(["id": .string(object.id), "what": .string("caption"), "x": .number(missing.rounded(.up))]))
                 }
+            } else if object.type == .html {
+                guard let measured = htmlSizes[object.id] else { continue }
+                size = measured
             } else {
                 // Notes and text wrap at the frame's width.
                 guard let measured = try? await ObjectMeasure.size(type: object.type, props: object.props, width: current.w, root: root) else { continue }

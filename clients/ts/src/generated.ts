@@ -151,7 +151,7 @@ export type GroupProps = {
 export type FitFrame = {
   x: number;
   y: number;
-  /** wrap width for notes and text; for code the widest the tile may get (default 960), past which long lines wrap */
+  /** wrap width for notes and text; for code the widest the tile may get (default 960), past which long lines wrap; for html the width the page lays out at (default 640) */
   w?: number;
 };
 
@@ -381,7 +381,7 @@ export type ObjectCreateParams = {
   type: ObjectType;
   props: Record<string, unknown>;
   frame?: Frame | FitFrame;
-  /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note or text, or to cap a code tile's width) */
+  /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
   size?: "fit";
   parent?: Id;
   /** calling tile id; clients fill from CANVAS_TILE_ID */
@@ -414,7 +414,7 @@ export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
   props: Record<string, unknown>;
-  /** wrap width for notes and text; maximum width for code (default 960) */
+  /** wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640) */
   width?: number;
   caller?: Id;
 };
@@ -763,13 +763,13 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
-    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text. Other types are `unsupported`. */
+    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest). Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;
@@ -783,7 +783,7 @@ export interface CanvasApi {
     translate(params: LayoutTranslateParams): Promise<LayoutTranslateResult>;
     /** Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups. */
     grid(params: LayoutGridParams): Promise<LayoutGridResult>;
-    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text whose content doesn't fit its frame (points missing in x and y; code: its range's rows), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated. */
+    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text/html whose content doesn't fit its frame (points missing in x and y; code: its range's rows; html: its page's document laid out at the frame's width), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated. */
     check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
   tray: {

@@ -43,8 +43,9 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   Code: exactly `range` (the tile shows no extra context and no neighbouring lines), plus 20 pt when `caption` is set, and at least as wide as the whole caption;
   `width` is the maximum width (default 960 pt, about 120 columns):
   a range whose longest line fits stays exactly that narrow, longer lines soft-wrap and the height counts their extra rows, and a caption wider than that truncates.
-  Notes: the rendered markdown, live fences resolved, at `width` (default 280). Text shapes: at `width`, or one unwrapped line per paragraph. HTML and browser tiles are `unsupported`.
-- `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note or text, or to cap a code tile's width);
+  Notes: the rendered markdown, live fences resolved, at `width` (default 280). Text shapes: at `width`, or one unwrapped line per paragraph.
+  HTML: the page laid out `width` wide (default 640) once it has rendered (Mermaid, `<canvas-code>` excerpts), as tall as its document, at most 4000 pt (a longer page scrolls in the tile). Browser tiles are `unsupported`.
+- `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note, text, or an HTML page, or to cap a code tile's width);
   an update re-measures at the object's current position and width (code: at `frame.w` or the 960 pt default, never its current width, so a re-fit can widen it).
 - `layout.place(id, near, side=right|left|above|below, gap=40, align=start|center|end)` and `layout.stack(ids, direction=row|column, gap=40, wrapAt?, align?, origin?)` move objects in one undo step and return the new frames.
   Groups move with their members, so `layout.stack([lane1, lane2], direction="column")` lays out lanes; bound arrows follow.
@@ -68,7 +69,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
 - `layout.check(ids? | rect?)` → `overlaps` (pairs),
   `arrowCrossings` (`{arrow, crosses}`: routes through tiles, text, or filled shapes other than the arrow's own ends),
   `labelOverlaps` (`{arrow, overlaps}`: the arrow's label, placed as drawn, lies on these tiles, text, or filled shapes, its own ends included, or on these arrows' labels; widen the gap or shorten the label),
-  `overflow` (`{id, x, y}`: points of code/note/text content beyond the frame; for code, its range's rows and longest line),
+  `overflow` (`{id, x, y}`: points of code/note/text/HTML content beyond the frame; for code, its range's rows and longest line; for HTML, its page laid out at the frame's width),
   `truncated` (`{id, what: "caption", x}`: a code caption the frame cuts off, `x` points short).
   A group and its members, and an unfilled rect around what it contains, are not overlaps. Follow tiles are fixed-size viewers and never overflow or truncate.
   It judges what is drawn (whole tile frames, routes and line-bound ends as drawn), so an empty report means a clean picture. Run it after a layout pass instead of screenshots.

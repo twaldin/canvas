@@ -32,9 +32,11 @@ final class HtmlTile: NSView, TileContent {
     /// pans it into view.
     var onOpenedCode: ((ObjectID) -> Void)?
 
-    init(object: CanvasObject, board: Board) {
+    /// `live: false` builds no web view (a page measured offscreen, `measure`).
+    init(object: CanvasObject, board: Board, live: Bool = true) {
         self.object = object
         self.board = board
+        self.live = live
         super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
@@ -139,8 +141,11 @@ final class HtmlTile: NSView, TileContent {
         if rendering {
             switch message {
             case .rendered:
-                renderSettled?()
+                offscreenSettled = true
                 return .object([:])
+            case .getState(let key):
+                // The page being rendered or measured is this object's (which may not be on the board yet).
+                return HtmlChannel.state(object.props, key: key)
             case .openCode, .setState:
                 throw HtmlError.malformed("not available while the page renders offscreen")
             default:
@@ -224,9 +229,10 @@ final class HtmlTile: NSView, TileContent {
 
     // MARK: Offscreen render
 
-    /// The page `render(_:)` loaded; the channel accepts its messages (read-only).
+    /// The page `render(_:)` or `measure` loaded; the channel accepts its messages (read-only).
     private(set) var renderWebView: WKWebView?
-    private var renderSettled: (() -> Void)?
+    /// The offscreen page reported `view.rendered` since this was last reset.
+    private var offscreenSettled = false
     private var renderBusy = false
 
     /// Loads the page in a separate web view parked in the stage (never the user's live page,
@@ -235,50 +241,24 @@ final class HtmlTile: NSView, TileContent {
     /// its scroll position, or with `full` the whole page height.
     func render(_ request: TileRenderRequest) async -> TileRender {
         guard let window else { return .placeholder(request, "the tile has no window") }
-        while renderBusy {
-            guard !Task.isCancelled else { return .placeholder(request, "timed out waiting for another render of this tile") }
-            try? await Task.sleep(for: .milliseconds(50))
+        guard await beginOffscreen() else { return .placeholder(request, "timed out waiting for another render of this tile") }
+        defer { endOffscreen() }
+        let content: CGSize
+        switch await loadOffscreen(size: request.size, appearance: request.appearance) {
+        case .success(let extent): content = CGSize(width: max(request.size.width, extent.width), height: extent.height)
+        case .failure(.rules(let reason)): return TileRender(image: nil, contentSize: request.size, state: .failed, reason: reason)
+        case .failure(.unsettled(let reason)): return .placeholder(request, reason)
         }
-        renderBusy = true
-        defer {
-            renderBusy = false
-            renderSettled = nil
-            renderWebView?.stopLoading()
-            renderWebView?.configuration.userContentController.removeAllScriptMessageHandlers()
-            renderWebView?.removeFromSuperview()
-            renderWebView = nil
-        }
-        let rules: WKContentRuleList
-        do {
-            rules = try await HtmlRuleLists.list(allowing: allowNetwork)
-        } catch {
-            return TileRender(image: nil, contentSize: request.size, state: .failed, reason: "network rules failed to compile: \(error)")
-        }
-        let web = HtmlWebView(frame: NSRect(origin: .zero, size: request.size), configuration: configuration(rules: rules))
-        web.navigationDelegate = self
-        web.uiDelegate = self
-        web.appearance = request.appearance
-        web.underPageBackgroundColor = .textBackgroundColor
-        WebStage.setOcclusionDetection(false, on: web)
-        WebStage.park(web, frame: NSRect(origin: .zero, size: request.size))
-        renderWebView = web
-        var settled = false
-        renderSettled = { settled = true }
-        web.load(URLRequest(url: pageURL))
-        guard await Self.wait(until: { settled }) else { return .placeholder(request, "the page did not finish rendering") }
-
-        let measure = "[Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0), Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)]"
-        let extent = (try? await web.evaluateJavaScript(measure)) as? [Double] ?? []
-        let content = CGSize(width: max(request.size.width, extent.first ?? 0), height: extent.count > 1 ? extent[1] : request.size.height)
+        guard let web = renderWebView else { return .placeholder(request, "timed out") }
         if request.full, content.height > request.size.height + 1 {
-            settled = false
+            offscreenSettled = false
             let size = CGSize(width: request.size.width, height: min(content.height, RenderMath.maxContentExtent))
             WebStage.park(web, frame: NSRect(origin: .zero, size: size))
-            _ = await Self.wait(until: { settled }, limit: .seconds(2))
+            _ = await Self.wait(until: { [unowned self] in offscreenSettled }, limit: .seconds(2))
         } else if !request.full, scrollY > 0 {
-            settled = false
+            offscreenSettled = false
             _ = try? await web.callAsyncJavaScript("window.canvasKit?.restoreScroll(y)", arguments: ["y": scrollY], contentWorld: .page)
-            _ = await Self.wait(until: { settled }, limit: .seconds(1))
+            _ = await Self.wait(until: { [unowned self] in offscreenSettled }, limit: .seconds(1))
         }
         guard !Task.isCancelled else { return .placeholder(request, "timed out") }
         let shot = WKSnapshotConfiguration()
@@ -288,6 +268,83 @@ final class HtmlTile: NSView, TileContent {
         }
         let image = request.image(size: web.bounds.size) { bounds in page.drawUpright(in: bounds) }
         return TileRender(image: image, contentSize: content, state: image == nil ? .failed : .rendered)
+    }
+
+    /// Pages measured at once (`measure`); more wait their turn.
+    private static var measuring = 0
+    private static let maxMeasuring = 3
+    /// How long a measured page gets to report `view.rendered`.
+    static let measureLimit: Duration = .seconds(10)
+
+    /// The document extent (scroll width and height, in points) of an HTML tile's page with
+    /// `props` laid out `width` points wide: `object.measure`, `size: "fit"`, and `layout.check`
+    /// (`ObjectMeasure.html`). The page loads offscreen exactly as `render(_:)` loads it, in a
+    /// throwaway tile (the object may not exist yet) whose `<canvas-code>` excerpts read `root`.
+    /// It is laid out 1 pt tall, so the document height is the content's, not the viewport's.
+    static func measure(props: JSONValue, width: CGFloat, root: URL) async throws -> CGSize {
+        while measuring >= maxMeasuring {
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        measuring += 1
+        defer { measuring -= 1 }
+        let object = CanvasObject(id: IDs.make("obj"), type: .html, frame: Frame(x: 0, y: 0, w: Double(width), h: RenderMath.tileTitleHeight + 1),
+                                  z: 0, createdBy: .user, createdAt: Date(), props: props)
+        let tile = HtmlTile(object: object, board: Board(id: IDs.make("brd"), root: root), live: false)
+        guard await tile.beginOffscreen() else { throw ObjectMeasure.Failure.unavailable("the page is busy") }
+        defer { tile.endOffscreen() }
+        switch await tile.loadOffscreen(size: CGSize(width: width, height: 1), appearance: NSApp.effectiveAppearance, limit: measureLimit) {
+        case .success(let extent): return extent
+        case .failure(.rules(let reason)), .failure(.unsettled(let reason)): throw ObjectMeasure.Failure.unavailable("cannot measure the page: \(reason)")
+        }
+    }
+
+    private enum OffscreenFailure: Error {
+        case rules(String)
+        case unsettled(String)
+    }
+
+    /// Waits for this tile's previous offscreen page to finish; false when cancelled meanwhile.
+    private func beginOffscreen() async -> Bool {
+        while renderBusy {
+            guard !Task.isCancelled else { return false }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        renderBusy = true
+        return true
+    }
+
+    private func endOffscreen() {
+        renderBusy = false
+        renderWebView?.stopLoading()
+        renderWebView?.configuration.userContentController.removeAllScriptMessageHandlers()
+        renderWebView?.removeFromSuperview()
+        renderWebView = nil
+    }
+
+    /// Loads the page into `renderWebView`, `size` points, parked in the stage, and waits for the
+    /// kit's `view.rendered`; then the document's scroll width and height.
+    private func loadOffscreen(size: CGSize, appearance: NSAppearance, limit: Duration = .seconds(60)) async -> Result<CGSize, OffscreenFailure> {
+        let rules: WKContentRuleList
+        do {
+            rules = try await HtmlRuleLists.list(allowing: allowNetwork)
+        } catch {
+            return .failure(.rules("network rules failed to compile: \(error)"))
+        }
+        let web = HtmlWebView(frame: NSRect(origin: .zero, size: size), configuration: configuration(rules: rules))
+        web.navigationDelegate = self
+        web.uiDelegate = self
+        web.appearance = appearance
+        web.underPageBackgroundColor = .textBackgroundColor
+        WebStage.setOcclusionDetection(false, on: web)
+        WebStage.park(web, frame: NSRect(origin: .zero, size: size))
+        renderWebView = web
+        offscreenSettled = false
+        web.load(URLRequest(url: pageURL))
+        guard await Self.wait(until: { [unowned self] in offscreenSettled }, limit: limit) else { return .failure(.unsettled("the page did not finish rendering")) }
+        let measure = "[Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0), Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)]"
+        let extent = (try? await web.evaluateJavaScript(measure)) as? [Double] ?? []
+        return .success(CGSize(width: extent.first ?? size.width, height: extent.count > 1 ? extent[1] : size.height))
     }
 
     /// Polls `condition` until it holds, the task is cancelled (the render deadline), or `limit` passes.

@@ -171,7 +171,7 @@ When you lay things out deliberately, let the canvas do the geometry:
 - `layout.place`/`layout.stack`/`layout.grid` position objects (groups move whole; `grid` lines up columns across lanes),
   and `layout.translate` moves a finished build into place.
 - `object.batch` applies a whole layout as one ⌘Z step with `"$0"` references to objects it creates.
-- `layout.check` reports overlaps, arrows through tiles, arrow labels lying on tiles or on each other, content that doesn't fit, and cut-off captions.
+- `layout.check` reports overlaps, arrows through tiles, arrow labels lying on tiles or on each other, content that doesn't fit (HTML pages too), and cut-off captions.
   It judges what is drawn: frames are whole tiles, and arrows route as drawn. When it reports nothing, the picture is clean.
   Unfilled rects and ellipses are annotations and never count as overlaps.
 
@@ -229,6 +229,7 @@ A code tile shows the whole current file, scrolled so `range` sits a few rows be
 ### HTML explainers
 
 `object.create --type html` with `{"html": "…", "title": "…"}`.
+Add `"size": "fit"` (with `frame` `{x, y, w}`, default width 640) to make the tile exactly as tall as the rendered page at that width, up to 4000 pt; `object.measure --type html` gives the same size without creating it.
 Tiles are sandboxed: no network unless you list hosts in `allowNetwork`, no native access.
 Every tile preloads Tailwind (themed to the app: `bg-background text-foreground bg-muted bg-card border-border text-muted-foreground bg-accent bg-code text-warn text-ok`, dark mode automatic),
 Mermaid (`<pre class="mermaid">`), and grounded components:

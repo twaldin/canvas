@@ -47,6 +47,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registry.onTerminalsEnded = { _, tiles in
             for tile in tiles { TerminalTile.killSession(tile: tile) }
         }
+        // object.measure, size: "fit", and layout.check lay HTML pages out in WebKit.
+        ObjectMeasure.html = { props, width, root in try await HtmlTile.measure(props: props, width: width, root: root) }
         notifier.onOpen = { [weak self] board, tile in
             guard let controller = self?.controllers[board] else { return }
             NSApp.activate(ignoringOtherApps: true)

@@ -356,6 +356,49 @@ struct LayoutBoardTests {
         #expect(Layout.stack(sizes, from: CGPoint(x: 5, y: 5), direction: .column, gap: 20, align: .center) == [CGPoint(x: 5, y: 5), CGPoint(x: 5, y: 75), CGPoint(x: 5, y: 175)])
     }
 
+    /// A 13 × 10 board of 800 × 500 tiles 100 pt apart, from the origin.
+    func mainBoard() -> [CGRect] {
+        (0..<130).map { CGRect(x: CGFloat($0 % 13) * 900, y: CGFloat($0 / 13) * 600, width: 800, height: 500) }
+    }
+
+    @Test func fitIgnoresAFarOutlierThatWouldShrinkTheBoardPastMinimumZoom() throws {
+        let board = mainBoard()
+        let strays = [CGRect(x: 40_000, y: 45_000, width: 860, height: 560), CGRect(x: 41_000, y: 45_000, width: 860, height: 560)]
+        let target = try #require(Layout.fitTarget(board + strays, viewport: CGSize(width: 1512, height: 954), padding: 60, minZoom: 0.1))
+        #expect(target == CGRect(x: 0, y: 0, width: 12 * 900 + 800, height: 9 * 600 + 500))
+    }
+
+    @Test func fitShowsEverythingWhenEverythingFitsAtMinimumZoom() throws {
+        // Two clusters far apart, but the whole span still fits at 10%.
+        let frames = [CGRect(x: 0, y: 0, width: 800, height: 500), CGRect(x: 10_000, y: 0, width: 800, height: 500), CGRect(x: 10_900, y: 0, width: 800, height: 500)]
+        #expect(Layout.clusters(frames).count == 2)
+        #expect(Layout.fitTarget(frames, viewport: CGSize(width: 1512, height: 954), padding: 60, minZoom: 0.1) == CGRect(x: 0, y: 0, width: 11_700, height: 500))
+        #expect(Layout.fitTarget([], viewport: CGSize(width: 1512, height: 954), padding: 60, minZoom: 0.1) == nil)
+    }
+
+    @Test func fitPrefersTheClusterWithMoreObjectsThenMoreArea() throws {
+        let small = [CGRect(x: 0, y: 0, width: 100, height: 100), CGRect(x: 200, y: 0, width: 100, height: 100)]
+        let large = [CGRect(x: 50_000, y: 0, width: 2000, height: 2000)]
+        let viewport = CGSize(width: 1000, height: 1000)
+        #expect(Layout.fitTarget(small + large, viewport: viewport, padding: 0, minZoom: 0.1) == CGRect(x: 0, y: 0, width: 300, height: 100), "two objects beat one bigger one")
+        let pair = [CGRect(x: 50_000, y: 0, width: 2000, height: 2000), CGRect(x: 52_500, y: 0, width: 100, height: 100)]
+        #expect(Layout.fitTarget(small + pair, viewport: viewport, padding: 0, minZoom: 0.1) == CGRect(x: 50_000, y: 0, width: 2600, height: 2000), "equal counts: more area wins")
+    }
+
+    @Test func nearbyGroupsAreOneClusterAndALoneObjectIsItsOwn() {
+        let left = [CGRect(x: 0, y: 0, width: 400, height: 300), CGRect(x: 500, y: 0, width: 400, height: 300)]
+        // 1400 pt right of `left`: within the margin, so the groups join.
+        let right = [CGRect(x: 2300, y: 0, width: 400, height: 300), CGRect(x: 2300, y: 400, width: 400, height: 300)]
+        // 1000 pt right of and below the lower `right` tile, far from `left`: it joins through `right`.
+        let chained = CGRect(x: 3700, y: 1700, width: 200, height: 200)
+        let lone = CGRect(x: 0, y: 20_000, width: 400, height: 300)
+        #expect(Layout.clusters(left + right + [chained, lone]) == [[0, 1, 2, 3, 4], [5]])
+        // Exactly `margin` apart still joins; one point more doesn't.
+        #expect(Layout.clusters([CGRect(x: 0, y: 0, width: 10, height: 10), CGRect(x: 1510, y: 0, width: 10, height: 10)]).count == 1)
+        #expect(Layout.clusters([CGRect(x: 0, y: 0, width: 10, height: 10), CGRect(x: 1511, y: 0, width: 10, height: 10)]).count == 2)
+        #expect(Layout.clusters([lone]) == [[0]])
+    }
+
     @Test func stackingGroupsMovesTheirMembersInOneStep() throws {
         let a = note(0, 0), b = note(300, 0), c = note(1000, 1000)
         let lane1 = board.create(type: .group, props: .object(["members": .array([.string(a.id), .string(b.id)])]))

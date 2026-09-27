@@ -799,19 +799,32 @@ final class CanvasView: NSScrollView {
         scheduleLiveness()
     }
 
+    /// Room kept around whatever a fit shows, in document points.
+    static let fitPadding: CGFloat = 60
+
     /// Zooms (at most to 100%) so a document rect fills the viewport, centered.
     func fit(_ rect: NSRect) {
-        let padded = rect.insetBy(dx: -60, dy: -60)
+        let padded = rect.insetBy(dx: -Self.fitPadding, dy: -Self.fitPadding)
         let size = contentView.frame.size
         magnification = min(maxMagnification, max(minMagnification, min(size.width / padded.width, size.height / padded.height)))
         let visible = contentView.bounds.size
         scroll(to: NSPoint(x: padded.midX - visible.width / 2, y: padded.midY - visible.height / 2))
     }
 
+    /// Everything, or when that can't be read at minimum zoom, the largest cluster of objects
+    /// (`Layout.fitTarget`): a few strays far away don't shrink the board to nothing.
     func zoomToFit() {
         let rects = selectableRects().map(\.rect) + groups.values.filter { !$0.isHidden }.map(\.frame)
-        guard let first = rects.first else { return }
-        fit(rects.dropFirst().reduce(first) { $0.union($1) })
+        guard let target = Layout.fitTarget(rects, viewport: contentView.frame.size, padding: Self.fitPadding, minZoom: minMagnification) else { return }
+        fit(target)
+    }
+
+    /// The navigator's "go to": the object fitted (at most 100%) and selected; a terminal also
+    /// takes keyboard focus, as `focus(tile:)` does.
+    func go(to id: ObjectID) {
+        guard let rect = docFrame(id) else { return }
+        fit(rect)
+        select(id, extend: false)
     }
 
     /// "Zoom in" on the canvas: this tile at 100%, centered, selected, and focused if it types.
@@ -873,6 +886,28 @@ final class CanvasView: NSScrollView {
             return .init(id: marker.objectID, message: marker.message, target: edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document))
         }
         edges.show(pointers.sorted { $0.id < $1.id })
+    }
+
+    // MARK: Nothing in view
+
+    /// False while the board has objects but none of them is in the viewport; the window then
+    /// offers a way back to them. Kept by the scene pass, reported on change.
+    private var contentInView = true
+    var onContentInViewChange: ((Bool) -> Void)?
+
+    /// Stops at the first object in view and allocates nothing. Tiles first (their views hold
+    /// their frames), then group regions, then drawn objects.
+    private func updateContentInView() {
+        let visible = documentVisibleRect
+        let inView = board.objects.isEmpty
+            || tiles.values.contains { $0.frame.intersects(visible) }
+            || groups.values.contains { !$0.isHidden && $0.frame.intersects(visible) }
+            || board.objects.values.contains { object in
+                object.type != .group && tiles[object.id] == nil && docFrame(object.id)?.intersects(visible) == true
+            }
+        guard inView != contentInView else { return }
+        contentInView = inView
+        onContentInViewChange?(inView)
     }
 
     // MARK: Seen
@@ -1009,6 +1044,7 @@ final class CanvasView: NSScrollView {
         }
         updateEdges()
         updateSeen()
+        updateContentInView()
     }
 
     // MARK: Hit testing for mentions

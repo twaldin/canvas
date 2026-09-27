@@ -13,6 +13,7 @@ A native macOS infinite canvas for coding agents. Agents run unmodified in real 
 - **Browser tiles.** omp's `browser` tool drives them.
 - **Drawing.** Shapes, arrows (straight, orthogonal, or routed around tiles), ink, and titled group regions.
 - **Mentions.** Hyper-click anything (a line of code, a note paragraph, a shape) to stage a mention into the prompt of the terminal you're targeting.
+- **Getting around.** Go to… (⌘P) searches every group and tile by title, path, or note heading and takes you to the one you pick. When you've panned into empty space, a "Back to content" pill brings you home, and Zoom to Fit (⌘9) frames the main cluster of work instead of shrinking to fit a few far-off strays.
 - **Agent API.** A local socket with a JSON schema, a Python SDK, a TypeScript client, and a `canvas` CLI. Agents create and lay out objects in atomic batches, measure and fit content, render any region offscreen without moving your view, and read the board's activity history.
 
 ## Install

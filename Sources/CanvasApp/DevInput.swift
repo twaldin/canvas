@@ -164,7 +164,10 @@ enum DevInput {
                 let t = CGFloat(step) / 8
                 mouse(.leftMouseDragged, NSPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t))
             }
-            mouse(.leftMouseUp, end)
+            // `--hold`: the button stays down (a shot of the gesture mid-drag); `release` ends it.
+            if fields["hold"] == nil { mouse(.leftMouseUp, end) }
+        case "release":
+            mouse(.leftMouseUp, point("x", "y"))
         case "flags":
             // Holding (or releasing) modifiers with the pointer at x,y: drives hover outlines.
             pointer = point("x", "y")

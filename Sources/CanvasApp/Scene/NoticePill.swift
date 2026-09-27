@@ -29,13 +29,15 @@ final class NoticePill: NSVisualEffectView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    /// Shows `text` centered `bottom` points above the bottom of `container` (non-flipped), for
+    /// Shows `text` centered `bottom` points above the bottom edge of `container`, for
     /// `duration`; a newer notice replaces it and restarts the clock.
     func show(_ text: String, in container: NSView, bottom: CGFloat) {
         label.stringValue = text
         label.sizeToFit()
         let width = min(label.frame.width + 28, max(120, container.bounds.width - 40))
-        frame = NSRect(x: ((container.bounds.width - width) / 2).rounded(), y: bottom.rounded(), width: width, height: 28)
+        let y = container.isFlipped ? container.bounds.height - bottom - 28 : bottom
+        frame = NSRect(x: ((container.bounds.width - width) / 2).rounded(), y: y.rounded(), width: width, height: 28)
+        autoresizingMask = [.minXMargin, .maxXMargin, container.isFlipped ? .minYMargin : .maxYMargin]
         label.frame = NSRect(x: 14, y: ((28 - label.frame.height) / 2).rounded(), width: width - 28, height: label.frame.height)
         isHidden = false
         alphaValue = 1
@@ -66,7 +68,6 @@ extension CanvasView {
     func showNotice(_ text: String) {
         let pill = subviews.lazy.compactMap { $0 as? NoticePill }.first ?? {
             let pill = NoticePill(frame: .zero)
-            pill.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
             addSubview(pill)
             return pill
         }()

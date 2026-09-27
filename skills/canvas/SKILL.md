@@ -6,7 +6,7 @@ description: You are running inside Canvas (CANVAS_ENV=1), an infinite canvas wh
 # Working in Canvas
 
 Your terminal is one tile on an infinite canvas the user is looking at.
-Next to it live code tiles, changes (review) tiles, markdown notes, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
+Next to it live code tiles, changes (review) tiles, markdown notes, image tiles, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
 You and the user read and change the same objects.
 The canvas is the shared working state; your transcript stays in your terminal.
 
@@ -152,7 +152,7 @@ Create objects when a visual helps the user more than terminal text: a plan they
 Don't mirror your whole transcript onto the canvas.
 Keep the first draft to about one screen (see Known surprises) and grow it when the user asks.
 
-Omit `frame` and the canvas places new objects in the free spot nearest your terminal (see Known surprises).
+Omit `frame` and the canvas places new objects in the free spot nearest your terminal (see Known surprises); within 10 minutes of your last object, the next one stacks below it (else right of it) instead.
 When you lay things out deliberately, let the canvas do the geometry:
 
 - `size: "fit"` sizes a tile to its content.
@@ -170,6 +170,7 @@ Details and an example: `references/api.md` "Layout".
 | Point at real code | `code` tile: `{"path": "src/store.ts", "range": {"start": 41, "end": 60}, "caption": "restore replays the log"}` (`path` relative to the board root; see Code tiles) |
 | Several locations at once | `canvas.compositions.locations.open(["src/a.ts:10-40", "src/b.ts:7"])` |
 | Durable notes, plans, findings | `note`: `{"markdown": "…"}` |
+| A chart or figure | `image`: `{"path": "out/fig.png", "caption": "…"}`: save the figure to a file and show it; re-save to the same path and the tile reloads. No base64 PNGs in HTML |
 | A rich explainer, comparison, decision | `html` tile, see below |
 | Structure: boxes, labels, relations | `shape` / `arrow`, see below |
 | A web page | `browser`: `{"url": "http://localhost:3000"}` (your browser tool opens its own; see Browser tiles) |
@@ -182,6 +183,9 @@ To make a tile readable from further out without changing what it shows, set `sc
 Users scale objects with ⌥-drag on a corner or the Scale menu; leave their scale alone unless asked.
 
 Update with `object.update` (props shallow-merge; `frame` may give any of x, y, w, h; pass `rev` from your last read or create to avoid clobbering a concurrent edit; `conflict` means re-read and retry).
+After changing a note's markdown or an HTML tile's html, refit in the same call: `object.update` with `"size": "fit"`.
+Before styling a chart or page, read `view.get` `appearance` (`dark`|`light`); for dark, e.g. matplotlib `plt.style.use("dark_background")` and `savefig(…, transparent=True)`, not white slabs.
+The user can share without you: the object menu has Copy as Image, Save as PNG…, and for HTML tiles Save as HTML… and Open in Browser. Don't rebuild an export by hand unless they ask for another format.
 Delete with `object.delete`; deleting a terminal tile ends its session and whatever runs in it.
 
 ### Notes
@@ -192,7 +196,7 @@ Markdown code fences are live when anchored to real code, so prefer anchors over
 
 - Excerpt, rendered from disk: ```` ```ts file=src/store.ts#L41-60 ```` or ```` ```ts file=src/store.ts symbol=restore ````
 - Proposed change, rendered as a diff against the real range: add `propose` (```` ```ts file=src/store.ts#L41-48 propose ````) and write the new code in the fence.
-- Plain fences are free-written snippets; `file:line` references in notes become links.
+- Plain fences are free-written snippets; `file:line` references in notes become links; `![alt](out/fig.png)` shows an image (board-relative, or absolute inside the board root or the temp dir).
 
 Anchors prefer symbols (they survive edits); line anchors are re-found by content and show a stale badge when lost.
 
@@ -228,7 +232,7 @@ and `props.reviewed[]` (what the user staged or reverted). Editing `reviewed` do
 
 `object.create --type html` with `{"html": "…", "title": "…"}`.
 Add `"size": "fit"` (with `frame` `{x, y, w}`, default width 640) to make the tile exactly as tall as the rendered page at that width, up to 4000 pt; `object.measure --type html` gives the same size without creating it.
-Tiles are sandboxed: no network unless you list hosts in `allowNetwork`, no native access.
+Tiles are sandboxed: no network unless you list hosts in `allowNetwork`, no native access; `<img src="out/fig.png">` loads images from the board root or the temp dir (no `file://`).
 Every tile preloads Tailwind (themed to the app: `bg-background text-foreground bg-muted bg-card border-border text-muted-foreground bg-accent bg-code text-warn text-ok`, dark mode automatic),
 Mermaid (`<pre class="mermaid">`), and grounded components:
 
@@ -257,7 +261,8 @@ Colors, fills, text sizes, arrow routing and binding rules: `references/shapes.m
 ## Browser tiles
 
 omp's `browser` tool opens a browser tile beside your terminal for each `browser.open` (find its id with `canvas board.history --limit 5`); `close` deletes it.
-The page's viewport is the tile's body (`innerWidth` = frame width, `innerHeight` = frame height − 58): resize the tile to test a width; the tool's `viewport`/`emulate` are ignored.
+The page's viewport is the tile's body (`innerWidth` = frame width, `innerHeight` = frame height − 58). The tool's `viewport`, `tab.setViewport`, `tab.emulate` and `tab.devices()` don't reach it: for a phone width resize the tile (`object.update` frame `{"w": 390, "h": 902}`).
+A browser tile's `title` is yours and never overwritten; the page's own title is `props.pageTitle` and doesn't bump `rev`.
 Pages you drive stay live for 60 s wherever the tile is; all tiles share one signed-out WebKit profile.
 Eval and CSP limits, rendering unloaded pages, and history credit: `references/browser.md`.
 

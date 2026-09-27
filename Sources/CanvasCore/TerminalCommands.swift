@@ -104,8 +104,15 @@ public struct TerminalCommandTracker: Sendable {
         if let program { self.program = program }
     }
 
-    /// A command finished; the tracker starts over for the next one.
-    public mutating func finished(exit: Int?, durationNanos: UInt64, at date: Date) -> TerminalCommand {
+    /// A command finished (OSC 133 D; Ghostty reports one only after a C, timing it from
+    /// there); the tracker starts over for the next one. Only the shell's own marks are
+    /// commands: nil, with the tracker left as it was, for a mark while a program holds the
+    /// foreground (`shellAtPrompt` false: an agent TUI's own C/D pairs, 0 ms apart, titled with
+    /// its spinner) and for any mark while the tile's agent reports a lifecycle (its marks and
+    /// titles aren't the user's shell commands). The command the shell ran it from is still
+    /// named when the shell's D comes.
+    public mutating func finished(exit: Int?, durationNanos: UInt64, at date: Date, shellAtPrompt: Bool, agentReporting: Bool) -> TerminalCommand? {
+        guard shellAtPrompt, !agentReporting else { return nil }
         let finished = TerminalCommand(command: command ?? program, exit: exit, durationMs: Int(durationNanos / 1_000_000))
         command = nil
         program = nil

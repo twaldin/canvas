@@ -116,8 +116,16 @@ public enum ObjectMeasure {
     /// that, long lines wrap and the caption truncates.
     nonisolated public static func code(lines: [String], fileLineCount: Int, caption: String?, follow: Bool, maxWidth: CGFloat) -> CGSize {
         var size = codeRows(lines: lines, fileLineCount: fileLineCount, caption: caption != nil, follow: follow, maxWidth: maxWidth)
-        if let caption { size.width = min(max(size.width, captionWidth(caption)), max(CodeMetrics.minWidth, maxWidth.rounded(.down))) }
+        if let caption { size.width = min(max(size.width, captionWidth(caption)), widest(maxWidth)) }
         return size
+    }
+
+    /// `maxWidth` in whole points, at least `CodeMetrics.minWidth`. A scaled tile's natural width
+    /// (its frame's width over its scale) comes back a hair under the whole points it was fitted
+    /// at (612 × 1.1 / 1.1 = 611.99…), which must not cost a column: that wrapped the longest
+    /// line and `layout.check` reported a fitted tile overflowing by one row.
+    nonisolated static func widest(_ maxWidth: CGFloat) -> CGFloat {
+        max(CodeMetrics.minWidth, (maxWidth + 0.001).rounded(.down))
     }
 
     /// `code` without the caption's width: the frame the rows themselves need, as wide as the
@@ -128,7 +136,7 @@ public enum ObjectMeasure {
         let header = CodeMetrics.chromeHeight(caption: caption, history: follow) - CodeMetrics.titleHeight
         let gutter = CodeMetrics.gutterWidth(lineCount: fileLineCount)
         let natural = CodeMetrics.content(rows: lines.count, longestLine: longest, gutterWidth: gutter, headerHeight: header).width
-        let width = min(natural, max(CodeMetrics.minWidth, maxWidth.rounded(.down)))
+        let width = min(natural, widest(maxWidth))
         let columns = CodeMetrics.textColumns(width: width, lineCount: fileLineCount)
         let rows = longest <= columns ? lines.count : lines.reduce(0) { $0 + 1 + CodeMetrics.wrap($1.utf16, columns: columns).breaks.count }
         return CGSize(width: width, height: CodeMetrics.content(rows: rows, longestLine: 0, gutterWidth: gutter, headerHeight: header).height + CodeMetrics.titleHeight)

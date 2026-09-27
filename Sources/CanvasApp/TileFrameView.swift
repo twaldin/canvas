@@ -384,6 +384,22 @@ final class TileFrameView: NSView {
         }
     }
 
+    /// A card shows the content as it was when the tile went offscreen or zoomed out, and code
+    /// and changes tiles watch nothing meanwhile: `view.snapshot` redraws their cards from the
+    /// model first (`cardSnapshot` reloads a model that isn't current), so it shows what the
+    /// tile holds now.
+    func refreshCard() async {
+        guard !isLive, !contentLive else { return }
+        let request = cardRequest
+        let image = await withCheckedContinuation { (continuation: CheckedContinuation<NSImage?, Never>) in
+            content.cardSnapshot { continuation.resume(returning: $0) }
+        }
+        guard !isLive, cardRequest == request, let image else { return }
+        card.image = cardImage(image)
+        card.isHidden = false
+        cardTitle.isHidden = true
+    }
+
     /// Below the readable zoom: the tile is one handle (click selects, drag moves) and shows its
     /// agent's lifecycle wash, whether it shows a card or lives zoomed out.
     var zoomedOut = false {

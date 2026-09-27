@@ -254,8 +254,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// The window content as the user sees it, with the viewport it shows. Content drawn outside
     /// AppKit (Ghostty's Metal, WebKit) is missing from `cacheDisplay`, so visible tiles swap in
-    /// images of it while rendering.
-    func snapshot(format: ImageFormat) -> (output: RenderOutput, viewport: Viewport)? {
+    /// images of it while rendering. Code and changes cards in view are redrawn from their
+    /// current model first (a file rewritten while zoomed out shows as it is now).
+    func snapshot(format: ImageFormat) async -> (output: RenderOutput, viewport: Viewport)? {
+        let stale = canvas.tiles.values.filter { tile in
+            !tile.isLive && tile.frame.intersects(canvas.documentVisibleRect) && [.code, .changes].contains(board.objects[tile.objectID]?.type)
+        }
+        let refreshes = stale.map { tile in Task { await tile.refreshCard() } }
+        for refresh in refreshes { await refresh.value }
         guard let window, let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         let visible = canvas.documentVisibleRect
         let live = canvas.tiles.values.filter { $0.isLive && $0.frame.intersects(visible) }.map(\.content)

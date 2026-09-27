@@ -132,6 +132,7 @@ extension Board {
     func forgetHandoffs(of id: ObjectID) {
         handoffs[id] = nil
         finalAnswers[id] = nil
+        turnErrors[id] = nil
         for (terminal, waiting) in handoffs {
             let left = waiting.filter { !$0.mention.target.objectIDs.contains(id) }
             handoffs[terminal] = left.isEmpty ? nil : left

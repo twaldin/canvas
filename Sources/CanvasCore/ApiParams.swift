@@ -26,7 +26,7 @@ enum ApiParams {
         "tray.unstage": (["id"], ["id"]),
         "tray.drain": (["board", "caller", "peek"], []),
         "tray.commit": (["board", "ids"], ["ids"]),
-        "agent.report": (["tile", "kind", "state", "message", "seq", "source", "call", "final"], ["tile", "kind", "state"]),
+        "agent.report": (["tile", "kind", "state", "message", "seq", "source", "call", "final", "error"], ["tile", "kind", "state"]),
         "agent.report_session": (["tile", "kind", "sessionId", "sessionPath"], ["tile", "kind"]),
         "agent.release": (["tile", "kind", "source"], ["tile", "kind"]),
         "agent.list": ([], []),

@@ -326,9 +326,15 @@ final class TerminalTile: NSView, TileContent {
 
     /// A command finished: the header shows its exit status or duration when it failed or ran
     /// long, and one that ran `noticeAfterMs` or more raises a marker (the bell's rules: not
-    /// while the user looks at the terminal, never for an agent reporting a lifecycle).
+    /// while the user looks at the terminal, never for an agent reporting a lifecycle). A mark
+    /// while a program holds the foreground, or while the tile's agent reports a lifecycle, is
+    /// that program's, not a shell command (`TerminalCommandTracker.finished`).
     fileprivate func commandFinished(exit: Int?, durationNanos: UInt64) {
-        let command = commands.finished(exit: exit, durationNanos: durationNanos, at: Date())
+        var atPrompt = true
+        if let shell, case .running = ForegroundProgram.state(shell: shell) { atPrompt = false }
+        let lifecycle = board.objects[objectID]?.props["lifecycle"]?["state"]?.string
+        let reporting = lifecycle != nil && lifecycle != LifecycleState.unknown.rawValue
+        guard let command = commands.finished(exit: exit, durationNanos: durationNanos, at: Date(), shellAtPrompt: atPrompt, agentReporting: reporting) else { return }
         lastCommand = (command, Date())
         let detail = ([command.command ?? "The last command"] + [command.exit.map { "exit \($0)" }, command.durationMs.map(TerminalCommand.duration)].compactMap { $0 })
             .joined(separator: " · ")

@@ -39,8 +39,10 @@ export default function canvas(pi: ExtensionAPI): void {
   let approvals = 0;
   const calls = new Map<string, ToolCall>();
   let staged: Staged | undefined;
-  // The last answer of the turn that just ended, sent with its idle report (agent.read final).
+  // The last answer of the turn that just ended, sent with its idle report (agent.read final),
+  // and the error that turn stopped on, if it didn't finish (an API error, an abort).
   let final: string | undefined;
+  let failure: string | undefined;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
@@ -49,7 +51,9 @@ export default function canvas(pi: ExtensionAPI): void {
     clearTimeout(idleTimer);
     const firstBlocker = blockers.values().next().value;
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
-    const send = () => quietly(client.api.agent.report({ tile: tile!, kind: "omp", state, message: firstBlocker, seq: ++seq, source: SOURCE, final: state === "idle" ? final : undefined }));
+    const settled = state === "idle";
+    const send = () =>
+      quietly(client.api.agent.report({ tile: tile!, kind: "omp", state, message: firstBlocker, seq: ++seq, source: SOURCE, final: settled ? final : undefined, error: settled ? failure : undefined }));
     // Debounce idle so retries and tool-only continuations don't flicker the badge.
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
@@ -98,6 +102,7 @@ export default function canvas(pi: ExtensionAPI): void {
     reporting = ctx.hasUI;
     active = !ctx.isIdle();
     final = undefined;
+    failure = undefined;
     blockers.clear();
     staged = undefined;
     if (reporting) watchApprovals(ctx.ui);
@@ -119,6 +124,7 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("agent_start", () => {
     active = true;
     final = undefined;
+    failure = undefined;
     commitStaged();
     publish();
   });
@@ -127,7 +133,10 @@ export default function canvas(pi: ExtensionAPI): void {
   // continuation, or background jobs whose results will resume it), so this is not a settle.
   pi.on("agent_end", (event) => {
     active = event.willContinue === true;
-    if (!active) final = lastAnswer(event.messages);
+    if (!active) {
+      final = lastAnswer(event.messages);
+      failure = turnError(event.messages);
+    }
     publish();
   });
 
@@ -218,4 +227,19 @@ function lastAnswer(messages: readonly { role?: unknown; content?: unknown }[]):
   if (!last || !Array.isArray(last.content)) return undefined;
   const text = last.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
   return text.trim() ? text : undefined;
+}
+
+/** Why the run's last assistant message stopped short: omp's `stopReason` error (with its message), an abort, or the output limit; none for a finished answer. */
+function turnError(messages: readonly { role?: unknown; stopReason?: unknown; errorMessage?: unknown }[]): string | undefined {
+  const last = messages.findLast((message) => message.role === "assistant");
+  switch (last?.stopReason) {
+    case "error":
+      return typeof last.errorMessage === "string" && last.errorMessage.trim() ? last.errorMessage.trim() : "the model request failed";
+    case "aborted":
+      return "interrupted";
+    case "length":
+      return "stopped at the output token limit";
+    default:
+      return undefined;
+  }
 }

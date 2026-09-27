@@ -310,6 +310,33 @@ final class AgentBoardApiTests {
         #expect(try await read()["result"]?["text"] == .string("second"))
     }
 
+    /// soak study: an omp turn that died on "Anthropic stream error (overloaded_error)" showed as
+    /// green done, and `final` returned the truncated text as if it were the answer.
+    @Test func aTurnThatEndedOnAnErrorIsIdleWithWhyAndItsAnswerIsCutOff() async throws {
+        let tile = try agent(name: "reviewer")
+        func state() -> JSONValue? { board.objects[tile]?.props["lifecycle"] }
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
+        let failed = try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"idle","final":"The fee math is","error":"Anthropic stream error (overloaded_error)"}"#)
+        #expect(failed["ok"] == .bool(true))
+        #expect(state()?["state"] == "idle" && state()?["message"] == "Anthropic stream error (overloaded_error)", "not done: the user reads why")
+        let read = try await call("agent.read", #"{"target":"reviewer","final":true}"#)
+        #expect(read["result"]?["text"] == "The fee math is" && read["result"]?["cutOff"] == "Anthropic stream error (overloaded_error)")
+        #expect(try await call("agent.report", #"{"tile":"\#(tile)","kind":"omp","state":"working","error":"x"}"#)["error"]?["code"] == "invalid_params")
+
+        // The next turn finishes: done, and its answer is whole.
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: nil, source: nil, final: "Fixed.")
+        #expect(state()?["state"] == "done" && state()?["message"] == nil)
+        let whole = try await call("agent.read", #"{"target":"reviewer","final":true}"#)
+        #expect(whole["result"]?["text"] == "Fixed." && whole["result"]?["cutOff"] == nil)
+
+        // Aborted before any text: no answer, and the error says why.
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: nil, source: nil)
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: nil, source: nil, error: "interrupted")
+        let none = try await call("agent.read", #"{"target":"reviewer","final":true}"#)
+        #expect(none["error"]?["message"]?.string?.contains("ended on an error before any answer: interrupted") == true)
+    }
+
     // MARK: board.export
 
     @Test func exportWritesAReadableSnapshotThatLoadsBack() async throws {

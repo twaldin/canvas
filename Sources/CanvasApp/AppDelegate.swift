@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return try terminal.lastBlock()
         }
-        router.snapshotBoard = { [weak self] board, format in self?.controllers[board.id]?.snapshot(format: format) }
+        router.snapshotBoard = { [weak self] board, format in await self?.controllers[board.id]?.snapshot(format: format) }
         router.renderView = { [weak self] board, request, format in
             guard let canvas = self?.controllers[board.id]?.canvas else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
             return try await canvas.render(request, format: format)

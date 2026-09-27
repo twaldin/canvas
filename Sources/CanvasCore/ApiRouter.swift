@@ -85,7 +85,7 @@ public final class ApiRouter {
     /// false when the surface isn't attached.
     public var submitToTerminal: ((Board, ObjectID, String) async -> Bool)?
     /// The board's window as currently shown, encoded in `format`, with the viewport it shows.
-    public var snapshotBoard: ((Board, ImageFormat) -> (output: RenderOutput, viewport: Viewport)?)?
+    public var snapshotBoard: ((Board, ImageFormat) async -> (output: RenderOutput, viewport: Viewport)?)?
     /// Offscreen render for `view.render`; throws `Failure` for bad targets.
     public var renderView: ((Board, RenderRequest, ImageFormat) async throws -> RenderOutput)?
     /// What the board's window shows; nil when it has none.
@@ -447,14 +447,16 @@ public final class ApiRouter {
         if pendingPrompts.contains(terminal.id) || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
             throw Failure("unavailable", "\(terminal.id) is still in its turn (\(pendingPrompts.contains(terminal.id) ? "prompted" : state)): agent.wait for it, then read final")
         }
+        let cutOff = board.turnErrors[terminal.id]
         guard let answer = board.finalAnswers[terminal.id] else {
+            if let cutOff { throw Failure("unavailable", "\(terminal.id)'s last turn ended on an error before any answer: \(cutOff)") }
             throw Failure("unavailable", "no final answer is known for \(terminal.id)'s last turn: its agent (\(terminal.props["agent"]?["kind"]?.string ?? "none reporting")) reported none, the turn was interrupted, or Canvas restarted since. Read the screen with since: \"prompt\" instead")
         }
         return .object([
             "agent": agentEntry(terminal, on: board),
             "text": .string(answer),
             "lines": .number(Double(answer.split(separator: "\n", omittingEmptySubsequences: false).count)),
-        ])
+        ].merging(cutOff.map { ["cutOff": .string($0)] } ?? [:]) { first, _ in first })
     }
 
     /// `tray.drain`: the tray's mentions go to the terminal the tray shows (the board's prompt
@@ -522,7 +524,7 @@ public final class ApiRouter {
         let board = try board(p)
         let (format, out) = try imageDestination(p, name: "snapshot")
         guard let snapshotBoard else { throw Failure("unsupported", "snapshots need the app UI") }
-        guard let shot = snapshotBoard(board, format) else { throw Failure("unavailable", "board \(board.id) has no window") }
+        guard let shot = await snapshotBoard(board, format) else { throw Failure("unavailable", "board \(board.id) has no window") }
         var result = try await deliver(shot.output, to: out)
         result["viewport"] = shot.viewport.json
         result["scale"] = .number(shot.output.scale)
@@ -769,7 +771,8 @@ public final class ApiRouter {
             let tile = try string(p, "tile")
             guard let state = LifecycleState(rawValue: try string(p, "state")) else { throw Failure("invalid_params", "unknown state") }
             try board(forObject: tile).reportLifecycle(tile: tile, kind: try string(p, "kind"), state: state, message: p["message"]?.string, seq: p["seq"]?.int,
-                                                       source: p["source"]?.string, call: p["call"]?.string, final: p["final"]?.string)
+                                                       source: p["source"]?.string, call: p["call"]?.string, final: p["final"]?.string,
+                                                       error: p["error"]?.string)
             return .object([:])
 
         case "agent.report_session":
@@ -1105,9 +1108,11 @@ public final class ApiRouter {
     }
 
     /// `layout.check`: accidental overlaps, arrows through tiles, labels on tiles or labels,
-    /// content that doesn't fit its frame, and truncated captions, for `ids`, for what
-    /// intersects `rect`, or for the whole board. Follow tiles are fixed-size viewers: never
-    /// overflow or truncated. The board is judged as it was when the call arrived: files are read
+    /// content that doesn't fit its frame (`overflow`; a code tile's rows past its frame are
+    /// `scrolls`: it wraps at its width and scrolls to its range, so only its height can be
+    /// short, and a fixed-height viewer is often meant), and truncated captions, for `ids`, for
+    /// what intersects `rect`, or for the whole board. Follow tiles are fixed-size viewers:
+    /// never reported. The board is judged as it was when the call arrived: files are read
     /// concurrently and routes computed off the main actor on that snapshot (a whole-board check
     /// is dozens of file reads and an `avoid` grid search per arrow).
     private func check(_ p: JSONValue) async throws -> JSONValue {
@@ -1196,6 +1201,7 @@ public final class ApiRouter {
             return (geometry.layoutCheck(scope: scope, rows: rows), sizes, missing)
         }
         var overflow: [JSONValue] = []
+        var scrolls: [JSONValue] = []
         var truncated: [JSONValue] = []
         for object in measurable {
             let size: CGSize
@@ -1217,7 +1223,13 @@ public final class ApiRouter {
             let x = max(0, size.width - current.w)
             let y = max(0, size.height - current.h)
             guard x >= 1 || y >= 1 else { continue }
-            overflow.append(.object(["id": .string(object.id), "x": .number(x.rounded(.up)), "y": .number(y.rounded(.up))]))
+            // A code tile wraps at its width and scrolls to its range: rows past its frame are a
+            // viewer's scrolling, often meant, not content cut off.
+            if object.type == .code {
+                scrolls.append(.object(["id": .string(object.id), "y": .number(y.rounded(.up))]))
+            } else {
+                overflow.append(.object(["id": .string(object.id), "x": .number(x.rounded(.up)), "y": .number(y.rounded(.up))]))
+            }
         }
         return .object([
             "overlaps": .array(report.overlaps.map { .array($0.map(JSONValue.string)) }),
@@ -1230,6 +1242,7 @@ public final class ApiRouter {
                                 "overlaps": .array(overlap.overlaps.map(JSONValue.string))])
             }),
             "overflow": .array(overflow),
+            "scrolls": .array(scrolls),
             "truncated": .array(truncated),
         ])
     }

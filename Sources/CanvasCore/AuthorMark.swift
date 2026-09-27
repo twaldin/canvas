@@ -29,6 +29,8 @@ public enum AuthorMark {
 
     /// The mark's text for an author's name.
     public static func label(_ name: String) -> String { "by \(name)" }
+    /// The mark's tooltip.
+    public static func toolTip(_ name: String) -> String { "Created by the terminal “\(name)”" }
 
     /// A title bar narrower than this for its title and mark shows no mark.
     public static let minSpace: CGFloat = 160

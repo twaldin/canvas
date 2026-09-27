@@ -371,14 +371,12 @@ final class CanvasView: NSScrollView {
                 self.recordNavigation(from: from, landing: self.board.objects[opened.id].flatMap(CodeAim.init))
             }
         }
-        // A page's code link (an HTML tile's, a browser page's error list): the tile already
-        // showing the lines is gone to, anything else is shown with the least pan.
-        (content as? HtmlTile)?.onOpenedCode = { [weak self] opened, existing in
-            self?.showOpenedCode(opened, existing: existing)
-        }
-        (content as? NoteTile)?.onOpenedCode = { [weak self] opened, existing in
-            self?.showOpenedCode(opened, existing: existing)
-        }
+        // A page's or note's code link (an HTML tile's, a browser page's error list, a note's):
+        // the tile already showing the lines is gone to, anything else is shown with the least pan.
+        let showCode = { [weak self] (opened: ObjectID, existing: Bool) -> Void in self?.showOpenedCode(opened, existing: existing) }
+        (content as? HtmlTile)?.onOpenedCode = showCode
+        (content as? NoteTile)?.onOpenedCode = showCode
+        (content as? BrowserTile)?.onOpenedCode = showCode
         // A clicked line: user navigation. The changes tile keeps the selection and the keyboard
         // (j/k go on through the hunks; a selected code tile would take the keyboard from it);
         // the least pan that shows the code tile keeps the diff in view too.
@@ -388,9 +386,6 @@ final class CanvasView: NSScrollView {
         (content as? ChangesTile)?.onBranch = { [weak self] branch in
             guard let self, let object = self.board.objects[id] else { return }
             self.tiles[id]?.setBranch(branch, of: object)
-        }
-        (content as? BrowserTile)?.onOpenedCode = { [weak self] opened, existing in
-            self?.showOpenedCode(opened, existing: existing)
         }
         (content as? BrowserTile)?.onOpenedTile = { [weak self] opened in
             self?.reveal(opened)
@@ -963,24 +958,21 @@ final class CanvasView: NSScrollView {
     }
 
     /// A new object the user asked for without saying where (File › Open File, New Note, New
-    /// Browser Tile, ⌘T, Go to's file rows, Edit Here's terminal `near` its code tile): the free
-    /// spot nearest the viewport center or that tile, in view when there's room (`Board.place`),
-    /// revealed with the least pan otherwise, selected, and given the keyboard (an empty note
-    /// starts editing, `editNewNote`).
+    /// Browser Tile, ⌘T, Edit Here's terminal `near` its code tile): the free spot nearest the
+    /// viewport center or that tile, in view when there's room (`Board.place`), then `showNew`.
     func openForUser(_ type: ObjectType, props: JSONValue, near anchor: ObjectID? = nil) {
         let size = Board.defaultSize(type)
-        let object = board.create(type: type, props: props, frame: board.place(width: size.w, height: size.h, near: anchor))
-        reveal(object.id)
-        setSelection([object.id])
-        if !editNewNote(object) { takeKeyboard(object.id) }
+        showNew(board.create(type: type, props: props, frame: board.place(width: size.w, height: size.h, near: anchor)))
     }
 
-    /// An empty note the user just made starts editing (as Return would), so what they type
-    /// right away goes into it; Esc then leaves it selected with the canvas holding the
-    /// keyboard. False for anything else.
-    private func editNewNote(_ object: CanvasObject) -> Bool {
-        guard object.type == .note, object.props["markdown"]?.string?.isEmpty != false else { return false }
-        return enterSelection()
+    /// An object the user just made or opened: revealed with the least pan, selected, and given
+    /// the keyboard; an empty note starts editing (as Return would), so what they type right
+    /// away goes into it, and Esc then leaves it selected with the canvas holding the keyboard.
+    func showNew(_ object: CanvasObject) {
+        reveal(object.id)
+        setSelection([object.id])
+        if object.type == .note, object.props["markdown"]?.string?.isEmpty != false, enterSelection() { return }
+        takeKeyboard(object.id)
     }
 
     /// Keyboard focus for a tile the keyboard just went to: a terminal takes it itself (on the
@@ -1009,8 +1001,7 @@ final class CanvasView: NSScrollView {
         if !tile.isLive, let rect = docFrame(id) {
             apply(Layout.center(rect, in: clearArea, zoom: 1, padding: Self.jumpPadding))
         } else if let rect = landing(id, padding: Self.jumpPadding / magnification) {
-            let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification)
-            if jump != currentJump { apply(jump) }
+            reveal(rect: rect)
         }
         // On the next turn: a tile just made live builds its view in the liveness pass.
         DispatchQueue.main.async { [weak self] in
@@ -1025,16 +1016,6 @@ final class CanvasView: NSScrollView {
     func leaveTile(_ id: ObjectID) {
         if board.objects[id] != nil { setSelection([id]) }
         window?.makeFirstResponder(document)
-    }
-
-    /// View ▸ Leave Tile (⌘Esc): the tile holding the keyboard hands it to the canvas and stays
-    /// selected. The one way out of a terminal, whose Esc belongs to its program. False when
-    /// no tile has the keyboard.
-    @discardableResult
-    func leaveFocusedTile() -> Bool {
-        guard let id = focusedTile else { return false }
-        leaveTile(id)
-        return true
     }
 
     /// Where the keyboard goes back to when something that borrowed it (Go to, a code tile's
@@ -1130,11 +1111,9 @@ final class CanvasView: NSScrollView {
         return true
     }
 
-    /// An empty note at a document point (`createHere`), editing (`editNewNote`).
+    /// An empty note at a document point (`createHere`), editing (`showNew`).
     func createNote(at point: NSPoint) {
-        let note = createHere(.note, props: .object(["markdown": .string("")]), at: point)
-        setSelection([note.id])
-        _ = editNewNote(note)
+        showNew(createHere(.note, props: .object(["markdown": .string("")]), at: point))
     }
 
     /// An empty browser tile at a document point (`createHere`), with the address field focused
@@ -1166,14 +1145,10 @@ final class CanvasView: NSScrollView {
             let full = Board.defaultSize(.changes)
             let compact = set.files.isEmpty ? ChangesMetrics.fit(set, maxWidth: full.w) : nil
             // The pan that shows the new tile is a place ⌘[ comes back from.
-            var changes: CanvasObject?
             self.navigating {
-                changes = self.createHere(.changes, props: .object(props), at: point, size: compact.map { (Double($0.width), Double($0.height)) })
+                self.showNew(self.createHere(.changes, props: .object(props), at: point, size: compact.map { (Double($0.width), Double($0.height)) }))
                 return nil
             }
-            guard let changes else { return }
-            self.setSelection([changes.id])
-            self.takeKeyboard(changes.id)
         }
     }
 
@@ -1398,8 +1373,7 @@ final class CanvasView: NSScrollView {
         let shown = Self.docRect(clearViewport)
         let room = max(0, min(shown.width - union.width, shown.height - union.height) / 2)
         let typing = ids.count == 1 && ids[0] == focusedTerminal
-        let jump = Layout.reveal(union, from: currentJump, clear: clearArea, padding: min(Self.jumpPadding / magnification, room), bottomFirst: typing)
-        if jump != currentJump { apply(jump) }
+        reveal(rect: union, padding: min(Self.jumpPadding / magnification, room), bottomFirst: typing)
     }
 
     /// `props.scale` as written: 1 removes it.
@@ -1497,7 +1471,9 @@ final class CanvasView: NSScrollView {
         scheduleLiveness()
     }
 
+    /// Moves the view to `jump`; nothing when it is there already.
     private func apply(_ jump: Layout.Jump) {
+        guard jump != currentJump else { return }
         if magnification != jump.zoom { magnification = jump.zoom }
         scroll(to: jump.origin)
     }
@@ -1661,18 +1637,13 @@ final class CanvasView: NSScrollView {
     /// like Go to, selected (which acknowledges a marker), and given the keyboard (a terminal
     /// focuses, which sees a done agent). Pressed again from there, the one after it, around;
     /// from anywhere else, the first. When nothing needs the user, a notice says so.
-    @discardableResult
-    func goToNextNeedsYou() -> Bool {
+    func goToNextNeedsYou() {
         let items = NeedsYouItem.all(board.objects, attention: board.attention)
         let current = focusedTile ?? (selection.count == 1 ? selection.first : nil)
         let last = lastNeedsYou.flatMap { $0.id == current ? $0 : nil }
-        guard let next = NeedsYouItem.next(after: last, in: items) else {
-            showNotice("Nothing needs you")
-            return false
-        }
+        guard let next = NeedsYouItem.next(after: last, in: items) else { return showNotice("Nothing needs you") }
         lastNeedsYou = next
         go(to: next.id)
-        return true
     }
 
     /// "Zoom in" on the canvas: this tile at 100%, centered, selected, and focused if it types.
@@ -1698,25 +1669,27 @@ final class CanvasView: NSScrollView {
     /// clear of the chrome; nothing when it is already in view. `bottomFirst`: an object taller
     /// than the view shows its bottom (a terminal's prompt or question), not its top.
     func reveal(_ id: ObjectID, bottomFirst: Bool = false) {
-        guard let rect = docFrame(id) else { return }
-        let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification, bottomFirst: bottomFirst)
-        if jump != currentJump { apply(jump) }
+        docFrame(id).map { reveal(rect: $0, bottomFirst: bottomFirst) }
+    }
+
+    /// `reveal` of a document rect, `padding` (document points) around it, by default the jump
+    /// padding at this zoom.
+    private func reveal(rect: NSRect, padding: CGFloat? = nil, bottomFirst: Bool = false) {
+        apply(Layout.reveal(rect, from: currentJump, clear: clearArea, padding: padding ?? Self.jumpPadding / magnification, bottomFirst: bottomFirst))
     }
 
     /// `reveal`, keeping what shows of `anchor` (the tile it was opened from) in view too when
     /// both fit.
     func reveal(_ id: ObjectID, keeping anchor: ObjectID) {
         guard let rect = docFrame(id), let kept = docFrame(anchor) else { return reveal(id) }
-        let jump = Layout.reveal(rect, keeping: kept, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification)
-        if jump != currentJump { apply(jump) }
+        apply(Layout.reveal(rect, keeping: kept, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification))
     }
 
     /// A tile opened from `source` (document coordinates), e.g. a terminal's ⌘-clicked
     /// reference: panned to only when mostly out of view, never so far that `source` leaves it.
     func reveal(_ id: ObjectID, openedFrom source: NSRect) {
         guard let rect = docFrame(id) else { return }
-        let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification, openedFrom: source)
-        if jump != currentJump { apply(jump) }
+        apply(Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification, openedFrom: source))
     }
 
     /// Code a page's or note's link opened: one step of Navigate Back. A tile that already
@@ -1733,9 +1706,8 @@ final class CanvasView: NSScrollView {
     /// when larger than the view (`Layout.present`).
     func present(_ id: ObjectID) {
         guard let rect = landing(id, padding: Self.jumpPadding / magnification) else { return }
-        let jump = Layout.present(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification,
-                                  zoom: minMagnification...maxMagnification, readable: Self.readableZoom)
-        if jump != currentJump { apply(jump) }
+        apply(Layout.present(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification,
+                             zoom: minMagnification...maxMagnification, readable: Self.readableZoom))
     }
 
     // MARK: Attention

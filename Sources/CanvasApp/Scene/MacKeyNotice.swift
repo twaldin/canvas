@@ -1,4 +1,5 @@
 import AppKit
+import CanvasCore
 
 /// A PC habit on the canvas: a ⌃-chord that is a ⌘ shortcut on a Mac (Ctrl+T, Ctrl+W, Ctrl+Z,
 /// Ctrl+=) did nothing and said nothing (linux study F1). With the canvas holding the keyboard,
@@ -28,26 +29,25 @@ extension CanvasView {
     /// menu item has it; nil when it is no Canvas shortcut.
     private static func macShortcut(_ event: NSEvent) -> (keys: String, name: String?)? {
         if let item = CanvasWindowController.menuItem(for: event, in: NSApp.mainMenu) {
-            return (glyphs(item.keyEquivalentModifierMask, key: item.keyEquivalent), item.title)
+            let key = item.keyEquivalent
+            return (glyphs(item.keyEquivalentModifierMask, key: key, named: GhosttyConfig.KeyChord(menuKey: key, modifiers: []).key), item.title)
         }
         guard CanvasWindowController.navigationAction(for: event) != nil || CanvasWindowController.tileHeading(for: event) != nil else { return nil }
-        let key = arrows[event.keyCode] ?? event.charactersIgnoringModifiers ?? ""
-        return (glyphs(event.modifierFlags, key: key), nil)
+        return (glyphs(event.modifierFlags, key: event.charactersIgnoringModifiers ?? "", named: CanvasWindowController.keyChord(for: event)?.key), nil)
     }
 
-    private static let arrows: [UInt16: String] = [123: "←", 124: "→", 125: "↓", 126: "↑"]
+    /// Named keys' symbols, by their names in `GhosttyConfig.KeyChord`.
+    private static let symbols = ["backspace": "⌫", "enter": "↩", "tab": "⇥", "escape": "⎋", "space": "Space",
+                                  "arrow_up": "↑", "arrow_down": "↓", "arrow_left": "←", "arrow_right": "→"]
 
-    /// "⌥⇧⌘T": modifiers in the menu's order, then the key (a letter upper case, a named key as
-    /// its symbol).
-    private static func glyphs(_ flags: NSEvent.ModifierFlags, key: String) -> String {
+    /// "⌥⇧⌘T": modifiers in the menu's order, then the key (a letter upper case, a named key,
+    /// `name` in `KeyChord`'s terms, as its symbol).
+    private static func glyphs(_ flags: NSEvent.ModifierFlags, key: String, named name: String?) -> String {
         var text = ""
         if flags.contains(.control) { text += "⌃" }
         if flags.contains(.option) { text += "⌥" }
         if flags.contains(.shift) || key != key.lowercased() { text += "⇧" }
         if flags.contains(.command) { text += "⌘" }
-        let named: [String: String] = ["\u{8}": "⌫", "\u{7f}": "⌫", "\r": "↩", "\t": "⇥", "\u{1b}": "⎋", " ": "Space",
-                                       String(UnicodeScalar(NSUpArrowFunctionKey)!): "↑", String(UnicodeScalar(NSDownArrowFunctionKey)!): "↓",
-                                       String(UnicodeScalar(NSLeftArrowFunctionKey)!): "←", String(UnicodeScalar(NSRightArrowFunctionKey)!): "→"]
-        return text + (named[key] ?? key.uppercased())
+        return text + (name.flatMap { symbols[$0] } ?? key.uppercased())
     }
 }

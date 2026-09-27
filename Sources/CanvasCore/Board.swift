@@ -869,12 +869,11 @@ public final class Board {
         let projects = [root.path] + [terminal.props["cwd"]?.string].compactMap { $0 }
         guard FollowFilter.follows(absoluteURL(path).path, projects: projects) else { return nil }
         let relative = relativePath(path)
-        func json(_ range: LineRange) -> JSONValue { .object(["start": .number(Double(range.start)), "end": .number(Double(range.end))]) }
         let changes = changes.filter { $0.start >= 1 }.map { LineRange(start: $0.start, end: max($0.start, $0.end)) }
         let range = range ?? Self.followAim(changes)
-        let rangeValue: JSONValue = range.map(json) ?? .null
+        let rangeValue: JSONValue = range?.json ?? .null
         var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action), "range": rangeValue,
-                                          "lastChanges": changes.isEmpty ? .null : .array(changes.map(json))]
+                                          "lastChanges": changes.isEmpty ? .null : .array(changes.map(\.json))]
         let existing = followTiles(of: tile).first
         var entry: [String: JSONValue] = ["path": .string(relative), "action": .string(action)]
         if range != nil { entry["range"] = rangeValue }
@@ -977,7 +976,7 @@ public final class Board {
     public func pin(_ follow: ObjectID, path: String, range: LineRange?) throws -> CanvasObject {
         let tile = try object(follow)
         var props: [String: JSONValue] = ["path": .string(path), "diffBase": tile.props["diffBase"] ?? .string("merge-base")]
-        if let range { props["range"] = .object(["start": .number(Double(range.start)), "end": .number(Double(range.end))]) }
+        if let range { props["range"] = range.json }
         if let caption = tile.props["caption"] { props["caption"] = caption }
         return create(type: .code, props: .object(props), frame: place(width: tile.frame.w, height: tile.frame.h, near: follow))
     }

@@ -77,7 +77,7 @@ final class GroupView: NSView {
 
     private func refreshToolTip() {
         removeAllToolTips()
-        if let author, let rect = authorRect { addToolTip(rect, owner: "Created by the terminal “\(author)”" as NSString, userData: nil) }
+        if let author, let rect = authorRect { addToolTip(rect, owner: AuthorMark.toolTip(author) as NSString, userData: nil) }
     }
 
     /// The title's hit and draw area in view coordinates. Hit testing asks on every scroll event

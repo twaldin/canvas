@@ -88,6 +88,10 @@ DevPerf: burst of 45 magnify settle 1574 ms: frames 89 missed 6 (vsync 16.7 ms, 
 
 For CPU and wakeups, measure the process from outside: `/usr/bin/top -l 5 -s 3 -stats pid,cpu,idlew,power -pid <pid>` (`IDLEW`: idle wakeups per 3 s interval; skip the first sample) and `/bin/ps -o time= -p <pid>` before and after a fixed interval (the shell's `ps` may be another tool); `sample <pid> 5` shows where the main thread spends it.
 
+- Frame pacing needs a displayed window: on the shared study screen, measure inside one short stage hold (`stage.sh acquire`, the bursts, `release`), and park an instance right after every `start`/`restart`. CPU, wakeups, and memory work minimized. Scenarios with synthetic boards: keep every object near the rest, or Zoom to Fit leaves the pinch point over empty canvas and the gesture measures nothing.
+- Wakeups that stay high while the window is minimized and the main thread sleeps: `sample` the app and look for `CVDisplayLinkDriverHelper` → `TerminalSurfaceCoordinator.tick` → `draw`. That is a Ghostty surface that still believes it is visible: libghostty-spm's shared display link runs at up to 120 Hz while any visible surface owes a frame (~110 wakeups/s seen with one omp tile after ~40 minutes of use on the stage; a restart cleared it).
+- Memory: `footprint -p <pid>` for the app; WebKit's processes aren't its children, so attribute them with `responsibility_get_pid_responsible_for_pid` (e.g. Python `ctypes.CDLL(None)`) and sum their footprints.
+
 ### Terminals and agents
 
 - Terminal text: `TMPDIR=$(getconf DARWIN_USER_TEMP_DIR) zmx history canvas-<tileId> | tail -n 40` (zmx keys its socket directory off `TMPDIR`; the GUI app's differs from a herdr pane's).

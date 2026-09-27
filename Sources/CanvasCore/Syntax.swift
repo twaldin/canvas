@@ -56,12 +56,17 @@ public struct SyntaxSymbol: Sendable, Equatable {
     public var lines: ClosedRange<Int>
     /// What it declares, from its node: class, function, method, interface, enum, struct, …
     public var kind: String = "symbol"
+    /// How an outline lists it when that says more than its name: `IntoIterator for Batch` for
+    /// a Rust trait impl, whose name (and its members' qualifier) is the type, `Batch`.
+    public var title: String?
 
     /// The kind a declaration node makes (`class_declaration` is a class).
     static func kind(ofNode type: String?) -> String {
         guard let type else { return "symbol" }
-        for (part, kind) in [("protocol_function", "method"), ("method", "method"), ("deinit", "deinitializer"), ("init", "initializer"), ("protocol", "protocol"), ("interface", "interface"),
-                             ("class", "class"), ("enum", "enum"), ("struct", "struct"), ("trait", "trait"), ("impl", "impl"), ("mod", "module"),
+        // Whole node names where a part would match others: `definition` holds `init`.
+        for (part, kind) in [("protocol_function", "method"), ("method", "method"), ("deinit", "deinitializer"), ("init_declaration", "initializer"), ("protocol", "protocol"), ("interface", "interface"),
+                             ("class", "class"), ("enum", "enum"), ("struct", "struct"), ("union", "union"), ("trait", "trait"), ("impl", "impl"), ("mod", "module"),
+                             ("macro_definition", "macro"), ("const_item", "constant"), ("static_item", "static"), ("type_item", "type"),
                              ("type_spec", "type"), ("variable_declarator", "function"), ("function", "function")] where type.contains(part) {
             return kind
         }
@@ -147,12 +152,13 @@ public enum Syntax {
 
     private static func symbols(_ root: Node, tree: MutableTree, grammar: Grammar, source: NSString) -> [SyntaxSymbol] {
         guard let query = grammar.symbols else { return [] }
-        var found: [(name: String, range: NSRange, lines: ClosedRange<Int>, kind: String)] = []
+        var found: [(name: String, title: String?, range: NSRange, lines: ClosedRange<Int>, kind: String)] = []
         for match in query.execute(node: root, in: tree) {
             guard let declaration = match.captures.first(where: { $0.name == "symbol" })?.node,
                   let name = match.captures.first(where: { $0.name == "name" }).map({ source.substring(with: $0.node.range) }) else { continue }
+            let title = match.captures.first(where: { $0.name == "trait" }).map { "\(source.substring(with: $0.node.range)) for \(name)" }
             let lines = Int(declaration.pointRange.lowerBound.row) + 1...Int(declaration.pointRange.upperBound.row) + 1
-            found.append((name, declaration.range, lines, SyntaxSymbol.kind(ofNode: declaration.nodeType)))
+            found.append((name, title, declaration.range, lines, SyntaxSymbol.kind(ofNode: declaration.nodeType)))
         }
         found.sort { $0.range.location != $1.range.location ? $0.range.location < $1.range.location : $0.range.length > $1.range.length }
         // Qualify each name with the declarations enclosing it.
@@ -161,7 +167,7 @@ public enum Syntax {
             while let last = stack.last, last.end <= symbol.range.location { stack.removeLast() }
             let qualified = (stack.map(\.name) + [symbol.name]).joined(separator: ".")
             stack.append((symbol.name, symbol.range.location + symbol.range.length))
-            return SyntaxSymbol(name: qualified, lines: symbol.lines, kind: symbol.kind)
+            return SyntaxSymbol(name: qualified, lines: symbol.lines, kind: symbol.kind, title: symbol.title)
         }
     }
 
@@ -284,13 +290,20 @@ private final class Grammar: @unchecked Sendable {
             (type_spec name: (_) @name) @symbol
             """
         case .rust:
+            // A trait impl is named by its type, like an inherent one, so its members qualify
+            // as `Batch.into_iter`; the trait is its `@trait` (`SyntaxSymbol.title`).
             return """
             (function_item name: (_) @name) @symbol
-            (impl_item type: (_) @name) @symbol
+            (impl_item trait: (_)? @trait type: (_) @name) @symbol
             (struct_item name: (_) @name) @symbol
             (enum_item name: (_) @name) @symbol
+            (union_item name: (_) @name) @symbol
             (trait_item name: (_) @name) @symbol
             (mod_item name: (_) @name) @symbol
+            (macro_definition name: (_) @name) @symbol
+            (const_item name: (_) @name) @symbol
+            (static_item name: (_) @name) @symbol
+            (type_item name: (_) @name) @symbol
             """
         case .bash:
             return "(function_definition name: (_) @name) @symbol"

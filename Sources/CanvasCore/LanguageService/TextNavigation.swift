@@ -9,9 +9,10 @@ public struct Declaration: Equatable, Sendable {
 }
 
 /// Code navigation without a language server: likely declarations by per-language patterns
-/// (`function`, `class`, `def`, `const`, `type`, `interface`, `func`, `fn`, `struct`, …), and
-/// word matches over the files of a root (`git grep -w`), for when a language's server is not
-/// installed or not running. Answers are labelled as text search wherever they are shown.
+/// (`function`, `class`, `def`, `const`, `type`, `interface`, `func`, `fn`, `struct`,
+/// `macro_rules!`, …), and word matches over the files of a root (`git grep -w`), for when a
+/// language's server is not installed or not running. Answers are labelled as text search
+/// wherever they are shown.
 public enum TextNavigation {
     /// Names a declaration keyword introduces, with the kind it makes.
     private static let keywordKinds: [String: String] = [
@@ -20,13 +21,16 @@ public enum TextNavigation {
         "type": "type", "typealias": "type", "enum": "enum", "struct": "struct", "union": "union", "actor": "actor",
         "const": "constant", "let": "variable", "var": "variable", "val": "variable",
         "module": "module", "namespace": "module", "mod": "module", "extension": "extension",
+        "macro_rules!": "macro",
     ]
 
     private static let identifier = #"[A-Za-z_$][\w$]*"#
 
-    /// `class Foo`, `export async function foo`, `pub fn foo`, `def foo`, `const foo`, `type Foo`.
-    /// The name is matched ahead, not taken, so `const fn foo` finds `fn foo` too.
-    private static let keyword = try! NSRegularExpression(pattern: #"(?<![\w$.])(function\*?|def|func|fun|fn|class|interface|protocol|trait|type|typealias|enum|struct|union|actor|const|let|var|val|module|namespace|mod|extension)\s+(?=("# + identifier + "))")
+    /// `class Foo`, `export async function foo`, `pub fn foo`, `def foo`, `const foo`, `type Foo`,
+    /// `macro_rules! foo`. The name is matched ahead, not taken, so `const fn foo` finds `fn foo` too.
+    private static let keyword = try! NSRegularExpression(pattern: #"(?<![\w$.])(function\*?|def|func|fun|fn|class|interface|protocol|trait|type|typealias|enum|struct|union|actor|const|let|var|val|module|namespace|mod|extension|macro_rules!)\s+(?=("# + identifier + "))")
+    /// A Rust static: `pub static mut COUNTER: u32` (`static` elsewhere is a modifier).
+    private static let rustStatic = try! NSRegularExpression(pattern: #"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+(?:mut\s+)?([A-Za-z_]\w*)\s*:"#)
     /// Go methods: `func (s *Server) Serve(`.
     private static let goMethod = try! NSRegularExpression(pattern: #"\bfunc\s*\([^)]*\)\s*([A-Za-z_]\w*)"#)
     /// `foo = async (a) =>`, `foo: function (`, `foo = x =>`.
@@ -40,7 +44,7 @@ public enum TextNavigation {
 
     /// The declarations a line of source makes (a line may make several: `const f = () =>`
     /// once). Comment lines and imports make none. `pathExtension` picks language-only rules
-    /// (Python's module-level assignments).
+    /// (Python's module-level assignments, Rust's statics).
     public static func declarations(inLine line: String, pathExtension: String = "") -> [Declaration] {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         // Comments, imports, and attributes (`#[derive]`) declare nothing.
@@ -67,6 +71,9 @@ public enum TextNavigation {
         }
         if pathExtension == "py" || pathExtension == "pyi", found.isEmpty, let match = pythonAssignment.firstMatch(in: line, range: whole) {
             add(text.substring(with: match.range(at: 1)), "variable", match.range(at: 1).location)
+        }
+        if pathExtension == "rs", let match = rustStatic.firstMatch(in: line, range: whole) {
+            add(text.substring(with: match.range(at: 1)), "static", match.range(at: 1).location)
         }
         return found
     }
@@ -114,7 +121,7 @@ public enum TextNavigation {
             let depth = stack.count
             stack.append((symbol.lines, containers.contains(symbol.kind)))
             guard !local else { continue }
-            let name = symbol.name.split(separator: ".").last.map(String.init) ?? symbol.name
+            let name = symbol.title ?? symbol.name.split(separator: ".").last.map(String.init) ?? symbol.name
             entries.append(OutlineEntry(name: name, kind: symbol.kind, line: symbol.lines.lowerBound, depth: depth))
         }
         let named = Set(entries.map(\.line))

@@ -247,6 +247,16 @@ struct DeclarationPatternTests {
         #expect(names("    public func navigate(_ action: KeyboardNavigation) -> Bool {", "swift") == ["navigate"])
     }
 
+    /// The rust study: Go to Definition on `print_error!(…)` found no declaration.
+    @Test func rustMacrosAndStaticsAreDeclarations() {
+        let macro = TextNavigation.declarations(inLine: "macro_rules! print_error {", pathExtension: "rs")
+        #expect(macro.map { "\($0.name) \($0.kind) \($0.column)" } == ["print_error macro 13"])
+        #expect(names("pub static mut COUNTER: AtomicUsize = AtomicUsize::new(0);", "rs") == ["COUNTER"])
+        #expect(names("pub(crate) static DEFAULT_MAX: usize = 8;", "rs") == ["DEFAULT_MAX"])
+        #expect(names("  static helper(x) {", "ts") == ["helper"], "elsewhere static is a modifier")
+        #expect(names("        print_error!(\"{}\", err);", "rs").isEmpty)
+    }
+
     @Test func usesCommentsAndImportsDeclareNothing() {
         #expect(names("  if (ready) {").isEmpty)
         #expect(names("  const html = injectMetaIntoSpa(raw);") == ["html"])
@@ -314,6 +324,36 @@ struct DeclarationPatternTests {
         #expect(outline.map(\.depth) == [0, 0, 0, 1, 0])
         #expect(outline.map(\.line) == [2, 3, 4, 5, 10])
         #expect(outline[2].kind == "class" && outline[3].kind == "method")
+    }
+
+    /// The rust study: Outline listed `impl IntoIterator for Batch` as "Batch · impl", like the
+    /// inherent `impl Batch`, and had no macros, consts, statics or type aliases.
+    @Test func rustOutlineNamesTraitImplsAndItems() {
+        let text = """
+        const MAX: usize = 8;
+        static mut SEEN: usize = 0;
+        pub type Result<T> = std::result::Result<T, Error>;
+        macro_rules! print_error {
+            ($($arg:tt)*) => { eprintln!($($arg)*) };
+        }
+        impl Batch {
+            const LIMIT: usize = 4;
+            fn new() -> Self { Batch }
+        }
+        impl IntoIterator for Batch {
+            fn into_iter(self) -> Self::IntoIter { todo!() }
+        }
+        fn main() {
+            const LOCAL: u8 = 1;
+        }
+        """
+        let outline = TextNavigation.outline(of: text, path: "src/walk.rs")
+        #expect(outline.map(\.name) == ["MAX", "SEEN", "Result", "print_error", "Batch", "LIMIT", "new", "IntoIterator for Batch", "into_iter", "main"])
+        #expect(outline.map(\.kind) == ["constant", "static", "type", "macro", "impl", "constant", "function", "impl", "function", "function"])
+        #expect(outline.map(\.depth) == [0, 0, 0, 0, 0, 1, 1, 0, 1, 0])
+        // Members still qualify by the type, so mentions read `Batch.into_iter`.
+        let symbols = Syntax.analyze(text, language: .rust).symbols
+        #expect(symbols.first { $0.lines.lowerBound == 12 }?.name == "Batch.into_iter")
     }
 }
 

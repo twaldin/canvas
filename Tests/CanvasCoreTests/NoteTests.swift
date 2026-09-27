@@ -695,7 +695,7 @@ struct NoteMentionTests {
 
     @Test func chipNamesTheNoteAndTheItem() throws {
         let (_, mention) = try stageLead()
-        #expect(mention.label == "note Audit log: trade-up… › 4. Rate limit keyed on IP")
+        #expect(mention.label == "note Audit log: tr… › 4. Rate limit keyed on …", "short enough for the chip to show whole")
     }
 
     @Test func contextGivesHeadingPathAndTheItemsText() async throws {

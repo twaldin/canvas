@@ -63,9 +63,10 @@ public enum MentionContext {
         case .image(_, let path, let x, let y):
             return "\(PathLabel.short(path)) at (\(x), \(y))"
         case .note(let object, let item):
-            let note = board.objects[object].map { clip(title(of: $0), 20) } ?? object
+            // Short enough that the chip shows it whole: the item's words matter most.
+            let note = board.objects[object].map { clip(title(of: $0), 14) } ?? object
             let summary = item.summary
-            return "note \(note) › \(summary.isEmpty ? item.kind.noun : clip(summary, 32))"
+            return "note \(note) › \(summary.isEmpty ? item.kind.noun : clip(summary, 24))"
         case .object(let id):
             guard let object = board.objects[id] else { return id }
             let name = object.type == .code ? PathLabel.short(title(of: object)) : title(of: object)

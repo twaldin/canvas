@@ -695,6 +695,8 @@ final class BrowserTile: NSView, TileContent {
     /// a background tab), loads in the stage and is waited for until the render's deadline.
     func render(_ request: TileRenderRequest) async -> TileRender {
         await markDriven()
+        // A page that failed is asked again (its server may be up by now) before it's drawn.
+        if loadFailure != nil, webView?.isLoading != true { retryFailedLoad(restart: true) }
         if let webView { await settle(webView) }
         return await capture(request)
     }

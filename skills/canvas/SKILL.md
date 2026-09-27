@@ -329,7 +329,9 @@ canvas view.attention --id obj_… --message "The race is here"   # → {"id": "
 canvas view.attention --id obj_… --clear                         # take it back
 ```
 
-Markers are keyed by the object (raising again replaces the message); the user selecting or looking at the object clears it too.
+Markers are keyed by the object (raising again replaces the message); the user selecting or looking at the object, or clicking the marker, clears it too.
+A marker's bubble is cut to the object's width (240–480 pt), so put the point of `--message` in its first ~40 characters.
+The user can clear every marker at once (right-click the canvas); markers aren't undo history.
 Raise one marker per thing your answer points at; they stay together until the user looks, even across app restarts.
 A job in a terminal with no agent integration can flag it without the API: `printf '\e]777;notify;Build;done\a'` (or OSC 9, or a bell) raises a marker there unless the user is typing in it.
 Terminals whose agent reports a lifecycle (omp, Claude Code, Codex) show done and blocked themselves, so their notifications raise nothing.
@@ -349,7 +351,7 @@ Every agent change is undoable with ⌘Z, but that is a safety net, not a licens
 Agents in other terminal tiles (any canvas in the app) are reachable by tile id or tile name:
 
 ```sh
-canvas agent.list                                    # every terminal: tile, kind, name, lifecycle (working/blocked/idle/done)
+canvas agent.list                                    # every terminal: tile, kind, name, lifecycle, board and root (its repo/worktree)
 canvas agent.prompt --target reviewer --text "Review the diff in src/store.ts"   # → waitable, submittedAt
 canvas agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `until` narrows it
 canvas agent.read --target reviewer --since prompt   # only what came after your last agent.prompt (inline images read as [image])
@@ -360,7 +362,7 @@ Then `agent.read --since prompt` returns just the reply (`--lines N` gives the p
 Kind `omp`, `claude` or `codex` reports a lifecycle (a fresh Codex from its first prompt). Kind `unknown` (a shell, aider, another CLI) has none:
 `agent.prompt` works, `agent.wait` fails once 15 s pass without a first report (enough for an agent you just started), so poll `agent.read --since prompt`.
 Claude Code runs no hook when its user presses Esc or denies an approval, so its tile keeps its last state until the next prompt.
-Don't prompt an agent that is `blocked`; it is waiting for its user.
+Don't prompt an agent that is `blocked`; it is waiting for its user (omp reports every approval prompt as blocked, nested ones included, and the user sees it on the tab and an edge pill).
 
 ## Compositions
 

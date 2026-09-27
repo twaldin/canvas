@@ -9,7 +9,9 @@
 //   dev-input <pid> move <x> <y>                     move the pointer (tracking-area hover, e.g. code navigation)
 //   dev-input <pid> text "<string>"                  insert text into the first responder
 //   dev-input <pid> command <selector>               e.g. insertNewline: deleteBackward: cancelOperation:
-//   dev-input <pid> shortcut <key> [--mods cmd]      key equivalent, e.g. shortcut z --mods cmd
+//   dev-input <pid> shortcut <char> [--mods cmd]     a key press by character, e.g. shortcut z --mods cmd, shortcut +
+//   dev-input <pid> key <name> [--mods …]            a key press by name: return escape tab space delete forwarddelete
+//                                                    up down left right home end pageup pagedown (or one character)
 //   dev-input <pid> scroll <x> <y> <dx> <dy>         pan by pixels
 //   dev-input <pid> magnify <x> <y> <amount>         pinch at x,y: zoom × (1 + amount) per step (0.05 in, -0.05 out)
 //   dev-input <pid> perf [ms]                        an idle DevPerf span (CANVAS_DEV_PERF=1), default 5000 ms
@@ -47,7 +49,7 @@ case "text":
     info["text"] = rest.joined(separator: " ")
 case "command":
     info["selector"] = rest.first ?? ""
-case "shortcut":
+case "shortcut", "key":
     info["key"] = rest.first ?? ""
 case "scroll":
     guard rest.count >= 4 else { exit(2) }

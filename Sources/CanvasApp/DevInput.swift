@@ -11,8 +11,10 @@ enum DevInput {
     /// Where replayed modifier changes happen; real input uses the actual mouse location.
     static var pointer: NSPoint?
 
+    static let enabled = ProcessInfo.processInfo.environment["CANVAS_DEV_INPUT"] == "1"
+
     static func install() {
-        guard ProcessInfo.processInfo.environment["CANVAS_DEV_INPUT"] == "1" else { return }
+        guard enabled else { return }
         DistributedNotificationCenter.default().addObserver(forName: notification, object: nil, queue: .main) { note in
             var fields: [String: String] = [:]
             for (key, value) in note.userInfo ?? [:] {
@@ -175,17 +177,20 @@ enum DevInput {
             ((window.attachedSheet ?? window).firstResponder as? NSTextInputClient)?.insertText(fields["text"] ?? "", replacementRange: NSRange(location: NSNotFound, length: 0))
         case "command":
             (window.attachedSheet ?? window).firstResponder?.doCommand(by: NSSelectorFromString(fields["selector"] ?? ""))
-        case "shortcut":
-            let key = fields["key"] ?? ""
-            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
-                                               windowNumber: window.windowNumber, context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0) else { return }
+        case "shortcut", "key":
+            guard let key = Key(fields["key"] ?? "") else { return NSLog("DevInput: unknown key %@", fields["key"] ?? "") }
             // A sheet in a window that isn't key ignores key equivalents (an alert's default button
             // only gets Return once key), so press the matching button, or accept on Return.
             if let sheet = window.attachedSheet {
-                if let pressed = button(in: sheet.contentView, keyEquivalent: key) { return pressed.performClick(nil) }
-                if key == "\r" || key == "\n" { return window.endSheet(sheet, returnCode: .alertFirstButtonReturn) }
+                if let pressed = button(in: sheet.contentView, keyEquivalent: key.characters) { return pressed.performClick(nil) }
+                if key.code == Key.returnCode { return window.endSheet(sheet, returnCode: .alertFirstButtonReturn) }
             }
-            if !window.performKeyEquivalent(with: event) { _ = NSApp.mainMenu?.performKeyEquivalent(with: event) }
+            // Through the application's own dispatch, as a key press arrives: key equivalents
+            // (window, then its views, then the main menu), then keyDown to the first responder,
+            // with the physical key code Ghostty and the text system read.
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                if let event = key.event(type, modifiers: flags, window: window) { NSApp.postEvent(event, atStart: false) }
+            }
         case "scroll":
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(number("dy")), wheel2: Int32(number("dx")), wheel3: 0) else { return }
             // CGEvent locations are global with a top-left origin (primary display), not Cocoa's.
@@ -244,6 +249,86 @@ enum DevInput {
         NSApp.orderedWindows.first { window in
             window.isVisible && window.windowController is CanvasWindowController
                 && (window.tabGroup.map { $0.selectedWindow === window } ?? true)
+        }
+    }
+}
+
+extension DevInput {
+    /// A key on a US ANSI keyboard, from a single character (`p`, `9`, `+`, `\r`) or a name
+    /// (`return`, `escape`, `tab`, `space`, `delete`, `forwarddelete`, arrows, `home`, `end`,
+    /// `pageup`, `pagedown`): its virtual key code, the characters it types, and whether it
+    /// implies Shift (`+`, `A`, `?`).
+    struct Key {
+        static let returnCode: UInt16 = 36
+        var code: UInt16
+        var characters: String
+        var shift = false
+        /// Arrows and the navigation block carry these flags on real key events.
+        var extraFlags: NSEvent.ModifierFlags = []
+
+        private static let named: [String: Key] = {
+            func function(_ code: UInt16, _ scalar: Int, arrow: Bool = false) -> Key {
+                Key(code: code, characters: String(Character(UnicodeScalar(UInt32(scalar))!)), extraFlags: arrow ? [.function, .numericPad] : .function)
+            }
+            return [
+                "return": Key(code: returnCode, characters: "\r"), "enter": Key(code: returnCode, characters: "\r"),
+                "tab": Key(code: 48, characters: "\t"), "space": Key(code: 49, characters: " "),
+                "delete": Key(code: 51, characters: "\u{7f}"), "backspace": Key(code: 51, characters: "\u{7f}"),
+                "escape": Key(code: 53, characters: "\u{1b}"), "esc": Key(code: 53, characters: "\u{1b}"),
+                "forwarddelete": function(117, NSDeleteFunctionKey), "home": function(115, NSHomeFunctionKey), "end": function(119, NSEndFunctionKey),
+                "pageup": function(116, NSPageUpFunctionKey), "pagedown": function(121, NSPageDownFunctionKey),
+                "left": function(123, NSLeftArrowFunctionKey, arrow: true), "right": function(124, NSRightArrowFunctionKey, arrow: true),
+                "down": function(125, NSDownArrowFunctionKey, arrow: true), "up": function(126, NSUpArrowFunctionKey, arrow: true),
+            ]
+        }()
+
+        /// Unshifted characters by key code, then the shifted ones.
+        private static let plain: [Character: UInt16] = [
+            "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
+            "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29,
+            "]": 30, "o": 31, "u": 32, "[": 33, "i": 34, "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43, "/": 44,
+            "n": 45, "m": 46, ".": 47, "`": 50, "\r": 36, "\n": 36, "\t": 48, " ": 49, "\u{1b}": 53, "\u{7f}": 51, "\u{8}": 51,
+        ]
+        private static let shifted: [Character: Character] = [
+            "!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6", "&": "7", "*": "8", "(": "9", ")": "0", "_": "-", "+": "=",
+            "{": "[", "}": "]", "|": "\\", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`",
+        ]
+
+        init(code: UInt16, characters: String, shift: Bool = false, extraFlags: NSEvent.ModifierFlags = []) {
+            self.code = code
+            self.characters = characters
+            self.shift = shift
+            self.extraFlags = extraFlags
+        }
+
+        init?(_ name: String) {
+            if let key = Self.named[name.lowercased()] { self = key; return }
+            guard name.count == 1, let character = name.first else { return nil }
+            if let code = Self.plain[character] {
+                self.init(code: code, characters: character == "\n" ? "\r" : character == "\u{8}" ? "\u{7f}" : name)
+            } else if let base = Self.shifted[character] ?? (character.isUppercase ? Character(character.lowercased()) : nil), let code = Self.plain[base] {
+                self.init(code: code, characters: name, shift: true)
+            } else {
+                return nil
+            }
+        }
+
+        /// A key down or up as the window server delivers it: `characters` with Control applied
+        /// (⌃C is ETX), `charactersIgnoringModifiers` with only Shift.
+        func event(_ type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags, window: NSWindow) -> NSEvent? {
+            var flags = modifiers.union(extraFlags)
+            if shift { flags.insert(.shift) }
+            var ignoring = characters
+            if flags.contains(.shift), !shift, characters.count == 1, let character = characters.first {
+                ignoring = Self.shifted.first { $0.value == character }.map { String($0.key) } ?? characters.uppercased()
+            }
+            var typed = ignoring
+            if flags.contains(.control), let scalar = ignoring.lowercased().unicodeScalars.first, ("a"..."z").contains(scalar) {
+                typed = String(UnicodeScalar(UInt8(scalar.value - 96)))
+            }
+            return NSEvent.keyEvent(with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                    windowNumber: window.windowNumber, context: nil, characters: typed, charactersIgnoringModifiers: ignoring,
+                                    isARepeat: false, keyCode: code)
         }
     }
 }

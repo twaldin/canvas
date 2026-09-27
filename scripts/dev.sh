@@ -3,6 +3,7 @@
 # other agents' instances (own CANVAS_HOME: socket, boards, log). See docs/testing.md.
 #
 #   scripts/dev.sh start [root]     build + bundle, launch without activating on the testing Space
+#                                   (no root: the tabs this home had open, else the checkout)
 #   scripts/dev.sh restart [root]   rebuild and relaunch, keeping terminal sessions (zmx) alive
 #   scripts/dev.sh stop             quit and kill this instance's zmx sessions
 #   scripts/dev.sh cli <args…>      run the canvas CLI against this instance
@@ -70,8 +71,15 @@ sessions() {
     { for (i = 1; i <= NF; i++) if ($i == label) { sub(/^ *name=/, "", $1); print $1 } }'
 }
 
+# Without a root, start/restart bring back the tabs this home had open (open-boards.json, first
+# tab selected); a fresh home opens the checkout.
+saved_root() {
+  python3 -c "import json,sys; roots=json.load(open(sys.argv[1])); print(roots[0] if roots else '')" "$home/open-boards.json" 2>/dev/null || true
+}
+
 launch() {
-  root="${1:-$repo}"
+  root="${1:-$(saved_root)}"
+  root="${root:-$repo}"
   [ -n "${CANVAS_DEV_APP:-}" ] || "$repo/scripts/bundle.sh" >/dev/null
   mkdir -p "$home"
   rm -f "$CANVAS_SOCKET"
@@ -136,5 +144,5 @@ case "${1:-}" in
     exec "$repo/.build/dev-input" "$pid" "$@"
     ;;
   sessions) sessions ;;
-  *) sed -n '2,13p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,14p' "$0" >&2; exit 2 ;;
 esac

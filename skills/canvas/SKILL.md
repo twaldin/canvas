@@ -30,9 +30,9 @@ Read these before you build anything; each one cost earlier agents a round trip.
 - **Renders go to a temp file.** `canvas render obj_…` without `--out` writes a new PNG under `$TMPDIR/canvas-renders/` and returns its `path`.
   Never pass an `--out` inside the repo: it shows up in `git status`.
 - **Write locations as `path:line`.** The user can ⌘-click `src/a.ts:42`, `:42:7`, `:10-20` or `#L10-20` in your terminal output to open that code beside your terminal
-  (resolved from your shell's cwd, then the board root), so prefer repo-relative `path:line` over prose like "in the store module".
-- **Name what the user will look for.** Go to (⌘P) matches every tile's caption and terminal name,
-  and the tray labels the terminal mentions go to by its `name`: caption your code tiles and name terminals you create.
+  (resolved from your shell's cwd, then the board root; a bare `core.py:42` opens only when that name is unique or clearly nearest the cwd), so write repo-relative `path:line`, not bare names or prose like "in the store module".
+- **Name what the user will look for.** Go to (⌘P) matches every tile's caption and terminal name and shows each code tile's caption under its path, so captions tell excerpts of one file apart;
+  the tray labels the terminal mentions go to by its `name`: caption your code tiles and name terminals you create.
 - **Code tiles tint their `range` only among other rows.** A `size: "fit"` tile shows exactly its range, untinted.
   To mark a few lines inside more context, give the tile a taller frame instead of fitting it.
 - **Line-bound arrows pin when their line is out of view.** An arrow end bound to `lines` of a code tile attaches at that row only while the tile shows it;
@@ -261,7 +261,7 @@ Eval and CSP limits, rendering unloaded pages, and history credit: `references/b
 ## Follow mode
 
 Your terminal has one follow tile: the canvas re-aims it at every source file in the project you read, edit, or write,
-flashes the lines each edit or write changed, and keeps a short history.
+flashes the lines each edit or write changed, and keeps a short history (edited locations marked with a pencil, kept longer than reads).
 Files in another worktree of the board's repository count too (the tile shows the absolute path with that worktree's changes).
 Images, PDFs and other binaries, files under the temp dir, and files that no longer exist never re-aim it.
 While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed ("N new ▸") before following again.
@@ -340,7 +340,8 @@ Then address it with `board: <id>` (from the result) on every call, and start ag
 
 ## When the user asks how to use Canvas
 
-⌘P goes to any tile or opens a repo file; ⌥⌘-arrows move between tiles; ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
+⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows move between tiles; ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
 ⌘9 fits everything, ⌘0 is 100%, ⌘=/⌘- zoom; ⌘T opens a terminal; ⌘G groups the selection; ⌘Z undoes any change, agents' included.
 Hyper-click (⌃⌥⇧⌘-click) stages a mention for the terminal the tray shows; Hyper-V pastes staged mentions into a terminal whose agent has no integration.
-⌘-click a `path:line` in terminal output to open it. Right-click empty canvas for New Terminal/Note/Browser Here; right-click a terminal for Follow Files.
+⌘-click a `path:line` in terminal output to open it. A code tile's right-click has Outline (type to filter) and Find References (Open All lays them out as excerpts).
+Right-click empty canvas for New Terminal/Note/Browser Here or Review Changes; right-click a terminal for Follow Files.

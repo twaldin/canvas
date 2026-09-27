@@ -488,7 +488,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(copyObjectIDs(_:)):
             item.title = selection.count > 1 ? "Copy Object IDs" : "Copy Object ID"
             return !selection.isEmpty
-        case #selector(goToNextNeedsYou(_:)): return canvas.somethingNeedsYou
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
         case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selectedHTMLTile != nil

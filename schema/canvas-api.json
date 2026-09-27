@@ -345,7 +345,9 @@
         "board": { "$ref": "#/definitions/Id", "description": "the board the terminal is on" },
         "root": { "type": "string", "description": "that board's root directory" },
         "name": { "type": "string" },
-        "kind": { "type": "string" },
+        "kind": { "type": "string", "description": "the integrated agent that reported (omp, claude, codex, gemini, opencode), else unknown" },
+        "title": { "type": "string", "description": "the title the program in the terminal set (OSC 0/2), e.g. Gemini CLI's \"✋ Action Required (glow)\"; absent when none" },
+        "program": { "type": "string", "description": "what runs in the terminal's foreground, named the way a person would (`gemini`, `opencode`, `cargo test`); absent at the shell's prompt" },
         "sessionId": { "type": "string" },
         "lifecycle": { "$ref": "#/definitions/Lifecycle" }
       },
@@ -465,7 +467,7 @@
         "required": ["root"],
         "properties": {
           "root": { "type": "string", "description": "absolute directory path (`~` allowed); one board per directory" },
-          "select": { "type": "boolean", "default": false, "description": "bring the board's tab to the front" }
+          "select": { "type": "boolean", "default": false, "description": "bring the board's tab to the front: this switches the user's tab, so only when they asked to see that board" }
         },
         "additionalProperties": false
       },
@@ -859,14 +861,14 @@
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true.",
+      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true.",
       "params": {
         "type": "object",
         "required": ["target", "text"],
         "properties": {
           "target": { "type": "string", "description": "agent name or tile id" },
           "text": { "type": "string" },
-          "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` (e.g. Claude Code stays blocked after you press Esc on or deny an approval, since it runs no hook then)" }
+          "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" }
         },
         "additionalProperties": false
       },

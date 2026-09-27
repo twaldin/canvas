@@ -159,6 +159,8 @@ public enum AgentResume {
         case "omp": ["omp", "--resume=\(sessionId)"]
         case "claude": ["claude", "--resume", sessionId]
         case "codex": ["codex", "resume", sessionId]
+        case "gemini": ["gemini", "--resume", sessionId]
+        case "opencode": ["opencode", "--session", sessionId]
         default: nil
         }
     }

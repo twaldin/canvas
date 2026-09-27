@@ -204,7 +204,32 @@ struct AgentResumeTests {
         #expect(AgentResume.argv(kind: "omp", sessionId: "s1") == ["omp", "--resume=s1"])
         #expect(AgentResume.argv(kind: "claude", sessionId: "u-1") == ["claude", "--resume", "u-1"])
         #expect(AgentResume.argv(kind: "codex", sessionId: "t-1") == ["codex", "resume", "t-1"])
+        #expect(AgentResume.argv(kind: "gemini", sessionId: "g-1") == ["gemini", "--resume", "g-1"])
+        #expect(AgentResume.argv(kind: "opencode", sessionId: "ses_1") == ["opencode", "--session", "ses_1"])
         #expect(AgentResume.argv(kind: "aider", sessionId: "x") == nil)
+    }
+}
+
+struct TerminalNameTests {
+    @Test func aProgramIsNamedByWhatItRunsNotItsInterpreterOrOptions() {
+        // Gemini CLI is a node script behind `#!/usr/bin/env -S node --no-warnings=DEP0040`.
+        #expect(TerminalName.program(argv: ["node", "--no-warnings=DEP0040", "/opt/homebrew/bin/gemini", "-m", "flash"]) == "gemini")
+        #expect(TerminalName.program(argv: ["/Users/u/.opencode/bin/opencode", "-m", "zai/glm-4.7"]) == "opencode")
+        #expect(TerminalName.program(argv: ["cargo", "test", "-j", "4"]) == "cargo test")
+        #expect(TerminalName.program(argv: ["npm", "run", "dev", "extra"]) == "npm run dev")
+        #expect(TerminalName.program(argv: ["vim", "src/main.rs"]) == "vim main.rs")
+        #expect(TerminalName.program(argv: ["python3.12", "-u", "scripts/train.py", "--epochs", "3"]) == "train.py")
+        #expect(TerminalName.program(argv: ["bun", "run", "dev"]) == "bun run dev")
+        #expect(TerminalName.program(argv: []) == nil)
+    }
+
+    @Test func theHeaderSaysTheNameAndTheLiveTitleOnce() {
+        #expect(TerminalName.label(name: "gemini", title: "◇ Ready (glow)") == "gemini · ◇ Ready (glow)")
+        // A title that already says the name, in any case, isn't prefixed again.
+        #expect(TerminalName.label(name: "claude", title: "✳ Claude Code") == "✳ Claude Code")
+        #expect(TerminalName.label(name: "cargo test", title: nil) == "cargo test")
+        #expect(TerminalName.label(name: nil, title: "~/dev/glow") == "~/dev/glow")
+        #expect(TerminalName.label(name: " ", title: "") == nil)
     }
 }
 

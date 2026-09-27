@@ -107,6 +107,10 @@ public final class ApiRouter {
     /// fence key (the tile shows them too); nil without the tile, and `object.get` resolves them
     /// itself.
     public var noteExcerpts: ((Board, ObjectID) async -> [String: NoteExcerpt]?)?
+    /// A code tile's range resolved against disk now with the text the tile last found there
+    /// (it may re-anchor the range first); nil without the tile, and `object.get` resolves the
+    /// range by `props.anchor` alone.
+    public var codeRangeStatus: ((Board, ObjectID) async -> NoteExcerpt?)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
@@ -918,8 +922,11 @@ public final class ApiRouter {
             return result.merging(.object(["fences": NoteMarkdown.status(of: fences, excerpts: excerpts)]))
         }
         if object.type == .code, let fence = CodeAnchor.fence(object.props) {
-            let excerpt = await NoteSource.excerpt(for: fence, root: board.root, captured: nil)
-            return result.merging(.object(["rangeStatus": .object(excerpt.statusJSON)]))
+            var excerpt = await codeRangeStatus?(board, id)
+            if excerpt == nil { excerpt = await NoteSource.excerpt(for: fence, root: board.root, captured: nil) }
+            // The tile may have written a re-found range back meanwhile.
+            let current = try dispatch("object.get", p)
+            return current.merging(.object(["rangeStatus": .object(excerpt?.statusJSON ?? [:])]))
         }
         guard object.type == .changes else { return result }
         let set = await ChangeSet.load(root: board.root, spec: ChangesSpec(object.props), highlight: false)

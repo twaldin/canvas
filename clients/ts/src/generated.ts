@@ -607,7 +607,7 @@ export type ObjectGetResult = {
     /** stale or missing: why */
     reason?: string;
   }[];
-  /** code tiles showing a range (not follow tiles or pinned tiles): how the range resolves against disk now, by props.anchor */
+  /** code tiles showing a range (not follow tiles or pinned tiles): how the range resolves against disk now (the tile reloads and re-anchors first, so `object` already carries a re-found range) */
   rangeStatus?: AnchorStatus;
   /** changes tiles only */
   changes?: {

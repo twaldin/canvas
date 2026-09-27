@@ -22,6 +22,18 @@ public struct NoteExcerpt: Equatable, Sendable {
     /// `lines` the file's, and there is no diff.
     public var applied = false
 
+    public init(path: String, range: LineRange?, lines: [String], status: NoteAnchor.Status, diff: [NoteDiff.Line]? = nil,
+                fileLineCount: Int = 0, missing: Bool = false, applied: Bool = false) {
+        self.path = path
+        self.range = range
+        self.lines = lines
+        self.status = status
+        self.diff = diff
+        self.fileLineCount = fileLineCount
+        self.missing = missing
+        self.applied = applied
+    }
+
     public var isStale: Bool {
         if case .stale = status { true } else { false }
     }

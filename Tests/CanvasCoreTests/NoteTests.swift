@@ -185,6 +185,22 @@ struct NoteAnchorTests {
         #expect(NoteAnchor.resolve(fence, in: file, captured: nil).range == nil)
     }
 
+    /// click's `core.py` has two `value_from_envvar`s opening with the same line; logging put
+    /// inside the first must not hand its range to the second, whose next line happens to be
+    /// blank like the captured one.
+    @Test func linesInsertedInsideDontHandTheRangeToATwinFirstLine() {
+        let captured = ["rv = self.resolve_envvar_value(ctx)", "", "if rv is not None and self.nargs != 1:", "    return self.type.split_envvar_value(rv)", "", "return rv"]
+        let twin = ["rv = self.resolve_envvar_value(ctx)", "", "# Absent environment variable", "if rv is None:", "    return None", ""]
+        let logged = ["x", captured[0], "print('TEMP rv', rv)", "print('TEMP nargs')"] + captured.dropFirst() + ["", "class Option:"] + twin
+        let fence = NoteFence(path: "core.py", lines: LineRange(start: 2, end: 7))
+        #expect(NoteAnchor.resolve(fence, in: logged, captured: captured).range == LineRange(start: 2, end: 9))
+        // With the block deleted, the twin's first line doesn't make it the range: stale.
+        let deleted = ["x", "", "class Option:"] + twin
+        let lost = NoteAnchor.resolve(fence, in: deleted, captured: captured)
+        #expect(lost.range == nil)
+        #expect(lost.status == .stale("lines 2-7 no longer hold the code they showed"))
+    }
+
     @Test func symbolsResolveToTheirBody() {
         let swift = [
             "struct Board {",

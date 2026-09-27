@@ -194,7 +194,18 @@ final class CodeTile: NSView, TileContent {
             }
         }
         if old.props["diffBase"] != object.props["diffBase"] || old.props["pinnedCommit"] != object.props["pinnedCommit"] { load() }
-        if old.props["range"] != object.props["range"] || old.props["anchor"] != object.props["anchor"] { reanchor() }
+        if old.props["range"] != object.props["range"] || old.props["anchor"] != object.props["anchor"] {
+            if documentIsCurrent {
+                reanchor()
+            } else {
+                reanchorPending = true
+                if !isLive { needsLoad = true }
+                if staleReason != nil {
+                    staleReason = nil
+                    refreshPainter(keepSelection: true)
+                }
+            }
+        }
         refreshHeader()
         resizeSubviews(withOldSize: bounds.size)
     }
@@ -313,7 +324,7 @@ final class CodeTile: NSView, TileContent {
         let document = await source.document(path: path, url: board.absoluteURL(path))
         await MainTurns.next()
         guard path == displayed.path, source == self.source else { return nil }
-        if !showsCurrent || loadedSource != source || self.document?.text != document.text || self.document?.signs != document.signs {
+        if !showsCurrent || loadedSource != source || reanchorPending || self.document?.text != document.text || self.document?.signs != document.signs {
             install(document, source: source)
             // Not live: the next time it is, revalidate against the watched file and bases.
             if !isLive { needsLoad = true }
@@ -440,8 +451,12 @@ final class CodeTile: NSView, TileContent {
     /// `NoteAnchor`): with the file loaded or the range changed, the range is re-found by the
     /// text it held (else `props.anchor`, its first line) and, moved or resized by lines
     /// inserted or removed above or inside it, written back with its first line as bookkeeping
-    /// (`Board.reanchor`). Code that is gone leaves the range where it was, marked stale.
+    /// (`Board.reanchor`). Code that is gone leaves the range where it was, marked stale. Only
+    /// against the file as it is now: a range set while the tile's text may be behind the disk
+    /// (not live, or a reload pending) waits for the next load (`reanchorPending`), or it would
+    /// be anchored to whatever line that old text had there.
     private func reanchor() {
+        reanchorPending = false
         let wasStale = staleReason
         defer {
             if staleReason != wasStale {
@@ -468,6 +483,27 @@ final class CodeTile: NSView, TileContent {
             try? board.reanchor(object.id, range: range, anchor: anchor)
         }
     }
+
+    /// `object.get`'s `rangeStatus`: the range resolved against the file as it is now (loaded
+    /// first unless the tile is current, which re-anchors it) with the text the tile last found
+    /// there, so a first line repeated elsewhere doesn't pass for the code it showed. Nil for a
+    /// tile whose range doesn't anchor.
+    func rangeStatus() async -> NoteExcerpt? {
+        guard CodeAnchor.fence(object.props) != nil, let document = await loadOffscreen(),
+              let fence = CodeAnchor.fence(object.props), let path = fence.path, let written = fence.lines else { return nil }
+        guard document.side == .new, document.diff.state != .missing else {
+            return NoteExcerpt(path: path, range: nil, lines: [], status: .stale("no file \(path)"), missing: true)
+        }
+        let source = NoteSource.lines(of: document.text.text)
+        let captured = anchored.flatMap { $0.path == path && $0.range == written ? $0.lines : nil }
+        let resolution = NoteAnchor.resolve(fence, in: source, captured: captured)
+        let lines = resolution.range.map { Array(source[($0.start - 1)..<$0.end]) } ?? []
+        return NoteExcerpt(path: path, range: resolution.range, lines: lines, status: resolution.status, fileLineCount: source.count)
+    }
+
+    /// The range or anchor changed while the text wasn't known to be current: the next install
+    /// (a load, or the reload before a render) re-finds it.
+    private var reanchorPending = false
 
     // MARK: Find
 

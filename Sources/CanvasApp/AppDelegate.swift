@@ -80,6 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let note = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? NoteTile else { return nil }
             return await note.resolvedExcerpts()
         }
+        router.codeRangeStatus = { [weak self] board, tile in
+            guard let code = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? CodeTile else { return nil }
+            return await code.rangeStatus()
+        }
         router.snapshotBoard = { [weak self] board, format in await self?.controllers[board.id]?.snapshot(format: format) }
         router.renderView = { [weak self] board, request, format in
             guard let canvas = self?.controllers[board.id]?.canvas else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }

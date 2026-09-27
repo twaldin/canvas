@@ -696,7 +696,7 @@
               "additionalProperties": false
             }
           },
-          "rangeStatus": { "$ref": "#/definitions/AnchorStatus", "description": "code tiles showing a range (not follow tiles or pinned tiles): how the range resolves against disk now, by props.anchor" },
+          "rangeStatus": { "$ref": "#/definitions/AnchorStatus", "description": "code tiles showing a range (not follow tiles or pinned tiles): how the range resolves against disk now (the tile reloads and re-anchors first, so `object` already carries a re-found range)" },
           "changes": {
             "type": "object",
             "description": "changes tiles only",

@@ -53,11 +53,13 @@ public enum NoteAnchor {
             }
             return resolution(moved, tracking: [])
         }
-        // Every line matching the key is a candidate, the written position included: more
-        // matching neighbours (from the captured text) wins, nearness to where the range used to
-        // be only breaks ties, so a common first line (`}`) left at the old spot can't hold the
-        // range when the captured block sits elsewhere.
-        var best: (index: Int, score: Int, distance: Int)?
+        // Every line matching the key is a candidate, the written position included. With only
+        // the first line to go by, the nearest wins. With captured text, the candidate keeping
+        // most of it wins (lines inserted inside the range don't count against it, as they would
+        // matching line by line), then the one keeping it closest together, so a common first
+        // line (`}`) left at the old spot can't hold the range when the block sits elsewhere, and
+        // only then nearness to where the range used to be.
+        var candidates: [(start: Int, score: Int, distance: Int)] = []
         for index in source.indices where normalized(source[index]) == key {
             let start = index - offset
             guard start >= 0 else { continue }
@@ -65,18 +67,33 @@ public enum NoteAnchor {
             for (k, line) in expected.prefix(maxPlacementLines).enumerated() where k != offset && start + k < source.count && normalized(source[start + k]) == normalized(line) {
                 score += 1
             }
-            let distance = abs(start - written)
-            if best == nil || score > best!.score || (score == best!.score && distance < best!.distance) {
-                best = (start, score, distance)
-            }
+            candidates.append((start, score, abs(start - written)))
         }
-        if let best { return resolution(best.index, tracking: expected) }
+        let substantive = expected.filter { !normalized($0).isEmpty }.count
+        if expected.count > 1, expected.count <= maxPlacementLines, !candidates.isEmpty {
+            // Content scoring diffs a window per candidate: the nearest, and the best line by line.
+            let near = candidates.sorted { $0.distance < $1.distance }.prefix(maxNominees)
+            let matching = candidates.sorted { ($0.score, -$0.distance) > ($1.score, -$1.distance) }.prefix(8)
+            let wanted = expected.map(normalized)
+            let scored = Set((near + matching).map(\.start)).map { start in (start: start, fit: fit(wanted, in: source, from: start), distance: abs(start - written)) }
+            let best = scored.min { a, b in
+                if a.fit.kept != b.fit.kept { return a.fit.kept > b.fit.kept }
+                if a.fit.end - a.start != b.fit.end - b.start { return a.fit.end - a.start < b.fit.end - b.start }
+                return (a.distance, a.start) < (b.distance, b.start)
+            }!
+            // Edited where it stands, the range stays; elsewhere, a lone matching first line (the
+            // same statement in another function) is not the code the range showed.
+            if best.start == written || best.fit.kept * 2 > substantive { return resolution(best.start, tracking: expected) }
+        } else if let best = candidates.min(by: { ($0.distance, $0.start) < ($1.distance, $1.start) }) {
+            return resolution(best.start, tracking: expected)
+        }
         // The first line changed or went; most of the rest of the captured text may still stand.
         if expected.count > 1, let found = bestPlacement(of: expected, in: source, near: written, length: expected.count),
-           found.kept >= 2, found.kept * 2 > expected.count {
+           case let kept = fit(expected.map(normalized), in: source, from: found.start).kept, kept >= 2, kept * 2 > substantive {
             return resolution(found.start, tracking: expected)
         }
-        return Resolution(range: nil, status: .stale("lines \(lines.start)-\(lines.end) no longer contain \"\(clip(key))\""))
+        let reason = candidates.isEmpty ? "no longer contain \"\(clip(key))\"" : "no longer hold the code they showed"
+        return Resolution(range: nil, status: .stale("lines \(lines.start)-\(lines.end) \(reason)"))
     }
 
     /// The text a line range is re-found by: what it captured, when that opens with the anchor
@@ -94,33 +111,53 @@ public enum NoteAnchor {
         lines.enumerated().first { !normalized($0.element).isEmpty }.map { ($0.offset, normalized($0.element)) }
     }
 
-    /// Last line (0-based) of `captured`'s content in `source` when it starts at `start`: the
-    /// shortest stretch keeping as much of it as a generous window does, so lines inserted or
-    /// removed inside the range carry its end with them. Captured lines gone from the end leave
-    /// the range shorter rather than taking in the next, unrelated line, unless that line reads
-    /// like the one it replaced (`}` → `} // done`). Nil when most of the content is gone: the
-    /// range then keeps its written length.
+    /// Last line (0-based) of `captured`'s content in `source` when it starts at `start` (`fit`),
+    /// so lines inserted or removed inside the range carry its end with them. Captured lines gone
+    /// from the end leave the range shorter rather than taking in the next, unrelated line,
+    /// unless that line reads like the one it replaced (`}` → `} // done`) or both are blank.
+    /// Nil when most of the content is gone: the range then keeps its written length.
     static func trackedEnd(of captured: [String], in source: [String], from start: Int) -> Int? {
         guard captured.count <= maxPlacementLines, start < source.count else { return nil }
         let wanted = captured.map(normalized)
-        let window = source[start..<min(source.count, start + captured.count + max(10, captured.count / 2))].map(normalized)
-        let most = NoteDiff.keptCount(wanted, window)
-        guard most * 2 > wanted.count else { return nil }
-        var low = 1
-        var high = window.count
-        while low < high {
-            let mid = (low + high) / 2
-            if NoteDiff.keptCount(wanted, Array(window[..<mid])) >= most { high = mid } else { low = mid + 1 }
-        }
-        var end = start + low - 1
-        let lastKept = NoteDiff.lines(wanted, Array(window[..<low])).reduce(-1) { last, line in
+        let found = fit(wanted, in: source, from: start)
+        guard found.kept * 2 > wanted.filter({ !$0.isEmpty }).count else { return nil }
+        var end = found.end
+        let shown = source[start...end].map(normalized)
+        let lastKept = NoteDiff.lines(nonBlank(wanted, side: "c"), nonBlank(shown, side: "s")).reduce(-1) { last, line in
             if case .same(let old, _, _) = line { max(last, old) } else { last }
         }
         for replaced in wanted.dropFirst(lastKept + 1) {
-            guard end + 1 < source.count, similar(replaced, normalized(source[end + 1])) else { break }
+            guard end + 1 < source.count else { break }
+            let next = normalized(source[end + 1])
+            guard replaced.isEmpty ? next.isEmpty : similar(replaced, next) else { break }
             end += 1
         }
         return end
+    }
+
+    /// How many non-blank lines of `wanted` (normalized) a generous window of `source` from
+    /// `start` keeps, and where the shortest stretch keeping that many ends (0-based). Blank
+    /// lines never match: one far below would otherwise stretch a range over unrelated code.
+    static func fit(_ wanted: [String], in source: [String], from start: Int) -> (kept: Int, end: Int) {
+        let substantive = wanted.filter { !$0.isEmpty }.count
+        if start + wanted.count <= source.count, wanted.indices.allSatisfy({ normalized(source[start + $0]) == wanted[$0] }) {
+            return (substantive, start + max(0, wanted.count - 1))
+        }
+        let window = nonBlank(source[start..<min(source.count, start + wanted.count + max(20, wanted.count))].map(normalized), side: "s")
+        let tokens = nonBlank(wanted, side: "c")
+        let most = NoteDiff.keptCount(tokens, window)
+        var low = 1
+        var high = max(1, window.count)
+        while low < high {
+            let mid = (low + high) / 2
+            if NoteDiff.keptCount(tokens, Array(window[..<mid])) >= most { high = mid } else { low = mid + 1 }
+        }
+        return (most, start + low - 1)
+    }
+
+    /// `lines` with each blank line made unique to its `side`, so a diff never pairs blanks.
+    static func nonBlank(_ lines: [String], side: String) -> [String] {
+        lines.enumerated().map { $0.element.isEmpty ? "\u{0}\(side)\($0.offset)" : $0.element }
     }
 
     /// Two non-blank lines where one begins the other, or that share at least half their length

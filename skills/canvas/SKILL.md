@@ -91,7 +91,7 @@ A shape `over` a tile marks a region in the tile's local units (`partly over`: m
 On a browser or HTML tile the mention adds `page elements under it (<url>):` lines (`<selector> "<text>"`), read when the prompt was sent: re-check with the selectors or a render if the page may have changed.
 A Hyper-click on a page's `<canvas>`, `<video>` or `<img>` carries `pixel (x, y) of W×H` in the element's own pixels: use it directly instead of mapping a drawn shape's region.
 A terminal mention quotes its screen (one over 41 lines keeps 40: the first 3, the last 10 and failure lines).
-A command's output (``[n] command `go test ./...` · exit 1``) ends `· all of it: canvas agent.read --target <id> --block -N`: run exactly that to read the block (up to its last 2000 lines).
+A command's output (``[n] command `go test ./...` · exit 1``) ends `· read it: canvas agent.read --target <id> --block -N`: run exactly that to read the block (up to its last 2000 lines).
 Whether the user's last command passed: `lastCommand` (`{command, exit, durationMs}`) in `agent.list`/`object.get`, not the screen.
 An `(edited)` marker means what the mention holds changed after the user staged it (a note's text, a page's address, a Stage/Unstage/Discard of that code mention's own lines): re-read it.
 Every mention kind and field: `references/api.md` "Reading the board".

@@ -233,7 +233,10 @@ export type ResolvedMention = {
 
 export type Agent = {
   tile: Id;
-  board?: Id;
+  /** the board the terminal is on */
+  board: Id;
+  /** that board's root directory */
+  root: string;
   name?: string;
   kind: string;
   sessionId?: string;

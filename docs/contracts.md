@@ -285,6 +285,8 @@ All git in the app runs through `GitRunner.shared` (CanvasCore), which caps conc
 
 ## Agent prompts and replies
 
+`agent.list`, `agent.prompt`, `agent.wait`, and `agent.read` describe a terminal with one entry shape (`ApiRouter.agentEntry`, schema `Agent`): `tile`, `board`, `root` (that board's root directory), `name`, `kind`, `sessionId`, `lifecycle`.
+
 `agent.prompt` reads the target's session text (the last 400 lines, `TerminalTail`, each line with its position in the whole text) before it pastes, and keeps it in memory per terminal until the next prompt, the tile's deletion, or an app restart. `agent.read` `since: "prompt"` reads the last 2000 lines and returns them from the first remembered line that now reads differently (`TerminalTail.Tail.boundary(after:)`: a shell's prompt line that got the command, a TUI's input box its reply overwrote), else from where the old text ended. The scrollback's own trimming can move positions; the reply then starts earlier, never later. A terminal whose lifecycle is `unknown` gets no pending-prompt state, so `agent.wait` on it fails at once instead of waiting for a report that never comes.
 
 ## Lifecycle authority

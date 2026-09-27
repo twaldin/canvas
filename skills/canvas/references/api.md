@@ -95,7 +95,7 @@ and `attention.changed` (`{id, active, message?, raisedBy?}`: a marker raised, o
 
 ## Agents
 
-`agent.list` lists every terminal tile in the app. `lifecycle.state` is `working`, `blocked` (waiting for its user: an approval or a question),
+`agent.list` lists every terminal tile in the app; each entry names its `board` and that board's `root` directory, so you can tell which repo or worktree an agent works in. `lifecycle.state` is `working`, `blocked` (waiting for its user: an approval or a question),
 `idle`, `done` (idle with results the user hasn't looked at yet), or `unknown` (no integration reporting: a shell, aider, a CLI without Canvas hooks; its `kind` is `unknown` too).
 `agent.read` returns up to 2000 lines of the terminal's text, trailing blank lines removed; `since="prompt"` returns only what followed your last `agent.prompt` to it (`truncated` when there was more).
 `agent.prompt` returns `waitable`: then `agent.wait` right after it waits for that prompt's turn (it ignores the state from before the prompt), so wait for `done` directly:

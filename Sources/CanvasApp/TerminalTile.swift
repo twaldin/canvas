@@ -1,5 +1,6 @@
 import AppKit
 import CanvasCore
+import GhosttyKit
 import GhosttyTerminal
 
 /// A Ghostty surface running `zmx attach <session>`: the agent/shell survives app quit, crash,
@@ -186,8 +187,14 @@ final class TerminalTile: NSView, TileContent {
         window?.makeFirstResponder(terminal)
     }
 
+    /// Ghostty starts a surface focused, and libghostty-spm tells it otherwise only when first
+    /// responder or key window changes. Until then a terminal nobody had focused kept Ghostty's
+    /// focused-surface timers (cursor blink, termios polling) running once it had been shown,
+    /// minimized or not: ~12 wakeups/s per terminal.
     fileprivate func attached(_ surface: TerminalSurface?) {
         self.surface = surface
+        guard let handle = surface?.handle else { return }
+        ghostty_surface_set_focus(handle, window?.isKeyWindow == true && window?.firstResponder === terminal)
     }
 
     fileprivate func titleChanged(_ title: String) {

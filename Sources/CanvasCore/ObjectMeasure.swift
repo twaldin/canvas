@@ -140,7 +140,7 @@ public enum ObjectMeasure {
     }
 
     /// What an empty note shows (and so how tall it is).
-    public static let notePlaceholder = "Double-click to write a note"
+    public static let notePlaceholder = "Double-click or ↩ to write a note"
 
     /// Height TextKit 2 lays `text` out at in a container `width` wide, as the note display does.
     public static func noteTextHeight(_ text: NSAttributedString, width: CGFloat) -> CGFloat {

@@ -82,6 +82,7 @@ final class BrowserTile: NSView, TileContent {
             self?.credit.user()
             self?.submitAddress(text)
         }
+        chrome.onEscape = { [weak self] in self?.leave() }
         chrome.onReload = { [weak self] in
             guard let self else { return }
             self.credit.user()
@@ -197,6 +198,7 @@ final class BrowserTile: NSView, TileContent {
         controller.add(PageMessages(tile: self), contentWorld: BrowserScripts.world, name: BrowserScripts.messageName)
         let view = BrowserWebView(frame: webViewFrame, configuration: configuration)
         view.onUserInput = { [weak self] in self?.credit.user() }
+        view.onEscape = { [weak self] in self?.leave() }
         view.autoresizingMask = [.width, .height]
         view.navigationDelegate = self
         view.uiDelegate = self
@@ -424,9 +426,30 @@ final class BrowserTile: NSView, TileContent {
         if actor == .user { onOpenedTile?(opened.id) }
     }
 
-    /// Puts keyboard focus in the address field (a new, empty tile the user made).
+    /// Puts keyboard focus in the address field (a new, empty tile the user made; ⌘L).
     func focusAddress() {
         chrome.focusAddress()
+    }
+
+    /// Return on the selected tile: the page takes the keyboard (the address field while there
+    /// is no page); ⌘L goes to the address field, Esc back to the canvas.
+    func enterKeyboard() -> Bool {
+        guard let webView, webView.url != nil, webView.url?.absoluteString != "about:blank" else {
+            focusAddress()
+            return true
+        }
+        return window?.makeFirstResponder(webView) == true
+    }
+
+    private func leave() {
+        (enclosingScrollView as? CanvasView)?.leaveTile(objectID)
+    }
+
+    /// A key the page didn't handle comes back up the responder chain: Esc already handed the
+    /// keyboard to the canvas (`BrowserWebView`), and must not also clear the selection there.
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { return }
+        super.keyDown(with: event)
     }
 
     // MARK: Change signals (automation waits, snapshot freshness)
@@ -749,9 +772,13 @@ final class BrowserWebView: WKWebView {
         super.mouseDown(with: event)
     }
 
+    /// Esc: the page sees it (closing its own dialog), then the canvas takes the keyboard back.
+    var onEscape: (() -> Void)?
+
     override func keyDown(with event: NSEvent) {
         onUserInput?()
         super.keyDown(with: event)
+        if event.keyCode == 53, event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty { onEscape?() }
     }
 }
 
@@ -778,6 +805,10 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     var onForward: (() -> Void)?
     var onReload: (() -> Void)?
     var onSubmit: ((String) -> Void)?
+    /// Esc in the address field: its text goes back to the page's address, the canvas takes the keyboard.
+    var onEscape: (() -> Void)?
+    /// The address the field shows while nobody types in it.
+    private var shownAddress = ""
     private let back = BrowserChrome.button("chevron.left", "Back")
     private let forward = BrowserChrome.button("chevron.right", "Forward")
     private let reload = BrowserChrome.button("arrow.clockwise", "Reload")
@@ -828,7 +859,8 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     }
 
     func setAddress(_ text: String) {
-        address.stringValue = text == "about:blank" ? "" : text
+        shownAddress = text == "about:blank" ? "" : text
+        address.stringValue = shownAddress
     }
 
     func focusAddress() {
@@ -853,4 +885,12 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
 
     func controlTextDidBeginEditing(_ obj: Notification) { isEditing = true }
     func controlTextDidEndEditing(_ obj: Notification) { isEditing = false }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        address.stringValue = shownAddress
+        isEditing = false
+        onEscape?()
+        return true
+    }
 }

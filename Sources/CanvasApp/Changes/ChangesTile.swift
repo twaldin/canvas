@@ -311,13 +311,17 @@ final class ChangesTile: NSView, TileContent {
         return true
     }
 
+    func enterKeyboard() -> Bool {
+        window?.makeFirstResponder(self) == true
+    }
+
     /// s and r only with the keyboard in the tile, so typing elsewhere can never stage or revert.
     override func keyDown(with event: NSEvent) {
         if handleNavigationKey(event) { return }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
         guard modifiers.isEmpty else { return super.keyDown(with: event) }
         switch (event.keyCode, event.charactersIgnoringModifiers) {
-        case (53, _): (enclosingScrollView as? CanvasView)?.takeKeyboard(object.id)
+        case (53, _): (enclosingScrollView as? CanvasView)?.leaveTile(object.id)
         case (_, "s"): actOnCurrent(.stage)
         case (_, "r"): actOnCurrent(.revert)
         default: super.keyDown(with: event)

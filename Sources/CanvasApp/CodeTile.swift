@@ -43,6 +43,8 @@ final class CodeTile: NSView, TileContent {
     private var reloadWork: DispatchWorkItem?
     private var navigation: CodeNavigation?
     private var findBar: CodeFindBar?
+    /// Who had the keyboard before ⌘F, to get it back on Esc.
+    private weak var findPreviousResponder: NSResponder?
 
     static let flashDuration: TimeInterval = 3
 
@@ -63,6 +65,10 @@ final class CodeTile: NSView, TileContent {
         rowsView.onSign = { [weak self] sign in self?.togglePeek(sign) }
         rowsView.onInteract = { [weak self] in self?.userInteracted() }
         rowsView.onEditHere = { [weak self] point in self?.editHere(at: point) }
+        rowsView.onEscape = { [weak self] in
+            guard let self else { return }
+            (self.enclosingScrollView as? CanvasView)?.leaveTile(self.object.id)
+        }
         header.onBase = { [weak self] base in self?.setBase(base) }
         header.onChange = { [weak self] forward in self?.jumpToChange(forward: forward) }
         header.onPin = { [weak self] in self?.pin() }
@@ -102,7 +108,9 @@ final class CodeTile: NSView, TileContent {
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         let height = header.height
         header.frame = NSRect(x: 0, y: 0, width: bounds.width, height: height)
-        rowsView.frame = NSRect(x: 0, y: height, width: bounds.width, height: max(0, bounds.height - height))
+        // The find bar gets a strip of its own above the rows, so it never covers a match.
+        let top = height + findStrip
+        rowsView.frame = NSRect(x: 0, y: top, width: bounds.width, height: max(0, bounds.height - top))
         rewrap()
         layoutFindBar()
         rowsMoved()
@@ -373,15 +381,25 @@ final class CodeTile: NSView, TileContent {
 
     // MARK: Find
 
-    /// ⌘F: the find bar over the rows, seeded with a one-line selection, holding the keyboard.
+    /// ⌘F: the find bar above the rows, seeded with a one-line selection, holding the keyboard
+    /// until Esc gives it back to whoever had it.
     func showFind() {
         let bar = findBar ?? makeFindBar()
         if let text = rowsView.selectedText, !text.isEmpty, !text.contains("\n") { bar.field.stringValue = text }
-        bar.isHidden = false
-        layoutFindBar()
+        if !bar.holdsKeyboard { findPreviousResponder = window?.firstResponder }
+        if bar.isHidden {
+            bar.isHidden = false
+            resizeSubviews(withOldSize: bounds.size)
+        }
         window?.makeFirstResponder(bar.field)
         bar.field.currentEditor()?.selectAll(nil)
         findChanged()
+    }
+
+    /// The strip the visible find bar takes above the rows.
+    private var findStrip: CGFloat {
+        guard let findBar, !findBar.isHidden else { return 0 }
+        return CodeFindBar.size.height + 8
     }
 
     private func makeFindBar() -> CodeFindBar {
@@ -397,7 +415,7 @@ final class CodeTile: NSView, TileContent {
     private func layoutFindBar() {
         guard let findBar else { return }
         let size = CodeFindBar.size
-        findBar.frame = NSRect(x: max(0, bounds.width - size.width - 8), y: header.height + 6, width: min(size.width, bounds.width), height: size.height)
+        findBar.frame = NSRect(x: max(0, bounds.width - size.width - 8), y: header.height + 4, width: min(size.width, bounds.width), height: size.height)
     }
 
     /// The query changed: match again, the current match the first at or below the top row.
@@ -433,11 +451,16 @@ final class CodeTile: NSView, TileContent {
         if top < visible.minY || top + CodeMetrics.rowHeight > visible.maxY { scroll(toRow: row) }
     }
 
-    /// Esc: the bar goes, the highlights with it, and the keyboard returns to the rows.
+    /// Esc: the bar goes, the highlights with it, and the keyboard returns to whoever had it
+    /// before ⌘F (the rows, the canvas, a terminal), unless something else took it meanwhile.
     private func closeFind() {
-        findBar?.isHidden = true
+        guard let findBar, !findBar.isHidden else { return }
+        let hadKeyboard = findBar.holdsKeyboard
+        findBar.isHidden = true
         rowsView.painter?.find = nil
-        window?.makeFirstResponder(rowsView)
+        resizeSubviews(withOldSize: bounds.size)
+        if hadKeyboard, let window { CanvasView.returnKeyboard(to: findPreviousResponder, in: window) }
+        findPreviousResponder = nil
     }
 }
 
@@ -744,6 +767,52 @@ extension CodeTile {
     var takesKeyboardFocus: Bool { false }
 
     var headerHeight: CGFloat { header.height }
+
+    /// Return on the selected tile: the rows take the keyboard (arrows, pages, Home/End scroll;
+    /// ⌘F finds; Esc goes back to the canvas).
+    func enterKeyboard() -> Bool {
+        window?.makeFirstResponder(rowsView) == true
+    }
+
+    enum KeyboardNavigation { case definition, definitionInNewTile, references, outline }
+
+    /// Go to Definition, Find References and Outline from the menu bar, where no pointer names a
+    /// symbol: at the selection's start, else the first name on the tile's anchor line (the
+    /// first line of its range, else the top row) that isn't a keyword (`CodeSubject`). False
+    /// when there is none (a deleted file, nothing loaded yet).
+    @discardableResult
+    func navigate(_ action: KeyboardNavigation) -> Bool {
+        guard let navigation, let document, showsCurrent, let painter = rowsView.painter else { return false }
+        let topRow = CodePainter.row(atY: rowsView.bounds.minY + CodeMetrics.verticalPadding)
+        if action == .outline {
+            navigation.showOutline(anchor: NSPoint(x: painter.gutterWidth + 8, y: CodePainter.rowTop(topRow)))
+            return true
+        }
+        guard document.side == .new else { return false }
+        var subject: (line: Int, character: Int)?
+        if let selection = painter.selection, selection.start < selection.end, case .line(let line)? = painter.rows.entryRow(selection.start.entry) {
+            subject = (line, selection.start.offset)
+        } else {
+            let top: Int? = if case .line(let line)? = painter.rows.segment(topRow)?.row { line } else { nil }
+            if let line = displayed.range?.start ?? top, let character = CodeSubject.firstName(in: document.text(of: .line(line))) {
+                subject = (line, character)
+            }
+        }
+        guard let subject else { return false }
+        reveal(line: subject.line)
+        let row = painter.rows.index(ofLine: subject.line)
+        let anchor = NSPoint(x: painter.gutterWidth + 8, y: CodePainter.rowTop(row))
+        switch action {
+        case .definition: navigation.goToDefinition(at: subject, anchor: anchor, newTile: false)
+        case .definitionInNewTile: navigation.goToDefinition(at: subject, anchor: anchor, newTile: true)
+        case .references: navigation.findReferences(at: subject, anchor: anchor)
+        case .outline: break
+        }
+        return true
+    }
+
+    /// Whether `navigate` has anything to act on (menu validation).
+    var canNavigate: Bool { document != nil && showsCurrent && rowsView.painter != nil }
 
     // MARK: Offscreen drawing
 

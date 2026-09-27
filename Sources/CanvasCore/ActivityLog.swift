@@ -276,8 +276,11 @@ extension ActivityLog {
             parts.append(String(format: "resized %.0f×%.0f → %.0f×%.0f", before.frame.w, before.frame.h, after.frame.w, after.frame.h))
         }
         if before.z != after.z { parts.append("restacked") }
-        let old = UndoHistory.contentProps(before).object ?? [:]
-        let new = UndoHistory.contentProps(after).object ?? [:]
+        // A terminal's own bookkeeping is too frequent to log; a page's title and a follow tile's
+        // aim are what the history is for, even though ⌘Z skips them.
+        let skipped = before.type == .terminal ? UndoHistory.terminalBookkeeping : []
+        let old = UndoHistory.props(of: before, without: skipped).object ?? [:]
+        let new = UndoHistory.props(of: after, without: skipped).object ?? [:]
         let keys = Set(old.keys).union(new.keys).filter { old[$0] != new[$0] }.sorted()
         if !keys.isEmpty { parts.append("props " + keys.joined(separator: ", ")) }
         return parts.isEmpty ? nil : parts.joined(separator: "; ")

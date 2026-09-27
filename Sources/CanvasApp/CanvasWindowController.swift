@@ -85,9 +85,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             case .allContent: self?.canvas.zoomToFit()
             case .object(let id): self?.canvas.go(to: id)
             case .file(let path, let lines):
-                var props: [String: JSONValue] = ["path": .string(path)]
-                if let lines { props["range"] = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))]) }
-                self?.canvas.openForUser(.code, props: .object(props))
+                self?.open(path: path, lines: lines)
             case .status: break
             }
         }
@@ -273,12 +271,31 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Go to's file and symbol rows: the code tile already showing the file (follow tiles
+    /// excluded: they're their agent's) re-aimed at the lines (`Board.showCode`) and gone to;
+    /// else a new one placed in view like any object the user asks for.
+    private func open(path: String, lines: LineRange?) {
+        let existing = board.objects.values
+            .filter { $0.type == .code && $0.props["path"]?.string == path && $0.props["followOf"] == nil }
+            .max { $0.z < $1.z }
+        if let existing {
+            if let lines { _ = try? board.showCode(path: path, range: lines, beside: existing.id) }
+            return canvas.go(to: existing.id)
+        }
+        var props: [String: JSONValue] = ["path": .string(path)]
+        if let lines { props["range"] = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))]) }
+        canvas.openForUser(.code, props: .object(props))
+    }
+
     /// When the language servers last answered a Go to symbol search with symbols (they are warm).
     private var symbolsAnswered: Date?
 
     /// Go to's symbol rows for `name`: the workspace symbols of the projects this board's code
     /// tiles show (else of the language most of the board root's files are in), from the app's
-    /// language servers, started if needed. Files outside the board root are left out.
+    /// language servers, started if needed. Files outside the board root are left out. When no
+    /// server for those files' languages could answer (not installed, crashed), one status row
+    /// says why, with its install hint, as Outline does, rather than claiming there are no such
+    /// symbols.
     private func workspaceSymbols(named name: String) async -> [NavigatorRow] {
         let root = board.root
         var files = board.objects.values.filter { $0.type == .code }.compactMap { $0.props["path"]?.string }.map(board.absoluteURL)
@@ -295,18 +312,29 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             if let most = counts.max(by: { $0.value < $1.value })?.key, let path = first[most] { files = [root.appendingPathComponent(path)] }
         }
         guard !files.isEmpty else { return [] }
-        var symbols = try? await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)
+        func ask() async -> Result<[LSPWorkspaceSymbol], Error> {
+            do { return .success(try await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)) } catch { return .failure(error) }
+        }
+        var answer = await ask()
         // A server that just started answers before it has read the project (pyright: nothing at
         // all), so until one has answered with symbols lately, an empty answer is asked again
         // for a while; the panel says "Searching symbols…" meanwhile.
         let warm = symbolsAnswered.map { Date().timeIntervalSince($0) < 240 } ?? false
         var retries = warm ? 0 : 10
-        while symbols?.isEmpty == true, retries > 0, !Task.isCancelled {
+        while case .success(let found) = answer, found.isEmpty, retries > 0, !Task.isCancelled {
             retries -= 1
             try? await Task.sleep(for: .seconds(1))
-            symbols = try? await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)
+            answer = await ask()
         }
-        guard var symbols else { return [] }
+        let symbolsFound: [LSPWorkspaceSymbol]
+        switch answer {
+        case .success(let found): symbolsFound = found
+        case .failure(let error):
+            if error is CancellationError { return [] }
+            let reason = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            return [NavigatorRow(target: .status, title: reason, kind: "", dot: nil, toolTip: reason)]
+        }
+        var symbols = symbolsFound
         if !symbols.isEmpty { symbolsAnswered = Date() }
         // Servers match fuzzily (`_resolve_pager_command` for `resolve_command`): the name itself
         // first, then names starting with it, each in the server's order.
@@ -392,6 +420,89 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             guard !drained.context.isEmpty, let terminal, terminal.paste(drained.context + "\n", submit: false) else { return }
             board.commit(drained.mentions.map(\.id))
         }
+    }
+
+    // MARK: The context menus' actions in the menu bar
+
+    @objc func goToNextNeedsYou(_ sender: Any?) {
+        canvas.goToNextNeedsYou()
+    }
+
+    @objc func reviewChanges(_ sender: Any?) {
+        canvas.reviewChanges()
+    }
+
+    @objc func clearAttentionMarkers(_ sender: Any?) {
+        board.clearAllAttention()
+    }
+
+    @objc func toggleFollowFiles(_ sender: Any?) {
+        canvas.toggleFollow()
+    }
+
+    /// Object ▸ Scale ▸ a preset (the item's `tag` in percent).
+    @objc func scaleSelection(_ sender: Any?) {
+        guard let item = sender as? NSMenuItem else { return }
+        canvas.scaleSelection(to: Double(item.tag) / 100)
+    }
+
+    @objc func copyObjectIDs(_ sender: Any?) {
+        canvas.copyIDs()
+    }
+
+    @objc func enterGroup(_ sender: Any?) {
+        guard let group = canvas.selectedGroup else { return }
+        canvas.enter(group: group)
+    }
+
+    @objc func goToDefinition(_ sender: Any?) { canvas.keyboardCodeTile?.navigate(.definition) }
+    @objc func openDefinitionInNewTile(_ sender: Any?) { canvas.keyboardCodeTile?.navigate(.definitionInNewTile) }
+    @objc func findReferences(_ sender: Any?) { canvas.keyboardCodeTile?.navigate(.references) }
+    @objc func showOutline(_ sender: Any?) { canvas.keyboardCodeTile?.navigate(.outline) }
+
+    /// Whether a menu item applies now (AppDelegate forwards the menu bar's validation here).
+    func validate(_ item: NSMenuItem) -> Bool {
+        let selection = canvas.selection
+        switch item.action {
+        case #selector(undoCanvas(_:)): return textUndoManager?.canUndo == true || board.history.canUndo
+        case #selector(redoCanvas(_:)): return textUndoManager?.canRedo == true || board.history.canRedo
+        case #selector(deleteSelection(_:)), #selector(bringToFront(_:)), #selector(sendToBack(_:)): return !selection.isEmpty
+        case #selector(groupSelection(_:)): return selection.count >= 2
+        case #selector(ungroupSelection(_:)):
+            return board.objects.values.contains { $0.type == .group && (selection.contains($0.id) || GroupSpec($0.props)?.members.contains(where: selection.contains) == true) }
+        case #selector(pasteMentions(_:)): return !board.tray.isEmpty && canvas.promptTarget != nil
+        case #selector(exitGroup(_:)): return canvas.enteredGroup != nil
+        case #selector(enterGroup(_:)): return canvas.selectedGroup != nil
+        case #selector(copyObjectIDs(_:)):
+            item.title = selection.count > 1 ? "Copy Object IDs" : "Copy Object ID"
+            return !selection.isEmpty
+        case #selector(goToNextNeedsYou(_:)): return canvas.somethingNeedsYou
+        case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
+        case #selector(toggleFollowFiles(_:)):
+            guard let terminal = canvas.followTerminal else {
+                item.state = .off
+                return false
+            }
+            item.state = canvas.follows(terminal) ? .on : .off
+            return true
+        case #selector(scaleSelection(_:)):
+            guard let scales = canvas.selectionScales else {
+                item.state = .off
+                return false
+            }
+            let scale = Double(item.tag) / 100
+            item.state = scales == [scale] && item.tag != 100 ? .on : .off
+            return item.tag != 100 || scales != [1]
+        case #selector(goToDefinition(_:)), #selector(openDefinitionInNewTile(_:)), #selector(findReferences(_:)), #selector(showOutline(_:)):
+            return canvas.keyboardCodeTile?.canNavigate == true
+        default: return true
+        }
+    }
+
+    /// A text view with its own undo history holding the keyboard (a note being edited).
+    private var textUndoManager: UndoManager? {
+        guard let text = window?.firstResponder as? NSTextView, text.isEditable else { return nil }
+        return text.undoManager
     }
 
     /// The View menu's navigation shortcuts, matched on the key's characters: ⌘P, ⌘9, ⌘0, ⌘= (and
@@ -492,6 +603,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             switch event.charactersIgnoringModifiers {
             case "w": if canvas.closeSelectionOrFocused() { return true }
             case "f": if canvas.findInCodeTile() { return true }
+            case "l": if canvas.focusBrowserAddress() { return true }
             default: break
             }
         }

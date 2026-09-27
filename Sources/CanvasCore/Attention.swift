@@ -140,3 +140,54 @@ public struct NeedsYou: Equatable, Sendable {
         return NeedsYou(level: level, terminals: terminals.map(\.id), message: message)
     }
 }
+
+/// One thing on a board that needs the user, for Go to Next Needs-You (⌘J) and the top of Go to:
+/// a blocked agent's terminal (waiting on an approval or answer), or an object with an attention
+/// marker.
+public struct NeedsYouItem: Equatable, Sendable {
+    public enum Reason: Int, Comparable, Sendable {
+        case blocked, marked
+        public static func < (lhs: Reason, rhs: Reason) -> Bool { lhs.rawValue < rhs.rawValue }
+    }
+
+    public var id: ObjectID
+    public var reason: Reason
+    /// The lifecycle's or the marker's message.
+    public var message: String?
+    public var frame: Frame
+
+    public init(id: ObjectID, reason: Reason, message: String?, frame: Frame) {
+        self.id = id
+        self.reason = reason
+        self.message = message
+        self.frame = frame
+    }
+
+    /// Blocked terminals first, then marked objects, each in reading order (top to bottom, then
+    /// left to right).
+    static func precedes(_ lhs: NeedsYouItem, _ rhs: NeedsYouItem) -> Bool {
+        (lhs.reason.rawValue, lhs.frame.y, lhs.frame.x, lhs.id) < (rhs.reason.rawValue, rhs.frame.y, rhs.frame.x, rhs.id)
+    }
+
+    /// What needs the user on a board, in visiting order; a blocked terminal with a marker is
+    /// listed once, as blocked.
+    public static func all(_ objects: [ObjectID: CanvasObject], attention: [ObjectID: Attention]) -> [NeedsYouItem] {
+        var items: [NeedsYouItem] = []
+        for object in objects.values {
+            if object.type == .terminal, object.props["lifecycle"]?["state"]?.string == LifecycleState.blocked.rawValue {
+                items.append(NeedsYouItem(id: object.id, reason: .blocked, message: object.props["lifecycle"]?["message"]?.string, frame: object.frame))
+            } else if let marker = attention[object.id] {
+                items.append(NeedsYouItem(id: object.id, reason: .marked, message: marker.message, frame: object.frame))
+            }
+        }
+        return items.sorted(by: precedes)
+    }
+
+    /// The item after `last` (the one visited last, as it was then) in visiting order, wrapping
+    /// around; the first without one. Visiting a marked object clears its marker, so `last` is
+    /// often gone from `items`: the next is still the one after its place.
+    public static func next(after last: NeedsYouItem?, in items: [NeedsYouItem]) -> NeedsYouItem? {
+        guard let last else { return items.first }
+        return items.first { precedes(last, $0) && $0.id != last.id } ?? items.first
+    }
+}

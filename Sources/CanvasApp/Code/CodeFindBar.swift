@@ -118,6 +118,11 @@ final class CodeFindBar: NSView, NSTextFieldDelegate {
         count.stringValue = status
     }
 
+    /// Whether the field is being typed in (its editor is the window's first responder).
+    var holdsKeyboard: Bool {
+        (window?.firstResponder as? NSText)?.delegate === field
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         updateColors()

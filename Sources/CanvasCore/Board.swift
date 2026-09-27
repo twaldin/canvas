@@ -200,10 +200,11 @@ public final class Board {
 
     /// Patches an object. A group's frame is never taken from `frame`: it follows its members.
     /// `actor` names who the activity log credits when it isn't the caller (the app's own
-    /// write-backs are `.system`).
+    /// write-backs are `.system`, which ⌘Z skips: `Board.unrecorded`).
     @discardableResult
     public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws -> CanvasObject {
-        try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: [])
+        if actor == .system { return try unrecorded { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) } }
+        return try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: [])
     }
 
     /// `update`, re-bounding the groups that contain the object in the same undo step.
@@ -662,15 +663,18 @@ public final class Board {
         let follow: CanvasObject
         activityMuted = true
         defer { activityMuted = false }
+        // The agent's bookkeeping, not anyone's choice: never an undo step (`unrecorded`).
         if let existing {
-            follow = try update(existing.id, props: .object(props), caller: tile)
+            follow = try unrecorded { try update(existing.id, props: .object(props), caller: tile) }
         } else {
             props["diffBase"] = .string("merge-base")
             // Beside its terminal, wholly in view when the terminal is on screen, smaller when
             // only that fits (the view never moves for an agent's tile).
             let size = Self.defaultSize(.code)
-            follow = create(type: .code, props: .object(props.filter { $0.value != .null }),
-                            frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: Self.followMinimumSize), caller: tile)
+            follow = unrecorded {
+                create(type: .code, props: .object(props.filter { $0.value != .null }),
+                       frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: Self.followMinimumSize), caller: tile)
+            }
         }
         activityMuted = false
         let at = range.map { ":\($0.start)-\($0.end)" } ?? ""

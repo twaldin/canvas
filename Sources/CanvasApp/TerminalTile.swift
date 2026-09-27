@@ -182,6 +182,11 @@ final class TerminalTile: NSView, TileContent {
         window?.makeFirstResponder(terminal)
     }
 
+    func enterKeyboard() -> Bool {
+        focus()
+        return true
+    }
+
     /// Ghostty starts a surface focused, and libghostty-spm tells it otherwise only when first
     /// responder or key window changes. Until then a terminal nobody had focused kept Ghostty's
     /// focused-surface timers (cursor blink, termios polling) running once it had been shown,

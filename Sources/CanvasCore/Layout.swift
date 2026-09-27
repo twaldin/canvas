@@ -252,7 +252,18 @@ public enum Layout {
         return min(limits.upperBound, max(limits.lowerBound, next ?? (zoomIn ? limits.upperBound : limits.lowerBound)))
     }
 
-    public enum Heading: String, Sendable, CaseIterable { case left, right, up, down }
+    public enum Heading: String, Sendable, CaseIterable {
+        case left, right, up, down
+
+        public var opposite: Heading {
+            switch self {
+            case .left: .right
+            case .right: .left
+            case .up: .down
+            case .down: .up
+            }
+        }
+    }
 
     /// The index of the frame nearest `from` toward `heading` (⌥⌘-arrow between tiles), among
     /// frames whose center lies past `from`'s center that way and that start past its near edge.
@@ -263,37 +274,92 @@ public enum Layout {
     /// across it (a tile in the same row or column wins over a nearer diagonal one), then the
     /// nearest center. Nil when none lies that way.
     public static func neighbor(of from: CGRect, among frames: [CGRect], toward heading: Heading) -> Int? {
-        func key(_ frame: CGRect) -> (inLine: Bool, score: CGFloat, distance: CGFloat)? {
-            let along: CGFloat, ahead: Bool
-            let horizontal = heading == .left || heading == .right
-            switch heading {
-            case .right:
-                ahead = frame.midX > from.midX && frame.minX > from.minX
-                along = max(0, frame.minX - from.maxX)
-            case .left:
-                ahead = frame.midX < from.midX && frame.maxX < from.maxX
-                along = max(0, from.minX - frame.maxX)
-            case .down:
-                ahead = frame.midY > from.midY && frame.minY > from.minY
-                along = max(0, frame.minY - from.maxY)
-            case .up:
-                ahead = frame.midY < from.midY && frame.maxY < from.maxY
-                along = max(0, from.minY - frame.maxY)
-            }
-            guard ahead else { return nil }
-            let (fromStart, fromEnd, start, end) = horizontal ? (from.minY, from.maxY, frame.minY, frame.maxY) : (from.minX, from.maxX, frame.minX, frame.maxX)
-            let across = max(0, start - fromEnd, fromStart - end)
-            let overlap = min(fromEnd, end) - max(fromStart, start)
-            let inLine = overlap > 0 && overlap >= min(fromEnd - fromStart, end - start) / 4
-            let distance = hypot(frame.midX - from.midX, frame.midY - from.midY)
-            return (inLine, inLine ? along : along + 2 * across, distance)
+        frames.indices.compactMap { index in neighborKey(from, frames[index], heading).map { (index, $0) } }
+            .min { precedes($0.1, $1.1) }?.0
+    }
+
+    /// The tile the selection goes to when the selected one closes (⌘W keeps going): the best
+    /// neighbor in any direction by `neighbor`'s ranking (in line first, then the least gap),
+    /// else, among tiles no heading reaches (overlapping it), the nearest center. Nil when
+    /// `frames` is empty.
+    public static func nearest(to from: CGRect, among frames: [CGRect]) -> Int? {
+        let ranked = frames.indices.compactMap { index in
+            Heading.allCases.compactMap { neighborKey(from, frames[index], $0) }.min(by: precedes).map { (index, $0) }
         }
-        return frames.indices.compactMap { index in key(frames[index]).map { (index, $0) } }
-            .min { lhs, rhs in
-                let (l, r) = (lhs.1, rhs.1)
-                if l.inLine != r.inLine { return l.inLine }
-                return (l.score, l.distance) < (r.score, r.distance)
-            }?.0
+        if let best = ranked.min(by: { precedes($0.1, $1.1) }) { return best.0 }
+        return frames.indices.min { hypot(frames[$0].midX - from.midX, frames[$0].midY - from.midY) < hypot(frames[$1].midX - from.midX, frames[$1].midY - from.midY) }
+    }
+
+    private typealias NeighborKey = (inLine: Bool, score: CGFloat, distance: CGFloat)
+
+    private static func precedes(_ l: NeighborKey, _ r: NeighborKey) -> Bool {
+        if l.inLine != r.inLine { return l.inLine }
+        return (l.score, l.distance) < (r.score, r.distance)
+    }
+
+    private static func neighborKey(_ from: CGRect, _ frame: CGRect, _ heading: Heading) -> NeighborKey? {
+        let along: CGFloat, ahead: Bool
+        let horizontal = heading == .left || heading == .right
+        switch heading {
+        case .right:
+            ahead = frame.midX > from.midX && frame.minX > from.minX
+            along = max(0, frame.minX - from.maxX)
+        case .left:
+            ahead = frame.midX < from.midX && frame.maxX < from.maxX
+            along = max(0, from.minX - frame.maxX)
+        case .down:
+            ahead = frame.midY > from.midY && frame.minY > from.minY
+            along = max(0, frame.minY - from.maxY)
+        case .up:
+            ahead = frame.midY < from.midY && frame.maxY < from.maxY
+            along = max(0, from.minY - frame.maxY)
+        }
+        guard ahead else { return nil }
+        let (fromStart, fromEnd, start, end) = horizontal ? (from.minY, from.maxY, frame.minY, frame.maxY) : (from.minX, from.maxX, frame.minX, frame.maxX)
+        let across = max(0, start - fromEnd, fromStart - end)
+        let overlap = min(fromEnd, end) - max(fromStart, start)
+        let inLine = overlap > 0 && overlap >= min(fromEnd - fromStart, end - start) / 4
+        let distance = hypot(frame.midX - from.midX, frame.midY - from.midY)
+        return (inLine, inLine ? along : along + 2 * across, distance)
+    }
+}
+
+/// ⌥⌘-arrow moves between tiles, reversible: the opposite arrow right after a move goes back to
+/// the tile it came from (up then down returns, even when another tile is the nearer one below),
+/// and a run of moves unwinds the same way. Any other start (a click, Go to, nothing selected)
+/// forgets the trail.
+public struct TileWalk: Sendable {
+    private struct Move: Sendable {
+        var from: ObjectID
+        var to: ObjectID
+        var heading: Layout.Heading
+    }
+
+    private var trail: [Move] = []
+    private static let limit = 64
+
+    public init() {}
+
+    /// The tile a move toward `heading` goes to from `source` (whose frame, or the viewport
+    /// center without one, is `from`), among `tiles` (the source not included); nil when none
+    /// lies that way.
+    public mutating func step(from source: ObjectID?, frame from: CGRect, toward heading: Layout.Heading,
+                              among tiles: [(id: ObjectID, frame: CGRect)]) -> ObjectID? {
+        if let last = trail.last, let source, last.to == source {
+            if last.heading == heading.opposite, tiles.contains(where: { $0.id == last.from }) {
+                trail.removeLast()
+                return last.from
+            }
+        } else {
+            trail.removeAll()
+        }
+        guard let index = Layout.neighbor(of: from, among: tiles.map(\.frame), toward: heading) else { return nil }
+        let target = tiles[index].id
+        if let source {
+            trail.append(Move(from: source, to: target, heading: heading))
+            if trail.count > Self.limit { trail.removeFirst() }
+        }
+        return target
     }
 }
 

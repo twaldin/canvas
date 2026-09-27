@@ -113,6 +113,10 @@ protocol TileContent: NSView {
     var headerHeight: CGFloat { get }
     /// Whether clicking into the tile should take keyboard focus.
     var takesKeyboardFocus: Bool { get }
+    /// Return (or Tab) on the selected tile while the canvas has the keyboard: the tile takes it
+    /// (a terminal, a code tile's rows, a changes tile, a note's editor, a page). Esc in the
+    /// tile hands it back (`CanvasView.leaveTile`). False when nothing in it types.
+    func enterKeyboard() -> Bool
     /// Apply a new revision of the backing object.
     func update(_ object: CanvasObject)
 }
@@ -136,6 +140,8 @@ extension TileContent {
     var liveZoom: CGFloat { CanvasView.liveThreshold }
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) { ready() }
+
+    func enterKeyboard() -> Bool { false }
 
     func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,

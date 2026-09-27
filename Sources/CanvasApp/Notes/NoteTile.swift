@@ -70,7 +70,11 @@ final class NoteTile: NSView, TileContent {
         editor.isAutomaticSpellingCorrectionEnabled = false
         editor.autoresizingMask = [.width]
         editor.onCommit = { [weak self] in self?.endEditing(.confirmed) }
-        editor.onCancel = { [weak self] in self?.endEditing(.cancel) }
+        // Esc leaves like a click away (saving), except that with a conflict shown it keeps theirs.
+        editor.onCancel = { [weak self] in
+            guard let self else { return }
+            self.endEditing(self.banner.isHidden ? .implicit : .cancel)
+        }
         // Focus is already moving elsewhere; don't pull it to the prompt target mid-change.
         editor.onResign = { [weak self] in self?.endEditing(.implicit, returningFocus: false) }
         configure(editorScroll, document: editor)
@@ -357,12 +361,26 @@ final class NoteTile: NSView, TileContent {
 
     // MARK: Editing
 
-    private func beginEditing(at point: NSPoint) {
+    /// Return on the selected note: editing, the caret at the end; Esc or ⌘↩ gives the keyboard
+    /// back to the canvas with the note selected.
+    func enterKeyboard() -> Bool {
+        guard session == nil else { return false }
+        beginEditing(at: nil)
+        enteredByKeyboard = true
+        return true
+    }
+
+    /// Whether this edit started from the keyboard (Return), so ending it returns to the canvas.
+    private var enteredByKeyboard = false
+
+    /// Editing, the caret where `point` is (nil: at the end).
+    private func beginEditing(at point: NSPoint?) {
         guard session == nil else { return }
         session = NoteEditSession(object)
+        enteredByKeyboard = false
         let text = markdown
         editor.string = text
-        editor.setSelectedRange(NSRange(location: caretOffset(at: point, in: text), length: 0))
+        editor.setSelectedRange(NSRange(location: point.map { caretOffset(at: $0, in: text) } ?? (text as NSString).length, length: 0))
         displayScroll.isHidden = true
         editorScroll.isHidden = false
         window?.makeFirstResponder(editor)
@@ -435,10 +453,13 @@ final class NoteTile: NSView, TileContent {
         showBanner("Changed by someone else while you were editing. ⌘↩ saves yours over it; Esc keeps theirs.")
     }
 
-    /// Keyboard focus goes back to where prompts go.
+    /// Keyboard focus goes back to the canvas with the note selected after an edit started with
+    /// Return, else to where prompts go.
     private func returnFocus() {
-        if let canvas = enclosingScrollView as? CanvasView, let target = canvas.promptTarget,
-           let terminal = canvas.tiles[target]?.content as? TerminalTile {
+        let canvas = enclosingScrollView as? CanvasView
+        if enteredByKeyboard, let canvas {
+            canvas.leaveTile(object.id)
+        } else if let canvas, let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile {
             terminal.focus()
         } else {
             window?.makeFirstResponder(nil)

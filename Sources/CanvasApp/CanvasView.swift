@@ -74,11 +74,14 @@ final class CanvasDocumentView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? { canvas?.emptyCanvasMenu(at: convert(event.locationInWindow, from: nil)) }
 
     override func keyDown(with event: NSEvent) {
+        let plain = event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty
+        // Return or Tab hands the keyboard to the one selected tile (Esc in it hands it back).
+        if plain, [36, 76, 48].contains(event.keyCode), canvas?.enterSelection() == true { return }
         switch event.keyCode {
         case 53: cancelOperation(nil)
         case 51, 117: deleteBackward(nil)
         default:
-            // j/k, ↓/↑ and Return step through a selected changes tile's hunks.
+            // j/k and ↓/↑ step through a selected changes tile's hunks.
             if canvas?.selectedChangesTile?.handleNavigationKey(event) == true { return }
             super.keyDown(with: event)
         }
@@ -747,29 +750,50 @@ final class CanvasView: NSScrollView {
 
     /// Deletes objects as one undo step. Closing a terminal ends its zmx session (the board
     /// reports it ended; see AppDelegate), so ask first, in a sheet: an app-modal alert would
-    /// stall every socket request until answered.
-    func delete(_ ids: [ObjectID]) {
+    /// stall every socket request until answered. `selectingNext`: ⌘W keeps going, the nearest
+    /// remaining tile takes the selection (and a terminal the keyboard), so the next ⌘W closes
+    /// that rather than the window.
+    func delete(_ ids: [ObjectID], selectingNext: Bool = false) {
         guard !ids.isEmpty else { return }
         let terminals = ids.filter { tiles[$0]?.content is TerminalTile }
-        guard !terminals.isEmpty else { return remove(ids) }
+        guard !terminals.isEmpty else { return remove(ids, selectingNext: selectingNext) }
         guard let window else { return }
         let alert = NSAlert()
         alert.messageText = terminals.count == 1 ? "Close this terminal?" : "Close \(terminals.count) terminals?"
         alert.informativeText = terminals.count == 1
             ? "Closing ends the terminal's session and anything running in it."
             : "Closing ends their sessions and anything running in them."
-        alert.addButton(withTitle: "Close")
-        alert.addButton(withTitle: "Cancel")
+        // Return closes: drawn as the default even while the app isn't active.
+        let close = alert.addButton(withTitle: "Close")
+        close.bezelColor = .controlAccentColor
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        let previous = window.firstResponder
         alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .alertFirstButtonReturn else { return }
+            guard let self else { return }
+            guard response == .alertFirstButtonReturn else {
+                // Cancelled: the keyboard goes back to whoever had it (the terminal asked about).
+                if let window = self.window { Self.returnKeyboard(to: previous, in: window) }
+                return
+            }
             // The board may have changed while the sheet was up.
-            self.remove(ids.filter { self.board.objects[$0] != nil })
+            self.remove(ids.filter { self.board.objects[$0] != nil }, selectingNext: selectingNext)
         }
     }
 
-    private func remove(_ ids: [ObjectID]) {
+    private func remove(_ ids: [ObjectID], selectingNext: Bool = false) {
+        let closed = ids.compactMap { tiles[$0]?.frame }
         board.transaction {
             for id in ids.sorted() { try? board.delete(id) }
+        }
+        if selectingNext, let first = closed.first {
+            let area = closed.dropFirst().reduce(first) { $0.union($1) }
+            let candidates = tiles.values.filter { !$0.isHidden }.sorted { $0.objectID < $1.objectID }
+            if let index = Layout.nearest(to: area, among: candidates.map(\.frame)) {
+                let next = candidates[index].objectID
+                reveal(next)
+                setSelection([next])
+                return takeKeyboard(next)
+            }
         }
         // A closed tile that had the keyboard leaves it with the window: the canvas takes it,
         // so Esc, Delete, ⌘W and the arrows keep working.
@@ -777,14 +801,15 @@ final class CanvasView: NSScrollView {
     }
 
     /// ⌘W: closes the selected objects, else the focused terminal (terminals ask first, in the
-    /// close sheet). False with neither, so the window's own close (tab or window) runs.
+    /// close sheet), and selects the nearest tile left. False with neither, so the window's own
+    /// close (tab or window) runs.
     func closeSelectionOrFocused() -> Bool {
         if !selection.isEmpty {
-            deleteSelection()
+            delete(Array(selection), selectingNext: true)
             return true
         }
         guard let id = focusedTerminal else { return false }
-        delete([id])
+        delete([id], selectingNext: true)
         return true
     }
 
@@ -849,7 +874,7 @@ final class CanvasView: NSScrollView {
 
     /// Keyboard focus for a tile the keyboard just went to: a terminal takes it itself (on the
     /// next turn, once a new one's surface exists); anything else leaves it with the canvas, so
-    /// Esc, Delete, ⌘W, ⌘G and the arrows act on the selection.
+    /// Esc, Delete, ⌘W, ⌘G and the arrows act on the selection, and Return enters it.
     func takeKeyboard(_ id: ObjectID) {
         guard board.objects[id]?.type == .terminal else {
             window?.makeFirstResponder(document)
@@ -857,6 +882,50 @@ final class CanvasView: NSScrollView {
         }
         DispatchQueue.main.async { [weak self] in
             (self?.tiles[id]?.content as? TerminalTile)?.focus()
+        }
+    }
+
+    /// Tiles Return hands the keyboard to (an HTML tile's page never takes it: `HtmlWebView`).
+    private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser]
+
+    /// Return (or Tab) with one tile selected and the canvas holding the keyboard: the tile
+    /// takes it (`TileContent.enterKeyboard`), revealed first; a zoomed-out one comes up at 100%
+    /// so its live view can. False when nothing is selected that types (the key stays the
+    /// canvas's).
+    func enterSelection() -> Bool {
+        guard selection.count == 1, let id = selection.first, let tile = tiles[id], let type = board.objects[id]?.type, Self.enterable.contains(type) else { return false }
+        if !tile.isLive, let rect = docFrame(id) {
+            apply(Layout.center(rect, in: clearArea, zoom: 1, padding: Self.jumpPadding))
+        } else {
+            reveal(id)
+        }
+        // On the next turn: a tile just made live builds its view in the liveness pass.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.selection == [id], let content = self.tiles[id]?.content else { return }
+            _ = content.enterKeyboard()
+        }
+        return true
+    }
+
+    /// Esc in a tile that has the keyboard: the canvas takes it back, the tile stays selected.
+    func leaveTile(_ id: ObjectID) {
+        if board.objects[id] != nil { setSelection([id]) }
+        window?.makeFirstResponder(document)
+    }
+
+    /// Where the keyboard goes back to when something that borrowed it (Go to, a code tile's
+    /// Outline, References or find bar, the close sheet) closes: a terminal through its own focus
+    /// path, another view still shown in the window as it is, else the canvas.
+    static func returnKeyboard(to previous: NSResponder?, in window: NSWindow) {
+        var view = previous as? NSView
+        while let current = view {
+            if let terminal = current as? TerminalTile, terminal.window === window { return terminal.focus() }
+            view = current.superview
+        }
+        if let previous = previous as? NSView, previous.window === window, !previous.isHiddenOrHasHiddenAncestor {
+            window.makeFirstResponder(previous)
+        } else {
+            window.makeFirstResponder(window.initialFirstResponder)
         }
     }
 
@@ -876,17 +945,20 @@ final class CanvasView: NSScrollView {
         focusedTile.flatMap { tiles[$0]?.content is TerminalTile ? $0 : nil }
     }
 
+    /// ⌥⌘-moves so far, so the opposite arrow goes back (`TileWalk`).
+    private var walk = TileWalk()
+
     /// ⌥⌘-arrow: the nearest tile that way from the focused tile, else the selection, else the
-    /// viewport center (`Layout.neighbor`), shown with the least pan, selected, and given the
-    /// keyboard.
+    /// viewport center (`Layout.neighbor`), or the tile the previous move came from when this is
+    /// its opposite arrow (`TileWalk`); shown with the least pan, selected, and given the keyboard.
     func moveToNeighbor(_ heading: Layout.Heading) {
         let sources = focusedTile.map { [$0] } ?? selection.filter { tiles[$0] != nil }.sorted()
         let frames = sources.compactMap { tiles[$0]?.frame }
         let from = frames.dropFirst().reduce(frames.first) { union, frame in union?.union(frame) }
             ?? NSRect(x: documentVisibleRect.midX, y: documentVisibleRect.midY, width: 0, height: 0)
-        let candidates = tiles.values.filter { !sources.contains($0.objectID) && !$0.isHidden }
-        guard let index = Layout.neighbor(of: from, among: candidates.map(\.frame), toward: heading) else { return }
-        let id = candidates[index].objectID
+        let candidates = tiles.values.filter { !sources.contains($0.objectID) && !$0.isHidden }.sorted { $0.objectID < $1.objectID }
+        guard let id = walk.step(from: sources.count == 1 ? sources[0] : nil, frame: from, toward: heading,
+                                 among: candidates.map { ($0.objectID, $0.frame) }) else { return }
         reveal(id)
         setSelection([id])
         takeKeyboard(id)
@@ -935,6 +1007,62 @@ final class CanvasView: NSScrollView {
     var selectedChangesTile: ChangesTile? {
         guard selection.count == 1, let id = selection.first else { return nil }
         return tiles[id]?.content as? ChangesTile
+    }
+
+    // MARK: Menu bar (the context menus' actions, for the keyboard and accessibility)
+
+    /// The code tile Code ▸ Go to Definition, Find References and Outline act on: the focused
+    /// one, else the one selected tile while no terminal has the keyboard.
+    var keyboardCodeTile: CodeTile? {
+        if let focused = focusedTile { return tiles[focused]?.content as? CodeTile }
+        guard selection.count == 1, let id = selection.first else { return nil }
+        return tiles[id]?.content as? CodeTile
+    }
+
+    /// The terminal Object ▸ Follow Files toggles: the focused one, else the one selected tile.
+    var followTerminal: ObjectID? {
+        if let focused = focusedTerminal { return focused }
+        guard selection.count == 1, let id = selection.first, board.objects[id]?.type == .terminal else { return nil }
+        return id
+    }
+
+    /// Whether `followTerminal`'s agent reports bring up its follow tile (the default).
+    func follows(_ terminal: ObjectID) -> Bool { board.objects[terminal]?.props["follow"]?.bool != false }
+
+    /// Follow Files on or off: off removes the follow tile; on, the agent's next file report
+    /// brings it back.
+    func toggleFollow() {
+        guard let id = followTerminal else { return }
+        try? board.setFollowing(id, !follows(id))
+    }
+
+    /// The scales of the selected objects that take one (`ObjectScale`); nil when none does.
+    var selectionScales: Set<Double>? {
+        let scalable = selection.compactMap { board.objects[$0] }.filter { ObjectScale.applies(to: $0.type, props: $0.props) }
+        return scalable.isEmpty ? nil : Set(scalable.map(\.scale))
+    }
+
+    /// The one selected group, for Enter Group.
+    var selectedGroup: ObjectID? {
+        guard selection.count == 1, let id = selection.first, groups[id] != nil else { return nil }
+        return id
+    }
+
+    /// File ▸ Review Changes: a changes tile for the board root's uncommitted work in view.
+    func reviewChanges() {
+        let size = Board.defaultSize(.changes), visible = documentVisibleRect
+        createChanges(at: NSPoint(x: visible.midX - size.w / 2, y: visible.midY - size.h / 2))
+    }
+
+    /// ⌘L: the address field of the focused browser tile, else of the one selected browser tile
+    /// (selected too). False when neither (a terminal or anything else keeps ⌘L).
+    func focusBrowserAddress() -> Bool {
+        let id = focusedTile ?? (selection.count == 1 ? selection.first : nil)
+        guard let id, let browser = tiles[id]?.content as? BrowserTile else { return false }
+        setSelection([id])
+        reveal(id)
+        browser.focusAddress()
+        return true
     }
 
     // MARK: Context menus
@@ -1026,7 +1154,7 @@ final class CanvasView: NSScrollView {
         return menu
     }
 
-    private func copyIDs() {
+    func copyIDs() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(selection.sorted().joined(separator: "\n"), forType: .string)
     }
@@ -1137,6 +1265,27 @@ final class CanvasView: NSScrollView {
         setSelection([id])
         takeKeyboard(id)
     }
+
+    /// What Go to Next Needs-You visited last, as it was then.
+    private var lastNeedsYou: NeedsYouItem?
+
+    /// Go to Next Needs-You (⌘J): the next blocked agent's terminal, then the next marked object
+    /// on this board (`NeedsYouItem`), framed like Go to, selected (which acknowledges a marker),
+    /// and given the keyboard (a terminal focuses). Pressed again from there, the one after it,
+    /// around; from anywhere else, the first. False when nothing needs the user.
+    @discardableResult
+    func goToNextNeedsYou() -> Bool {
+        let items = NeedsYouItem.all(board.objects, attention: board.attention)
+        let current = focusedTile ?? (selection.count == 1 ? selection.first : nil)
+        let last = lastNeedsYou.flatMap { $0.id == current ? $0 : nil }
+        guard let next = NeedsYouItem.next(after: last, in: items) else { return false }
+        lastNeedsYou = next
+        go(to: next.id)
+        return true
+    }
+
+    /// Whether anything on the board needs the user (menu validation).
+    var somethingNeedsYou: Bool { !NeedsYouItem.all(board.objects, attention: board.attention).isEmpty }
 
     /// "Zoom in" on the canvas: this tile at 100%, centered, selected, and focused if it types.
     func focus(tile id: ObjectID) {

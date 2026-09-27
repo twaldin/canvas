@@ -23,6 +23,8 @@ final class CodeRowsView: NSView {
     /// The offset changed (by the user or programmatically).
     var onScroll: (() -> Void)?
     var onEditHere: ((NSPoint) -> Void)?
+    /// Esc with the keyboard in the rows: back to the canvas.
+    var onEscape: (() -> Void)?
     /// Whether "Edit Here" is offered: the rows are the working-tree file (not a deleted file's
     /// base, not a pinned commit).
     var canEdit = true
@@ -157,6 +159,39 @@ final class CodeRowsView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         anchor = nil
+    }
+
+    // MARK: Keyboard
+
+    /// With the keyboard in the rows (Return on the selected tile, or a click): ↑/↓ (j/k) a row,
+    /// PageUp/PageDown (⇧Space/Space) a page, Home/End the ends; Esc hands the keyboard back.
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
+        guard modifiers.isEmpty || (modifiers == .shift && event.keyCode == 49) else { return super.keyDown(with: event) }
+        if event.keyCode == 53 {
+            onEscape?()
+            return
+        }
+        let row = CodeMetrics.rowHeight
+        let page = max(row, bounds.height - 2 * row)
+        let delta: CGFloat
+        switch event.keyCode {
+        case 125: delta = row
+        case 126: delta = -row
+        case 121: delta = page
+        case 116: delta = -page
+        case 49: delta = modifiers == .shift ? -page : page
+        case 115: delta = -contentHeight
+        case 119: delta = contentHeight
+        default:
+            switch event.charactersIgnoringModifiers {
+            case "j": delta = row
+            case "k": delta = -row
+            default: return super.keyDown(with: event)
+            }
+        }
+        onInteract?()
+        scroll(toY: bounds.minY + delta)
     }
 
     private func select(to position: CodeRows.Position) {

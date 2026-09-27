@@ -79,6 +79,30 @@ public enum Actor: Codable, Equatable, Sendable {
 
 public enum ObjectType: String, Codable, Sendable, CaseIterable {
     case terminal, browser, code, note, html, shape, arrow, group
+
+    /// The props this type defines (schema `TerminalProps` … `GroupProps`). Others are kept but
+    /// reported: `object.create`/`object.update` name them in `warnings`.
+    public var knownProps: Set<String> {
+        switch self {
+        case .terminal: ["cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "scale"]
+        case .browser: ["url", "title", "scale"]
+        case .code: ["path", "range", "symbol", "caption", "diffBase", "followOf", "lastAction", "history", "pinnedCommit", "scale"]
+        case .note: ["markdown", "title", "scale"]
+        case .html: ["html", "title", "allowNetwork", "state", "scale"]
+        case .shape: ["kind", "text", "points", "color", "fill", "scale"]
+        case .arrow: ["from", "to", "relation", "label", "color", "route"]
+        case .group: ["members", "title", "color", "padding"]
+        }
+    }
+
+    /// One warning per key of `props` this type doesn't define, in key order.
+    public func unknownPropWarnings(_ props: JSONValue?) -> [String] {
+        guard let keys = props?.object?.keys else { return [] }
+        let known = knownProps
+        return keys.filter { !known.contains($0) }.sorted().map { key in
+            "unknown prop \"\(key)\" for \(rawValue) (kept, but nothing reads it; \(rawValue) props: \(known.sorted().joined(separator: ", ")))"
+        }
+    }
 }
 
 public struct CanvasObject: Codable, Equatable, Sendable {

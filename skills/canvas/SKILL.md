@@ -69,7 +69,7 @@ Results are objects, never bare values:
 
 | Call | Returns |
 | --- | --- |
-| `object.create`, `object.update`, `object.get` | `{object}` (so the new id is `result["object"]["id"]`); `object.get --as graph` adds `graph` |
+| `object.create`, `object.update`, `object.get` | `{object}` (so the new id is `result["object"]["id"]`); `object.get --as graph` adds `graph`; create/update add `warnings` when a prop key is unknown for the type (a typo like `colour`): fix it |
 | `object.batch` | `{results, revision}`: each op's result in order (`results[0]["object"]["id"]`) |
 | `layout.place`/`stack`/`translate` | `{frames: {id: frame}}`; `layout.grid` adds `columns` and `rows` |
 | `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, overflow, truncated}` |

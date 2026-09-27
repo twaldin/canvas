@@ -157,6 +157,41 @@ final class LayoutApiTests {
         #expect(overflow[try #require(fits["object"]?["id"]?.string)] == nil)
     }
 
+    // MARK: Props
+
+    @Test func unknownPropsAreKeptButNamedInWarnings() async throws {
+        let created = try await result("object.create", .object(["type": "note", "props": .object(["markdown": "hi", "colour": "red"]), "frame": .object(["x": 0, "y": 0, "w": 200, "h": 100])]))
+        let warnings = (created["warnings"]?.array ?? []).compactMap(\.string)
+        #expect(warnings.count == 1)
+        #expect(warnings[0].contains("\"colour\"") && warnings[0].contains("note") && warnings[0].contains("markdown"))
+        let id = try #require(created["object"]?["id"]?.string)
+        #expect(try board.object(id).props["colour"] == .string("red"), "kept: agents may rely on it")
+
+        let updated = try await result("object.update", .object(["id": .string(id), "props": .object(["markdwon": "typo", "title": "Plan"])]))
+        #expect((updated["warnings"]?.array ?? []).compactMap(\.string).map { $0.contains("\"markdwon\"") } == [true])
+        let clean = try await result("object.update", .object(["id": .string(id), "props": .object(["markdown": "fixed"])]))
+        #expect(clean["warnings"] == nil)
+
+        // Each batch op's result carries its own.
+        let batch = try await result("object.batch", .object(["ops": .array([
+            .object(["method": "object.create", "params": .object(["type": "shape", "props": .object(["kind": "rect", "fil": "solid"]), "frame": .object(["x": 0, "y": 300, "w": 100, "h": 100])])]),
+            .object(["method": "object.create", "params": .object(["type": "shape", "props": .object(["kind": "rect", "fill": "solid"]), "frame": .object(["x": 200, "y": 300, "w": 100, "h": 100])])]),
+        ])]))
+        let results = try #require(batch["results"]?.array)
+        #expect(results[0]["warnings"]?.array?.count == 1 && results[1]["warnings"] == nil)
+    }
+
+    /// A prop the schema defines must never be reported as unknown.
+    @Test func knownPropsAreExactlyTheSchemas() throws {
+        let schema = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../schema/canvas-api.json")
+        let definitions = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: schema))["definitions"]
+        for type in ObjectType.allCases {
+            let name = type.rawValue.prefix(1).uppercased() + type.rawValue.dropFirst() + "Props"
+            let keys = Set(try #require(definitions?[name]?["properties"]?.object, "\(name)").keys)
+            #expect(type.knownProps == keys, "\(type)")
+        }
+    }
+
     @Test func noteHeightFollowsItsWrapWidthAndResolvedFences() async throws {
         let prose: JSONValue = .object(["markdown": .string(String(repeating: "A sentence that wraps across the note. ", count: 12))])
         let narrow = Self.size(try await result("object.measure", .object(["type": "note", "props": prose, "width": 240])))

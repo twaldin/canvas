@@ -68,6 +68,7 @@
         "command": { "type": "array", "items": { "type": "string" }, "description": "argv run inside the zmx session" },
         "zmxSession": { "type": "string" },
         "title": { "type": "string" },
+        "name": { "type": "string", "description": "a name other agents address this terminal by (agent.prompt/wait/read `target`)" },
         "agent": {
           "type": "object",
           "required": ["kind"],
@@ -485,7 +486,7 @@
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" } } }
     },
     "object.update": {
       "description": "Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w.",
@@ -502,7 +503,7 @@
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" } } }
     },
     "object.delete": {
       "description": "Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached.",

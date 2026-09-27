@@ -63,6 +63,7 @@ class TerminalProps(TypedDict):
     command: Required[list[str]]
     zmxSession: NotRequired[str]
     title: NotRequired[str]
+    name: NotRequired[str]
     agent: NotRequired[dict[str, Any]]
     lifecycle: NotRequired["Lifecycle"]
     follow: NotRequired[bool]

@@ -41,6 +41,8 @@ export type TerminalProps = {
   command: string[];
   zmxSession?: string;
   title?: string;
+  /** a name other agents address this terminal by (agent.prompt/wait/read `target`) */
+  name?: string;
   agent?: {
     kind: string;
     sessionId?: string;
@@ -389,6 +391,8 @@ export type ObjectCreateParams = {
 };
 export type ObjectCreateResult = {
   object: CanvasObject;
+  /** present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway */
+  warnings?: string[];
 };
 
 export type ObjectUpdateParams = {
@@ -402,6 +406,8 @@ export type ObjectUpdateParams = {
 };
 export type ObjectUpdateResult = {
   object: CanvasObject;
+  /** present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway */
+  warnings?: string[];
 };
 
 export type ObjectDeleteParams = {

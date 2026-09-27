@@ -174,6 +174,13 @@ public final class ApiRouter {
         .object(["id": id, "ok": .bool(false), "error": .object(["code": .string(failure.code), "message": .string(failure.message)])])
     }
 
+    /// A result with `warnings` (unknown props) when there are any.
+    static func withWarnings(_ result: [String: JSONValue], _ warnings: [String]) -> JSONValue {
+        var result = result
+        if !warnings.isEmpty { result["warnings"] = .array(warnings.map(JSONValue.string)) }
+        return .object(result)
+    }
+
     // MARK: agent.wait
 
     private func wait(_ id: JSONValue, _ p: JSONValue, _ connection: SocketServer.Connection) throws -> JSONValue? {
@@ -485,14 +492,14 @@ public final class ApiRouter {
             guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             let frame = try p["frame"].map { try $0.decode(Frame.self) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p, on: board))
-            return .object(["object": try JSONValue.encode(object)])
+            return Self.withWarnings(["object": try JSONValue.encode(object)], type.unknownPropWarnings(props))
 
         case "object.update":
             let id = try string(p, "id")
             let board = try board(forObject: id)
             let frame = try p["frame"].map { try $0.decode(Frame.self) }
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p, on: board))
-            return .object(["object": try JSONValue.encode(object)])
+            return Self.withWarnings(["object": try JSONValue.encode(object)], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
             let id = try string(p, "id")

@@ -346,10 +346,10 @@ final class CanvasView: NSScrollView {
             }
         }
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
-        // A clicked line: user navigation, like a terminal's ⌘-click (the keyboard stays put);
+        // A clicked line: user navigation. The changes tile keeps the selection and the keyboard
+        // (j/k go on through the hunks; a selected code tile would take the keyboard from it);
         // the least pan that shows the code tile keeps the diff in view too.
-        (content as? ChangesTile)?.onOpenedCode = { [weak self] opened, created in
-            if !created { self?.setSelection([opened]) }
+        (content as? ChangesTile)?.onOpenedCode = { [weak self] opened, _ in
             self?.reveal(opened, keeping: id)
         }
         (content as? BrowserTile)?.onOpenedTile = { [weak self] opened in
@@ -457,7 +457,23 @@ final class CanvasView: NSScrollView {
         refreshRings()
         // Selecting a marked object is the user acknowledging it.
         for id in added where markers[id] != nil { board.clearAttention(id) }
+        // The keyboard never stays behind in a tile the selection left (`KeyboardFocus`).
+        hand(KeyboardFocus.afterSelectionChange(ids, holder: keyboardHolder))
         onSelectionChange?()
+    }
+
+    /// The tile holding the keyboard, for `KeyboardFocus`.
+    private var keyboardHolder: KeyboardFocus.Holder? {
+        focusedTile.map { KeyboardFocus.Holder($0, isTerminal: tiles[$0]?.content is TerminalTile) }
+    }
+
+    /// Moves the keyboard as `KeyboardFocus` decided.
+    private func hand(_ handoff: KeyboardFocus.Handoff) {
+        switch handoff {
+        case .stay: break
+        case .canvas: window?.makeFirstResponder(document)
+        case .terminal(let id): (tiles[id]?.content as? TerminalTile)?.focus()
+        }
     }
 
     func selectAll() {
@@ -482,15 +498,28 @@ final class CanvasView: NSScrollView {
 
     /// A press on an object's handle (title bar, drawn stroke, group label): a plain press on an
     /// unselected object selects just it; on a selected one it keeps the selection for dragging.
+    /// A plain press on a tile's title bar also turns the keyboard to that tile (a terminal) or
+    /// the canvas, away from whatever had it (`KeyboardFocus.afterTitleBarPress`).
     private func press(_ id: ObjectID, extend: Bool) -> ObjectID? {
         if extend {
             setSelection(selection.symmetricDifference([id]))
             return nil
         }
+        let holder = keyboardHolder
+        defer {
+            if let tile = tiles[id] {
+                lastClickedTile = id
+                hand(KeyboardFocus.afterTitleBarPress(on: id, isTerminal: tile.content is TerminalTile, holder: holder))
+            }
+        }
         if selection.contains(id) { return selection.count > 1 ? id : nil }
         select(id, extend: false)
         return nil
     }
+
+    /// The tile the user last clicked (its body or title bar): Code ▸ commands fall back to it
+    /// (`KeyboardFocus.codeTarget`).
+    private var lastClickedTile: ObjectID?
 
     /// Selection with groups expanded to their members: what a move or new group acts on.
     private func expandedSelection() -> [ObjectID] {
@@ -545,7 +574,10 @@ final class CanvasView: NSScrollView {
             var view: NSView? = hit
             while let current = view, !(current is TileFrameView) { view = current.superview }
             if let tile = view as? TileFrameView, tile.isLive, hit.isDescendant(of: tile.content) {
-                select(tile.objectID, extend: event.modifierFlags.contains(.shift))
+                // ⇧-click inside a tile is the tile's own (extending a text or line selection):
+                // it selects just that tile, as a plain click does; title bars ⇧-click to add.
+                lastClickedTile = tile.objectID
+                select(tile.objectID, extend: false)
             }
             return event
         case .leftMouseDragged where shapePress:
@@ -763,17 +795,18 @@ final class CanvasView: NSScrollView {
         guard let window else { return }
         let alert = NSAlert()
         alert.messageText = terminals.count == 1 ? "Close this terminal?" : "Close \(terminals.count) terminals?"
-        alert.informativeText = terminals.count == 1
-            ? "Closing ends the terminal's session and anything running in it."
-            : "Closing ends their sessions and anything running in them."
-        // Return closes: drawn as the default even while the app isn't active.
+        // What ends, by name: the foreground program and what it or the shell started.
+        alert.informativeText = SessionProcesses.closingText(terminals.map { (tiles[$0]?.content as? TerminalTile)?.sessionProcesses() })
+        // Return and Esc cancel: closing ends running work, so it takes a click (or ⌘⌫).
+        alert.addButton(withTitle: "Cancel")
         let close = alert.addButton(withTitle: "Close")
-        close.bezelColor = .controlAccentColor
-        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        close.keyEquivalent = "\u{8}"
+        close.keyEquivalentModifierMask = .command
+        close.hasDestructiveAction = true
         let previous = window.firstResponder
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
-            guard response == .alertFirstButtonReturn else {
+            guard response == .alertSecondButtonReturn else {
                 // Cancelled: the keyboard goes back to whoever had it (the terminal asked about).
                 if let window = self.window { Self.returnKeyboard(to: previous, in: window) }
                 return
@@ -910,10 +943,21 @@ final class CanvasView: NSScrollView {
         return true
     }
 
-    /// Esc in a tile that has the keyboard: the canvas takes it back, the tile stays selected.
+    /// Esc in a tile that has the keyboard (or Leave Tile, ⌘Esc): the canvas takes it back, the
+    /// tile stays selected.
     func leaveTile(_ id: ObjectID) {
         if board.objects[id] != nil { setSelection([id]) }
         window?.makeFirstResponder(document)
+    }
+
+    /// View ▸ Leave Tile (⌘Esc): the tile holding the keyboard hands it to the canvas and stays
+    /// selected. The one way out of a terminal, whose Esc belongs to its program. False when
+    /// no tile has the keyboard.
+    @discardableResult
+    func leaveFocusedTile() -> Bool {
+        guard let id = focusedTile else { return false }
+        leaveTile(id)
+        return true
     }
 
     /// Where the keyboard goes back to when something that borrowed it (Go to, a code tile's
@@ -1036,11 +1080,10 @@ final class CanvasView: NSScrollView {
     // MARK: Menu bar (the context menus' actions, for the keyboard and accessibility)
 
     /// The code tile Code ▸ Go to Definition, Find References and Outline act on: the focused
-    /// one, else the one selected tile while no terminal has the keyboard.
+    /// one, else the one selected tile, else the one last clicked (`KeyboardFocus.codeTarget`).
     var keyboardCodeTile: CodeTile? {
-        if let focused = focusedTile { return tiles[focused]?.content as? CodeTile }
-        guard selection.count == 1, let id = selection.first else { return nil }
-        return tiles[id]?.content as? CodeTile
+        let id = KeyboardFocus.codeTarget(focused: focusedTile, selection: selection, lastClicked: lastClickedTile) { self.tiles[$0]?.content is CodeTile }
+        return id.flatMap { tiles[$0]?.content as? CodeTile }
     }
 
     /// The terminal Object ▸ Follow Files toggles: the focused one, else the one selected tile.
@@ -1095,6 +1138,14 @@ final class CanvasView: NSScrollView {
         if !selection.contains(id) { select(id, extend: false) }
         let count = selection.count
         let menu = NSMenu()
+        if focusedTile == id {
+            // How to get out of a terminal, whose Esc belongs to its program (View ▸ Leave Tile).
+            let leave = MenuAction.item("Leave Tile") { [weak self] in self?.leaveTile(id) }
+            leave.keyEquivalent = "\u{1b}"
+            leave.keyEquivalentModifierMask = .command
+            menu.addItem(leave)
+            menu.addItem(.separator())
+        }
         menu.addItem(MenuAction.item(count > 1 ? "Close \(count) Objects" : "Close") { [weak self] in self?.deleteSelection() })
         menu.addItem(.separator())
         menu.addItem(MenuAction.item("Bring to Front") { [weak self] in self?.bringToFront() })

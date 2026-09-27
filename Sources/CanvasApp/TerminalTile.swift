@@ -246,6 +246,12 @@ final class TerminalTile: NSView, TileContent {
         publishLabel()
     }
 
+    /// What closing this terminal ends, for the close sheet (`SessionProcesses`); nil until the
+    /// session's shell is known.
+    func sessionProcesses() -> SessionProcesses? {
+        shell.flatMap { ForegroundProgram.session(shell: $0) }
+    }
+
     /// Looks up the session's shell off the main actor, at most every few seconds (a session
     /// that doesn't exist yet appears once zmx has started it).
     private func findShell() {

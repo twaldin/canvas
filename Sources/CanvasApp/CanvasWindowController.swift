@@ -467,10 +467,18 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.enter(group: group)
     }
 
-    @objc func goToDefinition(_ sender: Any?) { canvas.keyboardCodeTile?.navigate(.definition) }
-    @objc func openDefinitionInNewTile(_ sender: Any?) { canvas.keyboardCodeTile?.navigate(.definitionInNewTile) }
-    @objc func findReferences(_ sender: Any?) { canvas.keyboardCodeTile?.navigate(.references) }
-    @objc func showOutline(_ sender: Any?) { canvas.keyboardCodeTile?.navigate(.outline) }
+    @objc func goToDefinition(_ sender: Any?) { navigateCode(.definition) }
+    @objc func openDefinitionInNewTile(_ sender: Any?) { navigateCode(.definitionInNewTile) }
+    @objc func findReferences(_ sender: Any?) { navigateCode(.references) }
+    @objc func showOutline(_ sender: Any?) { navigateCode(.outline) }
+
+    /// A Code ▸ command on `CanvasView.keyboardCodeTile`; with none, it says so.
+    private func navigateCode(_ navigation: CodeTile.KeyboardNavigation) {
+        guard let code = canvas.keyboardCodeTile else { return canvas.showNotice("No code tile to act on: click one first") }
+        code.navigate(navigation)
+    }
+
+    @objc func leaveTile(_ sender: Any?) { canvas.leaveFocusedTile() }
 
     /// Whether a menu item applies now (AppDelegate forwards the menu bar's validation here).
     func validate(_ item: NSMenuItem) -> Bool {
@@ -508,7 +516,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             item.state = scales == [scale] && item.tag != 100 ? .on : .off
             return item.tag != 100 || scales != [1]
         case #selector(goToDefinition(_:)), #selector(openDefinitionInNewTile(_:)), #selector(findReferences(_:)), #selector(showOutline(_:)):
-            return canvas.keyboardCodeTile?.canNavigate == true
+            // With no code tile to act on the command still runs, to say so (`navigateCode`).
+            return canvas.keyboardCodeTile?.canNavigate ?? true
+        case #selector(leaveTile(_:)): return canvas.focusedTile != nil
         default: return true
         }
     }
@@ -520,10 +530,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The View menu's navigation shortcuts, matched on the key's characters: ⌘P, ⌘9, ⌘0, ⌘= (and
-    /// ⌘+), ⌘-. Nil for anything else, which stays with the focused view.
+    /// ⌘+), ⌘-, and ⌘Esc (Leave Tile, before a terminal's Ghostty keybinds could claim it). Nil for
+    /// anything else, which stays with the focused view.
     static func navigationAction(for event: NSEvent) -> Selector? {
         guard event.type == .keyDown else { return nil }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if event.keyCode == 53, modifiers == .command { return #selector(leaveTile(_:)) }
         switch (event.charactersIgnoringModifiers, modifiers) {
         case ("p", .command): return #selector(toggleNavigator(_:))
         case ("9", .command): return #selector(zoomToFit(_:))

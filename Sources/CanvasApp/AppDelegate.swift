@@ -275,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openDefinitionInNewTile(_ sender: Any?) { keyController?.openDefinitionInNewTile(sender) }
     @objc func findReferences(_ sender: Any?) { keyController?.findReferences(sender) }
     @objc func showOutline(_ sender: Any?) { keyController?.showOutline(sender) }
+    @objc func leaveTile(_ sender: Any?) { keyController?.leaveTile(sender) }
     @objc func copyAsImage(_ sender: Any?) { keyController?.copyAsImage(sender) }
     @objc func saveAsPNG(_ sender: Any?) { keyController?.saveAsPNG(sender) }
     @objc func saveHTMLTile(_ sender: Any?) { keyController?.saveHTMLTile(sender) }
@@ -394,6 +395,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Go to…", #selector(toggleNavigator(_:)), "p"),
             // ⌘J: no shell sees ⌘, and Ghostty binds nothing to it.
             item("Go to Next Needs-You", #selector(goToNextNeedsYou(_:)), "j"),
+            // ⌘Esc: Esc belongs to a terminal's program, so this is the way out of one (and of
+            // any tile); the board window takes it before Ghostty's keybinds. No shell sees ⌘.
+            item("Leave Tile", #selector(leaveTile(_:)), "\u{1b}"),
             .separator(),
             item("Actual Size", #selector(zoomToActual(_:)), "0"),
             item("Zoom In", #selector(zoomIn(_:)), "="),

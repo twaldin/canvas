@@ -41,23 +41,44 @@ enum ForegroundProgram {
     /// group), else its prompt (an interactive shell's own children, like a prompt's `git`
     /// status, aren't jobs). A few syscalls; fine on the main actor.
     static func state(shell: pid_t) -> State {
-        guard let info = bsdInfo(shell) else { return .gone }
+        guard let leader = leader(shell: shell) else { return .gone }
+        return leader.flatMap(arguments).map(State.running) ?? .prompt
+    }
+
+    /// The foreground job's leader (`state`): nil when the shell is gone, `.some(nil)` at its prompt.
+    private static func leader(shell: pid_t) -> pid_t?? {
+        guard let info = bsdInfo(shell) else { return nil }
         let group = pid_t(bitPattern: info.e_tpgid)
-        guard group > 0 else { return .prompt }
+        guard group > 0 else { return .some(nil) }
         var leader = group
         if leader == shell {
-            guard arguments(shell)?.contains("-c") == true else { return .prompt }
+            guard arguments(shell)?.contains("-c") == true else { return .some(nil) }
             let child = members(of: group).filter { $0 != shell }.compactMap { pid in bsdInfo(pid).map { (pid, $0) } }
                 .filter { $0.1.pbi_ppid == UInt32(shell) }
                 .max { ($0.1.pbi_start_tvsec, $0.1.pbi_start_tvusec) < ($1.1.pbi_start_tvsec, $1.1.pbi_start_tvusec) }
-            guard let child else { return .prompt }
+            guard let child else { return .some(nil) }
             leader = child.0
         } else if bsdInfo(leader) == nil {
             // The group's leader exited (the first stage of a pipeline): its oldest member.
-            guard let member = members(of: group).min() else { return .prompt }
+            guard let member = members(of: group).min() else { return .some(nil) }
             leader = member
         }
-        return arguments(leader).map(State.running) ?? .prompt
+        return .some(leader)
+    }
+
+    /// What closing the session ends (`SessionProcesses`): its foreground program and the
+    /// other processes the shell or that program started. Nil when the shell is gone. Walks the
+    /// process table once (a few hundred syscalls, ~1 ms): fine on the main actor for the close
+    /// sheet, not for a timer.
+    static func session(shell: pid_t) -> SessionProcesses? {
+        guard let leader = leader(shell: shell) else { return nil }
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return nil }
+        var pids = [pid_t](repeating: 0, count: Int(count) + 64)
+        let listed = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<pid_t>.size))
+        let table = pids.prefix(max(0, Int(listed))).filter { $0 > 0 }.compactMap { pid in bsdInfo(pid).map { (pid, pid_t(bitPattern: $0.pbi_ppid)) } }
+        let processes = SessionProcesses.descendants(of: shell, in: table).map { SessionProcesses.Process(pid: $0.pid, parent: $0.parent, argv: arguments($0.pid) ?? []) }
+        return SessionProcesses(shell: shell, foreground: leader, processes: processes)
     }
 
     private static func bsdInfo(_ pid: pid_t) -> proc_bsdinfo? {

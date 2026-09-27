@@ -59,6 +59,13 @@ final class NavigationPanel: NSView {
         onPointerExit?()
     }
 
+    /// A click on the panel itself (a message, hover docs, a list's background) stays here:
+    /// passed on, the canvas would take it for a click on empty canvas and deselect the code
+    /// tile the panel is about. A message or hover docs close.
+    override func mouseDown(with event: NSEvent) {
+        if kind != .list { dismiss() }
+    }
+
     /// Shows the panel below `anchor` (a point in `view`), above the line when there's no room,
     /// inside the nearest canvas document (or the window) and clamped to what's visible.
     func show(below anchor: NSPoint, lineHeight: CGFloat, in view: NSView) {

@@ -292,6 +292,8 @@ struct TerminalNameTests {
         #expect(TerminalName.program(argv: ["npm", "run", "dev", "extra"]) == "npm run dev")
         #expect(TerminalName.program(argv: ["vim", "src/main.rs"]) == "vim main.rs")
         #expect(TerminalName.program(argv: ["python3.12", "-u", "scripts/train.py", "--epochs", "3"]) == "train.py")
+        // macOS's python.org build re-execs as its framework's `Python`.
+        #expect(TerminalName.program(argv: ["/Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python", "-m", "http.server", "8766"]) == "http.server 8766")
         #expect(TerminalName.program(argv: ["bun", "run", "dev"]) == "bun run dev")
         #expect(TerminalName.program(argv: []) == nil)
     }

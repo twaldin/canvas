@@ -9,6 +9,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let tray = TrayBar(frame: .zero)
     private let navigator = NavigatorPanel()
     private let nothingHere = NothingHerePill(frame: .zero)
+    private let emptyHint = EmptyBoardHint()
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
@@ -45,6 +46,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             tray.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
         ])
         window.contentView = container
+        emptyHint.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(emptyHint)
+        NSLayoutConstraint.activate([
+            emptyHint.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            emptyHint.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            emptyHint.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
+        ])
         drawing = ShapeLayer.install(on: canvas, toolbarIn: container)
         // Above the toolbar and tray, so the navigator is never covered.
         for view in [nothingHere, navigator] {
@@ -75,7 +83,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
             MainActor.assumeIsolated { self?.firstResponderChanged(window.firstResponder) }
         }
+        settlePromptTarget()
         refreshTray()
+        emptyHint.isHidden = !board.objects.isEmpty
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -84,7 +94,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.apply(event)
         drawing?.apply(event)
         switch event {
-        case .trayChanged, .objectDeleted: refreshTray()
+        case .trayChanged: refreshTray()
+        case .objectCreated, .objectDeleted:
+            settlePromptTarget()
+            refreshTray()
+            emptyHint.isHidden = !board.objects.isEmpty
         case .objectUpdated(let object) where object.id == canvas.promptTarget: refreshTray()
         default: break
         }
@@ -92,7 +106,16 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     private func refreshTray() {
         let title = canvas.promptTarget.flatMap { board.objects[$0] }.map(TileFrameView.title(for:))
-        tray.show(board.tray, targetTitle: title)
+        tray.show(board.tray, targetTitle: title, hasTerminal: board.objects.values.contains { $0.type == .terminal })
+    }
+
+    /// The terminal that last had keyboard focus; while none has (or it was closed), the board's
+    /// only terminal, so a lone agent never needs a click before mentions go to it.
+    private func settlePromptTarget() {
+        if let target = canvas.promptTarget, board.objects[target] != nil { return }
+        let terminals = board.objects.values.filter { $0.type == .terminal }
+        let sole = terminals.count == 1 ? terminals.first?.id : nil
+        if canvas.promptTarget != sole { canvas.promptTarget = sole }
     }
 
     /// Keyboard focus inside a terminal tile makes it the prompt target and marks it seen.

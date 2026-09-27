@@ -150,6 +150,10 @@ public final class Board {
     /// A terminal tile's current screen as text (soft-wrapped rows joined), for a mention of
     /// the whole terminal; nil when its session isn't running. Set by the app.
     public var terminalScreen: (@MainActor (ObjectID) async -> String?)?
+    /// Which of a terminal tile's finished commands `command` is now, from the newest (-1, as
+    /// `agent.read` `block` counts), for a mention of its block; nil when the terminal's log
+    /// doesn't have it (older than Canvas's attach). Set by the app.
+    public var terminalBlockIndex: (@MainActor (ObjectID, TerminalCommand) -> Int?)?
     /// Terminal tiles that left the board for good, once the step that removed them is over:
     /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create). A terminal a failed
     /// batch deleted and put back never counts. The app ends their sessions.

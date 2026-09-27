@@ -2,20 +2,22 @@ import Foundation
 
 /// A `path:line` reference in terminal output (an agent's answer, a compiler error, a stack
 /// trace): `src/foo.ts:42`, `src/foo.ts:42:7`, `src/foo.ts:42-50` (also with an en or em dash,
-/// as Gemini writes ranges), `foo.rs#L10-20`, `/abs/path.swift:3`, `~/x.py:9`; a Python traceback
-/// frame (`File "src/app.py", line 12, in main`) or a pdb frame (`/src/app.py(12)main()`, as
-/// `where` lists them and a stop shows `> …`); or a pytest node id
-/// (`tests/test_x.py::TestA::test_b[1]`), whose line is its `def`'s, found when it opens.
+/// as Gemini writes ranges), `foo.rs#L10-20`, `/abs/path.swift:3`, `file:///abs/path.ts:3:5`,
+/// `~/x.py:9`; a Python traceback frame (`File "src/app.py", line 12, in main`) or a pdb frame
+/// (`/src/app.py(12)main()`, as `where` lists them and a stop shows `> …`); a pytest node id
+/// (`tests/test_x.py::TestA::test_b[1]`), whose line is its `def`'s, found when it opens; or a
+/// source file's name alone (`Applied edit to url.go`), which has no line.
 /// ⌘-click opens it as a code tile beside the terminal.
 public struct TerminalReference: Equatable, Sendable {
     /// UTF-16 range of the whole reference in the searched text.
     public var range: NSRange
     public var path: String
-    public var lines: LineRange
+    /// Nil for a file named without a line: it opens at its top.
+    public var lines: LineRange?
     /// A pytest node id's names after the file (`["TestA", "test_b"]`); `lines` is then 1-1.
     public var test: [String]?
 
-    public init(range: NSRange, path: String, lines: LineRange, test: [String]? = nil) {
+    public init(range: NSRange, path: String, lines: LineRange?, test: [String]? = nil) {
         self.range = range
         self.path = path
         self.lines = lines
@@ -26,12 +28,23 @@ public struct TerminalReference: Equatable, Sendable {
 public enum TerminalReferences {
     /// The path: optional `~`/`.`/`..` root, directories, a name. It needs a slash or a file
     /// extension (checked after matching), so `localhost:3000` and `12:30` never match; the
-    /// lookbehind keeps `https://example.com:443` out.
-    private static let pathPattern = #"(?<![\w./@:~-])((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*)"#
+    /// lookbehind keeps `https://example.com:443` out. A `file://` URL's path counts, with its
+    /// scheme part of the reference.
+    private static let pathPattern = #"(?<![\w./@:~-])(?:file://)?((?:~|\.{1,2})?/?(?:[\w@.+-]+/)*[\w@+-][\w@.+-]*)"#
     /// A path, then `:line`, `:line:col`, `:start-end`, or `#Lstart`, `#Lstart-end`,
     /// `#Lstart-Lend`; a range's dash may be `-`, `–` or `—`.
     private static let pattern = try! NSRegularExpression(pattern:
         pathPattern + #"(?::(\d+)(?:[-–—](\d+)|:\d+)?|#L(\d+)(?:[-–—]L?(\d+))?)(?![\w/])"#)
+    /// A path with no line after it, kept when its extension is a source file's (`sourceExtensions`).
+    private static let barePattern = try! NSRegularExpression(pattern: pathPattern + #"(?![\w/#(@.-]|:\d)"#)
+    /// Extensions of files worth opening by name alone: source code, and the config and docs
+    /// beside it. Anything else named bare (`example.com`, `v1.2`) stays text.
+    static let sourceExtensions: Set<String> = [
+        "swift", "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "py", "pyi", "go", "rs", "c", "h", "cc", "cpp", "cxx", "hpp", "hh",
+        "m", "mm", "java", "kt", "kts", "scala", "rb", "php", "cs", "fs", "lua", "zig", "ex", "exs", "erl", "hs", "ml", "clj", "dart",
+        "sh", "bash", "zsh", "fish", "vue", "svelte", "css", "scss", "html", "sql", "proto", "graphql", "json", "toml", "yaml", "yml",
+        "md", "gradle", "cmake", "nix", "tf",
+    ]
     /// A Python traceback frame: `File "<path>", line <n>`; the quoted path may hold spaces.
     private static let tracebackPattern = try! NSRegularExpression(pattern: #"File "([^"\n]+)", line (\d+)"#)
     /// A pdb frame: a path, the line in parentheses, then the function called (`main()`,
@@ -69,7 +82,22 @@ public enum TerminalReferences {
             TerminalReference(range: match.range, path: ns.substring(with: match.range(at: 1)), lines: LineRange(start: 1, end: 1),
                               test: ns.substring(with: match.range(at: 2)).components(separatedBy: "::").filter { !$0.isEmpty })
         }
-        return (located + frames + stops + nodes).sorted { $0.range.location < $1.range.location }
+        let withLines = located + frames + stops + nodes
+        // A source file named alone (a sentence's full stop after it isn't part of it), where no
+        // reference above covers it.
+        let bare: [TerminalReference] = barePattern.matches(in: text, range: whole).compactMap { match in
+            var path = ns.substring(with: match.range(at: 1))
+            var range = match.range
+            while path.hasSuffix(".") {
+                path.removeLast()
+                range.length -= 1
+            }
+            let name = path.split(separator: "/").last.map(String.init) ?? path
+            guard hasExtension(name), sourceExtensions.contains((name as NSString).pathExtension.lowercased()),
+                  !withLines.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) else { return nil }
+            return TerminalReference(range: range, path: path, lines: nil)
+        }
+        return (withLines + bare).sorted { $0.range.location < $1.range.location }
     }
 
     /// The reference covering UTF-16 offset `offset` of `text`.
@@ -85,23 +113,41 @@ public enum TerminalReferences {
         return ext.first?.isLetter == true && ext.allSatisfy { $0.isLetter || $0.isNumber }
     }
 
-    /// The existing file `path` names: absolute and `~/` paths as they are, relative ones against
+    /// The existing file `path` names: `~/` paths as they are, relative ones against
     /// `directories` in order (the terminal's reported cwd, its `props.cwd`, the board root).
     /// Diff prefixes (`a/`, `b/`) are tried without the prefix too. When no directory has it, a
     /// relative path is looked up among the board root's `listed` files as a file name or a
     /// trailing part of a path (`core.py`, `click/core.py:10`, as agents write before they know
-    /// better): one match is it; of several, the one nearest `cwd` (fewest directories up and
-    /// down), unless two are equally near. Nil when nothing resolves.
+    /// better). An absolute path is itself when it exists; else (a deploy path in a production
+    /// stack trace, `/srv/app/server/routes/claims.ts`) its longest trailing part that names
+    /// listed files, at least a directory and the name (`server/routes/claims.ts`). One match is
+    /// it; of several, the one nearest `cwd` (fewest directories up and down), unless two are
+    /// equally near. Nil when nothing resolves.
     public static func resolve(_ path: String, directories: [String], home: String, isFile: (String) -> Bool,
                                listed: (root: String, files: FileIndex)? = nil, near cwd: String? = nil) -> String? {
         func standard(_ path: String) -> String { URL(fileURLWithPath: path).standardizedFileURL.path }
+        func matches(ending suffix: String, in listed: (root: String, files: FileIndex)) -> [String] {
+            var found: [String] = []
+            for match in listed.files.paths(endingWith: suffix) {
+                let candidate = standard((listed.root as NSString).appendingPathComponent(match))
+                if !found.contains(candidate), isFile(candidate) { found.append(candidate) }
+            }
+            return found
+        }
         if path.hasPrefix("~/") {
             let candidate = standard(home + path.dropFirst())
             return isFile(candidate) ? candidate : nil
         }
         if path.hasPrefix("/") {
             let candidate = standard(path)
-            return isFile(candidate) ? candidate : nil
+            if isFile(candidate) { return candidate }
+            guard let listed else { return nil }
+            let parts = candidate.split(separator: "/")
+            for count in stride(from: parts.count - 1, through: 2, by: -1) {
+                let found = matches(ending: parts.suffix(count).joined(separator: "/"), in: listed)
+                if !found.isEmpty { return nearest(found, to: cwd) }
+            }
+            return nil
         }
         var relatives = [path]
         if path.hasPrefix("a/") || path.hasPrefix("b/") { relatives.append(String(path.dropFirst(2))) }
@@ -112,18 +158,21 @@ public enum TerminalReferences {
             }
         }
         guard let listed else { return nil }
-        var matches: [String] = []
+        var found: [String] = []
         // A diff's `a/` or `b/` prefix is dropped only when the path as written matches nothing.
-        for relative in relatives where matches.isEmpty {
+        for relative in relatives where found.isEmpty {
             var suffix = Substring(relative)
             while suffix.hasPrefix("./") { suffix = suffix.dropFirst(2) }
             guard !suffix.split(separator: "/").contains("..") else { continue }
-            for match in listed.files.paths(endingWith: String(suffix)) {
-                let candidate = standard((listed.root as NSString).appendingPathComponent(match))
-                if !matches.contains(candidate), isFile(candidate) { matches.append(candidate) }
-            }
+            found = matches(ending: String(suffix), in: listed)
         }
-        guard matches.count > 1 else { return matches.first }
+        return nearest(found, to: cwd)
+    }
+
+    /// The one of `files`, else the one nearest `cwd` (fewest directories up and down) unless
+    /// two are equally near; nil for none.
+    private static func nearest(_ files: [String], to cwd: String?) -> String? {
+        guard files.count > 1 else { return files.first }
         guard let cwd else { return nil }
         // /tmp and /private/tmp are one directory; a shell may report either.
         func real(_ path: String) -> [Substring] { URL(fileURLWithPath: path).resolvingSymlinksInPath().path.split(separator: "/") }
@@ -133,7 +182,7 @@ public enum TerminalReferences {
             let shared = zip(here, folder).prefix { $0 == $1 }.count
             return (here.count - shared) + (folder.count - shared)
         }
-        let ranked = matches.map { ($0, distance($0)) }.sorted { $0.1 < $1.1 }
+        let ranked = files.map { ($0, distance($0)) }.sorted { $0.1 < $1.1 }
         return ranked[0].1 < ranked[1].1 ? ranked[0].0 : nil
     }
 
@@ -148,13 +197,14 @@ extension TerminalReferences {
     /// A reference drawn in a terminal's viewport, resolved to a file.
     public struct Hit: Equatable, Sendable {
         public var file: String
-        public var lines: LineRange
+        /// Nil for a file named without a line.
+        public var lines: LineRange?
         /// Where it is drawn: one run per viewport row it covers.
         public var runs: [TerminalTextRows.Run]
         /// A pytest node id's names (`TerminalReference.test`): the line is its `def`'s.
         public var test: [String]?
 
-        public init(file: String, lines: LineRange, runs: [TerminalTextRows.Run], test: [String]? = nil) {
+        public init(file: String, lines: LineRange?, runs: [TerminalTextRows.Run], test: [String]? = nil) {
             self.file = file
             self.lines = lines
             self.runs = runs
@@ -325,10 +375,11 @@ public struct TerminalTextRows {
         character.isLetter || character.isNumber || "_@.+-/~:#–—".contains(character)
     }
 
-    /// A row's last word that isn't a whole reference by itself: `src/dir_entry.`, `walk.rs:661-`.
+    /// A row's last word that isn't a whole reference with a line by itself: `src/dir_entry.`,
+    /// `walk.rs:661-`, `walk.rs` (its `:661` may be on the next row).
     private static func isUnfinished(_ word: String) -> Bool {
         let length = (word as NSString).length
-        return !TerminalReferences.find(in: word).contains { NSMaxRange($0.range) == length }
+        return !TerminalReferences.find(in: word).contains { $0.lines != nil && NSMaxRange($0.range) == length }
     }
 }
 
@@ -347,9 +398,10 @@ extension Board {
     ///   `followMinimumSize` to land wholly in view) and becomes the terminal's preview.
     /// `newTile` (⌥⌘-click) always opens a new tile, which the user keeps.
     @discardableResult
-    public func openCode(path: String, lines: LineRange, beside tile: ObjectID, newTile: Bool = false) -> CodeOpened {
+    public func openCode(path: String, lines: LineRange?, beside tile: ObjectID, newTile: Bool = false) -> CodeOpened {
         let stored = relativePath(path)
-        let range: JSONValue = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
+        // A file named without a line opens at its top.
+        let range = lines?.json ?? .null
         if !newTile {
             if let existing = tileShowing(CodeAim(path: stored, range: lines), near: objects[tile]?.frame) {
                 return CodeOpened(id: existing, created: false, reaim: nil, existing: true)
@@ -361,7 +413,7 @@ extension Board {
             }
         }
         let size = Board.defaultSize(.code)
-        let created = create(type: .code, props: .object(["path": .string(stored), "range": range]),
+        let created = create(type: .code, props: .object(["path": .string(stored), "range": range].filter { $0.value != .null }),
                              frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: Self.followMinimumSize))
         if !newTile { codePreviews[tile] = (created.id, created.rev) }
         return CodeOpened(id: created.id, created: true, reaim: nil)

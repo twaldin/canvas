@@ -122,7 +122,9 @@ public enum MentionContext {
                 var parts = [command?.command.map { "command `\(clip($0, 120))`" } ?? "command output"]
                 if let exit = command?.exit { parts.append("exit \(exit)") }
                 if let duration = command?.durationMs { parts.append(TerminalCommand.duration(duration)) }
-                lines.append("[\(index)] \(parts.joined(separator: " · ")) · output of terminal tile \(object)\(name)\(edited)")
+                // Which block it is now: the terminal's log counts from its newest command.
+                let read = command.flatMap { board.terminalBlockIndex?(object, $0) }.map { " · all of it: canvas agent.read --target \(object) --block \($0)" } ?? ""
+                lines.append("[\(index)] \(parts.joined(separator: " · ")) · output of terminal tile \(object)\(name)\(read)\(edited)")
             }
             lines.append(contentsOf: terminalLines(part == .rows ? text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : TerminalExcerpt.lines(text)))
         case .group(let objects, let name):
@@ -181,7 +183,7 @@ public enum MentionContext {
             out.append("Read more with the canvas SDK or CLI: canvas get <id> --as graph; look with canvas render <id>")
         }
         if terminal.contains(true) {
-            out.append("Read more of a terminal: canvas agent.read --target <id> (--block last: its last command's output)")
+            out.append("Read more of a terminal: canvas agent.read --target <id> (--block -1: its last command's output, -2 the one before)")
         }
         out.append("</canvas-mentions>")
         return out.joined(separator: "\n")

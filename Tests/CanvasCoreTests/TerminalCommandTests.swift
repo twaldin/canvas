@@ -201,6 +201,138 @@ struct TerminalCommandTests {
         #expect(TerminalCommand(exit: 0, durationMs: 3_600_000 + 300_000).noticeMessage == "Command finished · 1 h 5 min")
     }
 
+    @Test func theMarkerNamesTheCommandThatRanLongNotACompoundLinesSetup() {
+        func name(_ line: String) -> String { TerminalCommand.significant(line) }
+        #expect(name("export PATH=$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH; cargo build --release --offline -j 2")
+                == "cargo build --release --offline -j 2")
+        #expect(name("cd crates/x && cargo test") == "cargo test")
+        #expect(name("clear; RUST_BACKTRACE=1 cargo test depth") == "cargo test depth", "env assignments before the command go too")
+        #expect(name("cd x && env FOO=1 make -j4 && echo done") == "make -j4 && echo done", "what follows the command stays")
+        #expect(name("echo \"a; cd b\" && make") == "echo \"a; cd b\" && make", "operators inside quotes don't split")
+        #expect(name("cd /tmp") == "cd /tmp", "all setup: the line as it is")
+        #expect(name("cargo test | tee log") == "cargo test | tee log")
+        let long = TerminalCommand(command: "export PATH=$HOME/.rustup/bin:$PATH; cargo build --release", exit: 0, durationMs: 35_900)
+        #expect(long.noticeMessage == "cargo build --release finished · 35 s")
+        let now = Date()
+        #expect(TerminalCommand.bellMessage(program: nil, shell: "zsh", last: (TerminalCommand(command: "cd app && make test", exit: 1), now), at: now) == "Bell after `make test`")
+    }
+
+    /// `clear; cargo build` with two E0277s and an E0308, as rustc prints them.
+    static let cargoBuild: [String] = {
+        var lines = ["   Compiling fd-find v10.2.0 (/private/tmp/fd)"]
+        lines += [
+            "error[E0308]: mismatched types",
+            "   --> src/cli.rs:412:24",
+            "    |",
+            "412 |         max_depth: self.max_depth.or(self.exact_depth),",
+            "    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<usize>`, found `Option<u64>`",
+            "    |",
+            "    = note: expected enum `Option<usize>`",
+            "               found enum `Option<u64>`",
+            "",
+        ]
+        for (file, line, macro) in [("src/error.rs:9:52", "src/walk.rs:228:33", "print_error"), ("src/error.rs:9:52", "src/main.rs:72:9", "print_error")] {
+            lines += [
+                "error[E0277]: the trait bound `u64: From<usize>` is not satisfied",
+                "   --> \(file)",
+                "    |",
+                "9   |         eprintln!(\"[fd error]: {}\", format!($($arg)*).len() as u64);",
+                "    |                                                    ^^^^^ the trait `From<usize>` is not implemented for `u64`",
+                "    |",
+                "   ::: \(line)",
+                "    |",
+                "228 |               \(macro)!(",
+                "    |  _____________-",
+                "229 | |                 \"Search path '{}' is not a directory.\",",
+                "...",
+                "235 | |             );",
+                "    | |_____________- in this macro invocation",
+                "    |",
+                "    = help: the following other types implement trait `From<T>`:",
+                "              `u64` implements `From<Char>`",
+                "              `u64` implements `From<bool>`",
+                "              `u64` implements `From<u16>`",
+                "              `u64` implements `From<u32>`",
+                "              `u64` implements `From<u8>`",
+                "    = note: required for `usize` to implement `Into<u64>`",
+                "    = note: this error originates in the macro `\(macro)` (in Nightly builds, run with -Z macro-backtrace for more info)",
+                "",
+            ]
+        }
+        lines += [
+            "Some errors have detailed explanations: E0277, E0308.",
+            "For more information about an error, try `rustc --explain E0277`.",
+            "error: could not compile `fd-find` (bin \"fd\") due to 3 previous errors",
+        ]
+        return lines
+    }()
+
+    @Test func aCompilersLocationLinesStayAndItsEllipsisIsNoProgress() {
+        let trimmed = TerminalExcerpt.trim(Self.cargoBuild, head: 10, tail: 30)
+        #expect(Self.cargoBuild.count > 41, "long enough to trim")
+        let locations = Self.cargoBuild.filter { $0.contains("--> ") || $0.contains("::: ") }
+        #expect(locations.count == 5)
+        for line in locations + Self.cargoBuild.filter({ $0.hasPrefix("error") }) {
+            #expect(trimmed.contains(line), "every error and where it is: \(line)")
+        }
+        #expect(!trimmed.contains { $0.contains("progress") }, "rustc's `...` leaves out source lines; it isn't progress")
+        #expect(TerminalExcerpt.trim(["...", "ok"] + (1...50).map { "line \($0)" }, head: 2, tail: 3).first == "...")
+        var run = (1...50).map { "line \($0)" }
+        run[25] = "      at ./tests/tests.rs:1431:8"
+        #expect(TerminalExcerpt.trim(run, head: 10, tail: 3).contains(run[25]), "a stack frame at a file:line:col is a failure line")
+    }
+
+    @Test func theCommandLogFindsABlockByItsCommandsLineAfterItsPromptScrolledAwayOrClearWipedIt() {
+        let jq = TerminalCommand(command: "jq -r .status api.jsonl", exit: 0, durationMs: 120)
+        let grep = TerminalCommand(command: "git grep -n rateKey", exit: 0, durationMs: 30)
+        let again = TerminalCommand(command: "jq -r .status api.jsonl", exit: 5, durationMs: 90)
+        var log = TerminalCommandLog()
+        for command in [jq, grep, again] { log.append(command, at: Date()) }
+        // The terminal's text to the cursor: older output, then each block under its command line.
+        let text = ["old output", "❯ jq -r .status api.jsonl", "200", "500", "", "~/app on main", "❯ git grep -n rateKey",
+                    "server/claims.ts:241: rateKey", "", "~/app on main", "❯ jq -r .status api.jsonl", "jq: error", "", "~/app on main", "❯ "]
+        #expect(log.positions(in: text) == [-1: 10, -2: 6, -3: 1], "the same command twice: each block its own line")
+        #expect(log.block(holding: 3, in: text) == -3, "the first jq block, however far its prompt row scrolled")
+        #expect(log.block(holding: 7, in: text) == -2)
+        #expect(log.block(holding: 11, in: text) == -1)
+        #expect(log.block(holding: 0, in: text) == nil && log.block(holding: 6, in: text) == nil, "older text and a command line are no block")
+        #expect(log.index(of: jq) == -3 && log.index(of: again) == -1 && log.index(of: TerminalCommand(command: "ls")) == nil)
+        #expect(log.output(-3, in: text, promptAbove: 2) == 2..<4, "less the blank line and the path line a prompt shows above its input line")
+        #expect(log.output(-1, in: text, promptAbove: 2) == 11..<12)
+        // Scrollback trimmed past the first jq: it and anything older are gone.
+        #expect(log.positions(in: Array(text.dropFirst(2))) == [-1: 8, -2: 4])
+        // `clear; cargo build` wiped the screen with its own command line.
+        let build = TerminalCommand(command: "clear; cargo build", exit: 101, durationMs: 4_200)
+        log.append(build, at: Date())
+        let cleared = ["error[E0277]: the trait bound `u64: From<usize>` is not satisfied", "   --> src/error.rs:9:52", "error: could not compile `fd-find`", "", "❯ "]
+        #expect(log.positions(in: cleared) == [-1: -1])
+        #expect(log.block(holding: 1, in: cleared) == -1, "its output from the top")
+        #expect(log.output(-2, in: cleared, promptAbove: 0) == nil, "what came before the clear is gone")
+        #expect(TerminalBlocks.isCommandLine("❯ cmake", of: "make") == false && TerminalBlocks.isCommandLine("make", of: "make"), "whole words")
+    }
+
+    @Test func theLiveScreenJoinsRowsByTheTerminalsOwnWrapFlags() {
+        // pytest cuts its short-summary rows at the width: two FAILED rows of exactly 20 columns.
+        let history = "old 0123456789abcdef\nnext\nFAILED a.py::t - Ass\nFAILED b.py::u - Err\n0123456789abcdefghij\nwrapped rest\nwant \"a b w\n│x\n$\n\n"
+        func read(screen: [TerminalTail.ScreenRow]) -> [String] {
+            var tail = TerminalTail(limit: 50, columns: 20, screen: screen)
+            tail.append(Data(history.utf8))
+            return tail.finish().rows
+        }
+        let rows = ["FAILED a.py::t - Ass", "FAILED b.py::u - Err", "0123456789abcdefghij", "wrapped rest", "want \"a b w", "│x", "$", ""]
+        let hard = rows.map { TerminalTail.ScreenRow(text: $0, wraps: false) }
+        #expect(read(screen: hard) == ["old 0123456789abcdefnext", "FAILED a.py::t - Ass", "FAILED b.py::u - Err", "0123456789abcdefghij", "wrapped rest", "want \"a b w", "│x", "$"],
+                "on the screen no row joins that the terminal didn't wrap; above it the guess stands")
+        var soft = hard
+        soft[4].wraps = true
+        #expect(read(screen: soft).suffix(3) == ["wrapped rest", "want \"a b w│x", "$"], "one the terminal wrapped joins, border or not")
+        #expect(read(screen: []) == ["old 0123456789abcdefnext", "FAILED a.py::t - Ass", "FAILED b.py::u - Err0123456789abcdefghijwrapped rest", "want \"a b w", "│x", "$"],
+                "without the screen: the guess, which keeps rows that start alike apart but joins every other full row")
+        var moved = hard
+        moved[0].text = "something else"
+        #expect(read(screen: moved) == read(screen: []), "a screen that doesn't read as the history's end changes nothing")
+    }
+
     @Test func aBlockGetsTheLastCommandsExitOnlyWhenItIsThatCommandsBlock() {
         let last = TerminalCommand(command: "go test ./...", exit: 1, durationMs: 900)
         // Output ending two rows above the cursor (a two-line prompt), under its own command line.
@@ -286,11 +418,13 @@ struct TerminalMentionTests {
         let shell = board.create(type: .terminal, props: .object([:])).id
         board.terminalLabel = { $0 == shell ? "go · ~/src/app" : nil }
         board.terminalScreen = { _ in "❯ ls\nREADME.md\n" }
+        board.terminalBlockIndex = { id, command in id == shell && command.command == "go test ./..." ? -3 : nil }
         let output = (1...60).map { "ok \($0)" }.joined(separator: "\n")
         try board.stage(.terminal(object: shell, text: output, part: .command, command: TerminalCommand(command: "go test ./...", exit: 1, durationMs: 42_000)))
         try board.stage(.object(shell))
         let context = await board.drain().context
-        #expect(context.contains("[1] command `go test ./...` · exit 1 · 42 s · output of terminal tile \(shell) \"go · ~/src/app\""))
+        #expect(context.contains("[1] command `go test ./...` · exit 1 · 42 s · output of terminal tile \(shell) \"go · ~/src/app\" · all of it: canvas agent.read --target \(shell) --block -3"),
+                "the call that reads that block, counted from the terminal's newest command")
         #expect(context.contains("    ok 10\n    … 20 lines omitted …\n    ok 31"))
         #expect(context.contains("[2] terminal \(shell) \"go · ~/src/app\""))
         #expect(context.contains("    README.md"))

@@ -182,6 +182,37 @@ extension GhosttyConfig {
             self.modifiers = modifiers
             self.key = key
         }
+
+        /// The chord a menu item's key equivalent is (`key`, with its modifier mask as
+        /// `modifiers`), named as Ghostty keybinds name keys: AppKit's characters for keys without
+        /// one of their own become their names (`"\t"` tab, `"\r"` enter, `"\u{1b}"` escape,
+        /// `"\u{8}"` backspace, the function-key range's arrows, page keys and F-keys), an
+        /// uppercase letter is the letter with Shift, a shifted symbol (`"{"` for ⇧⌘[) its key
+        /// with Shift (US layout).
+        public init(menuKey key: String, modifiers: Modifiers) {
+            var modifiers = modifiers
+            if let name = Self.menuKeyNames[key] {
+                if key == "\u{19}" { modifiers.insert(.shift) }
+                self.init(modifiers, name)
+            } else if let unshifted = Self.unshiftedSymbols[key] {
+                self.init(modifiers.union(.shift), unshifted)
+            } else {
+                if key != key.lowercased() { modifiers.insert(.shift) }
+                self.init(modifiers, key.lowercased())
+            }
+        }
+
+        /// AppKit's key-equivalent characters for named keys (NSEvent's function-key constants).
+        private static let menuKeyNames: [String: String] = [
+            "\t": "tab", "\u{19}": "tab", "\r": "enter", "\u{3}": "enter", " ": "space", "\u{8}": "backspace", "\u{7f}": "backspace",
+            "\u{1b}": "escape", "\u{F728}": "delete", "\u{F729}": "home", "\u{F72B}": "end", "\u{F72C}": "page_up", "\u{F72D}": "page_down",
+            "\u{F702}": "arrow_left", "\u{F703}": "arrow_right", "\u{F701}": "arrow_down", "\u{F700}": "arrow_up",
+            "\u{F704}": "f1", "\u{F705}": "f2", "\u{F706}": "f3", "\u{F707}": "f4", "\u{F708}": "f5", "\u{F709}": "f6",
+            "\u{F70A}": "f7", "\u{F70B}": "f8", "\u{F70C}": "f9", "\u{F70D}": "f10", "\u{F70E}": "f11", "\u{F70F}": "f12",
+        ]
+
+        /// US-layout shifted symbols menu items use as keys, and the keys that type them.
+        private static let unshiftedSymbols: [String: String] = ["{": "[", "}": "]", "+": "=", "_": "-", "|": "\\", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`"]
     }
 
     /// A user keybind of an app-level action. `chord` is nil for a trigger Canvas can't match

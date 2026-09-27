@@ -27,8 +27,10 @@ public final class BoardStore {
         return "brd_\(digest.prefix(20))"
     }
 
-    /// "<git common dir>\n<branch or detached worktree path>", or nil outside git.
+    /// "<git common dir>\n<branch or detached worktree path>", or nil outside git. A root with no
+    /// `.git` in it or above it answers nil without starting git (board opens run on the main actor).
     static func gitIdentity(_ root: URL) -> String? {
+        guard insideGit(root) else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", root.path, "rev-parse", "--path-format=absolute", "--git-common-dir", "--abbrev-ref", "HEAD", "--show-toplevel"]
@@ -45,12 +47,24 @@ public final class BoardStore {
         return "\(lines[0])\n\(branch)"
     }
 
+    /// Whether `root` or a directory above it holds `.git` (a repository or a worktree's file).
+    static func insideGit(_ root: URL) -> Bool {
+        var directory = root.standardizedFileURL
+        while true {
+            if FileManager.default.fileExists(atPath: directory.appendingPathComponent(".git").path) { return true }
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path { return false }
+            directory = parent
+        }
+    }
+
     public func url(for id: BoardID) -> URL {
         directory.appendingPathComponent("\(id).json")
     }
 
-    public func load(root: URL) -> Board {
-        let id = Self.boardID(for: root)
+    /// The board for `root`; `id` when the caller already worked it out (`BoardStore.boardID`).
+    public func load(root: URL, id known: BoardID? = nil) -> Board {
+        let id = known ?? Self.boardID(for: root)
         let board: Board
         if let data = try? Data(contentsOf: url(for: id)), var snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) {
             // The root may have moved (renamed checkout); the board follows its identity.

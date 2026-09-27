@@ -23,7 +23,7 @@ public final class BoardRegistry {
     public func open(root: URL) -> Board {
         let id = BoardStore.boardID(for: root)
         if let existing = boards[id] { return existing }
-        let board = store.load(root: root)
+        let board = store.load(root: root, id: id)
         board.onEvent = { [weak self, weak board] event in
             guard let self, let board else { return }
             self.onEvent?(board, event)

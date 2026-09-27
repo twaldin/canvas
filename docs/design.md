@@ -2,7 +2,7 @@
 
 A native macOS infinite canvas where coding agents run unmodified in real terminal tiles, next to browser, code/diff, note, and HTML tiles that both you and the agents can read, create, and change. The transcript stays in the agent's own terminal UI; the canvas holds the current working state.
 
-Source conversation: `chatgpt-design-agent-harness.md` (original idea) and the grilling session that produced this record.
+Source: the original brainstorm (private) and the grilling session that produced this record.
 
 ## Principles
 

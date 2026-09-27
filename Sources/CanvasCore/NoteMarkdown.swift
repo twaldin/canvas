@@ -23,12 +23,6 @@ public enum NoteMarkdown {
         public var line: Int
         public var level: Int
         public var title: String
-
-        public init(line: Int, level: Int, title: String) {
-            self.line = line
-            self.level = level
-            self.title = title
-        }
     }
 
     /// The note's top-level headings in order (the sections a block sits in, what Go to lists).
@@ -85,11 +79,7 @@ public enum NoteMarkdown {
     public static func anchoringRanges(_ markdown: String, root: URL) async -> String {
         let fences = anchoredFences(in: parse(markdown)).filter(needsAnchor)
         guard !fences.isEmpty else { return markdown }
-        var results: [String: NoteExcerpt] = [:]
-        for fence in fences {
-            results[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
-        }
-        return anchoringRanges(markdown, fences: fences, results: results)
+        return anchoringRanges(markdown, fences: fences, results: await NoteSource.excerpts(for: fences, root: root))
     }
 
     /// `object.get`'s `fences` for a note: each anchored fence as written (its info string, the

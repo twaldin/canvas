@@ -10,20 +10,19 @@ struct InkContrastTests {
     let white = 1.0
     let page = CGRect(x: 0, y: 0, width: 800, height: 600)
 
-    @Test func overAWhitePageInDarkModeTheInkIsDark() {
+    @Test func thePageUnderTheDrawingDecidesByItsLuminance() {
         let box = CGRect(x: 100, y: 100, width: 200, height: 80)
-        #expect(InkContrast.ink(for: box, over: [.init(rect: page, luminance: white)], canvas: darkCanvas) == .dark)
+        #expect(InkContrast.ink(for: box, over: [.init(rect: page, luminance: white)], canvas: darkCanvas) == .dark, "a white page in dark mode")
+        #expect(InkContrast.ink(for: box, over: [.init(rect: page, luminance: 0.02)], canvas: lightCanvas) == .light, "a dark page in light mode")
+        // Past the contrast crossover (≈0.18), dark text contrasts more than white.
+        #expect(InkContrast.ink(for: box, over: [.init(rect: page, luminance: 0.3)], canvas: darkCanvas) == .dark)
+        #expect(InkContrast.ink(for: box, over: [.init(rect: page, luminance: 0.1)], canvas: lightCanvas) == .light)
     }
 
     @Test func overTheBareCanvasTheInkFollowsIt() {
         let box = CGRect(x: 1000, y: 1000, width: 200, height: 80)
         #expect(InkContrast.ink(for: box, over: [.init(rect: page, luminance: white)], canvas: darkCanvas) == .light)
         #expect(InkContrast.ink(for: box, over: [], canvas: lightCanvas) == .dark)
-    }
-
-    @Test func overADarkPageInLightModeTheInkIsLight() {
-        let box = CGRect(x: 100, y: 100, width: 200, height: 80)
-        #expect(InkContrast.ink(for: box, over: [.init(rect: page, luminance: 0.02)], canvas: lightCanvas) == .light)
     }
 
     @Test func theTopmostSurfaceDecides() {
@@ -39,12 +38,6 @@ struct InkContrastTests {
         // A rectangle around a heading near the page's right edge, a sliver of it on the canvas.
         let box = CGRect(x: 640, y: 40, width: 200, height: 60)
         #expect(InkContrast.ink(for: box, over: [.init(rect: page, luminance: white)], canvas: darkCanvas) == .dark)
-    }
-
-    @Test func aMidGreyPageTakesDarkInk() {
-        // Past the contrast crossover (≈0.18), dark text contrasts more than white.
-        #expect(InkContrast.ink(for: CGRect(x: 10, y: 10, width: 50, height: 50), over: [.init(rect: page, luminance: 0.3)], canvas: darkCanvas) == .dark)
-        #expect(InkContrast.ink(for: CGRect(x: 10, y: 10, width: 50, height: 50), over: [.init(rect: page, luminance: 0.1)], canvas: lightCanvas) == .light)
     }
 
     @Test func luminanceOfSRGBColors() {

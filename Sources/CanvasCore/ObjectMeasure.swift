@@ -150,15 +150,12 @@ public enum ObjectMeasure {
     /// Natural points: unscaled.
     public static func note(_ props: JSONValue, width: CGFloat?, root: URL) async -> (size: CGSize, tableShortfall: CGFloat) {
         let document = NoteMarkdown.parse(props["markdown"]?.string ?? "")
-        var excerpts: [String: NoteExcerpt] = [:]
-        for fence in NoteMarkdown.anchoredFences(in: document) {
-            excerpts[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
-        }
+        let excerpts = await NoteSource.excerpts(for: NoteMarkdown.anchoredFences(in: document), root: root)
         let images = await NoteImages.load(NoteImages.sources(in: document), root: root)
         let width = width ?? defaultNoteWidth
-        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: width - 2 * noteInset.width)
-        let text = renderer.render(document, placeholder: notePlaceholder)
-        let height = noteTextHeight(text, width: width - 2 * noteInset.width)
+        let textWidth = width - 2 * noteInset.width
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth)
+        let height = noteTextHeight(renderer.render(document, placeholder: notePlaceholder), width: textWidth)
         return (CGSize(width: width, height: (CodeMetrics.titleHeight + 2 * noteInset.height + height).rounded(.up)), renderer.tableShortfall)
     }
 

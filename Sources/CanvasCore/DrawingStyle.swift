@@ -35,10 +35,14 @@ public enum DrawingStyle {
     ]
 
     public static func color(_ name: String?) -> NSColor {
-        guard let name else { return .labelColor }
+        name.flatMap(explicitColor) ?? .labelColor
+    }
+
+    /// A palette name's color or a `#rrggbb` (the `#` optional); nil for a name that is no color.
+    private static func explicitColor(_ name: String) -> NSColor? {
         if let named = palette.first(where: { $0.name == name }) { return named.color }
         let hex = name.hasPrefix("#") ? String(name.dropFirst()) : name
-        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return .labelColor }
+        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return nil }
         return NSColor(srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255, blue: CGFloat(value & 0xFF) / 255, alpha: 1)
     }
 
@@ -47,9 +51,7 @@ public enum DrawingStyle {
     /// the window's appearance: "black" in dark mode would otherwise be white on a white page.
     public static func isDefaultInk(_ name: String?) -> Bool {
         guard let name, name != "black" else { return true }
-        if palette.contains(where: { $0.name == name }) { return false }
-        let hex = name.hasPrefix("#") ? String(name.dropFirst()) : name
-        return !(hex.count == 6 && UInt32(hex, radix: 16) != nil)
+        return explicitColor(name) == nil
     }
 
     /// The default ink as resolved against its surface.

@@ -77,6 +77,25 @@ struct ChangeSetTests {
         let set = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object(["base": .string(first)])), highlight: false, engine: GitDiffEngine(watchesRepositories: false))
         #expect(set.files.first?.hunks.map(\.status) == [.committed, .unstaged])
     }
+
+    /// ⇧⌘M and `m` in a changes tile: the selected lines, else the hunk, named on the side they are on.
+    @Test func keyboardMentionsNameTheSelectedLinesOrTheHunk() async throws {
+        let repo = try await workRepo()
+        let set = await ChangeSet.load(root: repo.root, spec: ChangesSpec(.object([:])), highlight: false, engine: GitDiffEngine(watchesRepositories: false))
+        // app.txt's first hunk: context 1–2, line 3 removed then added, context 4–6.
+        let whole = try #require(set.mention(file: 0, hunk: 0, lines: nil))
+        #expect(whole.path == "app.txt" && whole.lines == LineRange(start: 3, end: 3) && whole.side == .new)
+        #expect(whole.detail == "whole hunk +1 −1 · unstaged")
+        let edited = try #require(set.mention(file: 0, hunk: 0, lines: [2, 3]))
+        #expect(edited.lines == LineRange(start: 3, end: 3) && edited.side == .new && edited.detail == "changed lines · unstaged hunk")
+        let removed = try #require(set.mention(file: 0, hunk: 0, lines: [2]))
+        #expect(removed.side == .old && removed.lines == LineRange(start: 3, end: 3) && removed.detail == "removed line · unstaged hunk")
+        let gapped = try #require(set.mention(file: 0, hunk: 0, lines: [0, 1, 3, 5]))
+        #expect(gapped.lines == LineRange(start: 1, end: 5) && gapped.side == .new, "working-tree lines, the removed one left out")
+        let deleted = try #require(set.mention(file: 1, hunk: 0, lines: nil))
+        #expect(deleted.path == "gone.txt" && deleted.side == .old && deleted.lines == LineRange(start: 1, end: 3))
+        #expect(set.mention(file: 0, hunk: 9, lines: nil) == nil)
+    }
 }
 
 @MainActor

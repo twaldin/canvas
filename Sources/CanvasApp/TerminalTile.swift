@@ -365,6 +365,15 @@ final class TerminalTile: NSView, TileContent {
         return .terminal(object: objectID, text: lines.joined(separator: "\n"), part: .rows)
     }
 
+    /// Edit › Mention: the selection; else, with the keyboard here and the shell at its prompt,
+    /// the last command's block (what ran, its output); else the whole terminal.
+    func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
+        if let text = surface?.readSelection(), !text.isEmpty { return .terminal(object: objectID, text: text) }
+        refreshProgram()
+        guard hasKeyboard, shell != nil, program == nil, let block = try? lastBlock(), !block.output.isEmpty else { return nil }
+        return .terminal(object: objectID, text: block.output, part: .command, command: block.command)
+    }
+
     /// The screen rows a Hyper-click outside a command's output mentions: an error's context is
     /// mostly above it.
     static let rowsBefore = 8

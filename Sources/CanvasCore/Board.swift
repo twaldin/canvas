@@ -59,6 +59,9 @@ public struct BoardSnapshot: Codable, Sendable {
     public var tray: [Mention]?
     /// Attention markers the user hasn't seen yet; optional so older board files still load.
     public var attention: [Attention]?
+    /// What the prompt target rule remembers (`PromptTarget.State`); optional so older board
+    /// files still load.
+    public var promptTarget: PromptTarget.State?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -72,6 +75,11 @@ public final class Board {
     public private(set) var tray: [Mention] = []
     /// Unseen attention markers by object (see Attention.swift).
     public internal(set) var attention: [ObjectID: Attention] = [:]
+    /// What the prompt target rule remembers; saved with the board, so the tray targets the
+    /// same terminal after a restart. Set by the board's window.
+    public var promptTarget = PromptTarget.State() {
+        didSet { if promptTarget != oldValue { onChange?() } }
+    }
     /// Mentions agents attached to their `agent.prompt` for each terminal, waiting for its next
     /// drained prompt (Handoff.swift); in memory only.
     public internal(set) var handoffs: [ObjectID: [Handoff]] = [:]
@@ -182,11 +190,14 @@ public final class Board {
         }
         tray = (snapshot.tray ?? []).filter { $0.target.objectIDs.allSatisfy { objects[$0] != nil } }
         for marker in snapshot.attention ?? [] where objects[marker.object] != nil { attention[marker.object] = marker }
+        promptTarget = snapshot.promptTarget ?? PromptTarget.State()
+        promptTarget.prune(objects)
     }
 
     public var snapshot: BoardSnapshot {
         BoardSnapshot(format: Self.format, id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray,
-                      attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object })
+                      attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object },
+                      promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {

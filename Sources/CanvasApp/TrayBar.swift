@@ -5,9 +5,12 @@ import CanvasCore
 @MainActor
 final class TrayBar: NSVisualEffectView {
     private let stack = NSStackView()
-    private let target = NSTextField(labelWithString: "")
-    private let hint = NSTextField(labelWithString: "Hyper-click (⌃⌥⇧⌘-click) anything to point your agent at it")
+    /// "→ name": a click opens `targetMenu` (the board's terminals) under it.
+    private let target = NSButton(title: "", target: nil, action: nil)
+    private let hint = NSTextField(labelWithString: "Hyper-click (⌃⌥⇧⌘-click) anything, or ⇧⌘M, to point your agent at it")
     var onUnstage: ((MentionID) -> Void)?
+    /// The menu the target opens: the terminals to retarget to; nil for none.
+    var targetMenu: (() -> NSMenu?)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -21,10 +24,14 @@ final class TrayBar: NSVisualEffectView {
         stack.alignment = .centerY
         hint.textColor = .secondaryLabelColor
         hint.font = .systemFont(ofSize: 12)
-        target.textColor = .secondaryLabelColor
-        target.font = .systemFont(ofSize: 12, weight: .medium)
+        target.isBordered = false
+        target.setButtonType(.momentaryChange)
         target.alignment = .right
+        target.lineBreakMode = .byTruncatingMiddle
         target.toolTip = CanvasBasics.trayTarget
+        target.target = self
+        target.action = #selector(targetClicked(_:))
+        target.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         for view in [stack, target] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
@@ -48,7 +55,12 @@ final class TrayBar: NSVisualEffectView {
         for view in stack.arrangedSubviews { view.removeFromSuperview() }
         if mentions.isEmpty { stack.addArrangedSubview(hint) }
         for mention in mentions { stack.addArrangedSubview(chip(for: mention)) }
-        target.stringValue = targetTitle.map { mentions.isEmpty || targetDrains ? "→ \($0)" : "→ \($0) · ⌃⌥⇧⌘V pastes" } ?? (hasTerminal ? "→ click a terminal to target it" : "→ no terminal yet (⌘T)")
+        let title = targetTitle.map { mentions.isEmpty || targetDrains ? "→ \($0) ▾" : "→ \($0) ▾ · ⌃⌥⇧⌘V pastes" } ?? (hasTerminal ? "→ choose a terminal ▾" : "→ no terminal yet (⌘T)")
+        target.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        target.isEnabled = hasTerminal
     }
 
     private func chip(for mention: Mention) -> NSView {
@@ -87,5 +99,10 @@ final class TrayBar: NSVisualEffectView {
 
     @objc private func removeClicked(_ sender: NSButton) {
         if let id = sender.identifier?.rawValue { onUnstage?(id) }
+    }
+
+    @objc private func targetClicked(_ sender: NSButton) {
+        guard let menu = targetMenu?() else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.maxY + 4), in: sender)
     }
 }

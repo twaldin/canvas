@@ -103,6 +103,10 @@ protocol TileContent: NSView {
     func mentionTarget(at point: NSPoint) -> MentionTarget?
     /// The mention for an actual Hyper-click, which may take a round trip (e.g. JavaScript).
     func resolveMention(at point: NSPoint) async -> MentionTarget?
+    /// What Edit › Mention (⇧⌘M) stages from this tile (`KeyboardMention`): what the user is on
+    /// in it. `hasKeyboard` false: the tile is only selected, so only an explicit sub-selection
+    /// (selected text, a hunk) counts. Nil: the tile as a whole (or, only selected, the selection).
+    func keyboardMention(hasKeyboard: Bool) async -> MentionTarget?
     /// Outline for a target in this view's coordinates, for the hover highlight.
     func outline(for target: MentionTarget) -> NSRect?
     /// The page elements under `rect` (this view's coordinates), for a mention of a shape drawn
@@ -135,6 +139,8 @@ extension TileContent {
     func resolveMention(at point: NSPoint) async -> MentionTarget? {
         mentionTarget(at: point)
     }
+
+    func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? { nil }
 
     func pageElements(in rect: NSRect) async -> PageElements? { nil }
 

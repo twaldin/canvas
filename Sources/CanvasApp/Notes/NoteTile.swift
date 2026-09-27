@@ -587,6 +587,16 @@ final class NoteTile: NSView, TileContent {
         return .note(object: object.id, item: item)
     }
 
+    /// Edit › Mention while editing: the block the selection starts in (or the caret is in), as
+    /// the editor's text reads now. Not editing: the note as a whole.
+    func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
+        guard isEditing else { return nil }
+        let text = editor.string
+        let location = min(editor.selectedRange().location, text.utf16.count)
+        let line = 1 + text.utf16.prefix(location).filter { $0 == 10 }.count
+        return NoteItem.at(line: line, in: text).map { .note(object: object.id, item: $0) }
+    }
+
     /// The block last looked up: holding Hyper asks on every mouse move.
     private var itemCache: (rev: Int, line: Int, item: NoteItem?)?
 

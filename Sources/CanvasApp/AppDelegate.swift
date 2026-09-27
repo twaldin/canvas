@@ -273,6 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func bringToFront(_ sender: Any?) { keyController?.bringToFront(sender) }
     @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
     @objc func pasteMentions(_ sender: Any?) { keyController?.pasteMentions(sender) }
+    @objc func mentionCurrent(_ sender: Any?) { keyController?.mentionCurrent(sender) }
     @objc func goToNextNeedsYou(_ sender: Any?) { keyController?.goToNextNeedsYou(sender) }
     @objc func navigateBack(_ sender: Any?) { keyController?.navigateBack(sender) }
     @objc func navigateForward(_ sender: Any?) { keyController?.navigateForward(sender) }
@@ -362,6 +363,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .separator(),
             // Hyper-V: no shell, TUI, or Ghostty default binding uses all four modifiers.
             item("Paste Mentions into Terminal", #selector(pasteMentions(_:)), "v", [.control, .option, .shift, .command]),
+            // ⇧⌘M: no shell or TUI sees ⌘, Ghostty binds nothing to it, and the board window
+            // takes it ahead of a focused terminal (CanvasWindowController.handleKeyEquivalent).
+            item("Mention", #selector(mentionCurrent(_:)), "M", [.command, .shift]),
         ])
         let scale = NSMenuItem(title: "Scale", action: nil, keyEquivalent: "")
         scale.submenu = NSMenu(title: "Scale")

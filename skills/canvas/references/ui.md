@@ -35,8 +35,9 @@ Point the user at Help › Canvas Basics for the same text in the app.
 
 - **Hyper-click** (⌃⌥⇧⌘-click; Caps Lock mapped to Hyper): stages a mention of a code line, page element, drawing, image pixel, or tile in the **tray**, the bar at the bottom of the window.
   Hyper-drag on empty canvas mentions everything inside the box as one group.
-- **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so).
-  Clicking another terminal retargets it; ⌃⌥⇧⌘V pastes them into a terminal without an agent integration.
+- **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles.
+- **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so): the terminal the user last typed in that runs an agent, else the board's only agent terminal (a dev-server shell beside it never takes it), else the last terminal typed in.
+  Clicking "→ name" opens a menu of the board's terminals (agents first) to pick another; it is kept across restarts. ⌃⌥⇧⌘V pastes them into a terminal without an agent integration.
 - **Drawing toolbar** at the top: select (V), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
   The default ink (Black) is drawn dark over light pages and images and light over the dark canvas; other colors stay as chosen.
 

@@ -24,7 +24,7 @@ public enum CanvasBasics {
         }
     }
 
-    public static let trayTarget = "Your Hyper-clicked mentions go to this terminal with your next prompt. Click another terminal to send them there."
+    public static let trayTarget = "Your mentions go to this terminal with your next prompt: an agent you last typed in, else the only agent on the board. Click to pick another terminal."
     public static let followTile = "Follows the file and line this agent last read or edited. Pin keeps the current view as a tile of its own."
     public static let followHistory = "Where the agent has been, newest first; a pencil marks an edit. Click one to show it."
     public static let marker = "An agent (or a program) asks you to look here. Click to go; it clears once you've seen it."
@@ -50,7 +50,8 @@ public enum CanvasBasics {
         ]),
         Section(title: "Pointing your agent at things", items: [
             Item(term: "Hyper-click", text: "⌃⌥⇧⌘-click (Caps Lock as Hyper) a code line, page element, drawing or tile to stage it as a mention in the tray at the bottom."),
-            Item(term: "Tray", text: "the chips are staged mentions; \"→ name\" is the terminal they go to with your next prompt. Click a terminal to target it; ⌃⌥⇧⌘V pastes them into one without an integration."),
+            Item(term: "⇧⌘M", text: "mention from the keyboard (Edit › Mention): the hunk or lines you're on in a changes tile, the selected text or range of a code tile, a note's block, a page's selection, a terminal's selection or last command; else the selected tiles."),
+            Item(term: "Tray", text: "the chips are staged mentions; \"→ name\" is the terminal they go to with your next prompt. Click it to pick another terminal; ⌃⌥⇧⌘V pastes them into one without an integration."),
             Item(term: "Drawing", text: "the toolbar at the top draws boxes (R), ellipses (O), arrows (A), text (T) and ink (P); V selects. Hyper-click a drawing to show the agent what it marks."),
         ]),
         Section(title: "Zoom", items: [

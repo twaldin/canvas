@@ -568,6 +568,13 @@ final class BrowserTile: NSView, TileContent {
         return mention(element)
     }
 
+    /// Edit › Mention: the page's text selection (the element holding it, with the selected
+    /// text); nil without one: the whole tile.
+    func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
+        guard let webView, let element = await WebMentions.selection(in: webView) else { return nil }
+        return mention(element)
+    }
+
     func pageElements(in rect: NSRect) async -> PageElements? {
         guard let webView, webView.superview === self else { return nil }
         var local = webView.convert(rect, from: self).intersection(webView.bounds)

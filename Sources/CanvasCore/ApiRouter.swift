@@ -411,6 +411,12 @@ public final class ApiRouter {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
         }
+        // An agent reporting from inside tmux (or an editor it started) isn't what the typing reaches.
+        if PromptTarget.runsAgent(terminal), p["force"]?.bool != true,
+           let program = PromptTarget.foreignProgram(kind: terminal.props["agent"]?["kind"]?.string, program: terminalStatus?(board, terminal.id).program) {
+            let kind = terminal.props["agent"]?["kind"]?.string ?? "the agent"
+            throw Failure("conflict", "\(terminal.id)'s foreground program is \(program), not \(kind): the text would go to it (in tmux, to whichever pane is active); force: true sends it anyway")
+        }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
         let mentions = try (p["mentions"]?.array ?? []).map { try HandoffMention(json: $0).target(on: board) }
         if !mentions.isEmpty, !PromptTarget.runsAgent(terminal) {

@@ -20,6 +20,10 @@ final class CodeHeaderBar: NSView {
     }
 
     static let reservedTrailing: CGFloat = 80
+    private static let pencil: NSImage? = {
+        let image = NSImage(systemSymbolName: "pencil", accessibilityDescription: "Edited")
+        return image?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
+    }()
 
     var onBase: ((String) -> Void)?
     var onChange: ((_ forward: Bool) -> Void)?
@@ -39,6 +43,8 @@ final class CodeHeaderBar: NSView {
     private var follow = false
     private var missed = 0
     private var history: [Location] = []
+    /// Per history entry: the agent edited or wrote it there (a pencil on its chip).
+    private var edited: [Bool] = []
     private var current: Location?
     private var captionText: String?
 
@@ -56,7 +62,7 @@ final class CodeHeaderBar: NSView {
         var stripButtons: [NSButton] = []
         /// What the caption and the strip's buttons were built for.
         var captionShown: String?
-        var stripShown: (history: [Location], current: Location?) = ([], nil)
+        var stripShown: (history: [Location], edited: [Bool], current: Location?) = ([], [], nil)
 
         init(in header: CodeHeaderBar) {
             base.controlSize = .small
@@ -166,9 +172,10 @@ final class CodeHeaderBar: NSView {
         refreshControls()
     }
 
-    func show(history: [Location], current: Location?) {
-        guard history != self.history || current != self.current else { return }
+    func show(history: [Location], edited: [Bool], current: Location?) {
+        guard history != self.history || edited != self.edited || current != self.current else { return }
         self.history = history
+        self.edited = edited
         self.current = current
         refreshControls()
     }
@@ -208,8 +215,8 @@ final class CodeHeaderBar: NSView {
             controls.caption.attributedStringValue = captionText.map(CodeCaption.string) ?? NSAttributedString()
             controls.caption.toolTip = captionText
         }
-        if controls.stripShown.history != history || controls.stripShown.current != current {
-            controls.stripShown = (history, current)
+        if controls.stripShown.history != history || controls.stripShown.edited != edited || controls.stripShown.current != current {
+            controls.stripShown = (history, edited, current)
             // Re-aims shift the same few locations along: retitle the buttons already there.
             for extra in controls.stripButtons.dropFirst(history.count) {
                 controls.strip.removeArrangedSubview(extra)
@@ -222,8 +229,12 @@ final class CodeHeaderBar: NSView {
                 button.isBordered = false
                 button.title = location.title
                 button.font = location == current ? .boldSystemFont(ofSize: 11) : .systemFont(ofSize: 11)
-                button.contentTintColor = location == current ? .labelColor : .linkColor
-                button.toolTip = location.path
+                let isEdit = edited.indices.contains(index) && edited[index]
+                button.contentTintColor = location == current ? .labelColor : isEdit ? .systemOrange : .linkColor
+                button.image = isEdit ? Self.pencil : nil
+                button.imagePosition = isEdit ? .imageLeading : .noImage
+                button.imageHugsTitle = true
+                button.toolTip = isEdit ? "Edited: \(location.path)" : location.path
                 if index >= controls.stripButtons.count {
                     controls.stripButtons.append(button)
                     controls.strip.addArrangedSubview(button)
@@ -268,16 +279,18 @@ final class CodeHeaderBar: NSView {
         fitStrip(controls)
     }
 
-    /// Shows the current location and as many of the newest others as fit, whole, in order; the
-    /// oldest drop off a narrow tile (a strip wider than its frame clipped or squeezed buttons,
-    /// the current one included).
+    /// Shows the current location, then the edits, then the newest reads, as many as fit whole,
+    /// in history order; the oldest reads drop off a narrow tile first (a strip wider than its
+    /// frame clipped or squeezed buttons, the current one included).
     private func fitStrip(_ controls: Controls) {
         let buttons = controls.stripButtons
         let widths = buttons.map(\.fittingSize.width)
         let pinned = history.firstIndex { $0 == current }
         var room = controls.strip.frame.width - (pinned.map { widths[$0] } ?? 0)
         var shown = Set(pinned.map { [$0] } ?? [])
-        for index in buttons.indices where index != pinned {
+        let isEdit = { (index: Int) in self.edited.indices.contains(index) && self.edited[index] }
+        let order = buttons.indices.filter(isEdit) + buttons.indices.filter { !isEdit($0) }
+        for index in order where index != pinned {
             let needed = widths[index] + (shown.isEmpty ? 0 : controls.strip.spacing)
             guard needed <= room else { break }
             room -= needed

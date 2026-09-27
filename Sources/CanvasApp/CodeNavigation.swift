@@ -251,18 +251,77 @@ final class CodeNavigation: NSObject {
             guard let self else { return }
             guard !locations.isEmpty else { return await self.showEmpty("No references found", file: file, root: root, anchor: anchor) }
             let lines = await Self.languages.lineTexts(locations)
-            self.showLocations(locations.count == 1 ? "1 reference" : "\(locations.count) references", locations, lines: lines, anchor: anchor, newTile: false)
+            let name = await offPool { Self.identifier(in: file, line: position.line, character: position.character) }
+            let title = locations.count == 1 ? "1 reference" : "\(locations.count) references"
+            self.showLocations(title, locations, lines: lines, anchor: anchor, newTile: false,
+                               openAll: ("Open All", { [weak self] in self?.openAll(locations, name: name) }))
         }
     }
 
-    private func showLocations(_ title: String, _ locations: [LSPLocation], lines: [String], anchor: NSPoint, newTile: Bool) {
+    private func showLocations(_ title: String, _ locations: [LSPLocation], lines: [String], anchor: NSPoint, newTile: Bool,
+                               openAll: (title: String, run: @MainActor () -> Void)? = nil) {
         let rows = zip(locations, lines).map { location, line in
             NavigationPanel.Row(title: "\(boardPath(location.url)):\(location.range.start.line + 1)", detail: line) { [weak self] in
                 NavigationPanel.current?.dismiss()
                 self?.open(location, newTile: newTile)
             }
         }
-        present(NavigationPanel.list(title: title, rows: rows), anchor: anchor)
+        present(NavigationPanel.list(title: title, rows: rows, headerAction: openAll), anchor: anchor)
+    }
+
+    /// Lines of context above and below each reference in an Open All layout.
+    private static let referenceContext = 3
+
+    /// Find References → Open All: one captioned code tile per reference (the reference line
+    /// with `referenceContext` lines around it), in one group beside this tile, as one undo step,
+    /// panned into view.
+    private func openAll(_ locations: [LSPLocation], name: String?) {
+        NavigationPanel.current?.dismiss()
+        let root = board.root
+        let entries = locations.map { (path: boardPath($0.url), line: $0.range.start.line + 1, url: $0.url) }
+        let subject = name.map { " to `\($0)`" } ?? ""
+        Task { [weak self] in
+            let urls = Array(Set(entries.map(\.url)))
+            let lineCounts = await offPool {
+                Dictionary(uniqueKeysWithValues: urls.map { url in
+                    (url, (try? String(contentsOf: url, encoding: .utf8)).map { $0.split(separator: "\n", omittingEmptySubsequences: false).count } ?? Int.max)
+                })
+            }
+            var excerpts: [CodeExcerpt] = []
+            for (index, entry) in entries.enumerated() {
+                let last = max(entry.line, lineCounts[entry.url] ?? Int.max)
+                let lines = LineRange(start: max(1, entry.line - Self.referenceContext), end: min(last, entry.line + Self.referenceContext))
+                let caption = "Reference \(index + 1) of \(entries.count)\(subject) · L\(entry.line)"
+                let props: JSONValue = .object(["path": .string(entry.path), "caption": .string(caption),
+                                                "range": .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])])
+                let size = (try? await ObjectMeasure.size(type: .code, props: props, width: nil, root: root)) ?? CGSize(width: Board.defaultSize(.code).w, height: 220)
+                excerpts.append(CodeExcerpt(path: entry.path, lines: lines, caption: caption, size: size))
+            }
+            let title = "\(entries.count == 1 ? "1 reference" : "\(entries.count) references")\(name.map { " to \($0)" } ?? "")"
+            guard let self, let opened = try? self.board.openExcerpts(excerpts, title: title, beside: self.tile) else { return }
+            let canvas = self.codeView.flatMap { sequence(first: $0, next: \.superview).first { $0 is CanvasView } as? CanvasView }
+            // The least pan that shows the first reference (the group's title sits just above it);
+            // a long list runs on below and to the right.
+            canvas?.reveal(opened.tiles[0])
+        }
+    }
+
+    /// The identifier at a 1-based line and UTF-16 column of a file, for titles. Blocking: call
+    /// through `offPool`.
+    nonisolated private static func identifier(in file: URL, line: Int, character: Int) -> String? {
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        guard lines.indices.contains(line - 1) else { return nil }
+        let units = Array(lines[line - 1].utf16)
+        func isWord(_ unit: UInt16) -> Bool {
+            guard let scalar = Unicode.Scalar(unit) else { return false }
+            return scalar == "_" || CharacterSet.alphanumerics.contains(scalar)
+        }
+        var start = min(max(0, character), units.count), end = start
+        while start > 0, isWord(units[start - 1]) { start -= 1 }
+        while end < units.count, isWord(units[end]) { end += 1 }
+        guard end > start else { return nil }
+        return String(decoding: units[start..<end], as: UTF16.self)
     }
 
     /// An empty answer while the server is still loading or indexing the project (sourcekit-lsp
@@ -318,9 +377,10 @@ final class CodeNavigation: NSObject {
         showOutline(anchor: NSPoint(x: max(0, anchor.x - 240), y: anchor.y))
     }
 
+    /// Top-level symbols and the members of types (not locals), filtered as the user types.
     func showOutline(anchor: NSPoint) {
         run(anchor: anchor) { [weak self] file, root in
-            let symbols = LSPSymbol.flatten(try await Self.languages.documentSymbols(file: file, boardRoot: root))
+            let symbols = LSPSymbol.outline(try await Self.languages.documentSymbols(file: file, boardRoot: root))
             guard let self else { return }
             guard !symbols.isEmpty else { return self.showMessage("No symbols", anchor: anchor) }
             let rows = symbols.map { entry in
@@ -330,14 +390,30 @@ final class CodeNavigation: NSObject {
                     self?.host?.reveal(line: line)
                 }
             }
-            self.present(NavigationPanel.list(title: "Outline", rows: rows), anchor: anchor)
+            let panel = NavigationPanel.filterList(title: "Outline", rows: rows)
+            self.present(panel, anchor: anchor)
+            panel.focusFilter()
         }
     }
 
     // MARK: Context menu
 
     func contextMenu(for event: NSEvent) {
-        guard let host, let codeView else { return }
+        guard let codeView, let menu = menu(for: event) else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: codeView)
+    }
+
+    /// The context menu a right-click `event` over a code view shows (input replay performs its
+    /// items: a shown menu's tracking loop ignores posted events).
+    static func menu(for event: NSEvent) -> NSMenu? {
+        guard let contentView = event.window?.contentView,
+              let hit = contentView.hitTest(contentView.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
+              let controller = controllers.allObjects.first(where: { $0.codeView.map { hit.isDescendant(of: $0) } ?? false }) else { return nil }
+        return controller.menu(for: event)
+    }
+
+    private func menu(for event: NSEvent) -> NSMenu? {
+        guard let host, let codeView else { return nil }
         let point = codeView.convert(event.locationInWindow, from: nil)
         let position = host.sourcePosition(atViewPoint: point)
         menuContext = (position, point)
@@ -355,7 +431,7 @@ final class CodeNavigation: NSObject {
             item.target = self
             menu.insertItem(item, at: index)
         }
-        NSMenu.popUpContextMenu(menu, with: event, for: codeView)
+        return menu
     }
 
     @objc private func menuDefinition() {

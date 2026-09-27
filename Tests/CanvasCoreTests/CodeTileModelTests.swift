@@ -81,6 +81,56 @@ struct CodeBoardTests {
         #expect(board.objects[follow.id]?.props["history"]?.array?.count == Board.followHistoryLimit)
     }
 
+    /// omp made three edits within 50 ms, then kept reading: every edit stays in the history,
+    /// marked, while older reads make room.
+    @Test func followHistoryKeepsEveryEditOfABurstMarked() throws {
+        let board = Board(id: "brd_test", root: root)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for name in ["core.py", "test_options.py", "CHANGES.md", "parser.py"] { FileManager.default.createFile(atPath: root.appendingPathComponent(name).path, contents: Data("x\n".utf8)) }
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/"), "command": .array([])]))
+        func report(_ path: String, _ line: Int?, _ action: String) throws {
+            try board.follow(tile: terminal.id, path: path, range: line.map { LineRange(start: $0, end: $0) }, action: action)
+        }
+        for line in 1...4 { try report("parser.py", line * 10, "read") }
+        try report("core.py", 2535, "edit")
+        try report("test_options.py", 83, "edit")
+        try report("CHANGES.md", nil, "write")
+        for line in 1...10 { try report("parser.py", 100 + line, "read") }
+        try report("core.py", 2535, "read")
+        let history = try #require(board.followTiles(of: terminal.id).first?.props["history"]?.array)
+        #expect(history.count == Board.followHistoryLimit)
+        let edits = history.filter { Board.isEdit($0["action"]?.string) }.compactMap { $0["path"]?.string }
+        #expect(edits == ["core.py", "CHANGES.md", "test_options.py"], "every edit of the burst, newest first, after ten more reads")
+        #expect(history.first?["path"]?.string == "core.py" && history.first?["action"]?.string == "edit",
+                "re-reading an edited location keeps it an edit, at the front")
+        #expect(history.filter { $0["path"]?.string == "parser.py" }.compactMap { $0["range"]?["start"]?.int } == [110, 109, 108, 107, 106],
+                "the newest reads fill the rest")
+    }
+
+    /// Find References → Open All: the excerpts stack in order in one titled group beside the
+    /// tile, clear of it, and one undo takes the whole layout back.
+    @Test func openExcerptsLaysOutOneGroupBesideTheTileAsOneUndoStep() throws {
+        let board = Board(id: "brd_test", root: root)
+        let source = board.create(type: .code, props: .object(["path": .string("a.py")]), frame: Frame(x: 0, y: 0, w: 640, h: 446))
+        let excerpts = [(10, 180.0), (40, 220.0), (90, 180.0)].enumerated().map { index, entry in
+            CodeExcerpt(path: "a.py", lines: LineRange(start: entry.0 - 3, end: entry.0 + 3), caption: "Reference \(index + 1) of 3", size: CGSize(width: 600, height: entry.1))
+        }
+        let before = Set(board.objects.keys)
+        let opened = try board.openExcerpts(excerpts, title: "3 references to f", beside: source.id)
+        let tiles = opened.tiles.map { board.objects[$0]! }
+        #expect(tiles.map { $0.props["range"]?["start"]?.int } == [7, 37, 87])
+        #expect(tiles.map { $0.props["caption"]?.string } == ["Reference 1 of 3", "Reference 2 of 3", "Reference 3 of 3"])
+        #expect(tiles.map(\.frame.h) == [180, 220, 180], "each at its measured size")
+        for (upper, lower) in zip(tiles, tiles.dropFirst()) {
+            #expect(lower.frame.x == upper.frame.x && lower.frame.y == upper.frame.maxY + Board.placementGap, "one column, in order")
+        }
+        let group = try #require(board.objects[opened.group])
+        #expect(GroupSpec(group.props)?.members == opened.tiles && group.props["title"]?.string == "3 references to f")
+        #expect(!group.frame.intersects(source.frame), "beside the tile, not over it")
+        board.undo()
+        #expect(Set(board.objects.keys) == before, "one undo removes the group and every excerpt")
+    }
+
     @Test func stagedCodeMentionsResolveFromTheirOwnCommitNotTheTile() async throws {
         let repo = try await TempRepo()
         try await repo.write("lib.rs", "fn old()\nfn gone()\n")

@@ -75,7 +75,7 @@ export type CodeProps = {
   followOf?: Id;
   /** follow tiles: what the agent last did at this location */
   lastAction?: "read" | "edit" | "write" | "lsp" | "search";
-  /** follow tiles: recent locations, newest first, without repeats */
+  /** follow tiles: recent locations, newest first, without repeats; a location once edited or written keeps that action when read again, and past 8 entries the oldest reads go first, so every edit of a burst stays listed */
   history?: ({
     path: string;
     range?: LineRange;

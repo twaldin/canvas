@@ -7,8 +7,11 @@ struct NavigatorRow {
         /// Zoom to Fit.
         case allContent
         case object(ObjectID)
-        /// A file under the board root (repo-relative): opens a code tile for it.
-        case file(String)
+        /// A file under the board root (repo-relative), at `lines` when the query named a line
+        /// or the row is a symbol: opens a code tile for it.
+        case file(String, lines: LineRange?)
+        /// A line that says what's going on ("Searching symbols…"); choosing it does nothing.
+        case status
     }
 
     let target: Target
@@ -61,6 +64,9 @@ extension CanvasView {
 
     private static func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
 
+    /// A caption as a row's plain subtitle: without the backticks that set `code` in the tile.
+    private static func plainCaption(_ caption: String) -> String { CodeCaption.text(caption).replacingOccurrences(of: "`", with: "") }
+
     /// What tells two tiles with the same title apart. A terminal: its name, else the command it
     /// was started with, else its directory. Anything else: its caption, else the title of the
     /// group that lists it directly.
@@ -76,7 +82,7 @@ extension CanvasView {
         if object.type == .browser, let url = Self.nonEmpty(object.props["url"]) {
             return url.replacingOccurrences(of: #"^[a-zA-Z][a-zA-Z0-9+.-]*://"#, with: "", options: .regularExpression)
         }
-        if let caption = Self.nonEmpty(object.props["caption"]) { return CodeCaption.text(caption) }
+        if let caption = Self.nonEmpty(object.props["caption"]) { return Self.plainCaption(caption) }
         let group = board.objects.values.first { $0.type == .group && GroupSpec($0.props)?.members.contains(id) == true }
         return group.flatMap { Self.nonEmpty($0.props["title"]) }
     }
@@ -94,7 +100,9 @@ extension CanvasView {
                 let end = props["range"]?["end"]?.int ?? start
                 title += end > start ? " · L\(start)–\(end)" : " · L\(start)"
             }
-            return NavigatorRow(target: .object(object.id), title: title, kind: "Code", dot: nil, toolTip: props["path"]?.string)
+            // Excerpts of one file (a references layout, an agent's call sites) differ by caption.
+            return NavigatorRow(target: .object(object.id), title: title, kind: "Code", dot: nil,
+                                subtitle: nonEmpty(props["caption"]).map(plainCaption), toolTip: props["path"]?.string)
         case .note:
             let markdown = props["markdown"]?.string ?? ""
             let line = markdown.split(whereSeparator: \.isNewline).lazy
@@ -139,8 +147,13 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
     static let maxFileRows = 50
     private weak var previousResponder: NSResponder?
     private var clickMonitor: Any?
+    /// Workspace symbols for the current query, once the language servers answered.
+    private var symbolRows: (query: String, rows: [NavigatorRow])?
+    private var symbolSearch: Task<Void, Never>?
 
     var onGo: ((NavigatorRow.Target) -> Void)?
+    /// Workspace symbols matching a name (`@name`, or a query nothing else matched), as rows.
+    var searchSymbols: ((String) async -> [NavigatorRow])?
     var isOpen: Bool { !isHidden }
 
     init() {
@@ -242,6 +255,10 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         allRows = []
         rows = []
         files = FileIndex(paths: [])
+        symbolSearch?.cancel()
+        symbolSearch = nil
+        pendingSymbols = nil
+        symbolRows = nil
         table.reloadData()
         guard let window else { return }
         if let editor = window.firstResponder as? NSText, editor.delegate === field {
@@ -252,7 +269,7 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
     }
 
     private func go(_ row: Int) {
-        guard rows.indices.contains(row) else { return }
+        guard rows.indices.contains(row), rows[row].target != .status else { return }
         let target = rows[row].target
         close()
         onGo?(target)
@@ -273,13 +290,32 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
     }
 
     /// Objects whose title, type, subtitle, caption, or name contain the query, then the files
-    /// it fuzzily matches (`FileIndex`).
+    /// it fuzzily matches (`FileIndex`), at the line it names (`core.py:1428`). `@name`, or a
+    /// name nothing else matched, lists the language servers' workspace symbols instead.
     private func filter(keeping selected: NavigatorRow.Target? = nil) {
-        let query = field.stringValue.trimmingCharacters(in: .whitespaces)
-        let fileRows = files.search(query, limit: Self.maxFileRows).map { path in
-            NavigatorRow(target: .file(path), title: path, kind: "Open File", dot: nil, toolTip: path)
+        let raw = field.stringValue.trimmingCharacters(in: .whitespaces)
+        let query = GoToQuery.parse(raw)
+        var found: [NavigatorRow] = []
+        if !query.symbol {
+            found = allRows.filter { $0.matches(raw) } + files.search(query.text, limit: Self.maxFileRows).map { path in
+                let at = query.lines.map { $0.end > $0.start ? ":\($0.start)-\($0.end)" : ":\($0.start)" } ?? ""
+                return NavigatorRow(target: .file(path, lines: query.lines), title: path + at, kind: "Open File", dot: nil, toolTip: path)
+            }
         }
-        rows = allRows.filter { $0.matches(query) } + fileRows
+        let wantsSymbols = !query.text.isEmpty && query.lines == nil && searchSymbols != nil && (query.symbol || found.isEmpty)
+        if wantsSymbols {
+            if let symbols = symbolRows, symbols.query == query.text {
+                found += symbols.rows.isEmpty ? [NavigatorRow(target: .status, title: "No symbols named “\(query.text)”", kind: "", dot: nil)] : symbols.rows
+            } else {
+                found.append(NavigatorRow(target: .status, title: "Searching symbols…", kind: "", dot: nil))
+                lookUpSymbols(named: query.text)
+            }
+        } else {
+            symbolSearch?.cancel()
+            symbolSearch = nil
+            pendingSymbols = nil
+        }
+        rows = found
         table.reloadData()
         if !rows.isEmpty {
             let row = selected.flatMap { target in rows.firstIndex { $0.target == target } } ?? 0
@@ -292,6 +328,27 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         height.constant = Self.fieldHeight + 1 + (shown > 0 ? listHeight + 8 : 0)
         list.isHidden = rows.isEmpty
         separator.isHidden = rows.isEmpty
+    }
+
+    /// The name a symbol search is running (or waiting) for.
+    private var pendingSymbols: String?
+
+    /// Asks the language servers once typing pauses; the answer re-filters.
+    private func lookUpSymbols(named name: String) {
+        guard pendingSymbols != name, let searchSymbols else { return }
+        symbolSearch?.cancel()
+        pendingSymbols = name
+        symbolSearch = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            let rows = await searchSymbols(name)
+            guard let self, !Task.isCancelled, self.isOpen, self.pendingSymbols == name else { return }
+            self.pendingSymbols = nil
+            self.symbolSearch = nil
+            self.symbolRows = (name, rows)
+            let selected = self.rows.indices.contains(self.table.selectedRow) ? self.rows[self.table.selectedRow].target : nil
+            self.filter(keeping: selected == .status ? nil : selected)
+        }
     }
 
     func controlTextDidChange(_ notification: Notification) {
@@ -383,7 +440,12 @@ private final class NavigatorCell: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError("unused") }
 
+    /// A status line ("Searching symbols…") is quieter than a row that goes somewhere.
+    private var muted = false
+
     func show(_ row: NavigatorRow) {
+        muted = row.target == .status
+        applyColors()
         title.stringValue = row.title
         title.font = row.target == .allContent ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
         detail.stringValue = row.subtitle ?? ""
@@ -398,7 +460,7 @@ private final class NavigatorCell: NSTableCellView {
 
     private func applyColors() {
         let selected = backgroundStyle == .emphasized
-        title.textColor = selected ? .alternateSelectedControlTextColor : .labelColor
+        title.textColor = selected ? .alternateSelectedControlTextColor : muted ? .secondaryLabelColor : .labelColor
         kind.textColor = selected ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75) : .secondaryLabelColor
         detail.textColor = kind.textColor
     }

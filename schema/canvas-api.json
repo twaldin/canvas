@@ -101,7 +101,7 @@
         "history": {
           "type": "array",
           "maxItems": 8,
-          "description": "follow tiles: recent locations, newest first, without repeats",
+          "description": "follow tiles: recent locations, newest first, without repeats; a location once edited or written keeps that action when read again, and past 8 entries the oldest reads go first, so every edit of a burst stays listed",
           "items": {
             "type": "object",
             "required": ["path", "action"],

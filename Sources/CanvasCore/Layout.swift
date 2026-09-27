@@ -254,40 +254,95 @@ public enum Layout {
 
     public enum Heading: String, Sendable, CaseIterable { case left, right, up, down }
 
-    /// The index of the frame nearest `from` toward `heading` (⌥⌘-arrow between tiles): among
-    /// frames whose center lies past `from`'s center that way and that start past its near edge,
-    /// the least gap along the heading plus twice the gap across it (a tile in the same row or
-    /// column wins over a nearer diagonal one), then the nearest center. Nil when none lies that way.
+    /// The index of the frame nearest `from` toward `heading` (⌥⌘-arrow between tiles), among
+    /// frames whose center lies past `from`'s center that way and that start past its near edge.
+    /// Frames in line with `from` come first: those overlapping its span across the heading by at
+    /// least a quarter of the narrower of the two spans (a tile below that shares a column, not
+    /// one to the side reaching a little way down), nearest by the gap along the heading, then by
+    /// center. Only when none is in line: the least gap along the heading plus twice the gap
+    /// across it (a tile in the same row or column wins over a nearer diagonal one), then the
+    /// nearest center. Nil when none lies that way.
     public static func neighbor(of from: CGRect, among frames: [CGRect], toward heading: Heading) -> Int? {
-        func key(_ frame: CGRect) -> (CGFloat, CGFloat)? {
-            let along: CGFloat, across: CGFloat, ahead: Bool
+        func key(_ frame: CGRect) -> (inLine: Bool, score: CGFloat, distance: CGFloat)? {
+            let along: CGFloat, ahead: Bool
+            let horizontal = heading == .left || heading == .right
             switch heading {
             case .right:
                 ahead = frame.midX > from.midX && frame.minX > from.minX
                 along = max(0, frame.minX - from.maxX)
-                across = max(0, frame.minY - from.maxY, from.minY - frame.maxY)
             case .left:
                 ahead = frame.midX < from.midX && frame.maxX < from.maxX
                 along = max(0, from.minX - frame.maxX)
-                across = max(0, frame.minY - from.maxY, from.minY - frame.maxY)
             case .down:
                 ahead = frame.midY > from.midY && frame.minY > from.minY
                 along = max(0, frame.minY - from.maxY)
-                across = max(0, frame.minX - from.maxX, from.minX - frame.maxX)
             case .up:
                 ahead = frame.midY < from.midY && frame.maxY < from.maxY
                 along = max(0, from.minY - frame.maxY)
-                across = max(0, frame.minX - from.maxX, from.minX - frame.maxX)
             }
             guard ahead else { return nil }
-            return (along + 2 * across, hypot(frame.midX - from.midX, frame.midY - from.midY))
+            let (fromStart, fromEnd, start, end) = horizontal ? (from.minY, from.maxY, frame.minY, frame.maxY) : (from.minX, from.maxX, frame.minX, frame.maxX)
+            let across = max(0, start - fromEnd, fromStart - end)
+            let overlap = min(fromEnd, end) - max(fromStart, start)
+            let inLine = overlap > 0 && overlap >= min(fromEnd - fromStart, end - start) / 4
+            let distance = hypot(frame.midX - from.midX, frame.midY - from.midY)
+            return (inLine, inLine ? along : along + 2 * across, distance)
         }
         return frames.indices.compactMap { index in key(frames[index]).map { (index, $0) } }
-            .min { $0.1 < $1.1 }?.0
+            .min { lhs, rhs in
+                let (l, r) = (lhs.1, rhs.1)
+                if l.inLine != r.inLine { return l.inLine }
+                return (l.score, l.distance) < (r.score, r.distance)
+            }?.0
+    }
+}
+
+/// One code tile of an excerpt layout (`Board.openExcerpts`): a range of a file, captioned, at
+/// its measured size.
+public struct CodeExcerpt: Sendable, Equatable {
+    public var path: String
+    public var lines: LineRange
+    public var caption: String?
+    public var size: CGSize
+
+    public init(path: String, lines: LineRange, caption: String?, size: CGSize) {
+        self.path = path
+        self.lines = lines
+        self.caption = caption
+        self.size = size
     }
 }
 
 extension Board {
+    /// Code tiles for `excerpts` in a group titled `title` beside `anchor`, like an editor's
+    /// multibuffer (Find References → Open All): stacked top to bottom in order, `gap` apart,
+    /// a new column right of the last once one grows past `columnHeight`; the group takes the
+    /// free slot nearest `anchor` (`place(near:)`). One undo step.
+    @discardableResult
+    public func openExcerpts(_ excerpts: [CodeExcerpt], title: String, beside anchor: ObjectID, gap: Double = Board.placementGap,
+                             columnHeight: Double = 2400, caller: ObjectID? = nil) throws -> (group: ObjectID, tiles: [ObjectID]) {
+        guard !excerpts.isEmpty else { throw BoardError.invalidParams("no excerpts") }
+        _ = try object(anchor)
+        let origins = Layout.stack(excerpts.map(\.size), from: .zero, direction: .column, gap: CGFloat(gap), wrapAt: CGFloat(columnHeight))
+        let rects = zip(origins, excerpts).map { CGRect(origin: $0, size: $1.size) }
+        let spec = GroupSpec(.object(["members": .array([])]))!
+        let bounds = spec.frame(around: rects)!
+        let slot = place(width: Double(bounds.width), height: Double(bounds.height), near: anchor)
+        let dx = slot.x - Double(bounds.minX), dy = slot.y - Double(bounds.minY)
+        return try atomically {
+            let tiles = zip(excerpts, rects).map { excerpt, rect in
+                var props: [String: JSONValue] = [
+                    "path": .string(excerpt.path),
+                    "range": .object(["start": .number(Double(excerpt.lines.start)), "end": .number(Double(excerpt.lines.end))]),
+                ]
+                if let caption = excerpt.caption { props["caption"] = .string(caption) }
+                return create(type: .code, props: .object(props), frame: Frame(x: Double(rect.minX) + dx, y: Double(rect.minY) + dy, w: Double(rect.width), h: Double(rect.height)), caller: caller).id
+            }
+            let group = create(type: .group, props: .object(["members": .array(tiles.map(JSONValue.string)), "title": .string(title)]), caller: caller)
+            return (group.id, tiles)
+        }
+    }
+
     /// Moves `id` `gap` beside `anchor`; one undo step. Groups move their members.
     @discardableResult
     public func place(_ id: ObjectID, near anchor: ObjectID, side: Layout.Side, gap: Double = Layout.defaultGap, align: Layout.Align = .start, caller: ObjectID? = nil) throws -> [ObjectID: Frame] {

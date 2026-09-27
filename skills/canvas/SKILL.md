@@ -6,7 +6,7 @@ description: You are running inside Canvas (CANVAS_ENV=1), an infinite canvas wh
 # Working in Canvas
 
 Your terminal is one tile on an infinite canvas the user is looking at.
-Next to it live code/diff tiles, markdown notes, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
+Next to it live code tiles, changes (review) tiles, markdown notes, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
 You and the user read and change the same objects.
 The canvas is the shared working state; your transcript stays in your terminal.
 
@@ -212,6 +212,14 @@ A code tile shows the whole current file, scrolled so `range` sits a few rows be
   Mentions of a pinned tile quote the lines at that commit. Set it to `null` to go back to the working tree.
   For "what changed since X" in the working tree, use `diffBase: "<sha>"` instead.
 - Follow tiles are fixed-size viewers; `layout.check` never counts them.
+
+### Changes tiles
+
+To show the user what you changed, create a changes tile instead of an HTML diff: `canvas object.create --type changes --json '{"props":{},"size":"fit"}'`.
+Props: `base` (default `HEAD`: uncommitted work, staged or not; also `merge-base` or a commit), optional `paths` (board-relative files/dirs) and `title`.
+It lists changed files with unified hunks; the user stages or reverts per hunk or file (each one ⌘Z), clicks a line to open a code tile, and Hyper-clicks a line to mention it.
+Read what they kept with `object.get`: `changes.files[]` (path, status, added/removed, `hunks[]` with header, old/new ranges and `status` unstaged|staged|committed) as git has it now,
+and `props.reviewed[]` (what the user staged or reverted). Editing `reviewed` does nothing to git.
 
 ### HTML explainers
 

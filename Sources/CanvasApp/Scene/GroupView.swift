@@ -14,6 +14,15 @@ final class GroupView: NSView {
     var isSelected = false { didSet { if isSelected != oldValue { needsDisplay = true } } }
     /// The group's region in document coordinates.
     private(set) var region: NSRect = .zero
+    /// The name of the agent terminal that made the group (`AuthorMark`), drawn small and muted
+    /// after the title when the band has room.
+    var author: String? {
+        didSet {
+            guard author != oldValue else { return }
+            needsDisplay = true
+            refreshToolTip()
+        }
+    }
 
     var onPress: ((NSEvent) -> Void)?
     var onDrag: ((NSEvent) -> Void)?
@@ -37,6 +46,7 @@ final class GroupView: NSView {
         guard let spec = GroupSpec(object.props), spec != self.spec else { return }
         self.spec = spec
         needsDisplay = true
+        refreshToolTip()
     }
 
     /// Places the view for a region (document coordinates).
@@ -45,12 +55,30 @@ final class GroupView: NSView {
         if frame != region {
             frame = region
             needsDisplay = true
+            refreshToolTip()
         }
     }
 
     private var tint: NSColor { spec.color.map { DrawingStyle.color($0) } ?? .secondaryLabelColor }
     private static let titleFont = NSFont.systemFont(ofSize: 15, weight: .semibold)
     private var displayTitle: String { spec.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Group" }
+    private static let authorFont = NSFont.systemFont(ofSize: 12)
+
+    /// Where the author mark draws: after the title, in what the band has left (truncated,
+    /// dropped when too little is left); nil without one.
+    private var authorRect: NSRect? {
+        guard let author else { return nil }
+        let natural = (AuthorMark.label(author) as NSString).size(withAttributes: [.font: Self.authorFont]).width.rounded(.up)
+        let start = titleRect.maxX - 6
+        let shown = min(natural, bounds.width - start - 12)
+        guard shown >= min(natural, 40) else { return nil }
+        return NSRect(x: start, y: 0, width: shown, height: CGFloat(GroupSpec.titleHeight))
+    }
+
+    private func refreshToolTip() {
+        removeAllToolTips()
+        if let author, let rect = authorRect { addToolTip(rect, owner: "Created by the terminal “\(author)”" as NSString, userData: nil) }
+    }
 
     /// The title's hit and draw area in view coordinates. Hit testing asks on every scroll event
     /// and cursor rects on every pan frame, so the text width is measured once per title.
@@ -88,6 +116,15 @@ final class GroupView: NSView {
         let origin = NSPoint(x: title.minX + 14, y: title.midY - size.height / 2 + 2)
         text.draw(with: NSRect(origin: origin, size: NSSize(width: max(0, title.width - 20), height: size.height)),
                   options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes)
+        if let author, let rect = authorRect {
+            let style = NSMutableParagraphStyle()
+            style.lineBreakMode = .byTruncatingTail
+            let mark: [NSAttributedString.Key: Any] = [.font: Self.authorFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style]
+            let label = AuthorMark.label(author) as NSString
+            let height = label.size(withAttributes: mark).height
+            label.draw(with: NSRect(x: rect.minX, y: origin.y + (size.height - height) / 2 + 1, width: rect.width, height: height),
+                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: mark)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {

@@ -10,7 +10,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let navigator = NavigatorPanel()
     private let nothingHere = NothingHerePill(frame: .zero)
     private let emptyHint = EmptyBoardHint()
-    private let undoHUD = UndoHUD()
     private let basics = BasicsPanel()
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
@@ -82,7 +81,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             self.tray.isHidden = self.canvas.chromeHidden
         }
         // Above the toolbar and tray, so the navigator is never covered.
-        for view in [nothingHere, undoHUD, basics, navigator] {
+        for view in [nothingHere, basics, navigator] {
             view.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(view)
         }
@@ -91,9 +90,6 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         NSLayoutConstraint.activate([
             nothingHere.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             nothingHere.bottomAnchor.constraint(equalTo: tray.topAnchor, constant: -10),
-            undoHUD.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            undoHUD.bottomAnchor.constraint(equalTo: tray.topAnchor, constant: -52),
-            undoHUD.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
             navigator.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             navigator.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
             navigatorWidth,
@@ -238,17 +234,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             if agents, !isAgent, menu.numberOfItems > 0 { menu.addItem(.separator()) }
             agents = isAgent
             let name = board.terminalLabel?(terminal.id) ?? PromptTarget.label(terminal, shownTitle: canvas.tiles[terminal.id]?.title)
-            let item = NSMenuItem(title: name, action: #selector(targetMenuPicked(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = terminal.id
+            let id = terminal.id
+            let item = MenuAction.item(name) { [weak self] in self?.chooseTarget(id) }
             item.state = terminal.id == canvas.promptTarget ? .on : .off
             menu.addItem(item)
         }
         return menu
-    }
-
-    @objc private func targetMenuPicked(_ sender: NSMenuItem) {
-        if let id = sender.representedObject as? ObjectID { chooseTarget(id) }
     }
 
     /// The mentions the tray held when last seen, to tell which one was just staged.
@@ -427,10 +418,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let aim = CodeAim(path: path, range: lines)
         canvas.navigating(landing: aim) {
             let opened = board.openForNavigation(aim, from: nil)
-            if opened.created {
-                canvas.reveal(opened.id)
-                canvas.setSelection([opened.id])
-                canvas.takeKeyboard(opened.id)
+            if opened.created, let object = board.objects[opened.id] {
+                canvas.showNew(object)
             } else {
                 canvas.go(to: opened.id)
             }
@@ -520,26 +509,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// ⌘Z undoes the latest board change (the user's or an agent's). A text field or editor with
     /// its own pending edits undoes those first; a terminal holding the keyboard keeps ⌘Z and ⇧⌘Z
     /// for its program (`canvasUndoApplies`). Undoing an agent's change, or one to the user's
-    /// files or git index (a changes tile's Stage or Discard), is never silent: a brief HUD names
+    /// files or git index (a changes tile's Stage or Discard), is never silent: a notice names
     /// it (`UndoHistory.Step.notice`).
-    @objc func undoCanvas(_ sender: Any?) {
-        if let text = window?.firstResponder as? NSTextView, text.isEditable, let manager = text.undoManager, manager.canUndo {
-            return manager.undo()
-        }
-        guard canvasUndoApplies else { return }
-        let step = board.nextUndo
-        guard board.undo(), let step, let notice = step.notice(redo: false, author: board.authorName(step.author)) else { return }
-        undoHUD.show(notice)
-    }
+    @objc func undoCanvas(_ sender: Any?) { undo(redo: false) }
+    @objc func redoCanvas(_ sender: Any?) { undo(redo: true) }
 
-    @objc func redoCanvas(_ sender: Any?) {
-        if let text = window?.firstResponder as? NSTextView, text.isEditable, let manager = text.undoManager, manager.canRedo {
-            return manager.redo()
+    private func undo(redo: Bool) {
+        if let manager = textUndoManager, redo ? manager.canRedo : manager.canUndo {
+            return redo ? manager.redo() : manager.undo()
         }
         guard canvasUndoApplies else { return }
-        let step = board.nextRedo
-        guard board.redo(), let step, let notice = step.notice(redo: true, author: board.authorName(step.author)) else { return }
-        undoHUD.show(notice)
+        let step = redo ? board.nextRedo : board.nextUndo
+        guard redo ? board.redo() : board.undo(), let step, let notice = step.notice(redo: redo, author: board.authorName(step.author)) else { return }
+        canvas.showNotice(notice)
     }
 
     /// Canvas undo and redo act unless a terminal holds the keyboard: there ⌘Z belongs to the
@@ -686,6 +668,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     @objc func saveAsPNG(_ sender: Any?) { canvas.saveSelectionAsPNG() }
     @objc func saveHTMLTile(_ sender: Any?) { selected(.html).map(canvas.saveHTML) }
     @objc func openHTMLTileInBrowser(_ sender: Any?) { selected(.html).map(canvas.openHTMLInBrowser) }
+    @objc func openPageInBrowser(_ sender: Any?) { selected(.browser).map(canvas.openPageInBrowser) }
     @objc func copyNoteAsMarkdown(_ sender: Any?) { selected(.note).map(canvas.copyNoteMarkdown) }
     @objc func saveNoteAsMarkdown(_ sender: Any?) { selected(.note).map(canvas.saveNoteMarkdown) }
 
@@ -709,7 +692,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The one selected object, when it is of `type` (an HTML tile's Save as HTML and Open in
-    /// Browser, a note's Copy and Save as Markdown).
+    /// Browser, a browser tile's Open Page in Browser, a note's Copy and Save as Markdown).
     private func selected(_ type: ObjectType) -> ObjectID? {
         let selection = canvas.selection
         guard selection.count == 1, let id = selection.first, board.objects[id]?.type == type else { return nil }
@@ -732,7 +715,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         code.navigate(navigation)
     }
 
-    @objc func leaveTile(_ sender: Any?) { canvas.leaveFocusedTile() }
+    /// View ▸ Leave Tile (⌘Esc): the one way out of a terminal, whose Esc belongs to its program.
+    @objc func leaveTile(_ sender: Any?) { canvas.focusedTile.map(canvas.leaveTile) }
 
     /// Whether a menu item applies now (AppDelegate forwards the menu bar's validation here).
     func validate(_ item: NSMenuItem) -> Bool {
@@ -766,6 +750,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
         case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selected(.html) != nil
+        case #selector(openPageInBrowser(_:)): return selected(.browser) != nil
         case #selector(copyNoteAsMarkdown(_:)), #selector(saveNoteAsMarkdown(_:)): return selected(.note) != nil
         case #selector(showWebInspector(_:)): return inspectableBrowser != nil
         case #selector(snapshotPage(_:)): return keyboardBrowser != nil
@@ -842,17 +827,24 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// character, or the key's name for keys without one.
     static func keyChord(for event: NSEvent) -> GhosttyConfig.KeyChord? {
         guard event.type == .keyDown else { return nil }
-        let flags = event.modifierFlags
-        var modifiers: GhosttyConfig.Modifiers = []
-        if flags.contains(.command) { modifiers.insert(.command) }
-        if flags.contains(.shift) { modifiers.insert(.shift) }
-        if flags.contains(.option) { modifiers.insert(.option) }
-        if flags.contains(.control) { modifiers.insert(.control) }
+        let modifiers = modifiers(event.modifierFlags)
         if let name = namedKeys[event.keyCode] { return .init(modifiers, name) }
         guard let character = event.characters(byApplyingModifiers: [])?.lowercased(), character.count == 1 else { return nil }
         return .init(modifiers, character)
     }
 
+    /// `flags` as Ghostty keybinds' modifiers.
+    private static func modifiers(_ flags: NSEvent.ModifierFlags) -> GhosttyConfig.Modifiers {
+        var modifiers: GhosttyConfig.Modifiers = []
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        return modifiers
+    }
+
+    /// Keys whose unmodified characters are control codes (UCKeyTranslate gives every F-key 0x10),
+    /// by key code.
     private static let namedKeys: [UInt16: String] = [
         36: "enter", 48: "tab", 49: "space", 51: "backspace", 53: "escape", 117: "delete", 115: "home", 119: "end",
         116: "page_up", 121: "page_down", 123: "arrow_left", 124: "arrow_right", 125: "arrow_down", 126: "arrow_up",
@@ -867,17 +859,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// The main-menu item `event` is the key equivalent of.
     static func menuItem(for event: NSEvent, in menu: NSMenu?) -> NSMenuItem? {
-        guard event.type == .keyDown, let menu, let chord = keyChord(for: event) else { return nil }
-        for item in menu.items {
-            if let found = menuItem(for: event, in: item.submenu) { return found }
-            guard !item.keyEquivalent.isEmpty else { continue }
-            var modifiers: GhosttyConfig.Modifiers = []
-            let mask = item.keyEquivalentModifierMask
-            if mask.contains(.command) { modifiers.insert(.command) }
-            if mask.contains(.shift) { modifiers.insert(.shift) }
-            if mask.contains(.option) { modifiers.insert(.option) }
-            if mask.contains(.control) { modifiers.insert(.control) }
-            if chord == GhosttyConfig.KeyChord(menuKey: item.keyEquivalent, modifiers: modifiers) { return item }
+        keyChord(for: event).flatMap { menuItem(for: $0, in: menu) }
+    }
+
+    private static func menuItem(for chord: GhosttyConfig.KeyChord, in menu: NSMenu?) -> NSMenuItem? {
+        for item in menu?.items ?? [] {
+            if let found = menuItem(for: chord, in: item.submenu) { return found }
+            if !item.keyEquivalent.isEmpty, chord == GhosttyConfig.KeyChord(menuKey: item.keyEquivalent, modifiers: modifiers(item.keyEquivalentModifierMask)) { return item }
         }
         return nil
     }
@@ -945,16 +933,16 @@ final class CanvasWindow: NSWindow {
     /// ⌘-scroll anywhere on the canvas zooms it (`zoomsCanvas`).
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
-        if event.type == .scrollWheel, let content = contentView,
-           let hit = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
-           zoomsCanvas(event, over: hit) { return }
+        if event.type == .scrollWheel, zoomsCanvas(event, at: event.locationInWindow) { return }
         super.sendEvent(event)
     }
 
-    /// A ⌘-scroll over `view` inside the canvas goes to the canvas (`CanvasWheel`), which zooms.
-    func zoomsCanvas(_ event: NSEvent, over view: NSView) -> Bool {
+    /// A ⌘-scroll at `point` (window coordinates) over the canvas goes to the canvas
+    /// (`CanvasWheel`), which zooms. The modifiers first: every other scroll event skips the hit test.
+    func zoomsCanvas(_ event: NSEvent, at point: NSPoint) -> Bool {
         guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-              let canvas = (windowController as? CanvasWindowController)?.canvas, view.isDescendant(of: canvas) else { return false }
+              let canvas = (windowController as? CanvasWindowController)?.canvas, let content = contentView,
+              content.hitTest(content.superview?.convert(point, from: nil) ?? point)?.isDescendant(of: canvas) == true else { return false }
         canvas.scrollWheel(with: event)
         return true
     }

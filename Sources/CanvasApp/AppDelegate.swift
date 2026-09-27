@@ -59,39 +59,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         notifier.install()
         router.submitToTerminal = { [weak self] board, tile, text in
-            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return false }
+            guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else { return false }
             return await terminal.submit(text)
         }
         router.terminalStatus = { [weak self] board, tile in
-            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return TerminalStatus() }
+            guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else { return TerminalStatus() }
             terminal.refreshProgram()
             // Gemini CLI pads its title to a fixed width.
             return TerminalStatus(title: terminal.oscTitle?.trimmingCharacters(in: .whitespaces), program: terminal.program, lastCommand: terminal.lastCommand)
         }
         router.tmuxPane = { [weak self] board, tile in
-            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return nil }
+            guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else { return nil }
             return await terminal.tmuxPane()
         }
         router.readTerminalBlock = { [weak self] board, tile, index in
-            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else {
+            guard let terminal = self?.content(of: tile, on: board) as? TerminalTile else {
                 throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window")
             }
             return try terminal.block(index)
         }
         router.pageReport = { [weak self] board, tile in
-            guard let browser = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? BrowserTile else { return nil }
+            guard let browser = self?.content(of: tile, on: board) as? BrowserTile else { return nil }
             return await browser.pageReport()
         }
         router.noteExcerpts = { [weak self] board, tile in
-            guard let note = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? NoteTile else { return nil }
+            guard let note = self?.content(of: tile, on: board) as? NoteTile else { return nil }
             return await note.resolvedExcerpts()
         }
         router.codeRangeStatus = { [weak self] board, tile in
-            guard let code = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? CodeTile else { return nil }
+            guard let code = self?.content(of: tile, on: board) as? CodeTile else { return nil }
             return await code.rangeStatus()
         }
         router.reloadBrowser = { [weak self] board, tile, caller, timeoutMs in
-            guard let browser = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? BrowserTile else {
+            guard let browser = self?.content(of: tile, on: board) as? BrowserTile else {
                 throw ApiRouter.Failure("unavailable", "browser tile \(tile) is not open in a window")
             }
             do {
@@ -112,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         router.readTerminal = { [weak self] board, tile, lines in
             // Rows the terminal soft-wrapped join when its tile knows its width; the live
             // screen's by Ghostty's own wrap flags.
-            let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile
+            let terminal = self?.content(of: tile, on: board) as? TerminalTile
             let columns = terminal?.columns, screen = terminal?.screenRows() ?? []
             // A blocking subprocess read: keep it on GCD so it can't park Swift's cooperative
             // threads, which the socket servers' request tasks need.
@@ -270,6 +270,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controllers.values.first { $0.window?.isKeyWindow == true } ?? controllers.values.first
     }
 
+    /// Tile `id`'s content in `board`'s window, for the router's questions only a live tile answers.
+    private func content(of id: ObjectID, on board: Board) -> (any TileContent)? {
+        controllers[board.id]?.canvas.tiles[id]?.content
+    }
+
     @objc func newTerminal(_ sender: Any?) { keyController?.newTerminal(sender) }
     @objc func newBrowserTile(_ sender: Any?) {
         guard let controller = keyController, let window = controller.window else { return }
@@ -326,6 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func saveAsPNG(_ sender: Any?) { keyController?.saveAsPNG(sender) }
     @objc func saveHTMLTile(_ sender: Any?) { keyController?.saveHTMLTile(sender) }
     @objc func openHTMLTileInBrowser(_ sender: Any?) { keyController?.openHTMLTileInBrowser(sender) }
+    @objc func openPageInBrowser(_ sender: Any?) { keyController?.openPageInBrowser(sender) }
     @objc func copyNoteAsMarkdown(_ sender: Any?) { keyController?.copyNoteAsMarkdown(sender) }
     @objc func saveNoteAsMarkdown(_ sender: Any?) { keyController?.saveNoteAsMarkdown(sender) }
     @objc func showWebInspector(_ sender: Any?) { keyController?.showWebInspector(sender) }
@@ -394,6 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Export Selection as PNG…", #selector(saveAsPNG(_:)), "E", [.command, .shift]),
             item("Save HTML Tile as HTML…", #selector(saveHTMLTile(_:)), ""),
             item("Open HTML Tile in Browser", #selector(openHTMLTileInBrowser(_:)), ""),
+            item("Open Page in Browser", #selector(openPageInBrowser(_:)), ""),
             item("Save Note as Markdown…", #selector(saveNoteAsMarkdown(_:)), ""),
             // The focused or selected browser tile's page, frozen as an image tile beside it.
             item("Snapshot Page to Image", #selector(snapshotPage(_:)), ""),

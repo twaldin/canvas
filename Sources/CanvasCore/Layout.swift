@@ -197,6 +197,11 @@ public enum Layout {
             self.zoom = zoom
             self.origin = origin
         }
+
+        /// The document rect `clear` shows at this jump.
+        func shown(_ clear: CGRect) -> CGRect {
+            CGRect(x: origin.x + clear.minX / zoom, y: origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        }
     }
 
     /// `rect` with `padding` on every side fitted into `clear` and centered there, the zoom
@@ -229,24 +234,22 @@ public enum Layout {
     /// with `bottomFirst` its bottom edge (a terminal's question sits there), not moving while
     /// that edge is in view. The same `jump` when the rect is already in view.
     public static func reveal(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat, bottomFirst: Bool = false) -> Jump {
-        let zoom = jump.zoom
-        let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        let shown = jump.shown(clear)
         let target = rect.insetBy(dx: -padding, dy: -padding)
         func shift(_ min: CGFloat, _ max: CGFloat, shownMin: CGFloat, shownMax: CGFloat, endFirst: Bool = false) -> CGFloat {
             if max - min > shownMax - shownMin, endFirst { return (shownMin...shownMax).contains(max) ? 0 : max - shownMax }
             if max - min > shownMax - shownMin || min < shownMin { return min - shownMin }
             return max > shownMax ? max - shownMax : 0
         }
-        return Jump(zoom: zoom, origin: CGPoint(x: jump.origin.x + shift(target.minX, target.maxX, shownMin: shown.minX, shownMax: shown.maxX),
-                                                y: jump.origin.y + shift(target.minY, target.maxY, shownMin: shown.minY, shownMax: shown.maxY, endFirst: bottomFirst)))
+        return Jump(zoom: jump.zoom, origin: CGPoint(x: jump.origin.x + shift(target.minX, target.maxX, shownMin: shown.minX, shownMax: shown.maxX),
+                                                     y: jump.origin.y + shift(target.minY, target.maxY, shownMin: shown.minY, shownMax: shown.maxY, endFirst: bottomFirst)))
     }
 
     /// `reveal`, keeping what shows of `kept` (the tile something was opened from) in view too
     /// when both fit, with the padding cut down to what room is left (a code tile opened beside
     /// a changes tile that together just fit shows both whole); otherwise `rect` alone.
     public static func reveal(_ rect: CGRect, keeping kept: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat) -> Jump {
-        let zoom = jump.zoom
-        let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        let shown = jump.shown(clear)
         let visible = kept.intersection(shown)
         guard !visible.isNull, !visible.isEmpty else { return reveal(rect, from: jump, clear: clear, padding: padding) }
         let both = rect.union(visible)
@@ -259,8 +262,7 @@ public enum Layout {
     /// while at least half of `rect` shows clear of the chrome; otherwise `reveal`'s least pan,
     /// cut short where it would take `source` out of view.
     public static func reveal(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat, openedFrom source: CGRect) -> Jump {
-        let zoom = jump.zoom
-        let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        let shown = jump.shown(clear)
         let visible = rect.intersection(shown)
         if !visible.isNull, visible.width * visible.height >= rect.width * rect.height / 2 { return jump }
         let full = reveal(rect, from: jump, clear: clear, padding: padding)
@@ -270,7 +272,7 @@ public enum Layout {
             let lower = min(0, sourceMax - shownMax), upper = max(0, sourceMin - shownMin)
             return min(max(shift, lower), upper)
         }
-        return Jump(zoom: zoom, origin: CGPoint(
+        return Jump(zoom: jump.zoom, origin: CGPoint(
             x: jump.origin.x + clamp(full.origin.x - jump.origin.x, source.minX, source.maxX, shown.minX, shown.maxX),
             y: jump.origin.y + clamp(full.origin.y - jump.origin.y, source.minY, source.maxY, shown.minY, shown.maxY)))
     }
@@ -280,8 +282,7 @@ public enum Layout {
     /// zoom, fitted (`fit`, `readable` for a tall one) so the audience sees the one stop rather
     /// than half of the last one beside the least pan.
     public static func present(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat, zoom limits: ClosedRange<CGFloat>, readable: CGFloat? = nil) -> Jump {
-        let zoom = jump.zoom
-        let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
+        let zoom = jump.zoom, shown = jump.shown(clear)
         let padded = rect.insetBy(dx: -padding, dy: -padding)
         if shown.contains(padded) { return jump }
         guard padded.width <= shown.width, padded.height <= shown.height else {
@@ -465,10 +466,7 @@ extension Board {
         let dx = slot.x - Double(bounds.minX), dy = slot.y - Double(bounds.minY)
         return try atomically {
             let tiles = zip(excerpts, rects).map { excerpt, rect in
-                var props: [String: JSONValue] = [
-                    "path": .string(excerpt.path),
-                    "range": .object(["start": .number(Double(excerpt.lines.start)), "end": .number(Double(excerpt.lines.end))]),
-                ]
+                var props: [String: JSONValue] = ["path": .string(excerpt.path), "range": excerpt.lines.json]
                 if let caption = excerpt.caption { props["caption"] = .string(caption) }
                 return create(type: .code, props: .object(props), frame: Frame(x: Double(rect.minX) + dx, y: Double(rect.minY) + dy, w: Double(rect.width), h: Double(rect.height)), caller: caller).id
             }

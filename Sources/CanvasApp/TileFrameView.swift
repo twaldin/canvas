@@ -246,7 +246,7 @@ final class TileFrameView: NSView {
         statusLabel.textColor = failed ? .systemRed : .secondaryLabelColor
         statusLabel.toolTip = detail
         statusLabel.isHidden = status == nil
-        layoutParts()
+        layoutTitle()
     }
 
     /// Puts the title into the labels (also for `view.snapshot` of a window nobody sees).
@@ -269,7 +269,7 @@ final class TileFrameView: NSView {
         guard author != self.author else { return }
         self.author = author
         authorLabel.stringValue = author.map(AuthorMark.label) ?? ""
-        authorLabel.toolTip = author.map { "Created by the terminal “\($0)”" }
+        authorLabel.toolTip = author.map(AuthorMark.toolTip)
         layoutTitle()
     }
 
@@ -310,11 +310,9 @@ final class TileFrameView: NSView {
 
     private var branch: String?
 
-    static func title(for object: CanvasObject) -> String { title(for: object, branch: nil) }
-
     /// The title from the object's props; `branch` is the branch checked out in the board root,
     /// which a changes tile of the whole board root names (`Changes: main`).
-    static func title(for object: CanvasObject, branch: String?) -> String {
+    static func title(for object: CanvasObject, branch: String? = nil) -> String {
         let props = object.props
         switch object.type {
         case .terminal: return props["title"]?.string ?? props["agent"]?["kind"]?.string ?? "Terminal"

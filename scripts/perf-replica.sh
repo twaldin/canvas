@@ -12,7 +12,8 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="${PERF_HOME:-/tmp/canvas-perf-home}"
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
 
-pid() { [ -f "$home/pid" ] && kill -0 "$(cat "$home/pid")" 2>/dev/null && cat "$home/pid"; }
+# The pid file counts only while that process owns this home's socket (see scripts/dev.sh).
+pid() { [ -f "$home/pid" ] && kill -0 "$(cat "$home/pid")" 2>/dev/null && lsof -t "$home/canvas.sock" 2>/dev/null | grep -qx "$(cat "$home/pid")" && cat "$home/pid"; }
 window() { "$yabai" -m query --windows | python3 -c "import json,sys; print(next((w['id'] for w in json.load(sys.stdin) if w['pid']==$(pid)), ''))"; }
 
 case "${1:-}" in
@@ -42,7 +43,7 @@ EOF
     open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
       ${PERF_MALLOC_STACKS:+--env MallocStackLogging=1} --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_ROOT="$root" "$app"
     i=0; while [ ! -S "$home/canvas.sock" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-    pgrep -n -f "$app/Contents/MacOS/Canvas" > "$home/pid"
+    lsof -t "$home/canvas.sock" | head -n 1 > "$home/pid"
     i=0; while [ -z "$(window)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
     space="$(CANVAS_DEV_SPACE= sh -c ". /dev/null; $(sed -n '/^test_space()/,/^}/p' "$repo/scripts/dev.sh"); yabai=$yabai; test_space")"
     "$yabai" -m window "$(window)" --space "$space"

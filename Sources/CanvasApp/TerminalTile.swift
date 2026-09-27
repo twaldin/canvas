@@ -77,7 +77,22 @@ final class TerminalTile: NSView, TileContent {
         // `canvas.home` names the owning instance: board copies in another home (replicas, dev
         // instances) carry the same board and tile ids, so ids alone can't tell whose session it is.
         let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(homeLabel)"
-        return quote(["/usr/bin/env"] + strip + [zmx, "attach", "--labels", labels, session] + start)
+        let attach = ["/usr/bin/env"] + strip + [zmx, "attach", "--labels", labels, session] + start
+        let refusal = #"printf '\nThis terminal session (%s) belongs to another Canvas instance (%s).\nNot attaching: this copy of the board can neither type into it nor end it.\n' "$2" "$owner"; exec sleep 2147483647"#
+        return quote(["/bin/sh", "-c", ownerGuard(refusal: refusal) + "shift 3\nexec \"$@\"", "canvas-attach", zmx, session, homeLabel] + attach)
+    }
+
+    /// A prologue for `sh -c` with $1 = zmx, $2 = session name, $3 = this instance's home label:
+    /// runs `refusal` when the session exists labelled for another home. A board copied into
+    /// another home has the same tile ids, and `zmx attach --labels` relabels an existing session,
+    /// so without this a copy took over the original's sessions and its cleanup ended them.
+    /// Sessions without a home label (older ones) pass.
+    static func ownerGuard(refusal: String) -> String {
+        #"""
+        owner=$("$1" list 2>/dev/null | awk -F'\t' -v n="name=$2" '{ s = $1; sub(/^[ *]+/, "", s) } s == n { for (i = 2; i <= NF; i++) if (index($i, "canvas.home=") == 1) print substr($i, 13) }')
+        if [ -n "$owner" ] && [ "$owner" != "$3" ]; then \#(refusal); fi
+
+        """#
     }
 
     /// The support directory as a zmx label value, which allows only `[A-Za-z0-9._-]`: every other
@@ -101,12 +116,13 @@ final class TerminalTile: NSView, TileContent {
         argv.map { "'" + $0.replacingOccurrences(of: "'", with: "'\"'\"'") + "'" }.joined(separator: " ")
     }
 
-    /// Ends the persistent session; used only when the user closes the tile.
+    /// Ends the persistent session; used only when the user closes the tile. Never another
+    /// instance's session (`ownerGuard`).
     func killSession() {
         guard let zmx = AppPaths.zmx else { return }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = ["kill", sessionName]
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", Self.ownerGuard(refusal: "exit 0") + "exec \"$1\" kill \"$2\"", "canvas-kill", zmx, sessionName, Self.homeLabel]
         try? process.run()
     }
 

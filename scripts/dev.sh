@@ -38,10 +38,13 @@ export CANVAS_SOCKET="$home/canvas.sock"
 # zmx keys its socket directory off TMPDIR; match the GUI app's.
 zmx_env() { TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)" "$@"; }
 
+# The pid file counts only while that process owns this home's socket. A home copied from
+# another instance's carries its pid file, and trusting it quit Tim's live instance.
 running_pid() {
   [ -f "$home/pid" ] || return 1
   pid="$(cat "$home/pid")"
-  kill -0 "$pid" 2>/dev/null && echo "$pid"
+  kill -0 "$pid" 2>/dev/null || return 1
+  lsof -t "$CANVAS_SOCKET" 2>/dev/null | grep -qx "$pid" && echo "$pid"
 }
 
 quit() {

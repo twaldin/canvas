@@ -417,7 +417,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         Task { @MainActor [weak terminal] in
             let drained = await board.drain(peek: true, caller: target)
             // Ends on its own line, so what the user types next starts below the block.
-            guard !drained.context.isEmpty, let terminal, terminal.paste(drained.context + "\n", submit: false) else { return }
+            guard !drained.context.isEmpty, let terminal, terminal.paste(drained.context + "\n") else { return }
             board.commit(drained.mentions.map(\.id))
         }
     }

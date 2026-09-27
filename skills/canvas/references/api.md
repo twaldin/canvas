@@ -117,6 +117,7 @@ and `attention.changed` (`{id, active, message?, raisedBy?}`: a marker raised, o
 
 `agent.list` lists every terminal tile in the app; each entry names its `board` and that board's `root` directory, so you can tell which repo or worktree an agent works in. `lifecycle.state` is `working`, `blocked` (waiting for its user: an approval or a question),
 `idle`, `done` (idle with results the user hasn't looked at yet), or `unknown` (no integration reporting: a shell, aider, a CLI without Canvas hooks; its `kind` is `unknown` too).
+`kind` is the integrated agent (`omp`, `claude`, `codex`, `gemini`, `opencode`); `program` is what runs in the terminal's foreground (`gemini`, `cargo test`; absent at a shell prompt) and `title` the title that program set (e.g. Gemini CLI's "✋ Action Required (glow)"), for any terminal.
 `agent.read` returns up to 2000 lines of the terminal's text, trailing blank lines removed; `since="prompt"` returns only what followed your last `agent.prompt` to it (`truncated` when there was more).
 `agent.prompt` returns `waitable`: then `agent.wait` right after it waits for that prompt's turn (it ignores the state from before the prompt), so wait for `done` directly:
 ```python
@@ -126,5 +127,5 @@ reply = canvas.agent.read(target="fees", since="prompt")["text"]
 ```
 On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` gives it 15 s to report (an agent you just launched there) and then fails with `unavailable`; for a shell or a CLI without integration, poll `agent.read(since="prompt")` instead.
 `agent.prompt` to a `blocked` agent fails with `conflict` naming what it waits on (an approval or a question on its screen would take your text): tell the user, or `agent.wait` for it to move on.
-`force=True` sends anyway, e.g. to a Claude Code agent that stays `blocked` after the user pressed Esc on an approval.
+`force=True` sends anyway, e.g. to a Claude Code or Gemini CLI agent that stays `blocked` after the user pressed Esc on or denied an approval. It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to another agent's approval.
 `agent.wait` survives an app restart: the SDKs and CLI ask again once the app is back, with `timeoutMs` reduced by the time already waited.

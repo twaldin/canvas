@@ -309,7 +309,12 @@ export type Agent = {
   /** that board's root directory */
   root: string;
   name?: string;
+  /** the integrated agent that reported (omp, claude, codex, gemini, opencode), else unknown */
   kind: string;
+  /** the title the program in the terminal set (OSC 0/2), e.g. Gemini CLI's "✋ Action Required (glow)"; absent when none */
+  title?: string;
+  /** what runs in the terminal's foreground, named the way a person would (`gemini`, `opencode`, `cargo test`); absent at the shell's prompt */
+  program?: string;
   sessionId?: string;
   lifecycle: Lifecycle;
 };
@@ -425,7 +430,7 @@ export type BoardListResult = {
 export type BoardOpenParams = {
   /** absolute directory path (`~` allowed); one board per directory */
   root: string;
-  /** bring the board's tab to the front */
+  /** bring the board's tab to the front: this switches the user's tab, so only when they asked to see that board */
   select?: boolean;
 };
 export type BoardOpenResult = {
@@ -754,7 +759,7 @@ export type AgentPromptParams = {
   /** agent name or tile id */
   target: string;
   text: string;
-  /** send even though the target is `blocked` (e.g. Claude Code stays blocked after you press Esc on or deny an approval, since it runs no hook then) */
+  /** send even though the target is `blocked` (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval */
   force?: boolean;
 };
 export type AgentPromptResult = {
@@ -962,7 +967,7 @@ export interface CanvasApi {
     release(params: AgentReleaseParams): Promise<AgentReleaseResult>;
     /** Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, aider, a CLI without Canvas hooks) has kind and lifecycle `unknown`. */
     list(params?: AgentListParams): Promise<AgentListResult>;
-    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. */
+    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. */
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
     /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;

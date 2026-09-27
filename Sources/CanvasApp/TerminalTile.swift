@@ -14,6 +14,8 @@ final class TerminalTile: NSView, TileContent {
     private var surface: TerminalSurface?
     private let handler = TerminalEvents()
     private let underline = TerminalLinkUnderline()
+    /// The header text changed: the name (`props.name`, else the foreground program) and the
+    /// live title the program set (`TerminalName.label`).
     var onTitle: ((String) -> Void)?
     /// A ⌘-clicked reference opened this code tile (`created`) or re-aimed or found it there;
     /// `source` is the reference's rect in window coordinates.
@@ -45,6 +47,8 @@ final class TerminalTile: NSView, TileContent {
         underline.autoresizingMask = [.width, .height]
         underline.isHidden = true
         addSubview(underline)
+        name = object.props["name"]?.string
+        TerminalProgramWatch.shared.add(self)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -120,7 +124,7 @@ final class TerminalTile: NSView, TileContent {
     }()
 
     /// What a new session runs before dropping to a login shell: after a reboot, resume the
-    /// recorded agent session (`AgentResume`: omp, claude, codex); otherwise the tile's initial `command`.
+    /// recorded agent session (`AgentResume`: omp, claude, codex, gemini, opencode); otherwise the tile's initial `command`.
     static func initialCommand(_ object: CanvasObject) -> String? {
         if let kind = object.props["agent"]?["kind"]?.string, let sessionId = object.props["agent"]?["sessionId"]?.string,
            let resume = AgentResume.argv(kind: kind, sessionId: sessionId) {
@@ -172,11 +176,22 @@ final class TerminalTile: NSView, TileContent {
 
     // MARK: Input
 
-    /// Paste text honoring bracketed-paste mode; optionally press Enter.
+    /// Paste text honoring bracketed-paste mode.
     @discardableResult
-    func paste(_ text: String, submit: Bool) -> Bool {
+    func paste(_ text: String) -> Bool {
+        terminal.paste(text: text)
+    }
+
+    /// How long a submitted prompt waits between its paste and Enter. TUIs take an Enter that
+    /// follows the previous input within a few milliseconds as part of a paste (Gemini CLI turns
+    /// one within 30 ms into Shift+Enter, a newline), so the prompt would sit unsent.
+    static let submitDelay: Duration = .milliseconds(80)
+
+    /// Pastes `text` and presses Enter once the paste has landed (`submitDelay`).
+    func submit(_ text: String) async -> Bool {
         guard terminal.paste(text: text) else { return false }
-        if submit { terminal.sendKey(.enter) }
+        try? await Task.sleep(for: Self.submitDelay)
+        terminal.sendKey(.enter)
         return true
     }
 
@@ -200,7 +215,54 @@ final class TerminalTile: NSView, TileContent {
     }
 
     fileprivate func titleChanged(_ title: String) {
-        onTitle?(title)
+        oscTitle = title
+        refreshProgram()
+        publishLabel()
+    }
+
+    // MARK: Name
+
+    /// The user's or an agent's name for this terminal (`props.name`).
+    private var name: String?
+    /// The title the program in the terminal set (OSC 0/2), as it reports it.
+    private(set) var oscTitle: String?
+    /// What runs in the foreground (`TerminalName.program`: `gemini`, `cargo test`); nil at the prompt.
+    private(set) var program: String?
+    /// The session's shell (`ForegroundProgram.shellPid`), looked up once.
+    private var shell: pid_t?
+    private var shellLookup: Date?
+
+    /// Reads the foreground program again (a few syscalls once the session's shell is known).
+    func refreshProgram() {
+        guard let shell else { return findShell() }
+        let state = ForegroundProgram.state(shell: shell)
+        if state == .gone { self.shell = nil }
+        let program: String? = switch state {
+        case .running(let argv): TerminalName.program(argv: argv)
+        case .gone, .prompt: nil
+        }
+        guard program != self.program else { return }
+        self.program = program
+        publishLabel()
+    }
+
+    /// Looks up the session's shell off the main actor, at most every few seconds (a session
+    /// that doesn't exist yet appears once zmx has started it).
+    private func findShell() {
+        if let shellLookup, Date().timeIntervalSince(shellLookup) < 5 { return }
+        shellLookup = Date()
+        let session = sessionName
+        Task { [weak self] in
+            let pid = await offPool { ForegroundProgram.shellPid(session: session) }
+            guard let self, let pid else { return }
+            self.shell = pid
+            self.refreshProgram()
+        }
+    }
+
+    private func publishLabel() {
+        guard let object = board.objects[objectID] else { return }
+        onTitle?(TerminalName.label(name: name ?? program, title: oscTitle) ?? TileFrameView.title(for: object))
     }
 
     // MARK: Notices
@@ -450,7 +512,12 @@ final class TerminalTile: NSView, TileContent {
 
     var takesKeyboardFocus: Bool { true }
 
-    func update(_ object: CanvasObject) {}
+    func update(_ object: CanvasObject) {
+        let name = object.props["name"]?.string
+        guard name != self.name else { return }
+        self.name = name
+        publishLabel()
+    }
 }
 
 /// Retained delegate for the terminal view (its delegate reference is weak).
@@ -486,6 +553,8 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
 
     func terminalDidChangeWorkingDirectory(_ path: String) {
         tile?.reportedCwd = path.isEmpty ? nil : path
+        // The shell reports its directory at each prompt: whatever ran has finished.
+        tile?.refreshProgram()
     }
 
     func terminalDidUpdateScrollbar(_ scrollbar: TerminalScrollbar) {

@@ -58,7 +58,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notifier.install()
         router.submitToTerminal = { [weak self] board, tile, text in
             guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return false }
-            return terminal.paste(text, submit: true)
+            return await terminal.submit(text)
+        }
+        router.terminalStatus = { [weak self] board, tile in
+            guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return (nil, nil) }
+            terminal.refreshProgram()
+            // Gemini CLI pads its title to a fixed width.
+            return (terminal.oscTitle?.trimmingCharacters(in: .whitespaces), terminal.program)
         }
         router.snapshotBoard = { [weak self] board, format in self?.controllers[board.id]?.snapshot(format: format) }
         router.renderView = { [weak self] board, request, format in

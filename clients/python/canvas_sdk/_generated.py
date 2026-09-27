@@ -187,6 +187,8 @@ class Agent(TypedDict):
     root: Required[str]
     name: NotRequired[str]
     kind: Required[str]
+    title: NotRequired[str]
+    program: NotRequired[str]
     sessionId: NotRequired[str]
     lifecycle: Required["Lifecycle"]
 
@@ -387,7 +389,7 @@ class AgentApi:
         return self._call("agent.list", params, [])
 
     def prompt(self, *, target: str, text: str, force: bool | None = None) -> dict[str, Any]:
-        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true."""
+        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true."""
         params = {"target": target, "text": text, "force": force}
         return self._call("agent.prompt", params, [])
 

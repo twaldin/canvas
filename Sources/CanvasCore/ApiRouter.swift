@@ -81,8 +81,9 @@ public final class ApiRouter {
     }
 
     public let registry: BoardRegistry
-    /// Types text into a terminal tile (bracketed paste) and presses Enter; false when the surface isn't attached.
-    public var submitToTerminal: ((Board, ObjectID, String) -> Bool)?
+    /// Types text into a terminal tile (bracketed paste) and presses Enter once the paste landed;
+    /// false when the surface isn't attached.
+    public var submitToTerminal: ((Board, ObjectID, String) async -> Bool)?
     /// The board's window as currently shown, encoded in `format`, with the viewport it shows.
     public var snapshotBoard: ((Board, ImageFormat) -> (output: RenderOutput, viewport: Viewport)?)?
     /// Offscreen render for `view.render`; throws `Failure` for bad targets.
@@ -92,6 +93,9 @@ public final class ApiRouter {
     /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`), read and
     /// trimmed off the main actor; nil when the session doesn't exist.
     public var readTerminal: ((Board, ObjectID, _ lines: Int) async -> TerminalTail.Tail?)?
+    /// A terminal tile's live title (OSC 0/2) and foreground program (`TerminalName.program`), as
+    /// its tile knows them now; nil without the app UI.
+    public var terminalStatus: ((Board, ObjectID) -> (title: String?, program: String?))?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
@@ -314,10 +318,13 @@ public final class ApiRouter {
 
     func agentEntry(_ terminal: CanvasObject, on board: Board) -> JSONValue {
         let agent = terminal.props["agent"]
+        let status = terminalStatus?(board, terminal.id)
         let entry: [String: JSONValue] = [
             "tile": .string(terminal.id), "board": .string(board.id), "root": .string(board.root.path),
             "kind": agent?["kind"] ?? .string("unknown"),
             "name": terminal.props["name"] ?? .null,
+            "title": status?.title.map(JSONValue.string) ?? .null,
+            "program": status?.program.map(JSONValue.string) ?? .null,
             "sessionId": agent?["sessionId"] ?? .null,
             "lifecycle": terminal.props["lifecycle"] ?? .object(["state": .string(LifecycleState.unknown.rawValue)]),
         ]
@@ -370,12 +377,12 @@ public final class ApiRouter {
         let text = try string(p, "text")
         if Self.state(of: terminal) == LifecycleState.blocked.rawValue, p["force"]?.bool != true {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
-            throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Answer it in the tile, or pass force: true to send anyway")
+            throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
         }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
-        guard submitToTerminal(board, terminal.id, text) else {
+        guard await submitToTerminal(board, terminal.id, text) else {
             throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
         }
         // Only a reporting agent's next report can end the pre-prompt state.

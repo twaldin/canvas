@@ -74,6 +74,7 @@ final class TileFrameView: NSView {
         authorLabel.font = Self.authorFont
         authorLabel.textColor = .secondaryLabelColor
         authorLabel.lineBreakMode = .byTruncatingTail
+        authorLabel.alignment = .right
         authorLabel.isHidden = true
         titleBar.addSubview(badge)
         titleBar.addSubview(titleLabel)
@@ -208,9 +209,9 @@ final class TileFrameView: NSView {
         let space = max(0, width - 60)
         let whole = NSRect(x: 26, y: 5, width: space, height: 16)
         guard let author else { return (whole, nil) }
-        let natural = (AuthorMark.label(author) as NSString).size(withAttributes: [.font: authorFont]).width.rounded(.up)
-        let titleWidth = (title as NSString).size(withAttributes: [.font: titleFont]).width.rounded(.up)
-        let shown = AuthorMark.width(natural: natural, title: titleWidth, space: space)
+        // A label's cell pads its text 2 pt on either side.
+        func measure(_ text: String, _ font: NSFont) -> CGFloat { ((text as NSString).size(withAttributes: [.font: font]).width + 5).rounded(.up) }
+        let shown = AuthorMark.width(natural: measure(AuthorMark.label(author), authorFont), title: measure(title, titleFont), space: space)
         guard shown > 0 else { return (whole, nil) }
         let mark = NSRect(x: whole.maxX - shown, y: 6, width: shown, height: 15)
         return (NSRect(x: whole.minX, y: whole.minY, width: max(0, space - shown - AuthorMark.gap), height: whole.height), mark)

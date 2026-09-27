@@ -223,7 +223,9 @@ extension CanvasView {
         if let author, let mark = frames.author {
             let tail = NSMutableParagraphStyle()
             tail.lineBreakMode = .byTruncatingTail
-            (AuthorMark.label(author) as NSString).draw(in: mark.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
+            tail.alignment = .right
+            // Inset like a label cell's text.
+            (AuthorMark.label(author) as NSString).draw(in: mark.offsetBy(dx: rect.minX, dy: rect.minY).insetBy(dx: 2, dy: 0), withAttributes: [
                 .font: TileFrameView.authorFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: tail,
             ])
         }

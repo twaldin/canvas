@@ -77,7 +77,10 @@ final class CanvasDocumentView: NSView {
         switch event.keyCode {
         case 53: cancelOperation(nil)
         case 51, 117: deleteBackward(nil)
-        default: super.keyDown(with: event)
+        default:
+            // j/k, ↓/↑ and Return step through a selected changes tile's hunks.
+            if canvas?.selectedChangesTile?.handleNavigationKey(event) == true { return }
+            super.keyDown(with: event)
         }
     }
 
@@ -328,6 +331,11 @@ final class CanvasView: NSScrollView {
             }
         }
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
+        // A clicked line: user navigation, like a terminal's ⌘-click (the keyboard stays put).
+        (content as? ChangesTile)?.onOpenedCode = { [weak self] opened, created in
+            if !created { self?.setSelection([opened]) }
+            self?.reveal(opened)
+        }
         (content as? BrowserTile)?.onOpenedTile = { [weak self] opened in
             self?.reveal(opened)
             self?.setSelection([opened])
@@ -883,6 +891,20 @@ final class CanvasView: NSScrollView {
         }
     }
 
+    /// Review Changes: a changes tile for the board root's uncommitted work at a document point
+    /// (`createHere`), selected with the canvas holding the keyboard, so j/k step through hunks.
+    func createChanges(at point: NSPoint) {
+        let changes = createHere(.changes, props: .object(["base": .string("HEAD")]), at: point)
+        setSelection([changes.id])
+        takeKeyboard(changes.id)
+    }
+
+    /// The one selected tile when it is a changes tile.
+    var selectedChangesTile: ChangesTile? {
+        guard selection.count == 1, let id = selection.first else { return nil }
+        return tiles[id]?.content as? ChangesTile
+    }
+
     // MARK: Context menus
 
     func objectMenu(for id: ObjectID) -> NSMenu {
@@ -962,6 +984,7 @@ final class CanvasView: NSScrollView {
         menu.addItem(MenuAction.item("New Terminal Here") { [weak self] in self?.createTerminal(at: point) })
         menu.addItem(MenuAction.item("New Note Here") { [weak self] in self?.createNote(at: point) })
         menu.addItem(MenuAction.item("New Browser Here") { [weak self] in self?.createBrowser(at: point) })
+        menu.addItem(MenuAction.item("Review Changes") { [weak self] in self?.createChanges(at: point) })
         menu.addItem(.separator())
         menu.addItem(MenuAction.item("Clear Attention Markers", enabled: !board.attention.isEmpty) { [weak self] in self?.board.clearAllAttention() })
         if enteredGroup != nil {

@@ -169,6 +169,9 @@ final class TileFrameView: NSView {
         case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "Note"
         case .browser: return props["title"]?.string ?? props["url"]?.string ?? "Browser"
         case .html: return props["title"]?.string ?? "HTML"
+        case .changes:
+            let spec = ChangesSpec(props)
+            return props["title"]?.string ?? (spec.paths.isEmpty ? "Changes" : "Changes: \(spec.paths.map(PathLabel.short).joined(separator: ", "))")
         default: return object.type.rawValue.capitalized
         }
     }

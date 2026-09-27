@@ -104,6 +104,8 @@ extension CanvasView {
             return NavigatorRow(target: .object(object.id), title: title ?? line ?? "Empty note", kind: "Note", dot: nil)
         case .html:
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "HTML", dot: nil)
+        case .changes:
+            return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "Changes", dot: nil)
         case .browser:
             // Found by its address too ("localhost"); the host (and port) says which site it is.
             let url = nonEmpty(props["url"])

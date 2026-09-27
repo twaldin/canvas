@@ -78,9 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return try terminal.lastBlock()
         }
-        router.readPageLog = { [weak self] board, tile in
+        router.pageReport = { [weak self] board, tile in
             guard let browser = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? BrowserTile else { return nil }
-            return await browser.readPageLog()
+            return await browser.pageReport()
         }
         router.noteExcerpts = { [weak self] board, tile in
             guard let note = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? NoteTile else { return nil }

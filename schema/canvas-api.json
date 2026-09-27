@@ -341,6 +341,23 @@
       "description": "What a browser tile's page reported since it loaded. Main frame only; a new document (load, reload) starts over.",
       "properties": {
         "loaded": { "type": "boolean", "description": "false: the tile has no page now (never shown or rendered, or released while out of view); `view.render` loads it" },
+        "visibility": { "enum": ["visible", "hidden", "driven", "released"], "description": "how WebKit runs the page now: visible (on screen, rAF at the display's rate), hidden (nobody sees it: no rAF, timers throttled more the longer it stays hidden), driven (kept running for an agent though nobody sees it: rAF irregular and slower), released (no page)" },
+        "previous": {
+          "type": "object",
+          "description": "the log of the page Canvas last released (after `since` when it names that page), as it was then; returned until the page loads another document after the reload, and until `since` names the current document",
+          "properties": {
+            "releasedAt": { "type": "string", "description": "ISO 8601" },
+            "url": { "type": "string" },
+            "errors": { "type": "integer" },
+            "warnings": { "type": "integer" },
+            "entries": { "type": "array", "items": { "$ref": "#/definitions/PageLogEntry" } },
+            "omitted": { "type": "integer" },
+            "dropped": { "type": "integer" },
+            "reloaded": { "const": true },
+            "cursor": { "type": "string" },
+            "vitals": { "type": "object" }
+          }
+        },
         "url": { "type": "string" },
         "errors": { "type": "integer", "description": "exceptions, console errors and failed requests since the page loaded" },
         "warnings": { "type": "integer" },
@@ -348,7 +365,7 @@
         "omitted": { "type": "integer", "description": "older entries after `since` left out of `entries`" },
         "dropped": { "type": "integer", "description": "entries the page's buffers no longer hold" },
         "reloaded": { "const": true, "description": "`since` named an earlier document: `entries` start at this one's beginning" },
-        "cursor": { "type": "string", "description": "pass as `since` to read only what comes after" },
+        "cursor": { "type": "string", "description": "pass as `since` to read only what comes after; while released, the released page's (`previous.cursor`)" },
         "vitals": {
           "type": "object",
           "description": "milliseconds from navigation start (CLS unitless); null when not measured yet or not measured by WebKit (then named in `unsupported`), never a stand-in zero",
@@ -392,7 +409,14 @@
             "object": { "$ref": "#/definitions/Id" },
             "url": { "type": "string" },
             "selector": { "type": "string" },
-            "text": { "type": "string" }
+            "text": { "type": "string" },
+            "point": {
+              "type": "object",
+              "required": ["x", "y", "w", "h"],
+              "description": "a Hyper-click on a <canvas>, <video> or <img>: where in the element's own pixels (drawing buffer, video frame, natural image size), from its top-left, and its size in them",
+              "properties": { "x": { "type": "integer" }, "y": { "type": "integer" }, "w": { "type": "integer" }, "h": { "type": "integer" } },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         },

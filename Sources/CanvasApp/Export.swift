@@ -139,11 +139,27 @@ extension CanvasView {
         }
     }
 
+    /// Open in Browser on a browser tile: its page's address in the user's default browser (a
+    /// `file:` page too, which the file's own default app might not show as a page). A
+    /// development instance that may not activate other apps (`CANVAS_NO_ACTIVATE`) only logs it.
+    func openPageInBrowser(_ id: ObjectID) {
+        guard let url = (tiles[id]?.content as? BrowserTile)?.webAddress else { return }
+        if CanvasApplication.neverActivate {
+            return NSLog("Canvas: Open in Browser would open %@ (CANVAS_NO_ACTIVATE)", url.absoluteString)
+        }
+        guard url.isFileURL, let browser = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!) else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        NSWorkspace.shared.open([url], withApplicationAt: browser, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     /// Snapshot to Image (a browser tile's menu, File › Snapshot Page to Image): the page as it
     /// shows now, frozen as an image tile beside the browser tile at its width, titled with the
     /// page's title and the time and captioned with its address. The PNG is kept with the board
     /// (`AppPaths.pageSnapshots`), never in the temp directory: a before/after pair stays true
-    /// after the page changes. The new tile is selected, the browser still in view.
+    /// after the page changes. Nothing moves and the keyboard stays where it was (a page being
+    /// played keeps it); an image that lands out of view gets a notice saying where it is.
     func snapshotPage(_ id: ObjectID) {
         guard let browser = tiles[id]?.content as? BrowserTile, let source = board.objects[id] else { return }
         let taken = Date()
@@ -164,8 +180,7 @@ extension CanvasView {
                 if let address = browser.pageURL, !address.isEmpty { props["caption"] = .string(address) }
                 let size = try await ObjectMeasure.size(type: .image, props: .object(props), width: source.frame.w, root: self.board.root)
                 let image = self.board.create(type: .image, props: .object(props), frame: self.board.place(width: Double(size.width), height: Double(size.height), near: id))
-                self.reveal(image.id, keeping: id)
-                self.setSelection([image.id])
+                if let whereabouts = self.outOfView(image.id) { self.showNotice("Snapshot saved as an image \(whereabouts)") }
                 NSLog("Canvas: snapshot of %@ saved as %@", id, url.path)
             } catch {
                 self?.exportFailed("Snapshot to Image", error)

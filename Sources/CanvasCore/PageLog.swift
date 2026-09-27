@@ -234,6 +234,115 @@ public struct PageLog: Equatable, Sendable {
     }
 }
 
+/// What `object.get` says about a browser tile's page (`page`): whether anyone sees it now
+/// (`visibility`), what its current document reported (`log`), and the log of the page Canvas
+/// last released (`previous`), kept so a page released out of view doesn't take its errors
+/// with it.
+public struct PageReport: Equatable, Sendable {
+    /// How WebKit runs the page now, so frame and timer numbers read from it mean what they say.
+    public enum Visibility: String, Sendable {
+        /// On screen in its tile: requestAnimationFrame at the display's rate.
+        case visible
+        /// In its tile where nobody can see it (out of view, window minimized, covered, in a
+        /// background tab, app hidden): no requestAnimationFrame, timers throttled more the
+        /// longer it stays hidden.
+        case hidden
+        /// Kept visible to WebKit for an agent while nobody sees it: rAF and timers run, at an
+        /// irregular, lower rate than on screen.
+        case driven
+        /// No page in memory (released, or never shown): it loads from `props.url` when the tile
+        /// comes into view or an agent drives or renders it.
+        case released
+    }
+
+    /// The log of a page Canvas released, as it was then.
+    public struct Released: Equatable, Sendable {
+        public var log: PageLog
+        public var at: Date
+
+        public init(log: PageLog, at: Date) {
+            self.log = log
+            self.at = at
+        }
+    }
+
+    public var visibility: Visibility
+    /// The current document's log; nil while there is no page.
+    public var log: PageLog?
+    public var previous: Released?
+
+    public init(visibility: Visibility, log: PageLog?, previous: Released? = nil) {
+        self.visibility = visibility
+        self.log = log
+        self.previous = previous
+    }
+
+    /// The API's `page`: the current document's log after `since` (`PageLog.json`), `loaded`,
+    /// and `visibility`. `previous` (with `releasedAt`) is the released page's log, returned
+    /// until `since` names the current document (the caller has read past the release). While
+    /// released, `cursor` is the released page's, so a cursor loop carries on across the
+    /// release and the reload after it.
+    public func json(since: PageLog.Cursor? = nil) -> JSONValue {
+        var fields: [String: JSONValue] = log?.json(since: since).object ?? ["loaded": .bool(false)]
+        fields["visibility"] = .string(visibility.rawValue)
+        if let previous, since.map({ $0.document != log?.document }) ?? true {
+            let after = since.flatMap { $0.document == previous.log.document ? $0 : nil }
+            var old = previous.log.json(since: after).object ?? [:]
+            old["loaded"] = nil
+            old["releasedAt"] = .string(PageLog.isoFormatter.string(from: previous.at))
+            fields["previous"] = .object(old)
+            if log == nil { fields["cursor"] = .string(previous.log.cursor) }
+        }
+        return .object(fields)
+    }
+}
+
+/// Where a page's code is in the repo: a page log `source` or stack frame (`url:line:column`)
+/// read back to the file the page loaded, so the error list opens it as a code tile.
+public enum PageSource {
+    public struct Location: Equatable, Sendable {
+        public var url: URL
+        public var line: Int
+        public var column: Int?
+    }
+
+    /// The URL and line of a `source` (`http://localhost:8000/game.js:238:19`) or a WebKit
+    /// stack frame (`update@http://…/game.js:238:19`, `global code@…`, a bare URL); Chrome's
+    /// `at update (…:238:19)` reads too. Nil without a URL and line.
+    public static func location(_ text: String) -> Location? {
+        var rest = Substring(text.trimmingCharacters(in: .whitespaces))
+        if rest.hasSuffix(")"), let open = rest.lastIndex(of: "(") { rest = rest[rest.index(after: open)..<rest.index(before: rest.endIndex)] }
+        if let at = rest.range(of: "@", options: .backwards), !rest[..<at.lowerBound].contains("/") { rest = rest[at.upperBound...] }
+        guard let match = rest.wholeMatch(of: /(.+?):(\d+)(?::(\d+))?/), let line = Int(match.output.2), line > 0,
+              let url = URL(string: String(match.output.1)), url.scheme != nil else { return nil }
+        return Location(url: url, line: line, column: match.output.3.flatMap { Int($0) })
+    }
+
+    /// The existing file under the board root a page URL was served from: a `file:` URL's own
+    /// path; a web URL's path (query dropped; a directory's `index.html`; Vite's `/@fs/<absolute>`)
+    /// resolved like a terminal's ⌘-click reference (`TerminalReferences.resolve`): against
+    /// the board root, then by trailing path among its `listed` files (`/static/game.js` →
+    /// `public/static/game.js`). Only files inside `root`; nil when nothing resolves.
+    public static func file(for url: URL, root: String, isFile: (String) -> Bool = TerminalReferences.isFile,
+                            listed: FileIndex? = nil) -> String? {
+        func real(_ path: String) -> String { URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path }
+        let base = real(root)
+        func inside(_ path: String) -> String? {
+            let standard = URL(fileURLWithPath: path).standardizedFileURL.path
+            return real(standard).hasPrefix(base + "/") && isFile(standard) ? standard : nil
+        }
+        if url.isFileURL { return inside(url.path) }
+        guard url.scheme == "http" || url.scheme == "https" else { return nil }
+        var path = url.path(percentEncoded: false)
+        if path.hasPrefix("/@fs/") { return inside(String(path.dropFirst(4))) }
+        if path.isEmpty || path.hasSuffix("/") { path += "index.html" }
+        let relative = String(path.drop { $0 == "/" })
+        guard !relative.isEmpty, !relative.split(separator: "/").contains("..") else { return nil }
+        return TerminalReferences.resolve(relative, directories: [root], home: NSHomeDirectory(), isFile: isFile,
+                                          listed: listed.map { (root: root, files: $0) }, near: root).flatMap(inside)
+    }
+}
+
 /// The page-side recorder for `PageLog`: a script injected at document start into the page's
 /// own world (main frame), so it sees the page's console, errors and requests from the first
 /// line of the page on. It keeps bounded buffers and reports nothing but a changed error count

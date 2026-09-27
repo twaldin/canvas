@@ -70,7 +70,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
   A tile scaled up grows up or left, or moves nearby, rather than cover its neighbours.
 - ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; ⌘P again selects the query, Esc closes); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
-  In a terminal Esc belongs to the program: ⌘Esc (View › Leave Tile) leaves any tile.
+  In a terminal or a web page Esc belongs to the program or page: ⌘Esc (View › Leave Tile) leaves any tile.
 - Code tiles' hover, Go to Definition, Find References and Outline use the language's server (sourcekit-lsp, pyright-langserver, typescript-language-server, gopls, rust-analyzer), found through the login shell: `CANVAS_LSP_<LANGUAGE>` (e.g. `CANVAS_LSP_RUST`) if set, else PATH, else nvim's mason bin, `~/go/bin`, `rustup which rust-analyzer`; without one they answer by text search, labelled so.
 - A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.
 - Save as PNG…, Save as HTML… and Export Selection (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.

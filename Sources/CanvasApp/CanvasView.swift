@@ -367,8 +367,8 @@ final class CanvasView: NSScrollView {
                 self.recordNavigation(from: from, landing: self.board.objects[opened.id].flatMap(CodeAim.init))
             }
         }
-        // A page's code link: the tile already showing the lines is gone to, anything else is
-        // shown with the least pan.
+        // A page's code link (an HTML tile's, a browser page's error list): the tile already
+        // showing the lines is gone to, anything else is shown with the least pan.
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened, existing in
             self?.showOpenedCode(opened, existing: existing)
         }
@@ -384,6 +384,9 @@ final class CanvasView: NSScrollView {
         (content as? ChangesTile)?.onBranch = { [weak self] branch in
             guard let self, let object = self.board.objects[id] else { return }
             self.tiles[id]?.setBranch(branch, of: object)
+        }
+        (content as? BrowserTile)?.onOpenedCode = { [weak self] opened, existing in
+            self?.showOpenedCode(opened, existing: existing)
         }
         (content as? BrowserTile)?.onOpenedTile = { [weak self] opened in
             self?.reveal(opened)
@@ -1271,7 +1274,7 @@ final class CanvasView: NSScrollView {
         let count = selection.count
         let menu = NSMenu()
         if focusedTile == id {
-            // How to get out of a terminal, whose Esc belongs to its program (View ▸ Leave Tile).
+            // How to get out of a terminal or page, whose Esc belongs to its program (View ▸ Leave Tile).
             let leave = MenuAction.item("Leave Tile") { [weak self] in self?.leaveTile(id) }
             leave.keyEquivalent = "\u{1b}"
             leave.keyEquivalentModifierMask = .command
@@ -1301,6 +1304,7 @@ final class CanvasView: NSScrollView {
         }
         if count == 1, let browser = tiles[id]?.content as? BrowserTile {
             menu.addItem(MenuAction.item("Snapshot to Image") { [weak self] in self?.snapshotPage(id) })
+            menu.addItem(MenuAction.item("Open in Browser", enabled: browser.webAddress != nil) { [weak self] in self?.openPageInBrowser(id) })
             menu.addItem(MenuAction.item("Inspect Element", enabled: browser.canShowInspector) { [weak browser] in browser?.showInspector() })
         }
         menu.addItem(.separator())

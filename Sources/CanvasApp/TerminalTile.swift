@@ -48,10 +48,6 @@ final class TerminalTile: NSView, TileContent {
 
     // MARK: Launch
 
-    /// Variables inherited from the app's own environment that must not leak into tiles
-    /// (e.g. herdr/zmx state from the terminal that launched the app).
-    static let strippedPrefixes = ["HERDR_", "ZMX_", "CMUX_", "CANVAS_", "TERM_PROGRAM"]
-
     static func environment(tile: ObjectID, board: Board) -> [String: String] {
         var env = [
             "CANVAS_ENV": "1",
@@ -85,14 +81,13 @@ final class TerminalTile: NSView, TileContent {
     /// command when the session already exists, so it only runs for a new session.
     /// `keep`: the tile's own variables. `env -u` runs after Ghostty applied them, so an inherited
     /// variable of the same name (a dev instance launched with CANVAS_SOCKET set) must not unset them.
+    /// Everything else the app inherited is unset (`LoginSession.strippedForTile`): the shell starts
+    /// like a fresh login session and the user's startup files set their own variables.
     static func command(session: String, object: CanvasObject, board: Board, keep: Set<String>) -> String {
         let shell = AppPaths.userShell
         let start = initialCommand(object).map { [shell, "-l", "-c", "\($0); exec \(quote([shell])) -l"] } ?? [shell, "-l"]
         guard let zmx = AppPaths.zmx else { return quote(start) }
-        let strip = ProcessInfo.processInfo.environment.keys
-            .filter { key in !keep.contains(key) && strippedPrefixes.contains { key.hasPrefix($0) } }
-            .sorted()
-            .flatMap { ["-u", $0] }
+        let strip = LoginSession.strippedForTile(ProcessInfo.processInfo.environment, keep: keep).flatMap { ["-u", $0] }
         // `canvas.home` names the owning instance: board copies in another home (replicas, dev
         // instances) carry the same board and tile ids, so ids alone can't tell whose session it is.
         let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(homeLabel)"

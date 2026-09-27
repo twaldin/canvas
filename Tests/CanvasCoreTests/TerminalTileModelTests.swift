@@ -208,6 +208,22 @@ struct AgentResumeTests {
     }
 }
 
+struct LoginSessionTests {
+    @Test func aTileStartsLikeAFreshLoginSessionNotWithTheAppsLauncherEnvironment() {
+        // A dev instance launched from omp's bash tool: its non-interactive settings reached every
+        // tile (git commit used GIT_EDITOR=true, Claude Code refused to start under CLAUDECODE).
+        let inherited = [
+            "HOME": "/Users/u", "USER": "u", "SHELL": "/bin/zsh", "TMPDIR": "/var/folders/x/T/", "LANG": "en_US.UTF-8",
+            "SSH_AUTH_SOCK": "/private/tmp/agent", "XDG_CONFIG_HOME": "/tmp/xdg", "TERM": "dumb",
+            "PATH": "/opt/homebrew/bin:/usr/bin", "CANVAS_SOCKET": "/old.sock",
+            "CI": "true", "NO_COLOR": "1", "EDITOR": "true", "GIT_EDITOR": "true", "PAGER": "cat",
+            "CLAUDECODE": "1", "HERDR_PANE_ID": "p2", "npm_config_yes": "true", "GEMINI_API_KEY": "k",
+        ]
+        let stripped = LoginSession.strippedForTile(inherited, keep: ["PATH", "CANVAS_SOCKET", "CANVAS_TILE_ID"])
+        #expect(stripped == ["CI", "CLAUDECODE", "EDITOR", "GEMINI_API_KEY", "GIT_EDITOR", "HERDR_PANE_ID", "NO_COLOR", "PAGER", "npm_config_yes"])
+    }
+}
+
 struct GhosttyConfigTests {
     typealias Entry = GhosttyConfig.Entry
 

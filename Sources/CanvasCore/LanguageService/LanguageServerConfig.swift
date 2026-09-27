@@ -131,9 +131,6 @@ public final class LoginShell: @unchecked Sendable {
         return editor
     }
 
-    /// What a fresh login session starts with, before rc files run.
-    private static let sessionVariables = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"]
-
     private static func quote(_ word: String) -> String {
         "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
@@ -165,7 +162,7 @@ public final class LoginShell: @unchecked Sendable {
         defer { argv.forEach { free($0) } }
         var pid: pid_t = 0
         let inherited = ProcessInfo.processInfo.environment
-        let variables = Self.sessionVariables.compactMap { name in inherited[name].map { "\(name)=\($0)" } } + ["PATH=/usr/bin:/bin:/usr/sbin:/sbin"]
+        let variables = LoginSession.variables.sorted().compactMap { name in inherited[name].map { "\(name)=\($0)" } } + ["PATH=/usr/bin:/bin:/usr/sbin:/sbin"]
         let fresh: [UnsafeMutablePointer<CChar>?] = variables.map { strdup($0) } + [nil]
         defer { fresh.forEach { free($0) } }
         let spawned = freshEnvironment ? posix_spawn(&pid, shell, &actions, &attributes, argv, fresh) : posix_spawn(&pid, shell, &actions, &attributes, argv, environ)

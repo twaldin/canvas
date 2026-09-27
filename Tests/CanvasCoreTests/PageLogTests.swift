@@ -81,6 +81,8 @@ struct PageLogTests {
         let entry = try #require(try log().entries.last)
         #expect(entry.source?.hasPrefix("http://localhost:8000/static/cart.js:1:") == true, "the caller, not Canvas's hook: \(entry.source ?? "none")")
         #expect(entry.shortSource == "cart.js:1")
+        context.evaluateScript("console.warn('inline')", withSourceURL: URL(string: "http://localhost:8000/"))
+        #expect(try log().entries.last?.shortSource == "localhost:8000/:1", "a page's inline script is named by its page")
     }
 
     @Test func tellsTheTileTheErrorCountOncePerBurst() throws {
@@ -203,7 +205,7 @@ struct PageLogTests {
         let page = board.create(type: .browser, props: .object(["url": .string("http://localhost:8000/"), "title": .string("Shop")]))
         let entry = PageLogEntry(seq: 4, time: "2026-09-27T14:03:05.000Z", kind: .exception, level: "error", text: "TypeError: x is undefined",
                                  source: "http://localhost:8000/static/app.js:12:5",
-                                 stack: "hook@canvas-page-log.js:1:2\nrender@http://localhost:8000/static/app.js:12:5\nmain@http://localhost:8000/static/app.js:40:1")
+                                 stack: "hook@canvas-page-log.js:1:2\nrecord@user-script:3:132:47\nrender@http://localhost:8000/static/app.js:12:5\nmain@http://localhost:8000/static/app.js:40:1")
         let target = MentionTarget.console(object: page.id, url: "http://localhost:8000/", entry: entry)
         let decoded = try JSONDecoder().decode(MentionTarget.self, from: JSONEncoder().encode(target))
         #expect(decoded == target)
@@ -212,6 +214,6 @@ struct PageLogTests {
         let context = await board.drain().context
         #expect(context.contains("[1] page error · browser tile \(page.id) \"Shop\" · page http://localhost:8000/ · at "))
         #expect(context.contains("\n    TypeError: x is undefined\n    source: http://localhost:8000/static/app.js:12:5\n    stack:\n      render@http://localhost:8000/static/app.js:12:5\n      main@"))
-        #expect(!context.contains("canvas-page-log.js"), "Canvas's own frames stay out")
+        #expect(!context.contains("canvas-page-log.js") && !context.contains("user-script"), "Canvas's own frames stay out")
     }
 }

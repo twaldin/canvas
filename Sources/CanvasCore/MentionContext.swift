@@ -401,7 +401,7 @@ public enum MentionContext {
         lines.append(contentsOf: entry.text.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
         if let source = entry.source { lines.append("    source: \(source)") }
         if let stack = entry.stack {
-            let frames = stack.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.contains(PageCapture.scriptName) }
+            let frames = stack.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !PageCapture.isOwnFrame($0) }
             if !frames.isEmpty { lines.append("    stack:") }
             lines.append(contentsOf: frames.prefix(maxStackLines).map { "      \($0)" })
             if frames.count > maxStackLines { lines.append("      … \(frames.count - maxStackLines) more frames") }

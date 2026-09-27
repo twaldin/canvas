@@ -60,8 +60,9 @@ public struct PageLogEntry: Codable, Equatable, Sendable {
         guard parts.count >= 3, let line = Int(parts[parts.count - 2]), Int(parts[parts.count - 1]) != nil else { return PathLabel.short(source) }
         let file = parts.dropLast(2).joined(separator: ":")
         let path = URL(string: file)?.path ?? file
-        let name = path.split(separator: "/").last.map(String.init) ?? file
-        return "\(name.isEmpty ? file : name):\(line)"
+        // A page's own inline script: its URL without the scheme (`localhost:3000/:14`).
+        let name = path.split(separator: "/").last.map(String.init) ?? file.replacingOccurrences(of: #"^[a-z]+://"#, with: "", options: .regularExpression)
+        return "\(name):\(line)"
     }
 
     /// The time of day it happened (`14:03:05`), in the local time zone.
@@ -246,6 +247,11 @@ public enum PageCapture {
     public static let messageName = "canvasPageLog"
     /// The script's name in stack traces and the Web Inspector.
     public static let scriptName = "canvas-page-log.js"
+    /// A stack frame of this script (WebKit shows injected scripts as `user-script:<n>`).
+    public static func isOwnFrame(_ frame: String) -> Bool {
+        frame.contains(scriptName) || frame.hasPrefix("user-script:") || frame.contains("@user-script:")
+    }
+
     /// Returns the `PageLog` JSON as a string (evaluate in the page world).
     public static let readScript = "return globalThis.__canvasPageLog ? globalThis.__canvasPageLog.read() : null"
 
@@ -254,6 +260,7 @@ public enum PageCapture {
       if (Object.prototype.hasOwnProperty.call(globalThis, '__canvasPageLog')) return;
       const MAX_PROBLEMS = 200, MAX_OTHER = 200, MAX_TEXT = 1000, MAX_STACK = 4000;
       const OMP_ENTRIES = 500, OMP_RECORDS = 200, BODY_MAX = 65536;
+      // This script's own frames (JavaScriptCore honors its sourceURL; WebKit's user scripts show as `user-script:<n>`).
       const marker = 'canvas-page-log.js';
       const handlers = globalThis.webkit && globalThis.webkit.messageHandlers;
       const handler = handlers && handlers.canvasPageLog;
@@ -355,7 +362,8 @@ public enum PageCapture {
       const frameSource = (stack) => {
         if (typeof stack !== 'string') return undefined;
         for (const line of stack.split('\n')) {
-          if (!line || line.includes(marker)) continue;
+          // WebKit names injected scripts' frames `user-script:<n>` (this one, and never the page's).
+          if (!line || line.includes(marker) || /(^|@)user-script:/.test(line.trim())) continue;
           // WebKit: `name@url:line:column`; V8 style: `at name (url:line:column)`.
           let location = line.trim();
           const at = location.lastIndexOf('@');

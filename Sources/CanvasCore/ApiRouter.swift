@@ -154,6 +154,10 @@ public final class ApiRouter {
             case "layout.check": return Self.ok(id, try await check(params))
             case "object.create", "object.update":
                 let params = try await anchored(method, params)
+                if method == "object.create", let reused = try reusableChanges(params) {
+                    let update = try fitted("object.update", reused, size: try await fitSize("object.update", reused))
+                    return Self.ok(id, try dispatch("object.update", update).merging(.object(["reused": .bool(true)])))
+                }
                 return Self.ok(id, try dispatch(method, try fitted(method, params, size: try await fitSize(method, params))))
             default: break
             }
@@ -766,7 +770,34 @@ public final class ApiRouter {
         let result = try dispatch("object.get", p)
         guard let id = p["id"]?.string, let board = registry.board(containing: id), let object = board.objects[id], object.type == .changes else { return result }
         let set = await ChangeSet.load(root: board.root, spec: ChangesSpec(object.props), highlight: false)
-        return result.merging(.object(["changes": set.json]))
+        return result.merging(.object(["changes": set.json(viewed: object.props["viewed"])]))
+    }
+
+    /// An `object.create` of a changes tile an agent already made for the same `root`, `base`,
+    /// and `paths` (its own tile, on that board): the update that brings that tile the call's
+    /// other props, `frame`, and `size`, so the agent gets it back (`reused: true`) instead of
+    /// a duplicate beside the user's review. Nil for anything else.
+    func reusableChanges(_ p: JSONValue) throws -> JSONValue? {
+        guard p["type"]?.string == ObjectType.changes.rawValue, let props = p["props"], props.object != nil else { return nil }
+        let board = try board(p)
+        guard let caller = caller(p, on: board) else { return nil }
+        let spec = ChangesSpec(props)
+        let root = spec.directory(boardRoot: board.root).path
+        let existing = board.objects.values
+            .filter { $0.type == .changes && $0.createdBy == .agent(tile: caller) }
+            .filter { object in
+                let other = ChangesSpec(object.props)
+                return other.baseProp == spec.baseProp && other.paths == spec.paths && other.directory(boardRoot: board.root).path == root
+            }
+            .max { $0.z < $1.z }
+        guard let existing else { return nil }
+        var update: [String: JSONValue] = ["id": .string(existing.id), "caller": .string(caller)]
+        var given = props.object ?? [:]
+        for key in ["root", "base", "paths"] { given.removeValue(forKey: key) }
+        if !given.isEmpty { update["props"] = .object(given) }
+        if let frame = p["frame"] { update["frame"] = frame }
+        if let size = p["size"] { update["size"] = size }
+        return .object(update)
     }
 
     /// `object.create`/`object.update` params with a note's markdown anchored the way its tile

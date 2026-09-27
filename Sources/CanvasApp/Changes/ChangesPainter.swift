@@ -4,16 +4,57 @@ import CanvasCore
 /// A button drawn in a changes tile's file or hunk header.
 enum ChangesAction: String {
     case stage = "Stage"
-    case revert = "Revert"
+    case revert = "Discard"
+
+    /// What `props.reviewed` calls it.
+    var entryName: String { self == .stage ? "stage" : "revert" }
+
+    var tooltip: String {
+        switch self {
+        case .stage: "Mark as ready to commit (git add)"
+        case .revert: "Discard this change from your files"
+        }
+    }
 }
 
-/// Laid-out diff lines on screen, keyed by what they show; each draw keeps only what it drew.
+/// What a point in a changes tile's body is over.
+enum ChangesHit: Equatable {
+    case button(ChangesAction, file: Int, hunk: Int?)
+    case viewed(file: Int)
+    case file(Int)
+    case list
+    case listed(Int)
+    case hunk(file: Int, hunk: Int)
+    case line(file: Int, hunk: Int, line: Int)
+}
+
+extension CodeTheme {
+    /// Syntax colors for diff lines: red and green mean removed and added there, so strings,
+    /// keywords, and numbers take other hues.
+    static func diffColor(_ style: SyntaxStyle) -> NSColor {
+        switch style {
+        case .keyword: .systemPurple
+        case .string: .systemBlue
+        case .number, .builtin: .systemIndigo
+        case .type, .tag: .systemTeal
+        case .function: .systemCyan
+        case .property: .systemBrown
+        case .comment, .punctuation: .secondaryLabelColor
+        case .variable: .labelColor
+        }
+    }
+}
+
+/// Laid-out diff rows on screen, keyed by what they show; each draw keeps only what it drew.
 @MainActor
 final class ChangesLineCache {
     struct Key: Hashable {
         var file: Int
         var side: DiffSide
         var line: Int
+        /// Which visual row of a wrapped line, at which wrap width.
+        var part: Int
+        var columns: Int?
     }
 
     private var lines: [Key: CTLine] = [:]
@@ -40,33 +81,48 @@ final class ChangesLineCache {
     }
 }
 
-/// Draws a changes tile's body in a flipped context: the header strip (base, counts, a message,
-/// the keys), then the rows scrolled by `scroll`: file headers with Stage/Revert, hunk headers
-/// with theirs, and unified-diff lines highlighted like code tiles (`CodeTheme`, `SyntaxLines`),
-/// clipped at the tile's width. The live view, cards, and `view.render` all draw through this.
+/// Draws a changes tile's body in a flipped context: the header strip (summary, keys, the filter
+/// box), then the rows scrolled by `scroll`: the file list, file headers with Viewed, Stage and
+/// Discard, hunk headers with theirs, and unified-diff lines highlighted with a diff palette
+/// (`CodeTheme.diffColor`), soft-wrapped at the tile's width; the header of the file being read
+/// stays pinned at the top. The live view, cards, and `view.render` all draw through this.
 @MainActor
 struct ChangesPainter {
     let set: ChangeSet
     let rows: ChangeRows
     var collapsed: Set<String> = []
+    /// `props.viewed`: files marked Viewed (checked while their diff is the one marked).
+    var viewed: JSONValue?
     /// The hunk j/k, Return, s and r act on.
     var current: (file: Int, hunk: Int)?
+    /// Lines picked in one hunk (indices into its `lines`): s/r and its buttons act on them.
+    var selection: (file: Int, hunk: Int, lines: Set<Int>)?
     /// A refusal or failure, shown in the header in place of the summary.
     var message: String?
     /// The tile holds the keyboard: the header says which keys work.
     var focused = false
+    /// The filter's text; `drawsFilter` draws its box (cards and renders, where no field is).
+    var filter = ""
+    var drawsFilter = true
+    /// Each file as the rows name it (`name(_:)`), worked out once.
+    let names: [String]
 
-    init(set: ChangeSet, collapsed: Set<String>) {
+    /// `laidOut`: rows and names worked out for the same set, folds, width, filter, and list
+    /// (the live tile keeps them while only the current hunk or selection changes).
+    init(set: ChangeSet, collapsed: Set<String>, width: CGFloat, filter: String = "", listOpen: Bool = true, laidOut: (rows: ChangeRows, names: [String])? = nil) {
         self.set = set
         self.collapsed = collapsed
-        rows = ChangeRows(set, collapsed: collapsed)
+        self.filter = filter
+        names = laidOut?.names ?? set.files.map(Self.name)
+        rows = laidOut?.rows ?? ChangeRows(set, collapsed: collapsed, columns: ChangesMetrics.textColumns(width: width, digits: ChangesMetrics.digits(set)), filter: filter, listOpen: listOpen)
     }
 
     var digits: Int { ChangesMetrics.digits(set) }
     var gutterWidth: CGFloat { ChangesMetrics.gutterWidth(digits: digits) }
     var contentHeight: CGFloat { ChangesMetrics.headerHeight + rows.height + ChangesMetrics.bottomPadding }
 
-    static let keysHint = "j/k hunks · ↩ open · s stage · r revert"
+    static let keysHint = "j/k hunks · J/K or ]/[ files · ↩ open · s stage · r discard · esc done"
+    static let idleHint = "↩ or click to use keys"
 
     // MARK: Geometry
 
@@ -75,13 +131,33 @@ struct ChangesPainter {
         CGRect(x: 0, y: ChangesMetrics.headerHeight + rows.tops[index] - scroll, width: width, height: rows.height(ofRow: index))
     }
 
-    /// The row under a body point, nil over the header.
-    func row(at point: CGPoint, scroll: CGFloat) -> Int? {
+    /// The pinned header of the file being read, when its own has scrolled away.
+    func stickyRect(width: CGFloat, scroll: CGFloat) -> (file: Int, rect: CGRect)? {
+        guard let sticky = rows.stickyFile(scroll: scroll) else { return nil }
+        return (sticky.file, CGRect(x: 0, y: ChangesMetrics.headerHeight + sticky.offset, width: width, height: ChangesMetrics.fileHeight))
+    }
+
+    /// The filter box in the header strip.
+    static func filterRect(width: CGFloat) -> CGRect {
+        let w = min(ChangesMetrics.filterWidth, max(80, width / 3))
+        return CGRect(x: width - ChangesMetrics.trailingPadding + 4 - w, y: 3, width: w, height: ChangesMetrics.headerHeight - 6)
+    }
+
+    /// The row under a body point (the pinned file header over the rows it covers), nil over
+    /// the header strip.
+    func row(at point: CGPoint, width: CGFloat, scroll: CGFloat) -> Int? {
         guard point.y >= ChangesMetrics.headerHeight else { return nil }
+        if let sticky = stickyRect(width: width, scroll: scroll), sticky.rect.contains(point) { return rows.index(ofFile: sticky.file) }
         return rows.index(atY: point.y - ChangesMetrics.headerHeight + scroll)
     }
 
-    /// Stage and Revert in a file or hunk header row, right-aligned.
+    /// The rect a row is drawn in: the pinned one for a file header pinned at the top.
+    func drawnRect(ofRow index: Int, width: CGFloat, scroll: CGFloat) -> CGRect {
+        if case .file(let file) = rows.rows[index], let sticky = stickyRect(width: width, scroll: scroll), sticky.file == file { return sticky.rect }
+        return rect(ofRow: index, width: width, scroll: scroll)
+    }
+
+    /// Stage and Discard in a file or hunk header row, right-aligned.
     func buttons(inRow rect: CGRect) -> [(ChangesAction, CGRect)] {
         let width = ChangesMetrics.buttonWidth, gap = ChangesMetrics.buttonGap
         let height = min(18, rect.height - 6)
@@ -91,12 +167,61 @@ struct ChangesPainter {
         return [(.stage, stage), (.revert, revert)]
     }
 
-    func button(at point: CGPoint, row index: Int, width: CGFloat, scroll: CGFloat) -> ChangesAction? {
+    /// The file header's Viewed check, left of its buttons.
+    func viewedRect(inRow rect: CGRect) -> CGRect {
+        let stage = buttons(inRow: rect)[0].1
+        return CGRect(x: stage.minX - 10 - ChangesMetrics.viewedWidth, y: stage.minY, width: ChangesMetrics.viewedWidth, height: stage.height)
+    }
+
+    func hit(at point: CGPoint, width: CGFloat, scroll: CGFloat) -> ChangesHit? {
+        guard let index = row(at: point, width: width, scroll: scroll) else { return nil }
+        let rect = drawnRect(ofRow: index, width: width, scroll: scroll)
+        func button(_ file: Int, _ hunk: Int?) -> ChangesAction? {
+            buttons(inRow: rect).first { $0.1.insetBy(dx: -2, dy: -2).contains(point) }?.0
+        }
         switch rows.rows[index] {
-        case .file, .hunk:
-            return buttons(inRow: rect(ofRow: index, width: width, scroll: scroll)).first { $0.1.insetBy(dx: -2, dy: -2).contains(point) }?.0
-        default:
-            return nil
+        case .list: return .list
+        case .listed(let file): return .listed(file)
+        case .file(let file):
+            guard set.files[file].notice == nil else { return .file(file) }
+            if let action = button(file, nil) { return .button(action, file: file, hunk: nil) }
+            if viewedRect(inRow: rect).insetBy(dx: -2, dy: -2).contains(point) { return .viewed(file: file) }
+            return .file(file)
+        case .hunk(let file, let hunk):
+            if let action = button(file, hunk) { return .button(action, file: file, hunk: hunk) }
+            return .hunk(file: file, hunk: hunk)
+        case .line(let file, let hunk, let line): return .line(file: file, hunk: hunk, line: line)
+        case .notice(let file): return .file(file)
+        case .message, .omitted: return nil
+        }
+    }
+
+    /// What the header, a button, a check, or a hunk header says when hovered.
+    func tooltip(at point: CGPoint, width: CGFloat, scroll: CGFloat) -> String? {
+        if point.y < ChangesMetrics.headerHeight {
+            if Self.filterRect(width: width).contains(point) { return "Filter the files by path (/ from the keyboard)" }
+            return [set.baseDescription, ChangesTile.tooltip].compactMap { $0 }.joined(separator: "\n")
+        }
+        switch hit(at: point, width: width, scroll: scroll) {
+        case .button(let action, _, let hunk)?:
+            if hunk != nil, let selection, selection.hunk == hunk { return action.tooltip + " (the selected lines)" }
+            return action.tooltip + (hunk == nil ? " (the whole file)" : "")
+        case .viewed?: return "Viewed: fold the file until its changes change"
+        case .hunk(let file, let hunk)?:
+            let target = set.files[file].hunks[hunk]
+            let state: String
+            switch target.status {
+            case .unstaged: state = "not staged"
+            case .partial: state = "partly staged: the index holds an earlier version of some of it"
+            case .staged: state = "staged"
+            case .committed: state = "committed since the base"
+            }
+            return "\(target.header) · +\(target.added) −\(target.removed) · \(state)"
+        case .file(let file)?: return set.files[file].oldBoardPath.map { "\($0) → \(set.files[file].boardPath)" } ?? set.files[file].boardPath
+        case .list?: return "Click to fold or unfold the file list"
+        case .listed(let file)?: return "Jump to \(set.files[file].boardPath)"
+        case .line?: return "Click to open in a code tile · drag, ⇧-click, or ⌘-click to select lines (an edited line brings its old version), then Stage or Discard"
+        case nil: return nil
         }
     }
 
@@ -108,10 +233,16 @@ struct ChangesPainter {
         NSColor.textBackgroundColor.setFill()
         bounds.fill()
         context.saveGState()
-        context.clip(to: CGRect(x: 0, y: ChangesMetrics.headerHeight, width: size.width, height: max(0, size.height - ChangesMetrics.headerHeight)))
+        let body = CGRect(x: 0, y: ChangesMetrics.headerHeight, width: size.width, height: max(0, size.height - ChangesMetrics.headerHeight))
+        context.clip(to: body)
         let visible = rows.visible(from: scroll, to: scroll + size.height - ChangesMetrics.headerHeight)
         for index in visible {
             drawRow(index, in: context, rect: rect(ofRow: index, width: size.width, scroll: scroll), cache: cache)
+        }
+        if let sticky = stickyRect(width: size.width, scroll: scroll) {
+            drawFile(sticky.file, rect: sticky.rect)
+            NSColor.separatorColor.setFill()
+            CGRect(x: 0, y: sticky.rect.maxY - 0.5, width: size.width, height: 0.5).fill()
         }
         context.restoreGState()
         cache?.commit()
@@ -126,31 +257,49 @@ struct ChangesPainter {
         NSColor.separatorColor.setFill()
         CGRect(x: 0, y: strip.maxY - 0.5, width: width, height: 0.5).fill()
         let small = NSFont.systemFont(ofSize: 11)
-        let hint = focused ? Self.keysHint : "click in to use keys"
+        let filterBox = Self.filterRect(width: width)
+        if drawsFilter {
+            let path = NSBezierPath(roundedRect: filterBox, xRadius: 5, yRadius: 5)
+            NSColor.textBackgroundColor.setFill()
+            path.fill()
+            NSColor.separatorColor.setStroke()
+            path.lineWidth = 0.5
+            path.stroke()
+            let text = filter.isEmpty ? "Filter files" : filter
+            drawText(text, at: CGPoint(x: filterBox.minX + 7, y: filterBox.minY), height: filterBox.height, width: filterBox.width - 14,
+                     attributes: [.font: small, .foregroundColor: filter.isEmpty ? NSColor.placeholderTextColor : NSColor.labelColor])
+        }
+        let right = filterBox.minX - 10
+        let hint = focused ? Self.keysHint : Self.idleHint
         let hintAttributes: [NSAttributedString.Key: Any] = [.font: small, .foregroundColor: focused ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor]
         let hintSize = (hint as NSString).size(withAttributes: hintAttributes)
-        let showsHint = width > hintSize.width + 260
+        let showsHint = right > hintSize.width + 260
         if showsHint {
-            (hint as NSString).draw(at: CGPoint(x: width - ChangesMetrics.trailingPadding - hintSize.width, y: (strip.height - hintSize.height) / 2), withAttributes: hintAttributes)
+            (hint as NSString).draw(at: CGPoint(x: right - hintSize.width, y: (strip.height - hintSize.height) / 2), withAttributes: hintAttributes)
         }
         let text: String
         let color: NSColor
         if let message {
             text = message
             color = .systemOrange
+        } else if let selection, set.files.indices.contains(selection.file) {
+            text = "\(selection.lines.count) line\(selection.lines.count == 1 ? "" : "s") selected · s stages, r discards just those"
+            color = .controlAccentColor
         } else {
             text = set.summary
             color = .secondaryLabelColor
         }
-        let available = width - 12 - (showsHint ? hintSize.width + 24 : ChangesMetrics.trailingPadding)
+        let available = (showsHint ? right - hintSize.width - 14 : right) - 10
         drawText(text, at: CGPoint(x: 10, y: 0), height: strip.height, width: available, attributes: [.font: small, .foregroundColor: color])
     }
 
     private func drawRow(_ index: Int, in context: CGContext, rect: CGRect, cache: ChangesLineCache?) {
         switch rows.rows[index] {
+        case .list(let open): drawList(open: open, rect: rect)
+        case .listed(let file): drawListed(file, rect: rect)
         case .file(let file): drawFile(file, rect: rect)
         case .hunk(let file, let hunk): drawHunk(file: file, hunk: hunk, rect: rect)
-        case .line(let file, let hunk, let line): drawLine(file: file, hunk: hunk, line: line, rect: rect, context: context, cache: cache)
+        case .line(let file, let hunk, let line): drawLine(file: file, hunk: hunk, line: line, wrap: rows.wraps[index], rect: rect, context: context, cache: cache)
         case .notice(let file):
             drawText(set.files[file].notice ?? "", at: CGPoint(x: gutterWidth, y: rect.minY), height: rect.height, width: rect.width - gutterWidth,
                      attributes: [.font: NSFont.systemFont(ofSize: 11).withTraits(.italic), .foregroundColor: NSColor.secondaryLabelColor])
@@ -162,6 +311,34 @@ struct ChangesPainter {
             drawText("… \(count) more changed file\(count == 1 ? "" : "s") (limit \(ChangeSet.maxFiles); narrow it with paths)", at: CGPoint(x: 12, y: rect.minY), height: rect.height,
                      width: rect.width - 24, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
         }
+    }
+
+    private func drawList(open: Bool, rect: CGRect) {
+        NSColor.windowBackgroundColor.withAlphaComponent(0.6).setFill()
+        rect.fill()
+        let font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let count = rows.shown.count == set.files.count ? "\(set.files.count) files" : "\(rows.shown.count) of \(set.files.count) files"
+        let viewedCount = set.files.filter { $0.isViewed(in: viewed) }.count
+        let text = "\(open ? "▾" : "▸")  \(count)" + (viewedCount > 0 ? " · \(viewedCount) viewed" : "")
+        drawText(text, at: CGPoint(x: 10, y: rect.minY), height: rect.height, width: rect.width - 20, attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor])
+    }
+
+    private func drawListed(_ index: Int, rect: CGRect) {
+        let file = set.files[index]
+        let small = NSFont.systemFont(ofSize: 11)
+        let isViewed = file.isViewed(in: viewed)
+        var x: CGFloat = 26
+        let (letter, color) = Self.badge(file.status)
+        x += drawText(letter, at: CGPoint(x: x, y: rect.minY), height: rect.height, width: 14,
+                      attributes: [.font: NSFont.monospacedSystemFont(ofSize: 10, weight: .bold), .foregroundColor: color]) + 6
+        let counts = NSMutableAttributedString(string: "+\(file.added)", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular), .foregroundColor: CodeTheme.added])
+        counts.append(NSAttributedString(string: " −\(file.removed)", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular), .foregroundColor: CodeTheme.deleted]))
+        let countWidth = counts.size().width
+        let check = isViewed ? "✓ " : ""
+        let name = check + names[index]
+        let drawn = drawText(name, at: CGPoint(x: x, y: rect.minY), height: rect.height, width: max(0, rect.width - x - countWidth - 24),
+                             attributes: [.font: small, .foregroundColor: isViewed ? NSColor.secondaryLabelColor : NSColor.labelColor])
+        counts.draw(at: CGPoint(x: x + drawn + 10, y: rect.minY + (rect.height - counts.size().height) / 2))
     }
 
     private func drawFile(_ index: Int, rect: CGRect) {
@@ -183,11 +360,12 @@ struct ChangesPainter {
         (letter as NSString).draw(at: CGPoint(x: badge.midX - letterSize.width / 2, y: badge.midY - letterSize.height / 2), withAttributes: badgeAttributes)
         x = badge.maxX + 8
         let buttons = buttons(inRow: rect)
-        let right = (buttons.first?.1.minX ?? rect.maxX) - 10
+        let actionable = file.notice == nil
+        let right = (actionable ? viewedRect(inRow: rect).minX : rect.maxX) - 10
         let counts = "+\(file.added) −\(file.removed)"
         let countFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         let countWidth = (counts as NSString).size(withAttributes: [.font: countFont]).width
-        let name = file.oldBoardPath.map { "\($0) → \(file.boardPath)" } ?? file.boardPath
+        let name = names[index]
         let nameWidth = drawText(name, at: CGPoint(x: x, y: rect.minY), height: rect.height, width: max(0, right - x - countWidth - 12),
                                  attributes: [.font: font, .foregroundColor: NSColor.labelColor])
         x += nameWidth + 10
@@ -195,43 +373,79 @@ struct ChangesPainter {
         countText.append(NSAttributedString(string: " −\(file.removed)", attributes: [.font: countFont, .foregroundColor: CodeTheme.deleted]))
         if x + countWidth < right { countText.draw(at: CGPoint(x: x, y: rect.minY + (rect.height - countText.size().height) / 2)) }
         // Binary, oversized, and mode-only files have no lines to patch.
-        guard file.notice == nil else { return }
-        let allStaged = !file.hunks.isEmpty && file.hunks.allSatisfy { $0.status != .unstaged }
-        drawButtons(buttons, stageEnabled: !allStaged)
+        guard actionable else { return }
+        drawViewed(file.isViewed(in: viewed), in: viewedRect(inRow: rect))
+        let stageable = file.hunks.isEmpty || file.hunks.contains { $0.status.stageable }
+        drawButtons(buttons, stageEnabled: stageable)
+    }
+
+    private func drawViewed(_ checked: Bool, in frame: CGRect) {
+        let box = CGRect(x: frame.minX, y: frame.midY - 6.5, width: 13, height: 13)
+        let path = NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3)
+        (checked ? NSColor.controlAccentColor : NSColor.controlBackgroundColor).setFill()
+        path.fill()
+        (checked ? NSColor.controlAccentColor : NSColor.secondaryLabelColor).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        if checked {
+            let mark = NSBezierPath()
+            mark.move(to: CGPoint(x: box.minX + 3, y: box.midY))
+            mark.line(to: CGPoint(x: box.minX + 5.5, y: box.maxY - 3))
+            mark.line(to: CGPoint(x: box.maxX - 2.5, y: box.minY + 3))
+            mark.lineWidth = 1.8
+            NSColor.white.setStroke()
+            mark.stroke()
+        }
+        drawText("Viewed", at: CGPoint(x: box.maxX + 5, y: frame.minY), height: frame.height, width: frame.width - 18,
+                 attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: checked ? NSColor.labelColor : NSColor.secondaryLabelColor])
     }
 
     private func drawHunk(file: Int, hunk: Int, rect: CGRect) {
         let changed = set.files[file], target = changed.hunks[hunk]
         let isCurrent = current.map { $0 == (file, hunk) } ?? false
-        (isCurrent ? NSColor.controlAccentColor.withAlphaComponent(0.16) : NSColor.systemBlue.withAlphaComponent(0.06)).setFill()
+        (isCurrent ? NSColor.controlAccentColor.withAlphaComponent(0.22) : NSColor.systemBlue.withAlphaComponent(0.06)).setFill()
         rect.fill()
-        if isCurrent { drawCurrentBar(file: file, hunk: hunk, from: rect) }
-        let mono = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        var text = target.header
+        if isCurrent { drawCurrentBar(rect) }
+        var text = target.label
         let side: DiffSide = target.mappings.allSatisfy(\.modified.isEmpty) ? .old : .new
         let line = side == .old ? target.mappings.first?.original.lowerBound ?? 1 : target.modified.lowerBound
-        if let symbol = changed.symbol(line: line, side: side) { text += " \(symbol)" }
+        if let symbol = changed.symbol(line: line, side: side) { text += " · \(symbol)" }
         let buttons = buttons(inRow: rect)
         var right = (buttons.first?.1.minX ?? rect.maxX) - 10
-        if target.status != .unstaged {
-            let label = target.status.rawValue
-            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: target.status == .staged ? CodeTheme.added : NSColor.secondaryLabelColor]
-            let size = (label as NSString).size(withAttributes: attributes)
-            let pill = CGRect(x: right - size.width - 10, y: rect.midY - 8, width: size.width + 10, height: 16)
-            (target.status == .staged ? CodeTheme.added : NSColor.secondaryLabelColor).withAlphaComponent(0.14).setFill()
-            NSBezierPath(roundedRect: pill, xRadius: 8, yRadius: 8).fill()
-            (label as NSString).draw(at: CGPoint(x: pill.minX + 5, y: pill.midY - size.height / 2), withAttributes: attributes)
-            right = pill.minX - 8
+        if let pill = Self.pill(target.status) {
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: pill.color]
+            let size = (pill.text as NSString).size(withAttributes: attributes)
+            let frame = CGRect(x: right - size.width - 10, y: rect.midY - 8, width: size.width + 10, height: 16)
+            pill.color.withAlphaComponent(0.14).setFill()
+            NSBezierPath(roundedRect: frame, xRadius: 8, yRadius: 8).fill()
+            (pill.text as NSString).draw(at: CGPoint(x: frame.minX + 5, y: frame.midY - size.height / 2), withAttributes: attributes)
+            right = frame.minX - 8
         }
-        drawText(text, at: CGPoint(x: 10, y: rect.minY), height: rect.height, width: max(0, right - 10), attributes: [.font: mono, .foregroundColor: NSColor.secondaryLabelColor])
-        drawButtons(buttons, stageEnabled: target.status == .unstaged)
+        if let selection, selection.file == file, selection.hunk == hunk {
+            let note = "\(selection.lines.count) selected"
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.controlAccentColor]
+            let size = (note as NSString).size(withAttributes: attributes)
+            (note as NSString).draw(at: CGPoint(x: right - size.width, y: rect.midY - size.height / 2), withAttributes: attributes)
+            right -= size.width + 8
+        }
+        drawText(text, at: CGPoint(x: 12, y: rect.minY), height: rect.height, width: max(0, right - 12),
+                 attributes: [.font: NSFont.systemFont(ofSize: 11, weight: isCurrent ? .semibold : .regular), .foregroundColor: isCurrent ? NSColor.labelColor : NSColor.secondaryLabelColor])
+        drawButtons(buttons, stageEnabled: target.status.stageable)
     }
 
-    /// The current hunk's accent bar, down its header and lines.
-    private func drawCurrentBar(file: Int, hunk: Int, from rect: CGRect) {
-        let lines = CGFloat(set.files[file].hunks[hunk].lines.count)
+    static func pill(_ status: HunkStatus) -> (text: String, color: NSColor)? {
+        switch status {
+        case .unstaged: nil
+        case .partial: ("partly staged", .systemOrange)
+        case .staged: ("staged", CodeTheme.added)
+        case .committed: ("committed", .secondaryLabelColor)
+        }
+    }
+
+    /// The current hunk's marker: a bold accent bar down its left edge.
+    private func drawCurrentBar(_ rect: CGRect) {
         NSColor.controlAccentColor.setFill()
-        CGRect(x: 0, y: rect.minY, width: 3, height: rect.height + lines * ChangesMetrics.lineHeight).fill()
+        CGRect(x: 0, y: rect.minY, width: 5, height: rect.height).fill()
     }
 
     private func drawButtons(_ buttons: [(ChangesAction, CGRect)], stageEnabled: Bool) {
@@ -250,7 +464,7 @@ struct ChangesPainter {
         }
     }
 
-    private func drawLine(file: Int, hunk: Int, line: Int, rect: CGRect, context: CGContext, cache: ChangesLineCache?) {
+    private func drawLine(file: Int, hunk: Int, line: Int, wrap: ChangeRows.Wrap?, rect: CGRect, context: CGContext, cache: ChangesLineCache?) {
         let changed = set.files[file]
         let row = changed.hunks[hunk].lines[line]
         switch row.kind {
@@ -262,9 +476,14 @@ struct ChangesPainter {
             rect.fill()
         case .context: break
         }
+        if let selection, selection.file == file, selection.hunk == hunk, selection.lines.contains(line) {
+            NSColor.selectedTextBackgroundColor.withAlphaComponent(0.55).setFill()
+            rect.fill()
+        }
         if let current, current == (file, hunk) {
-            NSColor.controlAccentColor.setFill()
-            CGRect(x: 0, y: rect.minY, width: 3, height: rect.height).fill()
+            NSColor.controlAccentColor.withAlphaComponent(0.05).setFill()
+            rect.fill()
+            drawCurrentBar(rect)
         }
         let advance = CodeMetrics.charAdvance
         let columns = CGFloat(digits) * advance
@@ -279,33 +498,54 @@ struct ChangesPainter {
             CTLineDraw(CTLineCreateWithAttributedString(NSAttributedString(string: label, attributes: numbers)), context)
         }
         let sign = row.kind == .added ? "+" : row.kind == .removed ? "−" : ""
+        let signX = newRight + ChangesMetrics.numberGap / 2 + 3
         if !sign.isEmpty {
             let color = row.kind == .added ? CodeTheme.added : CodeTheme.deleted
-            context.textPosition = CGPoint(x: newRight + ChangesMetrics.numberGap / 2 + 3, y: rect.minY + CodeMetrics.baseline)
+            context.textPosition = CGPoint(x: signX, y: rect.minY + CodeMetrics.baseline)
             CTLineDraw(CTLineCreateWithAttributedString(NSAttributedString(string: sign, attributes: [.font: CodeTheme.font, .foregroundColor: color.cgColor])), context)
         }
         let side: DiffSide = row.kind == .removed ? .old : .new
         let text = side == .old ? changed.old : changed.new
         if let number = side == .old ? row.old : row.new, number >= 1, number <= text.lineCount {
-            let laid = cache?.line(.init(file: file, side: side, line: number)) { makeLine(changed, side: side, line: number) } ?? makeLine(changed, side: side, line: number)
-            context.saveGState()
-            context.clip(to: CGRect(x: gutterWidth, y: rect.minY, width: max(0, rect.width - gutterWidth), height: rect.height))
-            context.textPosition = CGPoint(x: gutterWidth, y: rect.minY + CodeMetrics.baseline)
-            CTLineDraw(laid, context)
-            context.restoreGState()
+            let whole = text.line(number)
+            let length = whole.utf16.count
+            let starts = [0] + (wrap?.breaks ?? [])
+            for (part, start) in starts.enumerated() {
+                let end = part + 1 < starts.count ? starts[part + 1] : length
+                let top = rect.minY + CGFloat(part) * ChangesMetrics.lineHeight
+                let x = gutterWidth + (part > 0 ? CGFloat(wrap?.indent ?? 0) * advance : 0)
+                if part > 0 {
+                    let hook = CTLineCreateWithAttributedString(NSAttributedString(string: "↪", attributes: [.font: CodeTheme.font, .foregroundColor: NSColor.quaternaryLabelColor.cgColor]))
+                    context.textPosition = CGPoint(x: signX - 2, y: top + CodeMetrics.baseline)
+                    CTLineDraw(hook, context)
+                }
+                let key = ChangesLineCache.Key(file: file, side: side, line: number, part: part, columns: wrap == nil ? nil : rows.columns)
+                let make = { makeLine(changed, side: side, line: number, whole: whole, start: start, end: end) }
+                let laid = cache?.line(key, make: make) ?? make()
+                context.saveGState()
+                context.clip(to: CGRect(x: gutterWidth, y: top, width: max(0, rect.width - gutterWidth), height: ChangesMetrics.lineHeight))
+                context.textPosition = CGPoint(x: x, y: top + CodeMetrics.baseline)
+                CTLineDraw(laid, context)
+                context.restoreGState()
+            }
         }
         context.restoreGState()
     }
 
-    /// One side's line, tabs expanded, highlighted by its syntax runs.
-    private func makeLine(_ file: ChangedFile, side: DiffSide, line: Int) -> CTLine {
-        let text = side == .old ? file.old : file.new
-        let row = CodeRowText(line: text.line(line), start: 0, startColumn: 0)
+    /// One visual row of a side's line (UTF-16 `start..<end` of it), tabs expanded against the
+    /// whole line, highlighted by its syntax runs.
+    private func makeLine(_ file: ChangedFile, side: DiffSide, line: Int, whole: String, start: Int, end: Int) -> CTLine {
+        let units = Array(whole.utf16)
+        let slice = String(utf16CodeUnits: Array(units[start..<end]), count: end - start)
+        let startColumn = start > 0 && units[..<end].contains(0x09) ? CodeMetrics.columns(units: units[..<start]) : 0
+        let row = CodeRowText(line: slice, start: start, startColumn: startColumn)
         let string = NSMutableAttributedString(string: row.display, attributes: [.font: CodeTheme.font, .foregroundColor: NSColor.labelColor.cgColor])
         for run in (side == .old ? file.oldSyntax : file.newSyntax).runs(line: line) {
-            let from = row.display(ofOffset: Int(run.start)), to = row.display(ofOffset: Int(run.end))
+            let lower = max(Int(run.start), start), upper = min(Int(run.end), end)
+            guard lower < upper else { continue }
+            let from = row.display(ofOffset: lower), to = row.display(ofOffset: upper)
             guard from < to else { continue }
-            string.addAttribute(.foregroundColor, value: CodeTheme.color(run.style).cgColor, range: NSRange(location: from, length: to - from))
+            string.addAttribute(.foregroundColor, value: CodeTheme.diffColor(run.style).cgColor, range: NSRange(location: from, length: to - from))
         }
         return CTLineCreateWithAttributedString(string)
     }
@@ -334,6 +574,13 @@ struct ChangesPainter {
         (text as NSString).draw(with: CGRect(x: origin.x, y: origin.y + (height - size.height) / 2, width: drawn + 1, height: size.height),
                                 options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: attributes)
         return drawn
+    }
+
+    /// A file as its header and the list name it: short for another worktree's absolute
+    /// paths (`PathLabel`), `old → new` for a rename.
+    static func name(_ file: ChangedFile) -> String {
+        let path = PathLabel.short(file.boardPath)
+        return file.oldBoardPath.map { "\(PathLabel.short($0)) → \(path)" } ?? path
     }
 
     static func badge(_ status: ChangeStatus) -> (String, NSColor) {

@@ -15,7 +15,7 @@ public enum MentionContext {
 
     public static func label(for target: MentionTarget, on board: Board) -> String {
         switch target {
-        case .code(_, let path, let lines, let side, let symbol, _):
+        case .code(_, let path, let lines, let side, let symbol, _, _):
             let range = lines.start == lines.end ? "\(lines.start)" : "\(lines.start)-\(lines.end)"
             let file = PathLabel.short(path)
             let location = side == DiffSide.old.rawValue ? "\(file):\(range) (old)" : "\(file):\(range)"
@@ -44,9 +44,10 @@ public enum MentionContext {
         let edited = mention.edited ? " (edited)" : ""
         var lines: [String] = []
         switch mention.target {
-        case .code(let object, let path, let range, let side, let symbol, let commit):
+        case .code(let object, let path, let range, let side, let symbol, let commit, let diff):
             let symbolText = symbol.map { " (symbol \($0))" } ?? ""
-            lines.append("[\(index)] code \(path):\(range.start)-\(range.end)\(symbolText) · tile \(object)\(provenance(of: object, side: side, commit: commit, on: board))\(edited)")
+            let diffText = diff.map { " · \($0)" } ?? ""
+            lines.append("[\(index)] code \(path):\(range.start)-\(range.end)\(symbolText) · tile \(object)\(provenance(of: object, side: side, commit: commit, explicit: diff != nil, on: board))\(diffText)\(edited)")
             let url = board.absoluteURL(path)
             if let commit, side != DiffSide.new.rawValue {
                 // The mention names its commit, so the excerpt never depends on what the tile
@@ -172,8 +173,9 @@ public enum MentionContext {
 
     /// Where the lines come from, from the mention alone: ` · diff vs merge-base 1a2b3c4` (plus
     /// `, old side` for deleted rows), ` · at 1a2b3c4` for a pinned excerpt, nothing for the
-    /// working tree. The tile's `diffBase` only names the kind of base.
-    static func provenance(of object: ObjectID, side: String?, commit: String?, on board: Board) -> String {
+    /// working tree. The tile's `diffBase` only names the kind of base. `explicit` (a changes
+    /// tile's line) names either side: `, new side (working tree)` or `, old side (base)`.
+    static func provenance(of object: ObjectID, side: String?, commit: String?, explicit: Bool = false, on board: Board) -> String {
         guard let commit else { return side == DiffSide.old.rawValue ? " · old side of diff" : "" }
         let sha = commit.prefix(7)
         guard side != nil else { return " · at \(sha)" }
@@ -184,7 +186,8 @@ public enum MentionContext {
             default: ""
             }
         } ?? ""
-        return " · diff vs \(kind)\(sha)\(side == DiffSide.old.rawValue ? ", old side" : "")"
+        let which = side == DiffSide.old.rawValue ? (explicit ? ", old side (base)" : ", old side") : (explicit ? ", new side (working tree)" : "")
+        return " · diff vs \(kind)\(sha)\(which)"
     }
 
     /// The mentioned lines marked `>`, plus up to `contextLines` unmarked lines on each side while

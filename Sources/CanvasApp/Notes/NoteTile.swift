@@ -546,7 +546,7 @@ final class NoteTile: NSView, TileContent {
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
-        guard case .code(_, let path, let lines, _, let symbol, let commit) = target else { return bounds }
+        guard case .code(_, let path, let lines, _, let symbol, let commit, _) = target else { return bounds }
         if let hoveredRow, hoveredRow.target == target { return hoveredRow.rect }
         let wanted = NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)
         guard let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }

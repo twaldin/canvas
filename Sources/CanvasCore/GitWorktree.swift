@@ -11,6 +11,9 @@ public struct GitWorktree: Equatable, Sendable {
     public var toplevel: String
     /// The shared git directory, symlinks resolved.
     public var commonDir: String
+    /// The worktree's own git directory (`HEAD`, `index`): `.git` of the main checkout, or
+    /// `<common>/worktrees/<name>` of a linked one. Symlinks resolved.
+    public var gitDir: String
 
     /// The worktree containing `path` (absolute; a file or directory, existing or not), or nil
     /// outside git.
@@ -20,9 +23,12 @@ public struct GitWorktree: Equatable, Sendable {
             let dotGit = directory.appendingPathComponent(".git")
             var isDirectory: ObjCBool = false
             if FileManager.default.fileExists(atPath: dotGit.path, isDirectory: &isDirectory) {
-                if isDirectory.boolValue { return GitWorktree(toplevel: directory.path, commonDir: resolved(dotGit)) }
+                if isDirectory.boolValue {
+                    let dir = resolved(dotGit)
+                    return GitWorktree(toplevel: directory.path, commonDir: dir, gitDir: dir)
+                }
                 guard let gitDir = linkedGitDir(dotGit) else { return nil }
-                return GitWorktree(toplevel: directory.path, commonDir: resolved(commonDir(of: gitDir)))
+                return GitWorktree(toplevel: directory.path, commonDir: resolved(commonDir(of: gitDir)), gitDir: resolved(gitDir))
             }
             let parent = directory.deletingLastPathComponent()
             guard parent.path != directory.path else { return nil }
@@ -38,6 +44,44 @@ public struct GitWorktree: Equatable, Sendable {
 
     /// The worktree's directory name (a linked worktree's, or the main checkout's).
     public var name: String { (toplevel as NSString).lastPathComponent }
+
+    /// Whether two paths lie in worktrees of one repository (the same common git directory).
+    public static func sameRepository(_ a: String, _ b: String) -> Bool {
+        guard let first = containing(a), let second = containing(b) else { return false }
+        return first.commonDir == second.commonDir
+    }
+
+    /// The branch checked out (`HEAD`'s `refs/heads/…`), nil when detached.
+    public var branch: String? {
+        guard let text = try? String(contentsOfFile: gitDir + "/HEAD", encoding: .utf8) else { return nil }
+        let head = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "ref: refs/heads/"
+        return head.hasPrefix(prefix) ? String(head.dropFirst(prefix.count)) : nil
+    }
+
+    /// Every worktree of this one's repository, the main checkout first, then linked ones by
+    /// directory name: the main checkout is the common directory's parent (a non-bare
+    /// repository's `.git`), a linked one is named by `worktrees/<name>/gitdir` (its `.git`
+    /// file). Worktrees whose directory is gone are left out.
+    public var siblings: [GitWorktree] {
+        var found: [GitWorktree] = []
+        let common = URL(fileURLWithPath: commonDir)
+        if common.lastPathComponent == ".git", let main = Self.containing(common.deletingLastPathComponent().path), main.commonDir == commonDir {
+            found.append(main)
+        }
+        let linked = common.appendingPathComponent("worktrees")
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: linked.path)) ?? []
+        var others: [GitWorktree] = []
+        for name in names {
+            guard let text = try? String(contentsOf: linked.appendingPathComponent(name).appendingPathComponent("gitdir"), encoding: .utf8) else { continue }
+            let dotGit = URL(fileURLWithPath: text.trimmingCharacters(in: .whitespacesAndNewlines))
+            let top = dotGit.deletingLastPathComponent().path
+            guard FileManager.default.fileExists(atPath: dotGit.path), let worktree = Self.containing(top), worktree.commonDir == commonDir,
+                  !found.contains(where: { $0.gitDir == worktree.gitDir }) else { continue }
+            others.append(worktree)
+        }
+        return found + others.sorted { $0.name < $1.name }
+    }
 
     /// `gitdir: <path>` in a linked worktree's (or submodule's) `.git` file; a relative path is
     /// relative to the file's directory.

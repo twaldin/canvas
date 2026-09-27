@@ -663,9 +663,12 @@ public final class Board {
     /// other calls (parallel siblings, subagents) finish meanwhile; finishing one re-raises the
     /// next. `working` without a call (a new prompt) and `idle` end every wait. A finished call
     /// reported out of order (lower `seq`) still ends its own wait but changes nothing else.
+    /// `serial`: with `blocked` and a call, the agent asks one approval at a time (Codex), so this
+    /// request is the one on screen and every earlier wait is over (an approval answered whose
+    /// completion never matched or hasn't arrived): the message is always the current request's.
     /// `final`: with `idle`, the last answer of the turn that just ended (`finalAnswers`), kept
     /// until the next turn starts.
-    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil) throws {
+    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil, serial: Bool = false) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
@@ -681,6 +684,7 @@ public final class Board {
         var message = message
         switch (state, call) {
         case (.blocked, let call?):
+            if serial { pendingApprovals[tile] = [] }
             pendingApprovals[tile, default: []].append((call, message))
         case (.working, let call?):
             resolveApproval(tile, call: call)

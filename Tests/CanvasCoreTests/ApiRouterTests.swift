@@ -195,6 +195,25 @@ final class ApiRouterTests {
         let partial = try await call(client, "object.create", ["type": "html", "props": .object(["html": "<p>x</p>"]), "frame": .object(["x": 0, "y": 0, "w": 200])])
         #expect(partial["error"]?["code"] == .string("invalid_params"))
         #expect(partial["error"]?["message"]?.string?.contains("frame needs x, y, w, and h (missing h)") == true, "\(partial)")
+        // Just a size: placed automatically, clear of what is there.
+        let sized = try await call(client, "object.create", ["type": "html", "props": .object(["html": "<p>x</p>"]), "frame": .object(["w": 320, "h": 180])])
+        let frame = try #require(try sized["result"]?["object"]?["frame"]?.decode(Frame.self))
+        #expect(frame.w == 320 && frame.h == 180)
+        #expect(!frame.rect.intersects(Frame(x: 50, y: 20, w: 300, h: 420).rect), "placed beside the note, not over it")
+        let halfPlaced = try await call(client, "object.create", ["type": "html", "props": .object(["html": "<p>x</p>"]), "frame": .object(["x": 0, "w": 320, "h": 180])])
+        #expect(halfPlaced["error"]?["message"]?.string?.contains("(missing y)") == true)
+    }
+
+    @Test func aFrameUpdateThatGrowsOverNeighboursNamesThem() async throws {
+        let page = board.create(type: .browser, props: .object(["url": "http://localhost:3000"]), frame: Frame(x: 0, y: 0, w: 390, h: 844))
+        let terminal = board.create(type: .terminal, props: .object(["cwd": "/"]), frame: Frame(x: 430, y: 0, w: 600, h: 400))
+        let client = try connect()
+        let desktop = try await call(client, "object.update", ["id": .string(page.id), "frame": .object(["w": 1280, "h": 858])])
+        #expect(desktop["result"]?["overlaps"] == .array([.string(terminal.id)]), "the viewport resize buried the terminal")
+        let again = try await call(client, "object.update", ["id": .string(page.id), "frame": .object(["h": 900])])
+        #expect(again["result"]?["overlaps"] == nil, "nothing newly covered")
+        let away = try await call(client, "object.update", ["id": .string(page.id), "frame": .object(["x": -1400])])
+        #expect(away["result"]?["overlaps"] == nil)
     }
 
     @Test func aNoteIsStoredWithTheAnchorsItsTileWouldWriteBack() async throws {

@@ -254,6 +254,29 @@ struct TerminalBoardTests {
         #expect(shown().state == "working")
     }
 
+    /// Codex asks one approval at a time: each request names what is on screen, even when the
+    /// completion of the one approved before never matched its request.
+    @Test func aSerialApprovalReplacesTheOneBefore() throws {
+        let board = makeBoard()
+        let tile = board.create(type: .terminal, props: .object([:])).id
+        var seq = 0
+        func report(_ state: LifecycleState, _ message: String? = nil, call: String? = nil) throws {
+            seq += 1
+            try board.reportLifecycle(tile: tile, kind: "codex", state: state, message: message, seq: seq, source: "canvas-codex", call: call, serial: state == .blocked)
+        }
+        func shown() -> (state: String?, message: String?) {
+            let lifecycle = board.objects[tile]?.props["lifecycle"]
+            return (lifecycle?["state"]?.string, lifecycle?["message"]?.string)
+        }
+        try report(.working)
+        try report(.blocked, "May I read PR #1039's description?", call: "a")
+        try report(.working, call: "a-as-completed")
+        try report(.blocked, "May I fetch PR #1039 into pr-1039?", call: "b")
+        #expect(shown() == ("blocked", "May I fetch PR #1039 into pr-1039?"))
+        try report(.working, call: "b")
+        #expect(shown().state == "working", "nothing left waiting on the first request")
+    }
+
     @Test func anAgentThatExitedIsNotResumed() throws {
         let board = makeBoard()
         let tile = board.create(type: .terminal, props: .object([:])).id

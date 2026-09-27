@@ -46,8 +46,8 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
   // Hooks are separate processes that can finish out of order (async ones especially); the
   // process start time orders their reports the way the agent fired them.
   const seq = Math.floor(performance.timeOrigin * 1000);
-  const report = (state: "working" | "blocked" | "idle", message?: string, call?: string, final?: string) =>
-    quietly(client.api.agent.report({ tile, kind, state, message, seq, source, call, final }));
+  const report = (state: "working" | "blocked" | "idle", message?: string, call?: string, final?: string, serial?: boolean) =>
+    quietly(client.api.agent.report({ tile, kind, state, message, seq, source, call, final, serial }));
   const context = (text: string) => JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
   // Only the tile's own session owns its lifecycle, session id and tray (./threads.ts). A
   // subagent's approvals and finished calls still count (the tile waits on them); nothing of
@@ -90,10 +90,12 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
     }
     case "PermissionRequest": {
       // Canvas keeps the tile blocked until this call finishes (its PostToolUse), whatever other
-      // calls (parallel siblings, subagents) finish meanwhile.
+      // calls (parallel siblings, subagents) finish meanwhile. Codex asks one approval at a time,
+      // so its new request is the one on screen: it replaces any earlier wait (`serial`), and the
+      // bubble never names a request already answered.
       const tool = str(input.tool_name) ?? "tool";
       const description = str(obj(input.tool_input)?.description);
-      await report("blocked", description ?? `approve ${tool}?`, toolCall(input));
+      await report("blocked", description ?? `approve ${tool}?`, toolCall(input), undefined, kind === "codex");
       return undefined;
     }
     case "Notification": {

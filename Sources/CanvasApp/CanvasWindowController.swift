@@ -103,7 +103,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             case .status: break
             }
         }
-        navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? [] }
+        navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? NavigatorPanel.SymbolAnswer(rows: []) }
         nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
@@ -376,10 +376,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Go to's symbol rows for `name`: the workspace symbols of the projects this board's code
     /// tiles show (else of the language most of the board root's files are in), from the app's
     /// language servers, started if needed. Files outside the board root are left out. When no
-    /// server for those files' languages could answer (not installed, crashed), one status row
-    /// says why, with its install hint, as Outline does, rather than claiming there are no such
-    /// symbols.
-    private func workspaceSymbols(named name: String) async -> [NavigatorRow] {
+    /// server for those files' languages could answer (not installed, crashed), the answer's
+    /// note says why, with its install hint, for the panel's footer (never a row).
+    private func workspaceSymbols(named name: String) async -> NavigatorPanel.SymbolAnswer {
         let root = board.root
         var files = board.objects.values.filter { $0.type == .code }.compactMap { $0.props["path"]?.string }.map(board.absoluteURL)
         if files.isEmpty {
@@ -394,7 +393,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             }
             if let most = counts.max(by: { $0.value < $1.value })?.key, let path = first[most] { files = [root.appendingPathComponent(path)] }
         }
-        guard !files.isEmpty else { return [] }
+        guard !files.isEmpty else { return NavigatorPanel.SymbolAnswer(rows: []) }
         func ask() async -> Result<[LSPWorkspaceSymbol], Error> {
             do { return .success(try await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)) } catch { return .failure(error) }
         }
@@ -413,9 +412,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         switch answer {
         case .success(let found): symbolsFound = found
         case .failure(let error):
-            if error is CancellationError { return [] }
-            let reason = (error as? LocalizedError)?.errorDescription ?? "\(error)"
-            return [NavigatorRow(target: .status, title: reason, kind: "", dot: nil, toolTip: reason)]
+            if error is CancellationError { return NavigatorPanel.SymbolAnswer(rows: []) }
+            return NavigatorPanel.SymbolAnswer(rows: [], note: (error as? LocalizedError)?.errorDescription ?? "\(error)")
         }
         var symbols = symbolsFound
         if !symbols.isEmpty { symbolsAnswered = Date() }
@@ -435,7 +433,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                                      subtitle: [symbol.container, "\(path):\(line)"].compactMap { $0 }.joined(separator: " · "), toolTip: "\(path):\(line)"))
             if rows.count == NavigatorPanel.maxFileRows { break }
         }
-        return rows
+        return NavigatorPanel.SymbolAnswer(rows: rows)
     }
 
     @objc func zoomToFit(_ sender: Any?) {

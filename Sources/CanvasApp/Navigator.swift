@@ -168,7 +168,11 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
     private let table = NSTableView()
     private let list = NSScrollView()
     private let separator = NSBox()
+    /// Under the list: why symbols are missing (a language server not installed, with its
+    /// install hint). A note, never a row: it isn't somewhere to go.
+    private let footer = NSTextField(labelWithString: "")
     private var height: NSLayoutConstraint!
+    private var footerHeight: NSLayoutConstraint!
     private var allRows: [NavigatorRow] = []
     private var rows: [NavigatorRow] = []
     private var files = FileIndex(paths: [])
@@ -177,12 +181,18 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
     private weak var previousResponder: NSResponder?
     private var clickMonitor: Any?
     /// Workspace symbols for the current query, once the language servers answered.
-    private var symbolRows: (query: String, rows: [NavigatorRow])?
+    private var symbolRows: (query: String, answer: SymbolAnswer)?
     private var symbolSearch: Task<Void, Never>?
 
+    /// A symbol search's rows, and why there are none when a language server couldn't answer.
+    struct SymbolAnswer {
+        var rows: [NavigatorRow]
+        var note: String? = nil
+    }
+
     var onGo: ((NavigatorRow.Target) -> Void)?
-    /// Workspace symbols matching a name (`@name`, or a query nothing else matched), as rows.
-    var searchSymbols: ((String) async -> [NavigatorRow])?
+    /// Workspace symbols matching a name (`@name`, or a query nothing else matched).
+    var searchSymbols: ((String) async -> SymbolAnswer)?
     var isOpen: Bool { !isHidden }
 
     init() {
@@ -207,6 +217,10 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         field.cell?.wraps = false
         field.delegate = self
         separator.boxType = .separator
+        footer.font = .systemFont(ofSize: 11)
+        footer.textColor = .secondaryLabelColor
+        footer.lineBreakMode = .byTruncatingTail
+        footer.isHidden = true
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
         table.addTableColumn(column)
@@ -228,11 +242,12 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         list.hasVerticalScroller = true
         list.autohidesScrollers = true
 
-        for view in [icon, field, separator, list] {
+        for view in [icon, field, separator, list, footer] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         height = heightAnchor.constraint(equalToConstant: Self.fieldHeight)
+        footerHeight = footer.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             icon.centerYAnchor.constraint(equalTo: topAnchor, constant: Self.fieldHeight / 2),
@@ -245,7 +260,11 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
             list.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 4),
             list.leadingAnchor.constraint(equalTo: leadingAnchor),
             list.trailingAnchor.constraint(equalTo: trailingAnchor),
-            list.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            list.bottomAnchor.constraint(equalTo: footer.topAnchor),
+            footer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            footer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            footer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            footerHeight,
             height,
         ])
     }
@@ -331,9 +350,12 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
             }
         }
         let wantsSymbols = !query.text.isEmpty && query.lines == nil && searchSymbols != nil && (query.symbol || found.isEmpty)
+        var note: String?
         if wantsSymbols {
             if let symbols = symbolRows, symbols.query == query.text {
-                found += symbols.rows.isEmpty ? [NavigatorRow(target: .status, title: "No symbols named “\(query.text)”", kind: "", dot: nil)] : symbols.rows
+                let none = query.symbol ? "No symbols named “\(query.text)”" : "No matches"
+                found += symbols.answer.rows.isEmpty ? [NavigatorRow(target: .status, title: none, kind: "", dot: nil)] : symbols.answer.rows
+                note = symbols.answer.note
             } else {
                 found.append(NavigatorRow(target: .status, title: "Searching symbols…", kind: "", dot: nil))
                 lookUpSymbols(named: query.text)
@@ -353,9 +375,14 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         // The inset table style pads above the first row; keep the same room below the last.
         let shown = min(rows.count, Self.visibleRows)
         let listHeight = shown > 0 ? table.rect(ofRow: shown - 1).maxY + table.rect(ofRow: 0).minY : 0
-        height.constant = Self.fieldHeight + 1 + (shown > 0 ? listHeight + 8 : 0)
+        let footerRoom: CGFloat = note == nil ? 0 : 22
+        footer.stringValue = note ?? ""
+        footer.toolTip = note
+        footer.isHidden = note == nil
+        footerHeight.constant = footerRoom == 0 ? 0 : 18
+        height.constant = Self.fieldHeight + 1 + (shown > 0 ? listHeight + 8 : 0) + footerRoom
         list.isHidden = rows.isEmpty
-        separator.isHidden = rows.isEmpty
+        separator.isHidden = rows.isEmpty && note == nil
     }
 
     /// The name a symbol search is running (or waiting) for.

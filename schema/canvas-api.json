@@ -265,6 +265,13 @@
       "additionalProperties": false,
       "description": "with size: fit (or for a new note), where the object goes; the rest of its frame is measured"
     },
+    "SizeFrame": {
+      "type": "object",
+      "required": ["w", "h"],
+      "properties": { "w": { "type": "number" }, "h": { "type": "number" } },
+      "additionalProperties": false,
+      "description": "just a size: the object gets it and is placed as without a frame (the free spot nearest the calling agent's terminal)"
+    },
     "FramePatch": {
       "type": "object",
       "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number" }, "h": { "type": "number" } },
@@ -633,7 +640,7 @@
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
+      "description": "Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
@@ -641,7 +648,7 @@
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
           "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
-          "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }] },
+          "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
           "caller": { "$ref": "#/definitions/Id", "description": "calling tile id; clients fill from CANVAS_TILE_ID" }
@@ -665,7 +672,7 @@
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "`size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "present when a `size: fit` refit covers others, or a `frame` given outright (e.g. a browser tile widened to a desktop viewport) makes the object cover one it didn't before (by layout.check's overlap rule; in a batch, fit only, once the whole batch is laid out): the ids of everything it covers. Grow away from neighbours or move it (layout.place) rather than leave the user's tiles buried" } } }
     },
     "object.delete": {
       "description": "Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached.",
@@ -894,7 +901,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "agent.report": {
-      "description": "Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. `working` without `call` (a new prompt) and `idle` end every wait.",
+      "description": "Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. With `serial`, a `blocked` call replaces every earlier wait (agents that ask one approval at a time), so the message always names the request on screen. `working` without `call` (a new prompt) and `idle` end every wait.",
       "params": {
         "type": "object",
         "required": ["tile", "kind", "state"],
@@ -906,7 +913,8 @@
           "seq": { "type": "integer" },
           "source": { "type": "string" },
           "call": { "type": "string", "description": "identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input)" },
-          "final": { "type": "string", "description": "only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts)" }
+          "final": { "type": "string", "description": "only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts)" },
+          "serial": { "type": "boolean", "default": false, "description": "with `blocked` and `call`: the agent asks one approval at a time (Codex), so this request ends every earlier wait (an approval answered whose completion never matched or hasn't arrived yet)" }
         },
         "additionalProperties": false
       },
@@ -943,7 +951,7 @@
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`.",
+      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a target whose agent reports from behind another foreground program (`program` tmux, nvim, less: the text would go to that program, in tmux to whichever pane is active). `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`.",
       "params": {
         "type": "object",
         "required": ["target", "text"],
@@ -952,7 +960,7 @@
           "text": { "type": "string" },
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/PromptMention" }, "description": "objects on the target's board to attach, e.g. [{\"object\": \"obj_…\"}, {\"object\": \"obj_…\", \"lines\": {\"start\": 41, \"end\": 48}}]" },
           "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal, named to the receiver with the mentions; clients fill from CANVAS_TILE_ID" },
-          "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" }
+          "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" }
         },
         "additionalProperties": false
       },

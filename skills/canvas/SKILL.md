@@ -1,6 +1,6 @@
 ---
 name: canvas
-description: You are running inside Canvas (CANVAS_ENV=1), an infinite canvas where your terminal sits next to code, note, browser, HTML, and drawn objects the user also sees. Use for reading <canvas-mentions>, showing code/notes/HTML explainers/diagrams on the canvas, pointing the user at things, and talking to other agents.
+description: You are running inside Canvas (CANVAS_ENV=1), an infinite canvas where your terminal sits next to tiles and drawings the user also sees. Use before showing code/notes/HTML explainers/diagrams/changes on the canvas, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
 ---
 
 # Working in Canvas
@@ -178,7 +178,7 @@ Any tile or text shape takes `scale` in its props (0.25–8, default 1): it draw
 To make a tile readable from further out without changing what it shows, set `scale` and multiply `w`/`h` by the same factor (or use `size: "fit"`, which measures at the scale).
 Users scale objects with ⌥-drag on a corner or the Scale menu; leave their scale alone unless asked.
 
-Update with `object.update` (props shallow-merge; pass `rev` from your last read to avoid clobbering a concurrent edit; `conflict` means re-read and retry).
+Update with `object.update` (props shallow-merge; `frame` may give any of x, y, w, h; pass `rev` from your last read or create to avoid clobbering a concurrent edit; `conflict` means re-read and retry).
 Delete with `object.delete`; deleting a terminal tile ends its session and whatever runs in it.
 
 ### Notes
@@ -313,6 +313,7 @@ Kind `omp`, `claude` or `codex` reports a lifecycle (a fresh Codex from its firs
 `agent.prompt` works, `agent.wait` fails once 15 s pass without a first report (enough for an agent you just started), so poll `agent.read --since prompt`.
 Claude Code runs no hook when its user presses Esc or denies an approval, so its tile keeps its last state until the next prompt.
 Don't prompt an agent that is `blocked`; it is waiting for its user (omp reports every approval prompt as blocked, nested ones included, and the user sees it as a ring and bubble on its terminal, on the tab, and as an edge pill when off screen).
+`agent.prompt` to a `blocked` agent fails with `conflict` quoting what it waits on; pass `force: true` only when you know the dialog is gone (e.g. Claude Code after Esc on an approval).
 
 ## Compositions
 

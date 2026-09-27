@@ -59,8 +59,9 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
     /// Bumped with every listing installed.
     private var setVersion = 0
-    /// The base field's delegate while it is open (`askForBase`).
-    fileprivate var baseField: BaseFieldResponder?
+    /// The base field and its popover while it is open (`askForBase`).
+    private weak var baseField: NSTextField?
+    private weak var basePopover: NSPopover?
 
     private var isLive = true
     private var needsLoad = true
@@ -211,8 +212,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         let viewed = object.props["viewed"]
         for file in set.files {
             let isViewed = file.isViewed(in: viewed)
-            if !seen.contains(file.boardPath) {
-                seen.insert(file.boardPath)
+            if seen.insert(file.boardPath).inserted {
                 if file.status == .deleted || isViewed { collapsed.insert(file.boardPath) }
                 if isViewed { viewedFolded.insert(file.boardPath) }
             } else if viewedFolded.contains(file.boardPath), !isViewed {
@@ -252,23 +252,29 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         }
         let key = LayoutKey(version: setVersion, collapsed: collapsed, columns: ChangesMetrics.textColumns(width: bounds.width, digits: ChangesMetrics.digits(set)),
                             filter: filter, listOpen: listOpen)
-        let reused = laidOut.flatMap { $0.key == key ? ($0.rows, $0.names) : nil }
-        var painter = ChangesPainter(set: set, collapsed: collapsed, width: bounds.width, filter: filter, listOpen: listOpen, laidOut: reused)
+        var painter = makePainter(for: set, width: bounds.width, laidOut: laidOut.flatMap { $0.key == key ? ($0.rows, $0.names) : nil })
         laidOut = (key, painter.rows, painter.names)
-        painter.viewed = object.props["viewed"]
-        painter.current = current
-        painter.selection = selection
-        painter.message = message
         painter.focused = hasKeyboard
         painter.drawsFilter = filterField == nil
-        if let asked = discardAsked, let file = set.files.firstIndex(where: { $0.boardPath == asked.path }) {
-            let hunk = asked.hunk.flatMap { id in set.files[file].hunks.firstIndex { $0.id == id } }
-            if asked.hunk == nil || hunk != nil { painter.discardAsked = (file, hunk) }
-        }
         self.painter = painter
         clampScroll()
         scheduleToolTips()
         needsDisplay = true
+    }
+
+    /// A painter for `set` as the tile shows it: its folds, filter, list, Viewed checks, current
+    /// hunk, selection, header message, and a Discard asking to be pressed again.
+    private func makePainter(for set: ChangeSet, width: CGFloat, laidOut: (rows: ChangeRows, names: [String])? = nil) -> ChangesPainter {
+        var painter = ChangesPainter(set: set, collapsed: collapsed, width: width, filter: filter, listOpen: listOpen, laidOut: laidOut)
+        painter.viewed = object.props["viewed"]
+        painter.current = current
+        painter.selection = selection
+        painter.message = message
+        if let asked = discardAsked, let file = set.files.firstIndex(where: { $0.boardPath == asked.path }) {
+            let hunk = asked.hunk.flatMap { id in set.files[file].hunks.firstIndex { $0.id == id } }
+            if asked.hunk == nil || hunk != nil { painter.discardAsked = (file, hunk) }
+        }
+        return painter
     }
 
     /// A tile fitted to its diff (its height is what `size: "fit"` gave the last listing, or
@@ -350,7 +356,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
 
     private var viewportHeight: CGFloat { max(0, bounds.height - ChangesMetrics.headerHeight) }
-    private var contentHeight: CGFloat { (painter?.rows.height ?? 0) + ChangesMetrics.bottomPadding }
+    private var contentHeight: CGFloat { (painter?.contentHeight ?? 0) - ChangesMetrics.headerHeight }
 
     private func clampScroll() {
         scroll = min(max(0, scroll), max(0, contentHeight - viewportHeight)).rounded()
@@ -418,24 +424,27 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         refreshPainter()
     }
 
-    /// Return and Esc in the field give the keyboard back to the tile (Esc clears it first).
+    /// Return and Esc in the filter give the keyboard back to the tile (Esc clears it first); in
+    /// the base field (`askForBase`) Return compares with what was typed, Esc leaves the base.
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        guard control === filterField else { return false }
-        if selector == #selector(NSResponder.insertNewline(_:)) {
-            window?.makeFirstResponder(self)
-            return true
-        }
-        if selector == #selector(NSResponder.cancelOperation(_:)) {
-            if !filter.isEmpty {
+        let isReturn = selector == #selector(NSResponder.insertNewline(_:))
+        guard isReturn || selector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        if control === baseField {
+            let choice = isReturn ? ChangesBaseChoice(typed: control.stringValue) : nil
+            basePopover?.close()
+            if let choice { setBase(choice) }
+        } else if control === filterField {
+            if isReturn || filter.isEmpty {
+                window?.makeFirstResponder(self)
+            } else {
                 filterField?.stringValue = ""
                 filter = ""
                 refreshPainter()
-            } else {
-                window?.makeFirstResponder(self)
             }
-            return true
+        } else {
+            return false
         }
-        return false
+        return true
     }
 
     private func focusFilter() {
@@ -531,11 +540,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         case .button(let action, let file, let hunk):
             let lines = hunk.flatMap { hunk in selection.flatMap { $0.file == file && $0.hunk == hunk ? $0.lines : nil } }
             if let hunk { current = (file, hunk) }
-            if action == .revert {
-                askToDiscard(file: file, hunk: hunk, lines: lines, byClick: true)
-            } else {
-                perform(action, file: file, hunk: hunk, lines: lines)
-            }
+            act(action, file: file, hunk: hunk, lines: lines, byClick: true)
         case .viewed(let file):
             toggleViewed(file)
         case .file(let file):
@@ -702,24 +707,31 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         case .open: openCurrent()
         case .stage: actOnCurrent(.stage)
         case .unstage: actOnCurrent(.unstage)
-        case .discard:
-            guard let target = keyTarget else { return show(message: "pick a hunk first (j/k or click)") }
-            askToDiscard(file: target.file, hunk: target.hunk, lines: target.lines, byClick: false)
+        case .discard: actOnCurrent(.revert)
         case .filter: focusFilter()
         case .mention: mentionCurrent()
         }
     }
 
+    /// s, u and r: on the selected lines, else the current hunk.
     private func actOnCurrent(_ action: ChangesAction) {
-        guard let target = keyTarget else { return show(message: "pick a hunk first (j/k or click)") }
-        perform(action, file: target.file, hunk: target.hunk, lines: target.lines)
+        guard let target = keyTarget else { return show(message: Self.pickFirst) }
+        act(action, file: target.file, hunk: target.hunk, lines: target.lines, byClick: false)
     }
 
-    /// What s, u and r act on: the selected lines, else the current hunk.
+    /// A header button or its key: Discard asks first (`askToDiscard`), Stage and Unstage act at once.
+    private func act(_ action: ChangesAction, file: Int, hunk: Int?, lines: Set<Int>?, byClick: Bool) {
+        if action == .revert { return askToDiscard(file: file, hunk: hunk, lines: lines, byClick: byClick) }
+        perform(action, file: file, hunk: hunk, lines: lines)
+    }
+
+    /// What s, u, r and m act on: the selected lines, else the current hunk.
     private var keyTarget: (file: Int, hunk: Int, lines: Set<Int>?)? {
         if let selection { return (selection.file, selection.hunk, selection.lines) }
         return current.map { ($0.file, $0.hunk, nil) }
     }
+
+    private static let pickFirst = "pick a hunk first (j/k or click)"
 
     /// A Discard asked about (a first `r`, or a first click on a Discard button) while its
     /// question shows: the file, its hunk (nil: the whole file) and picked lines.
@@ -737,10 +749,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// throws work away. A committed hunk has nothing to discard and says so at once.
     private func askToDiscard(file: Int, hunk: Int?, lines: Set<Int>?, byClick: Bool) {
         guard let set, set.files.indices.contains(file), hunk.map(set.files[file].hunks.indices.contains) ?? true else {
-            return show(message: "pick a hunk first (j/k or click)")
+            return show(message: Self.pickFirst)
         }
         let changed = set.files[file]
-        guard hunk.map({ changed.hunks[$0].status.discardable }) ?? changed.discardable else { return show(message: Self.committedRefusal) }
+        guard ChangesAction.revert.applies(to: changed, hunk: hunk) else { return show(message: ChangesAction.revert.refusal) }
         let question = DiscardQuestion(path: changed.boardPath, hunk: hunk.map { changed.hunks[$0].id }, lines: lines)
         if discardAsked == question {
             discardAsked = nil
@@ -753,8 +765,6 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         discardAsked = question
         show(message: "\(byClick ? "click Discard again" : "press r again") to discard \(what) from your files", for: byClick ? 3 : 2)
     }
-
-    static let committedRefusal = "committed: Discard only puts back work not committed yet"
 
     /// The next or previous hunk of an unfolded, listed file becomes current and scrolls into view.
     private func step(_ delta: Int) {
@@ -874,11 +884,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         guard !acting, let set, let repository = set.repository, set.files.indices.contains(file) else { return }
         let changed = set.files[file]
         let target = hunk.map { changed.hunks[$0] }
-        switch action {
-        case .stage: if !(target.map(\.status.stageable) ?? changed.stageable) { return show(message: "already staged") }
-        case .unstage: if !(target.map(\.status.unstageable) ?? changed.hunks.contains { $0.status.unstageable }) { return show(message: "not staged") }
-        case .revert: if !(target.map(\.status.discardable) ?? changed.discardable) { return show(message: Self.committedRefusal) }
-        }
+        guard action.applies(to: changed, hunk: hunk) else { return show(message: action.refusal) }
         acting = true
         let tile = object.id, board = board, includesCommits = set.includesCommits
         Task { [weak self] in
@@ -923,7 +929,6 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             refreshToolTips()
             if needsLoad || events == nil { load() }
         } else {
-            if loadTask != nil || reloadWork != nil { needsLoad = true }
             loadTask?.cancel()
             loadTask = nil
             reloadWork?.cancel()
@@ -955,14 +960,13 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
 
     private var currentMention: MentionTarget? {
-        if let selection { return mention(file: selection.file, hunk: selection.hunk, lines: selection.lines) }
-        return current.flatMap { mention(file: $0.file, hunk: $0.hunk, lines: nil) }
+        keyTarget.flatMap { mention(file: $0.file, hunk: $0.hunk, lines: $0.lines) }
     }
 
     /// `m` with the keyboard in the tile: stages the selected lines, else the current hunk, as a
     /// Hyper-click on them would (a second `m` unstages it).
     private func mentionCurrent() {
-        guard let target = currentMention else { return show(message: "pick a hunk first (j/k or click)") }
+        guard let target = currentMention else { return show(message: Self.pickFirst) }
         HyperMonitor.toggle(target, on: board)
     }
 
@@ -1012,11 +1016,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             loaded = fresh
         }
         guard let loaded else { return .placeholder(request, "not loaded") }
-        var painter = ChangesPainter(set: loaded, collapsed: collapsed, width: request.size.width, filter: filter, listOpen: listOpen)
-        painter.viewed = object.props["viewed"]
-        painter.current = current
-        painter.selection = selection
-        painter.message = message
+        var painter = makePainter(for: loaded, width: request.size.width)
+        painter.discardAsked = nil
         let content = CGSize(width: request.size.width, height: painter.contentHeight)
         let size = request.full ? CGSize(width: request.size.width, height: max(request.size.height, content.height)) : request.size
         let scrollY = request.full ? 0 : scroll
@@ -1036,8 +1037,8 @@ extension ChangesTile {
     /// the merge-base with the default branch), the commit or ref typed in before, or another one
     /// typed into a small field. A pick is `props.base`, one ⌘Z step.
     fileprivate func baseMenu(below rect: NSRect) -> NSMenu {
-        let current = ChangesBaseChoice(prop: ChangesSpec(object.props).baseProp)
-        let directory = ChangesSpec(object.props).directory(boardRoot: board.root)
+        let current = ChangesBaseChoice(prop: spec.baseProp)
+        let directory = spec.directory(boardRoot: board.root)
         let defaultBranch = GitWorktree.containing(directory.path)?.defaultBranch
         let menu = NSMenu()
         for choice in ChangesBaseChoice.choices(current: current) {
@@ -1051,7 +1052,7 @@ extension ChangesTile {
     }
 
     fileprivate func setBase(_ choice: ChangesBaseChoice) {
-        guard choice.prop != ChangesSpec(object.props).baseProp else { return }
+        guard choice.prop != spec.baseProp else { return }
         _ = try? board.update(object.id, props: .object(["base": .string(choice.prop)]))
     }
 
@@ -1069,35 +1070,10 @@ extension ChangesTile {
         let popover = NSPopover()
         popover.contentViewController = content
         popover.behavior = .transient
-        let responder = BaseFieldResponder { [weak self, weak popover] text in
-            popover?.close()
-            if let text, let choice = ChangesBaseChoice(typed: text) { self?.setBase(choice) }
-        }
-        field.delegate = responder
-        baseField = responder
+        field.delegate = self
+        baseField = field
+        basePopover = popover
         popover.show(relativeTo: rect, of: self, preferredEdge: .maxY)
         popover.contentViewController?.view.window?.makeFirstResponder(field)
-    }
-}
-
-/// Return and Esc in the base field.
-@MainActor
-fileprivate final class BaseFieldResponder: NSObject, NSTextFieldDelegate {
-    let done: (String?) -> Void
-
-    init(done: @escaping (String?) -> Void) {
-        self.done = done
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        if selector == #selector(NSResponder.insertNewline(_:)) {
-            done(control.stringValue)
-            return true
-        }
-        if selector == #selector(NSResponder.cancelOperation(_:)) {
-            done(nil)
-            return true
-        }
-        return false
     }
 }

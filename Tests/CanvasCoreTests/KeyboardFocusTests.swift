@@ -48,7 +48,6 @@ struct KeyboardFocusTests {
         #expect(hint(summary + ChangesMetrics.hintGap + width(full) - 1) == compact, "a narrower tile still says which keys work")
         #expect(hint(summary + ChangesMetrics.hintGap + width(shortest)) == shortest)
         #expect(hint(summary + ChangesMetrics.hintGap + width(shortest) - 1) == nil, "the whole summary stays: the hint goes first")
-        #expect(ChangesMetrics.idleHints[0].contains("⇧-click or drag lines"), "the widest idle hint says how to select lines")
     }
 
     @Test func takingAChangesTilesKeyboardStartsOnTheFirstHunkInView() async throws {

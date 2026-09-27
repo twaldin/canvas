@@ -344,8 +344,9 @@ Then address it with `board: <id>` (from the result) on every call, and start ag
 
 ## When the user asks how to use Canvas
 
-⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows move between tiles; ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
-⌘9 fits everything, ⌘0 is 100%, ⌘=/⌘- zoom; ⌘T opens a terminal; ⌘G groups the selection; ⌘Z undoes any change, agents' included.
+⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows move between tiles; Return gives the selected tile the keyboard, Esc gives it back;
+⌘J goes to the next thing that needs the user (blocked agents, then marked tiles); ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
+⌘9 fits everything, ⌘0 is 100%, ⌘=/⌘- zoom; ⌘T opens a terminal; ⌘G groups the selection; ⌘Z undoes the user's last change or an agent's (never follow re-aims or the app's own bookkeeping).
 Hyper-click (⌃⌥⇧⌘-click) stages a mention for the terminal the tray shows; Hyper-V pastes staged mentions into a terminal whose agent has no integration.
-⌘-click a `path:line` in terminal output to open it. A code tile's right-click has Outline (type to filter) and Find References (Open All lays them out as excerpts).
-Right-click empty canvas for New Terminal/Note/Browser Here or Review Changes; right-click a terminal for Follow Files.
+⌘-click a `path:line` in terminal output to open it. Code › Go to Definition ⌃⌘J, Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter).
+File › Review Changes ⇧⌘R; right-click empty canvas for New Terminal/Note/Browser Here; right-click a terminal for Follow Files. Every action is also in the menu bar (Help › search).

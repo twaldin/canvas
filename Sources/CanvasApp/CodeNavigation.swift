@@ -263,7 +263,7 @@ final class CodeNavigation: NSObject {
     private func showLocations(_ title: String, _ locations: [LSPLocation], lines: [String], anchor: NSPoint, newTile: Bool,
                                openAll: (title: String, run: @MainActor () -> Void)? = nil, note: String? = nil) {
         let rows = zip(locations, lines).map { location, line in
-            NavigationPanel.Row(title: "\(boardPath(location.url)):\(location.range.start.line + 1)", detail: line) { [weak self] in
+            NavigationPanel.Row(title: "\(board.relativePath(location.url.path)):\(location.range.start.line + 1)", detail: line) { [weak self] in
                 NavigationPanel.current?.dismiss()
                 self?.open(location, newTile: newTile)
             }
@@ -368,7 +368,7 @@ final class CodeNavigation: NSObject {
     private func openAll(_ locations: [LSPLocation], name: String?) {
         NavigationPanel.current?.dismiss()
         let root = board.root
-        let entries = locations.map { (path: boardPath($0.url), line: $0.range.start.line + 1, url: $0.url) }
+        let entries = locations.map { (path: board.relativePath($0.url.path), line: $0.range.start.line + 1, url: $0.url) }
         let subject = name.map { " to `\($0)`" } ?? ""
         Task { [weak self] in
             let urls = Array(Set(entries.map(\.url)))
@@ -433,7 +433,7 @@ final class CodeNavigation: NSObject {
     /// that file, else a new tile beside this one, shown with the least pan that keeps this one
     /// in view. `newTile` (⌥⌘) always opens a new tile. One step of Navigate Back.
     private func open(_ location: LSPLocation, newTile: Bool) {
-        let aim = CodeAim(path: boardPath(location.url), range: location.range.lines)
+        let aim = CodeAim(path: board.relativePath(location.url.path), range: location.range.lines)
         let board = board, tile = tile
         let go = { [weak self] () -> CodeReaim? in
             var opened = CodeOpened(id: tile, created: false, reaim: nil)
@@ -465,14 +465,6 @@ final class CodeNavigation: NSObject {
         codeView.flatMap { sequence(first: $0, next: \.superview).first { $0 is CanvasView } as? CanvasView }
     }
 
-    /// Board-relative when under the root. Servers report symlink-resolved paths (/private/tmp
-    /// for /tmp), so both sides are resolved before comparing.
-    private func boardPath(_ url: URL) -> String {
-        let path = url.resolvingSymlinksInPath().path
-        let root = board.root.resolvingSymlinksInPath().path
-        return path.hasPrefix(root + "/") ? String(path.dropFirst(root.count + 1)) : board.relativePath(path)
-    }
-
     // MARK: Outline
 
     private func installOutlineButton(in container: NSView, reservedWidth: CGFloat) {
@@ -500,14 +492,15 @@ final class CodeNavigation: NSObject {
                                                            else: { await self?.textOutline(file: file, anchor: anchor, reason: $0) }), let self else { return }
             let symbols = LSPSymbol.outline(answer)
             guard !symbols.isEmpty else { return self.showMessage("No symbols", anchor: anchor) }
-            // LSP has no macro kind: rust-analyzer sends `macro_rules!` as a function, so the
-            // declaring line, read as the text outline reads it, names the kind instead.
+            // LSP has no macro, trait or impl kinds: rust-analyzer sends `macro_rules!` as a
+            // function, a trait as an interface and an impl block as an object. The declaring
+            // line names them as the text outline does.
             let lines = await offPool { (try? String(contentsOf: file, encoding: .utf8)).map { $0.split(separator: "\n", omittingEmptySubsequences: false) } ?? [] }
+            let precise = ["function": "macro", "interface": "trait", "object": "impl"]
             func kind(_ symbol: LSPSymbol) -> String {
                 let line = symbol.selectionRange.start.line
-                guard symbol.kindName == "function", lines.indices.contains(line) else { return symbol.kindName }
-                let declared = TextNavigation.declarations(inLine: String(lines[line]), pathExtension: file.pathExtension).first { $0.name == symbol.name }
-                return declared?.kind == "macro" ? "macro" : symbol.kindName
+                guard let exact = precise[symbol.kindName], lines.indices.contains(line), DeclarationKeywords.kind(declaredBy: String(lines[line])) == exact else { return symbol.kindName }
+                return exact
             }
             self.showOutline("Outline", symbols.map { ($0.symbol.name, kind($0.symbol), $0.symbol.selectionRange.start.line + 1, $0.depth) }, anchor: anchor)
         }

@@ -4,12 +4,12 @@ import Foundation
 /// pointer names a symbol: the first name on a line that isn't a declaration keyword, so a tile
 /// aimed at `def write_usage(self, …)` or `public func neighbor(of:…)` means that symbol.
 public enum CodeSubject {
-    static let keywords: Set<String> = [
-        "def", "class", "async", "await", "func", "fn", "function", "let", "var", "const", "pub", "public", "private",
-        "fileprivate", "internal", "open", "static", "final", "override", "mutating", "nonisolated", "export", "default",
-        "struct", "enum", "interface", "type", "protocol", "extension", "impl", "trait", "mod", "package", "import",
-        "from", "return", "abstract", "readonly", "declare", "unsafe", "extern", "virtual", "inline", "void", "self",
-    ]
+    /// Declaration keywords (`DeclarationKeywords`, as words: `macro_rules`), bar those as common
+    /// as names, and the modifiers and words that come before a declared name.
+    static let keywords = Set(DeclarationKeywords.kinds.keys.filter { !DeclarationKeywords.commonNames.contains($0) }.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "!*")) }).union([
+        "async", "await", "pub", "public", "private", "fileprivate", "internal", "open", "static", "final", "override", "mutating", "nonisolated",
+        "export", "default", "import", "from", "return", "abstract", "readonly", "declare", "unsafe", "extern", "virtual", "inline", "void", "self",
+    ])
 
     /// The UTF-16 offset of the first non-keyword identifier in `line`; nil when it has none.
     public static func firstName(in line: String) -> Int? {

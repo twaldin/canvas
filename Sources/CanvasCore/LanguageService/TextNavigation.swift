@@ -14,21 +14,15 @@ public struct Declaration: Equatable, Sendable {
 /// language's server is not installed or not running. Answers are labelled as text search
 /// wherever they are shown.
 public enum TextNavigation {
-    /// Names a declaration keyword introduces, with the kind it makes.
-    private static let keywordKinds: [String: String] = [
-        "function": "function", "function*": "function", "def": "function", "func": "function", "fun": "function", "fn": "function",
-        "class": "class", "interface": "interface", "protocol": "protocol", "trait": "trait",
-        "type": "type", "typealias": "type", "enum": "enum", "struct": "struct", "union": "union", "actor": "actor",
-        "const": "constant", "let": "variable", "var": "variable", "val": "variable",
-        "module": "module", "namespace": "module", "mod": "module", "extension": "extension",
-        "macro_rules!": "macro",
-    ]
+    /// Names a declaration keyword introduces, with the kind it makes: `DeclarationKeywords` but
+    /// `impl` and `package`, which don't declare the name after them.
+    private static let keywordKinds = DeclarationKeywords.kinds.filter { !DeclarationKeywords.notDeclaring.contains($0.key) }
 
     private static let identifier = #"[A-Za-z_$][\w$]*"#
 
     /// `class Foo`, `export async function foo`, `pub fn foo`, `def foo`, `const foo`, `type Foo`,
     /// `macro_rules! foo`. The name is matched ahead, not taken, so `const fn foo` finds `fn foo` too.
-    private static let keyword = try! NSRegularExpression(pattern: #"(?<![\w$.])(function\*?|def|func|fun|fn|class|interface|protocol|trait|type|typealias|enum|struct|union|actor|const|let|var|val|module|namespace|mod|extension|macro_rules!)\s+(?=("# + identifier + "))")
+    private static let keyword = try! NSRegularExpression(pattern: #"(?<![\w$.])("# + DeclarationKeywords.alternation(keywordKinds.keys) + #")\s+(?=("# + identifier + "))")
     /// A Rust static: `pub static mut COUNTER: u32` (`static` elsewhere is a modifier).
     private static let rustStatic = try! NSRegularExpression(pattern: #"^\s*(?:pub(?:\([^)]*\))?\s+)?static\s+(?:mut\s+)?([A-Za-z_]\w*)\s*:"#)
     /// Go methods: `func (s *Server) Serve(`.

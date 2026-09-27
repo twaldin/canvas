@@ -75,10 +75,11 @@ public struct SourceExcerpt: Codable, Equatable, Sendable {
 
     // MARK: Symbols
 
-    /// Declaration keywords across the languages agents commonly write in. This is a textual
-    /// search, not a parse: good enough to anchor an excerpt, and a miss is reported as stale.
+    /// Declaration keywords across the languages agents commonly write in (`DeclarationKeywords`,
+    /// bindings too). This is a textual search, not a parse: good enough to anchor an excerpt,
+    /// and a miss is reported as stale.
     private static let modifiers = #"(?:(?:export|default|public|private|internal|fileprivate|open|static|final|async|override|abstract|protected|mutating|nonisolated|readonly|declare|extern|inline|virtual|unsafe|pub(?:\([^)]*\))?|@[\w.]+(?:\([^)]*\))?)\s+)*"#
-    private static let keywords = #"(?:func|function\*?|class|struct|enum|protocol|extension|actor|interface|type|typealias|def|fn|const|let|var|val|trait|impl|mod|module|namespace|macro|record|object)"#
+    private static let keywords = "(?:" + DeclarationKeywords.alternation(DeclarationKeywords.kinds.keys) + ")"
 
     /// 1-based inclusive range of a declaration, including the doc comments and attributes
     /// directly above it. `Outer.inner` (or `Outer::inner`) finds `inner` inside `Outer`.

@@ -226,10 +226,8 @@ A code tile shows the whole current file, scrolled so `range` sits a few rows be
 
 To show the user what you changed, create a changes tile instead of an HTML diff: `canvas object.create --type changes --json '{"props":{},"size":"fit"}'`.
 Props: `base` (default `HEAD`: uncommitted work, staged or not; also `merge-base` or a commit), optional `root` (another worktree of the board's repo, e.g. `"../wt-agent"`: review your worktree on the board where your terminal is), `paths` (files/dirs in it) and `title`.
-Creating it again with the same `root`/`base`/`paths` returns your existing tile (`reused: true`); a fitted tile grows as hunks are added.
-The user stages or discards per file, hunk, or selected lines (each one ⌘Z), marks files Viewed, clicks a line to open a code tile, and Hyper-clicks a line to mention it (the mention says its side, added/removed/context, and the hunk's state).
-Read what they kept with `object.get`: `changes.files[]` (path, status, added/removed, `viewed`, `hunks[]` with a stable `id`, header, old/new ranges, `status` unstaged|partial|staged|committed, and `lines`, the unified text, at most 200) as git has it now, so no render is needed;
-`partial` means staged, then changed again. `props.reviewed[]` lists what the user staged or discarded (`action` stage|revert, `scope` file|hunk|lines, `hunk`, `patch` applied, reversed for a discard). Editing `reviewed` does nothing to git.
+Creating it again with the same `root`/`base`/`paths` returns your existing tile (`reused: true`). The user stages or discards per file, hunk, or selected lines (each one ⌘Z) and Hyper-clicks lines to ask you about them.
+Read what they kept with `object.get`: `changes.files[].hunks[]` carry `status` (unstaged|partial|staged|committed) and the unified `lines`, so no render is needed; `props.reviewed[]` lists what they staged or discarded, with the patch. Every field: `references/api.md` "Changes tiles".
 
 ### HTML explainers
 

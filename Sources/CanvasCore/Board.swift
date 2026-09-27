@@ -375,14 +375,18 @@ public final class Board {
 
     /// Room kept between a placed object and its neighbours.
     public static let placementGap = 24.0
+    /// The smallest a follow tile gets so that it lands wholly in view beside its terminal.
+    public static let followMinimumSize = (w: 160.0, h: 200.0)
 
     /// Where a new object goes when nobody gave it a frame: the free slot nearest the caller's
     /// tile, touching it at `placementGap` when there's room (right first, then below, left,
     /// above), else nearest the viewport center. The app also places the user's own new objects
     /// here, beside the tile they came from (`near`, e.g. Edit Here's terminal) or at the viewport
-    /// center. See `place(_:)` for what counts as free.
-    public func place(width: Double, height: Double, near caller: ObjectID?) -> Frame {
-        if let caller, let anchor = objects[caller] { return freeSlot(width: width, height: height, anchor: anchor.frame, beside: true) }
+    /// center. See `place(_:)` for what counts as free. `shrinkingTo` (a follow tile's minimum
+    /// size): when nothing that size fits wholly in view, a smaller slot that does, down to the
+    /// minimum, beats one partly outside it.
+    public func place(width: Double, height: Double, near caller: ObjectID?, shrinkingTo minimum: (w: Double, h: Double)? = nil) -> Frame {
+        if let caller, let anchor = objects[caller] { return freeSlot(width: width, height: height, anchor: anchor.frame, beside: true, minimum: minimum) }
         let view = viewport() ?? Frame(x: 0, y: 0, w: 0, h: 0)
         return place(Frame(x: view.x + view.w / 2 - width / 2, y: view.y + view.h / 2 - height / 2, w: width, h: height))
     }
@@ -394,12 +398,13 @@ public final class Board {
     /// nearer ones outside it, and when none fits, slots partly in view win over ones wholly out
     /// of it. Origins are whole points.
     public func place(_ ideal: Frame) -> Frame {
-        freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false)
+        freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false, minimum: nil)
     }
 
     /// `beside`: the slot goes next to `anchor` (an object), nearest by the gap between them;
-    /// otherwise it replaces `anchor`, nearest by origin.
-    private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool) -> Frame {
+    /// otherwise it replaces `anchor`, nearest by origin. `minimum`: a slot partly in view may be
+    /// cut down to its part in view when that is at least this big.
+    private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool, minimum: (w: Double, h: Double)?) -> Frame {
         let gap = Self.placementGap
         let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape }
             .map { Frame(x: $0.frame.x - gap, y: $0.frame.y - gap, w: $0.frame.w + 2 * gap, h: $0.frame.h + 2 * gap) }
@@ -417,12 +422,12 @@ public final class Board {
             xs.formUnion([screen.x.rounded(.up), (screen.maxX - w).rounded(.down)])
             ys.formUnion([screen.y.rounded(.up), (screen.maxY - h).rounded(.down)])
         }
-        // In view, partly in view, out of view; then distance to the anchor, then side (right,
-        // below, left, above), then distance from where that side's slot would ideally start;
-        // ties go top-left first.
+        // In view, cut down to fit in view, partly in view, out of view; then distance to the
+        // anchor, then side (right, below, left, above), then distance from where that side's
+        // slot would ideally start; ties go top-left first.
         typealias Cost = (Int, Double, Int, Double, Double, Double)
-        func cost(_ slot: Frame) -> Cost {
-            let outside = screen.map { $0.contains(slot) ? 0 : $0.intersects(slot) ? 1 : 2 } ?? 0
+        func cost(_ slot: Frame, cut: Bool) -> Cost {
+            let outside = cut ? 1 : screen.map { $0.contains(slot) ? 0 : $0.intersects(slot) ? 2 : 3 } ?? 0
             guard beside else { return (outside, 0, 0, hypot(slot.x - anchor.x, slot.y - anchor.y), slot.y, slot.x) }
             let dx = max(0, anchor.x - slot.maxX, slot.x - anchor.maxX)
             let dy = max(0, anchor.y - slot.maxY, slot.y - anchor.maxY)
@@ -439,14 +444,25 @@ public final class Board {
             }
             return (outside, hypot(dx, dy).rounded(), side, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
         }
+        /// A slot partly in view cut down to its part in view, when that is at least `minimum`.
+        func cut(_ slot: Frame) -> Frame? {
+            guard let minimum, let screen, !screen.contains(slot) else { return nil }
+            let x = max(slot.x, screen.x.rounded(.up)), y = max(slot.y, screen.y.rounded(.up))
+            let cut = Frame(x: x, y: y, w: min(slot.maxX, screen.maxX.rounded(.down)) - x, h: min(slot.maxY, screen.maxY.rounded(.down)) - y)
+            return cut.w >= minimum.w && cut.h >= minimum.h ? cut : nil
+        }
         var best: (slot: Frame, cost: Cost)?
+        func consider(_ slot: Frame, cut: Bool) {
+            let slotCost = cost(slot, cut: cut)
+            if let best, !(slotCost < best.cost) { return }
+            if blocked.contains(where: { $0.intersects(slot) }) { return }
+            best = (slot, slotCost)
+        }
         for x in xs {
             for y in ys {
                 let slot = Frame(x: x, y: y, w: w, h: h)
-                let slotCost = cost(slot)
-                if let best, !(slotCost < best.cost) { continue }
-                if blocked.contains(where: { $0.intersects(slot) }) { continue }
-                best = (slot, slotCost)
+                consider(slot, cut: false)
+                if let smaller = cut(slot) { consider(smaller, cut: true) }
             }
         }
         // Unreachable: right of the rightmost blocker is always free.
@@ -596,7 +612,11 @@ public final class Board {
             follow = try update(existing.id, props: .object(props), caller: tile)
         } else {
             props["diffBase"] = .string("merge-base")
-            follow = create(type: .code, props: .object(props.filter { $0.value != .null }), caller: tile)
+            // Beside its terminal, wholly in view when the terminal is on screen, smaller when
+            // only that fits (the view never moves for an agent's tile).
+            let size = Self.defaultSize(.code)
+            follow = create(type: .code, props: .object(props.filter { $0.value != .null }),
+                            frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: Self.followMinimumSize), caller: tile)
         }
         activityMuted = false
         let at = range.map { ":\($0.start)-\($0.end)" } ?? ""

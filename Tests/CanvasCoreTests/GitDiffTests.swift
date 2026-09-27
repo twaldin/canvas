@@ -149,6 +149,41 @@ struct GitBaseTests {
         await engine.release(held)
         #expect(await engine.watchedRepositoryCount == 0, "the last live holder going away stops the stream")
     }
+
+    /// The incident study: a follow tile re-aiming cancelled its load mid-resolution, the shared
+    /// repository record kept "no commits yet", and every tile of the repository showed it.
+    @Test func aCancelledResolutionIsNeitherNoCommitsNorKept() async throws {
+        let repo = try await TempRepo(branch: "main")
+        try await repo.write("a.txt", numbered(1...3))
+        let fork = try await repo.commit("base")
+        try await repo.git("checkout", "-q", "-b", "feature")
+        try await repo.write("a.txt", numbered(1...4))
+        try await repo.commit("feature work")
+        let engine = GitDiffEngine(watchesRepositories: false)
+        let held = try #require(await engine.retain(containing: repo.url("a.txt")))
+        let cancelled = await Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await engine.diff(file: repo.url("a.txt"), base: .mergeBase)
+        }.value
+        #expect(cancelled.state == .noBase && cancelled.baseLabel == "git failed: cancelled")
+        let next = await engine.diff(file: repo.url("a.txt"), base: .mergeBase)
+        #expect(next.state == .modified && next.base == fork && next.baseLabel == "merge-base with main")
+        await engine.release(held)
+    }
+
+    /// Without a watcher to announce the first commit, the next load still finds it.
+    @Test func aBaseWithoutACommitIsAskedAgainOnTheNextLoad() async throws {
+        let repo = try await TempRepo(branch: "main")
+        try await repo.write("a.txt", numbered(1...3))
+        let engine = GitDiffEngine(watchesRepositories: false)
+        let held = try #require(await engine.retain(containing: repo.url("a.txt")))
+        let unborn = await engine.diff(file: repo.url("a.txt"), base: .head)
+        #expect(unborn.state == .noBase && unborn.baseLabel == "no commits yet")
+        let first = try await repo.commit("first")
+        let committed = await engine.diff(file: repo.url("a.txt"), base: .head)
+        #expect(committed.state == .unchanged && committed.base == first)
+        await engine.release(held)
+    }
 }
 
 struct GitDiffTests {

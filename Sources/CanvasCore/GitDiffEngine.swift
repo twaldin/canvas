@@ -49,7 +49,7 @@ public actor GitDiffEngine {
     public static let maxFileSize = 4 << 20
 
     /// A base commit and how it was chosen (`merge-base with main`), or no commit and why not
-    /// (`no commits yet`, `no default branch`).
+    /// (`no commits yet`, `no default branch`, `git failed: …` when git itself couldn't answer).
     public struct ResolvedBase: Equatable, Sendable {
         public var sha: String?
         public var label: String
@@ -249,9 +249,8 @@ public actor GitDiffEngine {
         guard NoteSource.isRevision(revision) else { return unavailable("not a revision: \(revision)") }
         guard let repository = await repository(containing: file) else { return unavailable("not in a git repository") }
         let toplevel = repository.toplevel
-        guard let sha = await Self.resolve(.commit(revision), in: toplevel, runner: runner).sha else {
-            return unavailable("unknown commit \(revision)", repository: toplevel.path)
-        }
+        let resolved = await Self.resolve(.commit(revision), in: toplevel, runner: runner)
+        guard let sha = resolved.sha else { return unavailable(resolved.label, repository: toplevel.path) }
         let path = Self.relative(Self.realPath(file), to: toplevel)
         guard let data = try? await runner.run(["cat-file", "blob", "--end-of-options", "\(sha):\(path)"], in: toplevel, maxOutput: Self.maxFileSize) else {
             return unavailable("not in \(sha.prefix(7))", repository: toplevel.path)
@@ -465,41 +464,74 @@ public actor GitDiffEngine {
         return Repository(toplevel: URL(fileURLWithPath: lines[0]), watchedDirectories: Array(Set([lines[1], lines[2]])))
     }
 
+    /// The repository's resolved base, reused only when it names a commit: an answer without one
+    /// (no commits yet, or git cancelled or failing mid-question) is asked again on the next
+    /// load, so it never outlives what caused it. It is still recorded, so a HEAD or ref change
+    /// re-resolves it and tiles showing it reload (`refreshBases`).
     private func resolve(_ base: DiffBase, in repository: Repository) async -> ResolvedBase {
-        if let known = repository.bases[base] { return known }
+        if let known = repository.bases[base], known.sha != nil { return known }
         let resolved = await Self.resolve(base, in: repository.toplevel, runner: runner)
         repository.bases[base] = resolved
         return resolved
     }
 
+    /// Git's answer for `base`; a git that couldn't answer (cancelled, timed out, failed) is
+    /// `git failed: <why>`, never mistaken for a missing commit.
     static func resolve(_ base: DiffBase, in toplevel: URL, runner: GitRunner) async -> ResolvedBase {
-        func verify(_ revision: String) async -> String? {
-            guard let data = try? await runner.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(revision)^{commit}"], in: toplevel) else { return nil }
+        do {
+            return try await lookUp(base, in: toplevel, runner: runner)
+        } catch {
+            return ResolvedBase(sha: nil, label: "git failed: \(describe(error))")
+        }
+    }
+
+    private static func lookUp(_ base: DiffBase, in toplevel: URL, runner: GitRunner) async throws -> ResolvedBase {
+        /// The commit `revision` names; nil when there is none (git exits 1: unborn HEAD, unknown name).
+        func verify(_ revision: String) async throws -> String? {
+            let data: Data
+            do {
+                data = try await runner.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(revision)^{commit}"], in: toplevel)
+            } catch GitError.failed(status: 1, _) {
+                return nil
+            }
             let sha = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             return sha.isEmpty ? nil : sha
         }
         switch base {
         case .head:
-            let sha = await verify("HEAD")
+            let sha = try await verify("HEAD")
             return ResolvedBase(sha: sha, label: sha == nil ? "no commits yet" : "HEAD")
         case .commit(let revision):
-            let sha = await verify(revision)
+            let sha = try await verify(revision)
             return ResolvedBase(sha: sha, label: sha == nil ? "unknown commit \(revision)" : revision)
         case .mergeBase:
-            guard await verify("HEAD") != nil else { return ResolvedBase(sha: nil, label: "no commits yet") }
-            guard let branch = await defaultBranch(in: toplevel, runner: runner) else {
+            guard try await verify("HEAD") != nil else { return ResolvedBase(sha: nil, label: "no commits yet") }
+            guard let branch = try await defaultBranch(in: toplevel, runner: runner) else {
                 return ResolvedBase(sha: nil, label: "no default branch")
             }
             let shortName = branch.replacingOccurrences(of: "refs/remotes/", with: "").replacingOccurrences(of: "refs/heads/", with: "")
-            let data = try? await runner.run(["merge-base", branch, "HEAD"], in: toplevel)
-            let sha = data.map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            // Exit 1: the histories share no commit.
+            let data = try await runner.run(["merge-base", branch, "HEAD"], in: toplevel, allowedStatus: [0, 1])
+            let sha = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             return sha.isEmpty ? ResolvedBase(sha: nil, label: "no merge-base with \(shortName)") : ResolvedBase(sha: sha, label: ResolvedBase.mergeBasePrefix + shortName)
         }
     }
 
+    /// Why git couldn't answer, in a few words for a header.
+    private static func describe(_ error: Error) -> String {
+        switch error {
+        case is CancellationError: "cancelled"
+        case GitError.timedOut: "timed out"
+        case GitError.outputTooLarge: "too much output"
+        case GitError.launch(let reason): reason
+        case GitError.failed(let status, let stderr): stderr.split(separator: "\n").first.map(String.init) ?? "exit \(status)"
+        default: "\(error)"
+        }
+    }
+
     /// origin/HEAD's target when the clone has one, else local main, else master.
-    static func defaultBranch(in toplevel: URL, runner: GitRunner) async -> String? {
-        guard let data = try? await runner.run(["for-each-ref", "--format=%(refname)%09%(symref)", "refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master"], in: toplevel) else { return nil }
+    static func defaultBranch(in toplevel: URL, runner: GitRunner) async throws -> String? {
+        let data = try await runner.run(["for-each-ref", "--format=%(refname)%09%(symref)", "refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master"], in: toplevel)
         var refs: [String: String] = [:]
         for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false)

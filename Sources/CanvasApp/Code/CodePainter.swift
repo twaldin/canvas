@@ -8,6 +8,8 @@ enum CodeTheme {
     static var peek: NSColor { NSColor.systemRed.withAlphaComponent(0.14) }
     static var range: NSColor { NSColor.systemYellow.withAlphaComponent(0.22) }
     static var flash: NSColor { NSColor.controlAccentColor }
+    static var match: NSColor { NSColor.systemYellow.withAlphaComponent(0.35) }
+    static var currentMatch: NSColor { NSColor.systemOrange.withAlphaComponent(0.45) }
     static var added: NSColor { .systemGreen }
     static var modified: NSColor { .systemBlue }
     static var deleted: NSColor { .systemRed }
@@ -81,6 +83,8 @@ struct CodePainter {
     /// Displayed lines an edit just changed, and the accent's current strength (0…1).
     var flash: (lines: [Range<Int>], strength: CGFloat)?
     var selection: (start: CodeRows.Position, end: CodeRows.Position)?
+    /// Find matches (the find bar), the current one stronger.
+    var find: CodeFind?
 
     var gutterWidth: CGFloat { document.gutterWidth }
 
@@ -205,6 +209,15 @@ struct CodePainter {
                 if let flash, flash.lines.contains(where: { $0.contains(number) }) {
                     CodeTheme.flash.withAlphaComponent(0.35 * flash.strength).setFill()
                     frame.fill()
+                }
+            }
+            if let find, let indices = find.byEntry[segment.entry] {
+                for index in indices {
+                    let match = find.matches[index]
+                    let span = (CodeRows.Position(entry: match.entry, offset: match.start), CodeRows.Position(entry: match.entry, offset: match.end))
+                    guard let spanX = selected(segment, span, line: line(segment, cache: cache)) else { continue }
+                    (index == find.current ? CodeTheme.currentMatch : CodeTheme.match).setFill()
+                    CGRect(x: spanX.from, y: frame.minY, width: max(0, (spanX.to ?? width) - spanX.from), height: frame.height).fill()
                 }
             }
             if let selection, let span = selected(segment, selection, line: line(segment, cache: cache)) {

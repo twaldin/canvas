@@ -123,6 +123,21 @@ final class ApiRouterTests {
         #expect(unknown["result"]?["agent"]?["tile"] == .string(shell))
     }
 
+    @Test func listedAgentsSayWhichBoardAndRootTheyAreOn() async throws {
+        let here = terminal()
+        let otherRoot = dir.appendingPathComponent("other")
+        try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+        let other = registry.open(root: otherRoot)
+        let there = other.create(type: .terminal, props: .object(["cwd": .string(otherRoot.path)])).id
+        let client = try connect()
+        let agents = try await call(client, "agent.list", [:])["result"]?["agents"]?.array ?? []
+        let byTile = Dictionary(uniqueKeysWithValues: agents.compactMap { entry in entry["tile"]?.string.map { ($0, entry) } })
+        #expect(byTile[here]?["board"] == .string(board.id))
+        #expect(byTile[here]?["root"] == .string(board.root.path))
+        #expect(byTile[there]?["board"] == .string(other.id))
+        #expect(byTile[there]?["root"] == .string(otherRoot.path))
+    }
+
     @Test func aWaitOnAnAgentJustLaunchedWaitsForItsFirstReport() async throws {
         let fresh = terminal()
         let client = try connect()

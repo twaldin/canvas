@@ -293,7 +293,7 @@ public final class ApiRouter {
     func agentEntry(_ terminal: CanvasObject, on board: Board) -> JSONValue {
         let agent = terminal.props["agent"]
         let entry: [String: JSONValue] = [
-            "tile": .string(terminal.id), "board": .string(board.id),
+            "tile": .string(terminal.id), "board": .string(board.id), "root": .string(board.root.path),
             "kind": agent?["kind"] ?? .string("unknown"),
             "name": terminal.props["name"] ?? .null,
             "sessionId": agent?["sessionId"] ?? .null,

@@ -305,10 +305,11 @@
     },
     "Agent": {
       "type": "object",
-      "required": ["tile", "kind", "lifecycle"],
+      "required": ["tile", "board", "root", "kind", "lifecycle"],
       "properties": {
         "tile": { "$ref": "#/definitions/Id" },
-        "board": { "$ref": "#/definitions/Id" },
+        "board": { "$ref": "#/definitions/Id", "description": "the board the terminal is on" },
+        "root": { "type": "string", "description": "that board's root directory" },
         "name": { "type": "string" },
         "kind": { "type": "string" },
         "sessionId": { "type": "string" },

@@ -160,7 +160,8 @@ class ResolvedMention(TypedDict):
 
 class Agent(TypedDict):
     tile: Required["Id"]
-    board: NotRequired["Id"]
+    board: Required["Id"]
+    root: Required[str]
     name: NotRequired[str]
     kind: Required[str]
     sessionId: NotRequired[str]

@@ -1,6 +1,7 @@
 # HTML explainers
 
-An HTML tile is the richest thing you can put next to your terminal: a plan, a walkthrough, a comparison the user can decide on. Build one when prose in the terminal would make the user scroll, cross-reference files by hand, or hold a structure in their head.
+An HTML tile is the richest thing you can put next to your terminal: a plan, a walkthrough, a comparison the user can decide on.
+Build one when prose in the terminal would make the user scroll, cross-reference files by hand, or hold a structure in their head.
 
 ## The tile
 
@@ -11,7 +12,9 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
 - `html` is a body fragment or a full document. Update it with `object.update` (the tile re-renders in place); keep the same tile rather than creating a new one per revision.
 - Sandboxed: no network (list hosts in `allowNetwork: ["localhost:3000", "*.example.com"]` when you truly need them), no native access, no approvals or credentials inside the tile, ever.
 - Preloaded, nothing to include:
-  - **Tailwind v4**, themed to the app. Use the semantic colors so the tile matches light and dark mode: `bg-background text-foreground`, `bg-card`, `bg-muted text-muted-foreground`, `border-border`, `bg-accent text-accent-foreground`, `bg-code`, `text-warn`, `text-ok`, `font-sans`, `font-mono`. Avoid hard-coded hex colors.
+  - **Tailwind v4**, themed to the app. Use the semantic colors so the tile matches light and dark mode:
+    `bg-background text-foreground`, `bg-card`, `bg-muted text-muted-foreground`, `border-border`, `bg-accent text-accent-foreground`, `bg-code`, `text-warn`, `text-ok`, `font-sans`, `font-mono`.
+    Avoid hard-coded hex colors.
   - **Mermaid**: `<pre class="mermaid">flowchart LR …</pre>` renders as a diagram.
   - **Canvas components** (below).
 - Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`.
@@ -25,16 +28,31 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
 | `<canvas-decisions key="storage" question="Where should boards live?">` + `<canvas-option value="sqlite" label="SQLite">why / cost</canvas-option>`… | A choice the user makes in place. The pick is stored in the tile's `props.state.storage`; read it with `object.get`. Clicking again clears it. |
 | `<canvas-compare>` + `<canvas-pane label="Before">…</canvas-pane>`… | Equal-width labeled columns, any count. |
 
-Grounding rule: every claim about code points at code. Use `<canvas-code>` for the lines that prove it and `<canvas-link>` for passing references. Never paste code you could anchor; pasted code goes stale silently, anchored code shows it.
+Grounding rule: every claim about code points at code. Use `<canvas-code>` for the lines that prove it and `<canvas-link>` for passing references.
+Never paste code you could anchor; pasted code goes stale silently, anchored code shows it.
 
 ## Style
 
+- **Small first draft.** About one screen: the answer, one diagram or comparison, a few excerpts.
+  Split a long explainer into several tiles in a group (one per stage or question) rather than one tall page, and add depth when the user asks.
 - **Lead with the answer.** The first screen states the conclusion or the decision needed, in one or two sentences. Detail follows.
 - **One idea per section**, each with a short heading that is a claim ("Restore reads the snapshot twice"), not a topic ("Restore").
 - **Show, then tell.** Put the excerpt or diagram first and a two-line caption under it, not paragraphs around it.
 - **Progressive disclosure.** Use `<details><summary>` for depth the user may not need: edge cases, logs, full traces.
-- **Restraint.** A tile is ~640 px wide at 100%: single column by default, `canvas-compare` only for genuine side-by-side. Neutral surfaces (`bg-card`, `border-border`), accent color only for the one thing that matters, `text-warn`/`text-ok` only for status. Generous spacing (`p-6 space-y-6`), `text-sm` body, `font-mono` for identifiers.
+- **Restraint.** A tile is ~640 px wide at 100%: single column by default, `canvas-compare` only for genuine side-by-side.
+  Neutral surfaces (`bg-card`, `border-border`), accent color only for the one thing that matters, `text-warn`/`text-ok` only for status.
+  Generous spacing (`p-6 space-y-6`), `text-sm` body, `font-mono` for identifiers.
 - **Title the tile** (`title` prop) with what it is for: "Plan: tray persistence", "Why restore races".
+
+## Mermaid
+
+- **Give diagrams the full width.** Mermaid scales a diagram down to fit its container,
+  so a sequence diagram squeezed into a narrow column (a grid cell, one `canvas-compare` pane) renders its message text at ~9 px, unreadable at 100%.
+  Put diagrams in their own full-width section, keep them to 5–9 nodes or participants, and put the details in sections under them.
+- **No `;` in sequence messages.** In a `sequenceDiagram`, `;` ends the statement, so `A->>B: read; retry` fails the whole diagram ("Syntax error in text").
+  Use a comma, or `#59;` for a literal semicolon (`A->>B: read#59; retry`).
+- **Building HTML in omp's `eval`:** a Python cell line that starts with `%%` (e.g. a Mermaid `%%{init: …}%%` directive) is taken as a cell magic.
+  Keep the directive inside a string that doesn't start a line of the cell, or leave it out.
 
 ## Playbooks
 
@@ -67,16 +85,23 @@ For options, before/after, or two implementations.
 
 ### Decision record
 
-For choices that should be remembered: context (two lines), the `<canvas-decisions>` block, consequences per option. After the user decides, update the tile to state the decision at the top and keep it as the record (or write it into a note).
+For choices that should be remembered: context (two lines), the `<canvas-decisions>` block, consequences per option.
+After the user decides, update the tile to state the decision at the top and keep it as the record (or write it into a note).
 
 ### Architecture map
 
-For "how do these parts fit". A Mermaid `flowchart` of components (subgraphs for processes or packages), edges labeled with the protocol or call. Under it, one row per component: name, one-line responsibility, `<canvas-link>` to its entry point. When the user should manipulate the structure themselves, draw it with canvas shapes and arrows instead, so they can move boxes and mention them.
+For "how do these parts fit". A Mermaid `flowchart` of components (subgraphs for processes or packages), edges labeled with the protocol or call. 
+Under it, one row per component: name, one-line responsibility, `<canvas-link>` to its entry point.
+When the user should manipulate the structure themselves, draw it with canvas shapes and arrows instead, so they can move boxes and mention them.
 
 ### Review / findings
 
-For review results or an investigation. Findings sorted by severity; each is a card (`bg-card border border-border rounded-lg p-4`) with a claim heading, `<canvas-code>` of the offending lines, why it matters, and the suggested fix. Put a one-line summary count at the top ("2 bugs, 1 risk, 3 nits").
+For review results or an investigation. Findings sorted by severity; each is a card (`bg-card border border-border rounded-lg p-4`) with a claim heading, `<canvas-code>` of the offending lines, why it matters, and the suggested fix.
+Put a one-line summary count at the top ("2 bugs, 1 risk, 3 nits").
 
 ## Check your tile
 
-After creating or updating an explainer, look at it: `canvas view.snapshot --out /tmp/c.png` (or `canvas render <id> --full --out /tmp/t.png`, which renders the whole page offscreen and reports `overflow`) and read the image. Fix overflow, unreadable contrast, or broken diagrams before telling the user it's there. Then point at it with `view.attention` rather than moving their viewport.
+After creating or updating an explainer, look at it: `canvas view.snapshot --out "$TMPDIR/c.png"`
+(or `canvas render <id> --full --out "$TMPDIR/t.png"`, which renders the whole page offscreen and reports `overflow`) and read the image.
+Write these files under `$TMPDIR`, never in the repo (see SKILL.md, Known surprises).
+Fix overflow, unreadable contrast, or broken diagrams before telling the user it's there. Then point at it with `view.attention` rather than moving their viewport.

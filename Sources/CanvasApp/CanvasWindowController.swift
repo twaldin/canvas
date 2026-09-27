@@ -56,7 +56,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         drawing = ShapeLayer.install(on: canvas, toolbarIn: container)
         canvas.chromeInsets = { [weak container, weak tray, weak drawing] in
             guard let container else { return NSEdgeInsets() }
-            container.layoutSubtreeIfNeeded()
+            // The toolbar and tray sit at fixed offsets, so only a window never laid out needs a
+            // pass here; attention pills ask on every pan step, sometimes from inside layout.
+            if tray?.frame.isEmpty ?? false { container.layoutSubtreeIfNeeded() }
             let top = drawing?.toolbar.map { $0.isHidden ? 0 : container.bounds.maxY - $0.frame.minY } ?? 0
             let bottom = tray.map { $0.isHidden ? 0 : $0.frame.maxY } ?? 0
             return NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)

@@ -51,11 +51,15 @@ final class AttentionMarker: NSView {
     private static func bubbleWidth(_ message: String?) -> CGFloat { text(message).size(withAttributes: bubbleAttributes).width + 24 }
 
     /// Places the marker around `target`, the object's rect in the superview's coordinates: the
-    /// ring hugs it at a fixed on-screen inset and the bubble sits above its top-left corner.
+    /// ring hugs it at a fixed on-screen inset and the bubble sits above its top-left corner, kept
+    /// inside `clear` (the part of the view the toolbar and tray leave uncovered, same
+    /// coordinates) so it stays readable when the object's top is under the chrome or offscreen.
     /// Panning only moves the view; a zoom step resizes the ring and redraws it.
-    func place(around target: NSRect) {
+    func place(around target: NSRect, clear: NSRect) {
         let ring = target.insetBy(dx: -Self.inset, dy: -Self.inset)
-        let bubble = NSRect(x: ring.minX, y: ring.minY - Self.gap - Self.bubbleHeight, width: bubbleWidth, height: Self.bubbleHeight)
+        var bubble = NSRect(x: ring.minX, y: ring.minY - Self.gap - Self.bubbleHeight, width: bubbleWidth, height: Self.bubbleHeight)
+        bubble.origin.x = max(min(bubble.minX, clear.maxX - Self.inset - bubble.width), clear.minX + Self.inset)
+        bubble.origin.y = max(min(bubble.minY, clear.maxY - bubble.height), clear.minY)
         let frame = ring.union(bubble).insetBy(dx: -Self.stroke / 2, dy: -Self.stroke / 2)
         let ringRect = ring.offsetBy(dx: -frame.minX, dy: -frame.minY)
         if ringRect != self.ringRect || frame.size != self.frame.size { needsDisplay = true }
@@ -124,14 +128,16 @@ final class AttentionEdgeView: NSView {
         return chevrons.first { $0.frame.contains(local) }
     }
 
-    func show(_ pointers: [Pointer]) {
+    /// `clear`: the part of the view the toolbar and tray leave uncovered (this view's
+    /// coordinates); pills sit at its edges, never under the chrome.
+    func show(_ pointers: [Pointer], clear: NSRect) {
         while chevrons.count > pointers.count { chevrons.removeLast().removeFromSuperview() }
         while chevrons.count < pointers.count {
             let chevron = EdgeChevron()
             addSubview(chevron)
             chevrons.append(chevron)
         }
-        let center = NSPoint(x: bounds.midX, y: bounds.midY)
+        let center = NSPoint(x: clear.midX, y: clear.midY)
         let margin: CGFloat = 16
         for (chevron, pointer) in zip(chevrons, pointers) {
             chevron.objectID = pointer.id
@@ -139,13 +145,13 @@ final class AttentionEdgeView: NSView {
             chevron.onClick = { [weak self] in self?.onReveal?(pointer.id) }
             let dx = pointer.target.x - center.x, dy = pointer.target.y - center.y
             chevron.angle = atan2(dy, dx)
-            // Where the ray from the viewport center to the target leaves the (inset) bounds.
-            let halfW = bounds.width / 2 - margin, halfH = bounds.height / 2 - margin
+            // Where the ray from the clear area's center to the target leaves it (inset).
+            let halfW = clear.width / 2 - margin, halfH = clear.height / 2 - margin
             let t = min(dx == 0 ? .infinity : halfW / abs(dx), dy == 0 ? .infinity : halfH / abs(dy))
             let edge = NSPoint(x: center.x + dx * t, y: center.y + dy * t)
             let size = chevron.fittingSize
-            let origin = NSPoint(x: min(max(edge.x - size.width / 2, margin), bounds.width - margin - size.width),
-                                 y: min(max(edge.y - size.height / 2, margin), bounds.height - margin - size.height))
+            let origin = NSPoint(x: min(max(edge.x - size.width / 2, clear.minX + margin), clear.maxX - margin - size.width),
+                                 y: min(max(edge.y - size.height / 2, clear.minY), clear.maxY - size.height))
             chevron.frame = NSRect(origin: origin, size: size)
             chevron.needsDisplay = true
         }

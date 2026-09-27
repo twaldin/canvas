@@ -999,14 +999,17 @@ final class CanvasView: NSScrollView {
     }
 
     /// Markers live in window space: re-placed on every pan and pinch step (`boundsChanged`) and
-    /// whenever objects move, around their object's rect as it is on screen now.
+    /// whenever objects move, around their object's rect as it is on screen now, their bubbles
+    /// kept in the area the chrome leaves clear (`clearArea`, what jumps aim at).
     private func layoutMarkers() {
+        guard !markers.isEmpty else { return }
         let visible = attention.bounds
+        let clear = clearArea
         for marker in markers.values {
             guard let rect = docFrame(marker.objectID) else { continue }
             let shown = attention.convert(rect, from: document)
             marker.isHidden = !shown.insetBy(dx: -60, dy: -60).intersects(visible)
-            if !marker.isHidden { marker.place(around: shown) }
+            if !marker.isHidden { marker.place(around: shown, clear: clear) }
         }
     }
 
@@ -1016,7 +1019,7 @@ final class CanvasView: NSScrollView {
             guard let rect = docFrame(marker.objectID), !rect.intersects(visible) else { return nil }
             return .init(id: marker.objectID, message: marker.message, target: edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document))
         }
-        edges.show(pointers.sorted { $0.id < $1.id })
+        edges.show(pointers.sorted { $0.id < $1.id }, clear: pointers.isEmpty ? edges.bounds : clearArea)
     }
 
     // MARK: Nothing in view

@@ -39,7 +39,7 @@ public enum CanvasBasics {
             Item(term: "⌘P", text: "find a tile by its title or caption."),
             Item(term: "Links", text: "a path:line link, Go to or ⌘-click goes to the tile already showing those lines, else opens them beside you. Return enters a code tile to scroll it."),
             Item(term: "⌘[ · ⌘]", text: "back and forward through where you went: steps, links, Go to, definitions, ⌘J, Review Changes."),
-            Item(term: "Hide Canvas Chrome", text: "View menu, for presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers (a blocked agent still shows). Esc brings them back."),
+            Item(term: "Hide Canvas Chrome", text: "⌥⌘T (View menu), for presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers (a blocked agent still shows). Esc brings them back."),
         ]),
         Section(title: "Agents", items: [
             Item(term: "Blue dot", text: "working: the agent is busy."),
@@ -67,13 +67,14 @@ public enum CanvasBasics {
         Section(title: "Zoom", items: [
             Item(term: "⌘9 · ⌘0", text: "fit everything · actual size (100%, or the selection at 100%)."),
             Item(term: "⌘= · ⌘-", text: "zoom in and out, 10% to 100%. Zoomed far out, tiles become cards (a picture, tinted by the agent's state); zoom in to use them."),
-            Item(term: "⌥-drag a corner", text: "scale a tile to read it from further out."),
+            Item(term: "⌃⌘= · ⌃⌘- · ⌃⌘0", text: "make the selected tile (or the one you're typing in) bigger, smaller, or its actual size again (Object › Scale, 50% to 200%): its text grows with it, and it moves over rather than cover its neighbours. ⌥-drag a corner scales freely."),
         ]),
         Section(title: "Keyboard", items: [
             Item(term: "⌘P", text: "go to a tile, file or symbol."),
             Item(term: "⌘T", text: "new terminal; then run omp, claude, codex, gemini or opencode."),
             Item(term: "Return · Esc", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas. In a terminal Esc goes to the program: ⌘Esc leaves any tile."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
+            Item(term: "⌥⌘/", text: "open or close this legend (Help › Canvas Basics)."),
         ]),
     ]
 }

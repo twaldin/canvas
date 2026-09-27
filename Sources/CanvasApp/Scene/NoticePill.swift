@@ -5,7 +5,8 @@ import AppKit
 /// clicks or the keyboard, and VoiceOver announces it.
 @MainActor
 final class NoticePill: NSVisualEffectView {
-    static let duration: TimeInterval = 2.5
+    /// Long enough to find and read with a screen magnifier panned elsewhere (2.5 s wasn't).
+    static let duration: TimeInterval = 4
     private let label = NSTextField(labelWithString: "")
     private var hideWork: DispatchWorkItem?
 

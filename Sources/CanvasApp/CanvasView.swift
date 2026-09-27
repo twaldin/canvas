@@ -392,8 +392,12 @@ final class CanvasView: NSScrollView {
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
         tile.onFrameCommit = { [weak self] rect, scale in
             guard let self, let object = self.board.objects[id] else { return }
+            var frame = Self.canvasFrame(rect)
+            // An ⌥-drag scale makes room like the Scale menu (`Board.scaledFrame`); a plain
+            // resize stays where the user dragged it.
+            if scale != CGFloat(object.scale), let placed = try? self.board.scaledFrame(id, to: CGSize(width: frame.w, height: frame.h)) { frame = placed }
             let props: JSONValue? = scale == CGFloat(object.scale) ? nil : .object(["scale": Self.scaleProp(Double(scale))])
-            _ = try? self.board.update(id, frame: Self.canvasFrame(rect), props: props)
+            _ = try? self.board.update(id, frame: frame, props: props)
         }
         tile.onResizing = { [weak self] in self?.objectsMoved() }
         tile.onClose = { [weak self] in self?.delete([id]) }
@@ -844,9 +848,12 @@ final class CanvasView: NSScrollView {
         alert.messageText = terminals.count == 1 ? "Close this terminal?" : "Close \(terminals.count) terminals?"
         // What ends, by name: the foreground program and what it or the shell started.
         alert.informativeText = SessionProcesses.closingText(terminals.map { (tiles[$0]?.content as? TerminalTile)?.sessionProcesses() })
-        // Return and Esc cancel: closing ends running work, so it takes a click (or ⌘⌫).
+        // Return and Esc cancel: closing ends running work, so it takes a click or ⌘⌫, which
+        // the button names (a sheet's buttons show no key equivalent themselves).
         alert.addButton(withTitle: "Cancel")
-        let close = alert.addButton(withTitle: "Close")
+        let close = alert.addButton(withTitle: "Close  ⌘⌫")
+        close.setAccessibilityLabel("Close")
+        close.setAccessibilityHelp("Command-Delete closes")
         close.keyEquivalent = "\u{8}"
         close.keyEquivalentModifierMask = .command
         close.hasDestructiveAction = true
@@ -1207,10 +1214,17 @@ final class CanvasView: NSScrollView {
         try? board.setFollowing(id, !follows(id))
     }
 
-    /// The scales of the selected objects that take one (`ObjectScale`); nil when none does.
-    var selectionScales: Set<Double>? {
-        let scalable = selection.compactMap { board.objects[$0] }.filter { ObjectScale.applies(to: $0.type, props: $0.props) }
-        return scalable.isEmpty ? nil : Set(scalable.map(\.scale))
+    /// What Object ▸ Scale acts on (like ⌘W): the selected tiles and text shapes, else the tile
+    /// holding the keyboard.
+    private var scaleTargets: [CanvasObject] {
+        let selected = selection.compactMap { board.objects[$0] }.filter { ObjectScale.applies(to: $0.type, props: $0.props) }
+        return selected.isEmpty ? focusedTile.flatMap { board.objects[$0] }.map { [$0] } ?? [] : selected
+    }
+
+    /// The scales of `scaleTargets`; nil when there is none.
+    var scaleTargetScales: Set<Double>? {
+        let scales = Set(scaleTargets.map(\.scale))
+        return scales.isEmpty ? nil : scales
     }
 
     /// The one selected group, for Enter Group.
@@ -1280,21 +1294,27 @@ final class CanvasView: NSScrollView {
         return menu
     }
 
-    /// Scale presets and Reset for the selected tiles and text shapes (a preset is checked when
-    /// they all show it); nil when nothing selected scales.
+    /// Bigger, Smaller, the presets and Actual Size for the selected tiles and text shapes (a
+    /// preset is checked when they all show it), with the main menu's shortcuts; nil when
+    /// nothing selected scales.
     private func scaleMenu() -> NSMenuItem? {
-        let scalable = selection.compactMap { board.objects[$0] }.filter { ObjectScale.applies(to: $0.type, props: $0.props) }
-        guard !scalable.isEmpty else { return nil }
-        let current = Set(scalable.map(\.scale))
+        guard let current = scaleTargetScales else { return nil }
         func percent(_ scale: Double) -> String { "\(Int((scale * 100).rounded()))%" }
+        func shortcut(_ item: NSMenuItem, _ key: String) -> NSMenuItem {
+            (item.keyEquivalent, item.keyEquivalentModifierMask) = (key, [.control, .command])
+            return item
+        }
         let submenu = NSMenu()
+        submenu.addItem(shortcut(MenuAction.item("Bigger", enabled: canStepScale(bigger: true)) { [weak self] in self?.stepScale(bigger: true) }, "="))
+        submenu.addItem(shortcut(MenuAction.item("Smaller", enabled: canStepScale(bigger: false)) { [weak self] in self?.stepScale(bigger: false) }, "-"))
+        submenu.addItem(.separator())
         for preset in ObjectScale.presets {
-            let item = MenuAction.item(percent(preset)) { [weak self] in self?.scaleSelection(to: preset) }
+            let item = MenuAction.item(percent(preset)) { [weak self] in self?.setScale(preset) }
             item.state = current == [preset] ? .on : .off
             submenu.addItem(item)
         }
         submenu.addItem(.separator())
-        submenu.addItem(MenuAction.item("Reset to 100%", enabled: current != [1]) { [weak self] in self?.scaleSelection(to: 1) })
+        submenu.addItem(shortcut(MenuAction.item("Actual Size", enabled: current != [1]) { [weak self] in self?.setScale(1) }, "0"))
         submenu.addItem(MenuAction.item("⌥-drag a corner to scale freely", enabled: false) {})
         let title = current.count == 1 && current != [1] ? "Scale (\(percent(current.first!)))" : "Scale"
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -1302,14 +1322,31 @@ final class CanvasView: NSScrollView {
         return item
     }
 
-    /// Sets the selected tiles' and text shapes' `props.scale`, resizing each around its top-left
-    /// corner so its content keeps its layout, as one undo step.
-    func scaleSelection(to scale: Double) {
-        let objects = selection.compactMap { board.objects[$0] }.filter { ObjectScale.applies(to: $0.type, props: $0.props) && $0.scale != scale }
-        guard !objects.isEmpty else { return }
+    /// Sets `props.scale` of the selected tiles and text shapes, else of the tile holding the
+    /// keyboard, resizing each so its content keeps its layout, as one undo step. A tile that
+    /// grows makes room rather than cover its neighbours (`Board.scaledFrame`).
+    func setScale(_ scale: Double) {
+        rescale(scaleTargets.filter { $0.scale != scale }.map { ($0, scale) })
+    }
+
+    /// Object ▸ Scale ▸ Bigger (⌃⌘=) or Smaller (⌃⌘-): each target to the next of the menu's
+    /// levels that way (`ObjectScale.step`); one past the last level stays.
+    func stepScale(bigger: Bool) {
+        rescale(scaleTargets.compactMap { object in ObjectScale.step(from: object.scale, bigger: bigger).map { (object, $0) } })
+    }
+
+    /// Whether Bigger (`bigger`) or Smaller has a level to step any target to.
+    func canStepScale(bigger: Bool) -> Bool {
+        scaleTargets.contains { ObjectScale.step(from: $0.scale, bigger: bigger) != nil }
+    }
+
+    private func rescale(_ changes: [(CanvasObject, Double)]) {
+        guard !changes.isEmpty else { return }
         board.transaction {
-            for object in objects {
-                _ = try? board.update(object.id, frame: ObjectScale.rescaled(object.frame, from: object.scale, to: scale), props: .object(["scale": Self.scaleProp(scale)]))
+            for (object, scale) in changes {
+                let size = ObjectScale.rescaled(object.frame, from: object.scale, to: scale)
+                guard let frame = try? board.scaledFrame(object.id, to: CGSize(width: size.w, height: size.h)) else { continue }
+                _ = try? board.update(object.id, frame: frame, props: .object(["scale": Self.scaleProp(scale)]))
             }
         }
     }

@@ -7,8 +7,15 @@ import Foundation
 /// so what the object shows stays laid out the same, just bigger or smaller.
 public enum ObjectScale {
     public static let range: ClosedRange<Double> = 0.25...8
-    /// The Scale menu's choices; its Reset item sets 1.
+    /// The Scale menu's choices; its Actual Size item sets 1.
     public static let presets: [Double] = [0.5, 0.75, 1.25, 1.5, 2]
+
+    /// The scale Object › Scale › Bigger (`bigger`) or Smaller steps to from `scale`: the next of
+    /// the menu's levels (the presets and 1) past it; nil past the last level that way.
+    public static func step(from scale: Double, bigger: Bool) -> Double? {
+        let levels = (presets + [1]).sorted()
+        return bigger ? levels.first { $0 > scale + 0.001 } : levels.last { $0 < scale - 0.001 }
+    }
 
     /// `props.scale` clamped to `range`; 1 when absent or not a positive number.
     public static func of(_ props: JSONValue) -> Double {

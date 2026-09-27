@@ -216,6 +216,19 @@ final class ApiRouterTests {
         #expect(away["result"]?["overlaps"] == nil)
     }
 
+    @Test func aScaleUpdateWithOnlyASizeMakesRoomLikeARefit() async throws {
+        let tile = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
+        let below = board.create(type: .note, props: .object(["markdown": "b"]), frame: Frame(x: 0, y: 340, w: 400, h: 300))
+        let client = try connect()
+        let doubled = try await call(client, "object.update", ["id": .string(tile.id), "props": .object(["scale": 2]), "frame": .object(["w": 800, "h": 600])])
+        #expect(try doubled["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 0, y: -300, w: 800, h: 600), "grown up, off the note below")
+        #expect(doubled["result"]?["overlaps"] == nil)
+        // An origin given with the scale is taken as it is, and the result names what it covers.
+        let placed = try await call(client, "object.update", ["id": .string(tile.id), "props": .object(["scale": .number(2.5)]), "frame": .object(["x": 0, "y": 0, "w": 1000, "h": 750])])
+        #expect(try placed["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 0, y: 0, w: 1000, h: 750))
+        #expect(placed["result"]?["overlaps"] == .array([.string(below.id)]))
+    }
+
     @Test func aNoteIsStoredWithTheAnchorsItsTileWouldWriteBack() async throws {
         let source = dir.appendingPathComponent("root/src/a.ts")
         try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)

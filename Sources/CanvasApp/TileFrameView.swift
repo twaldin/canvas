@@ -18,7 +18,7 @@ final class TileFrameView: NSView {
     private let statusLabel = NSTextField(labelWithString: "")
     private let badge = NSView()
     private let closeButton = TileCloseButton()
-    private let card = NSImageView()
+    private let card = CardImageView()
     private var cardTitle = NSTextField(labelWithString: "")
     private let cardTint = CardTint()
     private(set) var isLive = true
@@ -55,19 +55,19 @@ final class TileFrameView: NSView {
         roleDescription = object.type == .html ? "HTML" : object.type.rawValue
         super.init(frame: frame)
         closeButton.tile = self
+        card.tile = self
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-
         titleBar.wantsLayer = true
-        titleBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        // The group's label says the title (with state, range, caption); the label itself would
+        // say it again, and is empty while the window isn't visible (`syncTitle`).
+        titleLabel.setAccessibilityElement(false)
         titleLabel.font = Self.titleFont
         titleLabel.lineBreakMode = .byTruncatingMiddle
         badge.wantsLayer = true
         badge.layer?.cornerRadius = 5
+        applyLayerColors()
         closeButton.bezelStyle = .inline
         closeButton.isBordered = false
         closeButton.title = "✕"
@@ -93,6 +93,7 @@ final class TileFrameView: NSView {
         cardTitle.font = .systemFont(ofSize: 28, weight: .semibold)
         cardTitle.alignment = .center
         cardTitle.isHidden = true
+        cardTitle.setAccessibilityElement(false)
         addSubview(card)
         addSubview(cardTitle)
         cardTint.isHidden = true
@@ -106,11 +107,65 @@ final class TileFrameView: NSView {
     nonisolated override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    // Each tile is one accessibility group named by its title (VoiceOver, Full Keyboard Access).
+    // Each tile is one accessibility group (VoiceOver, Full Keyboard Access) named by its title,
+    // what an agent's terminal is doing, a code tile's lines and caption, and who made it; its
+    // text (`TileContent.accessibleText`) is a text area inside while it is live.
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .group }
     override func accessibilityRoleDescription() -> String? { roleDescription }
-    override func accessibilityLabel() -> String? { author.map { "\(title), created by \($0)" } ?? title }
+    override func accessibilityLabel() -> String? {
+        ([title, accessibilityDetail] + [author.map { "created by \($0)" }]).compactMap { $0 }.joined(separator: ", ")
+    }
+    override func accessibilityChildren() -> [Any]? {
+        let children = super.accessibilityChildren() ?? []
+        guard isLive, !zoomedOut, let text = content.accessibleText else { return children }
+        return children + [text]
+    }
+
+    /// What the label says after the title (`accessibilityDetail(for:)`).
+    private var accessibilityDetail: String?
+
+    /// An agent terminal's lifecycle ("done", "blocked: approve Bash?"), a code tile's lines and
+    /// caption ("lines 1321–1331, Step 1/4 · …"), an image's caption; nil for anything else.
+    static func accessibilityDetail(for object: CanvasObject) -> String? {
+        let props = object.props
+        func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
+        switch object.type {
+        case .terminal:
+            guard let state = props["lifecycle"]?["state"]?.string, CanvasBasics.lifecycle(state) != nil else { return nil }
+            return state == "blocked" ? nonEmpty(props["lifecycle"]?["message"]).map { "blocked: \($0)" } ?? state : state
+        case .code:
+            var parts: [String] = []
+            if let start = props["range"]?["start"]?.int {
+                let end = props["range"]?["end"]?.int ?? start
+                parts.append(end > start ? "lines \(start)–\(end)" : "line \(start)")
+            }
+            if let caption = nonEmpty(props["caption"]) { parts.append(CodeCaption.plain(caption)) }
+            return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        case .image: return nonEmpty(props["caption"])
+        default: return nil
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyLayerColors()
+    }
+
+    /// Layer colors resolve once, so again when the appearance changes (dark, light, Increase
+    /// Contrast). Under Increase Contrast the border is thicker and the lifecycle dot ringed.
+    private func applyLayerColors() {
+        let increased = NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.borderWidth = increased ? 2 : 1
+            layer?.borderColor = NSColor.separatorColor.cgColor
+            layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            titleBar.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+            badge.layer?.backgroundColor = Self.badgeColor(lifecycleState).cgColor
+            badge.layer?.borderWidth = increased && lifecycleState != nil ? 1 : 0
+            badge.layer?.borderColor = NSColor.labelColor.cgColor
+        }
+    }
 
     /// Layout happens in `applyScale`, once the bounds match the new frame.
     override func resizeSubviews(withOldSize oldSize: NSSize) {}
@@ -155,11 +210,12 @@ final class TileFrameView: NSView {
         let path = object.type == .code ? object.props["path"]?.string : nil
         titleLabel.toolTip = path.flatMap { PathLabel.short($0) == $0 ? nil : $0 }
         z = object.z
+        accessibilityDetail = Self.accessibilityDetail(for: object)
         let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
         badge.isHidden = object.type != .terminal
         if state != lifecycleState {
             lifecycleState = state
-            badge.layer?.backgroundColor = Self.badgeColor(state).cgColor
+            applyLayerColors()
             // What the dot means, in the words of Help › Canvas Basics.
             badge.toolTip = CanvasBasics.lifecycle(state)
             updateTint()
@@ -517,6 +573,14 @@ final class TileFrameView: NSView {
         addCursorRect(resizeGrip, cursor: .crosshair)
         addCursorRect(titleBar.frame, cursor: .openHand)
     }
+}
+
+/// A zoomed-out or offscreen tile's card image, named for accessibility like the live tile
+/// (its title, state, lines and caption), not an unlabelled image.
+private final class CardImageView: NSImageView {
+    weak var tile: TileFrameView?
+
+    override func accessibilityLabel() -> String? { tile?.accessibilityLabel() }
 }
 
 /// A tile's close button, named for accessibility after the tile it closes ("Close notes.md").

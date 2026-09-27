@@ -244,6 +244,30 @@ final class CodeRowsView: NSView {
         guard let point = (sender.representedObject as? NSValue)?.pointValue else { return }
         onEditHere?(point)
     }
+
+    // MARK: Accessibility
+
+    /// At most this many lines of a long range are read out.
+    static let accessibleLineLimit = 1000
+
+    /// The lines VoiceOver reads (`CodeTile.accessibleText`): the tile's range when it has one
+    /// (capped at `accessibleLineLimit`), else the lines in view; nil before the file loaded.
+    var accessibleLines: ClosedRange<Int>? {
+        guard let painter, painter.document.notice == nil, painter.document.text.lineCount > 0 else { return nil }
+        if let range = painter.rangeLines { return range.lowerBound...min(range.upperBound, range.lowerBound + Self.accessibleLineLimit - 1) }
+        let lines = painter.visibleRows(bounds.insetBy(dx: 0, dy: min(CodeMetrics.verticalPadding, bounds.height / 2))).compactMap { row -> Int? in
+            guard case .line(let line)? = painter.rows.row(row) else { return nil }
+            return line
+        }
+        guard let first = lines.min(), let last = lines.max() else { return nil }
+        return first...last
+    }
+
+    /// `accessibleLines`, each after its line number.
+    func accessibleText() -> AccessibleText? {
+        guard let painter, let lines = accessibleLines else { return nil }
+        return AccessibleText(numbered: lines.map { ($0, painter.document.text(of: .line($0))) })
+    }
 }
 
 extension CodeRowsView: NSMenuItemValidation {

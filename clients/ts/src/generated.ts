@@ -26,7 +26,7 @@ export type LineRange = {
   end: number;
 };
 
-/** how much bigger the object draws its content than its natural size: a tile lays out at frame size ÷ scale and draws magnified (header, text, page, terminal cells), so resizing the frame by the same factor keeps its layout; a text shape scales its font. Out-of-range values clamp; 1 is written as absent. The user sets it with ⌥-drag on a tile corner, a text shape's corner, or the Scale menu */
+/** how much bigger the object draws its content than its natural size: a tile lays out at frame size ÷ scale and draws magnified (header, text, page, terminal cells), so resizing the frame by the same factor keeps its layout; a text shape scales its font. Out-of-range values clamp; 1 is written as absent. An object.update that sets it with a size-only frame (w/h, no x/y) is placed like a size: "fit" refit on a tile: grown up or left, else moved nearby, rather than over its neighbours (`overlaps` names what it still covers). The user sets it with ⌥-drag on a tile corner, a text shape's corner, or Object › Scale (Bigger ⌃⌘=, Smaller ⌃⌘-, Actual Size ⌃⌘0) */
 export type Scale = number;
 
 export type Lifecycle = {

@@ -502,12 +502,12 @@ public final class Board {
         freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false, minimum: nil)
     }
 
-    /// Where `id` goes when `size: "fit"` resizes it to `size` without a given origin: grown from
-    /// its top-left corner when that covers nothing it didn't already; else grown from another
-    /// corner (`Layout.refit`: left, up, or both); else moved to the free slot nearest that
-    /// top-left-grown frame (`place(_:)`'s rule, in view first, its own groups aside) among those
-    /// no farther than its longer side; else grown from the top-left anyway (`overlaps(of:)`
-    /// says onto what).
+    /// Where `id` goes when it grows to `size` in place (`size: "fit"` without a given origin, or a
+    /// Scale step, `scaledFrame`): grown from its top-left corner when that covers nothing it
+    /// didn't already; else grown from another corner (`Layout.refit`: left, up, or both); else
+    /// moved to the free slot nearest that top-left-grown frame (`place(_:)`'s rule, in view
+    /// first, its own groups aside) among those no farther than its longer side; else grown from
+    /// the top-left anyway (`overlaps(of:)` says onto what).
     public func refitFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
         let current = try object(id).frame
         let grown = Frame(x: current.x, y: current.y, w: size.width, h: size.height)
@@ -515,6 +515,17 @@ public final class Board {
         let neighbours = objects.values.filter { $0.id != id && !containers.contains($0.id) && BoardGeometry.countsForOverlaps($0) }.map(\.frame)
         if let corner = Layout.refit(current, to: size, clearOf: neighbours) { return corner }
         return freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: containers.union([id]), within: max(grown.w, grown.h))
+    }
+
+    /// The frame `id` takes when its scale changes and its frame becomes `size` (the Scale menu
+    /// and keys, the end of an ⌥-drag, an agent's `props.scale` with a size-only frame): a tile
+    /// makes room by `refitFrame`'s rule, so growing it for legibility never silently covers its
+    /// neighbours; a text shape (an annotation, often meant to lie over something) keeps its
+    /// top-left corner.
+    public func scaledFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
+        let object = try object(id)
+        guard RenderMath.isTile(object.type) else { return Frame(x: object.frame.x, y: object.frame.y, w: size.width, h: size.height) }
+        return try refitFrame(id, to: size)
     }
 
     /// The objects `id` overlaps by accident, by `layout.check`'s `overlaps` rule.

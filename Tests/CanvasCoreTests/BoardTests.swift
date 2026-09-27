@@ -154,6 +154,18 @@ struct BoardTests {
         #expect(capped.contains("    …"))
     }
 
+    @Test func domChipsLeadWithTextTagAndTileAndEndWithTheSelector() throws {
+        let board = makeBoard()
+        let page = board.create(type: .browser, props: .object(["url": .string("http://localhost:3000/blog"), "title": .string("Blog")]))
+        func label(_ selector: String, _ text: String?) throws -> String {
+            try board.stage(.dom(object: page.id, url: "http://localhost:3000/blog", selector: selector, text: text)).label
+        }
+        #expect(try label("body > main > div:nth-of-type(2) > strong", "navigation") == "\"navigation\" · strong · Blog · body > main > div:nth-of-type(2) > strong")
+        #expect(try label("#discussion_r1 > div > p:nth-of-type(1)", nil) == "p · Blog · #discussion_r1 > div > p:nth-of-type(1)", "no text: the tag leads")
+        #expect(try label("#submit", "Sign in") == "\"Sign in\" · Blog · #submit", "an id selector names no tag")
+        #expect(try label("a[aria-label=\"a > b\"]", "Next") == "\"Next\" · a · Blog · a[aria-label=\"a > b\"]", "attribute values may contain ` > `")
+    }
+
     @Test func drawnShapeMentionDescribesWhatItEnclosesAndWhatItIsDrawnOn() async throws {
         let board = makeBoard()
         let inner = board.create(type: .note, props: .object(["markdown": .string("inside")]), frame: Frame(x: 20, y: 20, w: 50, h: 50))

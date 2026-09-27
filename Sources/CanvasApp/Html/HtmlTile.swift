@@ -224,7 +224,7 @@ final class HtmlTile: NSView, TileContent {
     private var renderSettled: (() -> Void)?
     private var renderBusy = false
 
-    /// Loads the page in a separate web view parked in the window (never the user's live page,
+    /// Loads the page in a separate web view parked in the stage (never the user's live page,
     /// whose size and scroll must not change), waits for the kit's `view.rendered` (Mermaid,
     /// `<canvas-code>` excerpts settled), measures it, and snapshots it: the tile's window at
     /// its scroll position, or with `full` the whole page height.
@@ -255,7 +255,7 @@ final class HtmlTile: NSView, TileContent {
         web.appearance = request.appearance
         web.underPageBackgroundColor = .textBackgroundColor
         WebStage.setOcclusionDetection(false, on: web)
-        WebStage.park(web, frame: NSRect(origin: .zero, size: request.size), in: window)
+        WebStage.park(web, frame: NSRect(origin: .zero, size: request.size))
         renderWebView = web
         var settled = false
         renderSettled = { settled = true }
@@ -268,7 +268,7 @@ final class HtmlTile: NSView, TileContent {
         if request.full, content.height > request.size.height + 1 {
             settled = false
             let size = CGSize(width: request.size.width, height: min(content.height, RenderMath.maxContentExtent))
-            WebStage.park(web, frame: NSRect(origin: .zero, size: size), in: window)
+            WebStage.park(web, frame: NSRect(origin: .zero, size: size))
             _ = await Self.wait(until: { settled }, limit: .seconds(2))
         } else if !request.full, scrollY > 0 {
             settled = false

@@ -7,7 +7,7 @@ import WebKit
 extension BrowserTile {
     func perform(_ command: CmuxBrowserCommand) async throws -> JSONValue {
         let webView = ensureWebView()
-        markDriven()
+        await markDriven()
         defer { scheduleSnapshotRefresh() }
         switch command {
         case .navigate(let url):
@@ -119,9 +119,18 @@ extension BrowserTile {
         }
     }
 
-    /// `browser.eval`: an expression in the page's own world, as cmux evaluates it.
+    /// `browser.eval` in the page's own world: an expression's promise is awaited; statements
+    /// run as a program (see `CmuxEval`). Neither is subject to the page's CSP.
     private func evaluate(_ script: String, in webView: WKWebView) async throws -> JSONValue {
-        try await withCheckedThrowingContinuation { continuation in
+        if let body = CmuxEval.awaitingBody(script) {
+            do {
+                return Self.json(try await webView.callAsyncJavaScript(body, arguments: [:], in: nil, contentWorld: .page))
+            } catch {
+                throw Self.cmuxError(error)
+            }
+        }
+        // The completion-handler form: the async overload can't return a program's `undefined`.
+        return try await withCheckedThrowingContinuation { continuation in
             webView.evaluateJavaScript(script) { value, error in
                 if let error {
                     continuation.resume(throwing: Self.cmuxError(error))
@@ -142,10 +151,11 @@ extension BrowserTile {
             if let match = message.firstMatch(of: /^(not_found|invalid_params): (.*)$/) {
                 return CmuxError(String(match.1), String(match.2))
             }
-            let line = (nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? NSNumber).map { " (line \($0))" } ?? ""
+            // Awaited expressions report line 0 (the async wrapper), which says nothing.
+            let line = (nsError.userInfo["WKJavaScriptExceptionLineNumber"] as? NSNumber).flatMap { $0.intValue > 0 ? " (line \($0))" : nil } ?? ""
             return CmuxError("js_error", message + line)
         case .javaScriptResultTypeIsUnsupported:
-            return CmuxError("js_error", "the script's result can't be serialized (return JSON-like values, not promises or DOM nodes)")
+            return CmuxError("js_error", "the script's result can't be serialized: return JSON-like values, not DOM nodes or functions (a promise is awaited only when the script is one expression)")
         default:
             return CmuxError("js_error", nsError.localizedDescription)
         }

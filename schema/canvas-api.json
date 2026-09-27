@@ -885,7 +885,7 @@
           "padding": { "type": "number", "default": 0, "description": "canvas points added around the target" },
           "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths" },
           "format": { "enum": ["png", "jpeg"], "default": "png", "description": "inline format when no `out` is given" },
-          "timeoutMs": { "type": "integer", "minimum": 0, "maximum": 60000, "default": 8000, "description": "how long to wait for content (HTML pages, file reads) before drawing placeholders" }
+          "timeoutMs": { "type": "integer", "minimum": 0, "maximum": 60000, "default": 8000, "description": "how long to wait for content (HTML pages, browser pages including loading one that isn't loaded, file reads) before drawing placeholders" }
         },
         "additionalProperties": false
       },

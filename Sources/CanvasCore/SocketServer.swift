@@ -16,6 +16,9 @@ public final class SocketServer: @unchecked Sendable {
         /// Set by handlers that require a login line before requests (the cmux socket's `auth`).
         /// Only the connection's handler touches it, and handlers run one request at a time.
         public var authenticated = false
+        /// The terminal tile a cmux client named as its own surface (`browser.open_split`'s
+        /// `surface_id`), credited for what the connection later does. Same access rule.
+        public var caller: String?
         private let writeLock = NSLock()
         /// Writes happen here, in call order, so a client that stops reading (a full socket
         /// buffer blocks `write`) never blocks the caller: event broadcasts and waiter replies run

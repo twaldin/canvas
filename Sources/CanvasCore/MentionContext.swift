@@ -19,8 +19,13 @@ public enum MentionContext {
             let range = lines.start == lines.end ? "\(lines.start)" : "\(lines.start)-\(lines.end)"
             let location = side == DiffSide.old.rawValue ? "\(path):\(range) (old)" : "\(path):\(range)"
             return symbol.map { "\(location) \($0)" } ?? location
-        case .dom(_, _, let selector, let text):
-            return text.map { "\(selector) \"\(clip($0, 24))\"" } ?? selector
+        case .dom(let object, _, let selector, let text):
+            // What a person recognizes first; the CSS path last, where the chip truncates.
+            var parts = text.map { ["\"\(clip($0, 24))\""] } ?? []
+            if let tag = tag(ofSelector: selector) { parts.append(tag) }
+            if let tile = board.objects[object] { parts.append(clip(title(of: tile), 24)) }
+            parts.append(selector)
+            return parts.joined(separator: " · ")
         case .terminal(_, let text):
             return "terminal \"\(clip(text, 28))\""
         case .group(let objects, let name):
@@ -181,5 +186,14 @@ public enum MentionContext {
     static func clip(_ text: String, _ limit: Int) -> String {
         let flat = text.replacingOccurrences(of: "\n", with: " ")
         return flat.count > limit ? String(flat.prefix(limit - 1)) + "…" : flat
+    }
+
+    /// The element's tag from a mention selector (`WebMentions`): the last step of a path
+    /// (`… > p:nth-of-type(2)` → `p`) or an attribute selector's element (`a[aria-label="…"]`);
+    /// nil for an id selector. Attribute selectors are never part of a path, and their values
+    /// may contain ` > `.
+    static func tag(ofSelector selector: String) -> String? {
+        let last = selector.contains("[") ? selector : selector.components(separatedBy: " > ").last ?? selector
+        return last.prefixMatch(of: /[A-Za-z][A-Za-z0-9-]*/).map { String($0.output).lowercased() }
     }
 }

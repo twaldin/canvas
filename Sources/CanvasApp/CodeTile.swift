@@ -196,6 +196,18 @@ final class CodeTile: NSView, TileContent {
             }
         }
         if old.props["diffBase"] != object.props["diffBase"] || old.props["pinnedCommit"] != object.props["pinnedCommit"] { load() }
+        if old.props["range"] != object.props["range"] || old.props["anchor"] != object.props["anchor"] {
+            if documentIsCurrent {
+                reanchor()
+            } else {
+                reanchorPending = true
+                if !isLive { needsLoad = true }
+                if staleReason != nil {
+                    staleReason = nil
+                    refreshPainter(keepSelection: true)
+                }
+            }
+        }
         refreshHeader()
         resizeSubviews(withOldSize: bounds.size)
     }
@@ -314,7 +326,7 @@ final class CodeTile: NSView, TileContent {
         let document = await source.document(path: path, url: board.absoluteURL(path))
         await MainTurns.next()
         guard path == displayed.path, source == self.source else { return nil }
-        if !showsCurrent || loadedSource != source || self.document?.text != document.text || self.document?.signs != document.signs {
+        if !showsCurrent || loadedSource != source || reanchorPending || self.document?.text != document.text || self.document?.signs != document.signs {
             install(document, source: source)
             // Not live: the next time it is, revalidate against the watched file and bases.
             if !isLive { needsLoad = true }
@@ -332,6 +344,7 @@ final class CodeTile: NSView, TileContent {
         let sameSource = loadedSource == source
         self.document = document
         loadedSource = source
+        reanchor()
         rowsView.canEdit = document.side == .new && !document.isPinned
         // Laid-out lines are keyed by line number, which a new text reassigns.
         rowsView.cache.removeAll()
@@ -419,7 +432,7 @@ final class CodeTile: NSView, TileContent {
             return
         }
         var painter = CodePainter(document: document, rows: document.rows(peeked: peeked, width: rowsView.bounds.width))
-        painter.rangeLines = displayed.range.flatMap(document.lines(for:))
+        painter.rangeLines = tintedRange.flatMap(document.lines(for:))
         painter.flash = flash.map { ($0.lines, flashStrength($0.start)) }
         painter.selection = keepSelection ? rowsView.painter?.selection : nil
         if let findBar, !findBar.isHidden {
@@ -432,6 +445,75 @@ final class CodeTile: NSView, TileContent {
         rowsView.painter = painter
         rowsMoved()
     }
+
+    // MARK: Anchoring
+
+    /// The range as last found, its file, and the text it held then, which re-finds it after the
+    /// file changes.
+    private var anchored: (path: String, range: LineRange, lines: [String])?
+    /// Why the range's code can't be found: the header says so instead of tinting other lines.
+    private var staleReason: String?
+
+    /// The range the rows tint: none while it is stale.
+    private var tintedRange: LineRange? { staleReason == nil ? displayed.range : nil }
+
+    /// A tile showing a range keeps it on the code it showed, as note fences do (`CodeAnchor`,
+    /// `NoteAnchor`): with the file loaded or the range changed, the range is re-found by the
+    /// text it held (else `props.anchor`, its first line) and, moved or resized by lines
+    /// inserted or removed above or inside it, written back with its first line as bookkeeping
+    /// (`Board.reanchor`). Code that is gone leaves the range where it was, marked stale. Only
+    /// against the file as it is now: a range set while the tile's text may be behind the disk
+    /// (not live, or a reload pending) waits for the next load (`reanchorPending`), or it would
+    /// be anchored to whatever line that old text had there.
+    private func reanchor() {
+        reanchorPending = false
+        let wasStale = staleReason
+        defer {
+            if staleReason != wasStale {
+                refreshPainter(keepSelection: true)
+                refreshHeader()
+            }
+        }
+        guard let document, showsCurrent, document.side == .new, document.text.lineCount > 0,
+              let fence = CodeAnchor.fence(object.props), fence.path == displayed.path, fence.lines == displayed.range, let written = fence.lines else {
+            staleReason = nil
+            return
+        }
+        let source = NoteSource.lines(of: document.text.text)
+        let captured = anchored.flatMap { $0.path == displayed.path && $0.range == written ? $0.lines : nil }
+        let resolution = NoteAnchor.resolve(fence, in: source, captured: captured)
+        guard let range = resolution.range else {
+            if case .stale(let reason) = resolution.status { staleReason = reason }
+            return
+        }
+        staleReason = nil
+        anchored = (displayed.path, range, Array(source[(range.start - 1)..<range.end]))
+        let anchor = CodeAnchor.anchor(of: range, in: source)
+        if range != written || anchor != fence.anchor {
+            try? board.reanchor(object.id, range: range, anchor: anchor)
+        }
+    }
+
+    /// `object.get`'s `rangeStatus`: the range resolved against the file as it is now (loaded
+    /// first unless the tile is current, which re-anchors it) with the text the tile last found
+    /// there, so a first line repeated elsewhere doesn't pass for the code it showed. Nil for a
+    /// tile whose range doesn't anchor.
+    func rangeStatus() async -> NoteExcerpt? {
+        guard CodeAnchor.fence(object.props) != nil, let document = await loadOffscreen(),
+              let fence = CodeAnchor.fence(object.props), let path = fence.path, let written = fence.lines else { return nil }
+        guard document.side == .new, document.diff.state != .missing else {
+            return NoteExcerpt(path: path, range: nil, lines: [], status: .stale("no file \(path)"), missing: true)
+        }
+        let source = NoteSource.lines(of: document.text.text)
+        let captured = anchored.flatMap { $0.path == path && $0.range == written ? $0.lines : nil }
+        let resolution = NoteAnchor.resolve(fence, in: source, captured: captured)
+        let lines = resolution.range.map { Array(source[($0.start - 1)..<$0.end]) } ?? []
+        return NoteExcerpt(path: path, range: resolution.range, lines: lines, status: resolution.status, fileLineCount: source.count)
+    }
+
+    /// The range or anchor changed while the text wasn't known to be current: the next install
+    /// (a load, or the reload before a render) re-finds it.
+    private var reanchorPending = false
 
     // MARK: Find
 
@@ -586,8 +668,9 @@ extension CodeTile {
 
     private func showHeader(for document: CodeDocument?) {
         // A pinned tile has no diff base to pick.
+        let warning = [staleReason.map { "stale: \($0)" }, document?.warning].compactMap { $0 }.joined(separator: " · ")
         header.show(diffBase: pinnedCommit == nil ? diffBaseProp : nil, defaultBranch: defaultBranch(for: document), baseDescription: document?.baseDescription,
-                    status: document?.status ?? "loading…", warning: document?.warning, changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
+                    status: document?.status ?? "loading…", warning: warning.isEmpty ? nil : warning, changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
         let before = header.height
         let history = followOf == nil ? [] : self.history
         header.show(history: history.map(\.aim), edited: history.map(\.edited), current: displayed)
@@ -911,7 +994,7 @@ extension CodeTile {
         // Wrapped at the tile's width, exactly as the live rows are.
         let rows = document.rows(peeked: showsCurrent ? peeked : [], width: size.width)
         var painter = CodePainter(document: document, rows: rows)
-        painter.rangeLines = displayed.range.flatMap(document.lines(for:))
+        painter.rangeLines = tintedRange.flatMap(document.lines(for:))
         // Off screen, the header shows this document; on screen it already shows the live one.
         if header.window == nil {
             showHeader(for: document)
@@ -922,7 +1005,7 @@ extension CodeTile {
         let headerImage = TileRenderRequest(size: header.bounds.size, scale: scale, full: false, appearance: appearance).image(of: header)
         let content = document.content(range: displayed.range, rows: rows, width: size.width, headerHeight: headerHeight)
         var fullScroll: CGFloat = 0
-        if let lines = painter.rangeLines {
+        if let lines = displayed.range.flatMap(document.lines(for:)) {
             let first = rows.index(ofLine: lines.lowerBound)
             let count = rows.rows(ofLine: lines.upperBound).upperBound - first
             fullScroll = CodeMetrics.scrollOffset(toRow: first, count: count, viewport: max(size.height, content.height) - headerHeight, totalRows: rows.count)

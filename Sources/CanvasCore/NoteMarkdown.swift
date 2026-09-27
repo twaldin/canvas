@@ -92,6 +92,25 @@ public enum NoteMarkdown {
         return anchoringRanges(markdown, fences: fences, results: results)
     }
 
+    /// `object.get`'s `fences` for a note: each anchored fence as written (its info string, the
+    /// markdown lines opening it, `symbol`, `commit`, whether it proposes) with how it resolves
+    /// now (`NoteExcerpt.statusJSON`); `path` is the file a symbol search found, else as written.
+    public static func status(of fences: [AnchoredFence], excerpts: [String: NoteExcerpt]) -> JSONValue {
+        .array(fences.map { fence in
+            var out: [String: JSONValue] = [
+                "info": .string(fence.key),
+                "markdownLines": .array(fence.lines.map { .number(Double($0)) }),
+                "propose": .bool(fence.fence.mode == .propose),
+            ]
+            if let symbol = fence.fence.symbol { out["symbol"] = .string(symbol) }
+            if let commit = fence.fence.commit { out["commit"] = .string(commit) }
+            let excerpt = excerpts[fence.key]
+            if let path = excerpt.flatMap({ $0.path.isEmpty ? nil : $0.path }) ?? fence.fence.path { out["path"] = .string(path) }
+            if let excerpt { out.merge(excerpt.statusJSON) { $1 } }
+            return .object(out)
+        })
+    }
+
     /// `markdown` with ` anchor="…"` appended to the opening fence lines `fenceLines` (1-based),
     /// or nil when the anchor can't be written there: a backtick fence can't hold a backtick in
     /// its info string, and a multi-line or blank anchor anchors nothing.

@@ -126,14 +126,14 @@ struct NoteAnchorTests {
         let moved = ["// header", "// more"] + source
         let second = NoteAnchor.resolve(fence, in: moved, captured: captured)
         #expect(second.range == LineRange(start: 9, end: 11))
-        #expect(second.status == .relocated(from: 7))
+        #expect(second.status == .relocated(from: LineRange(start: 7, end: 9)))
     }
 
     @Test func anchorAttributeRelocatesWithoutCapturedText() {
         let fence = NoteFence(path: "a.swift", lines: LineRange(start: 3, end: 5), anchor: "func save() {")
         let resolution = NoteAnchor.resolve(fence, in: source, captured: nil)
         #expect(resolution.range == LineRange(start: 7, end: 9))
-        #expect(resolution.status == .relocated(from: 3))
+        #expect(resolution.status == .relocated(from: LineRange(start: 3, end: 5)))
     }
 
     @Test func proposalBodyRelocatesItsRangeWithoutCapturedText() {
@@ -158,7 +158,7 @@ struct NoteAnchorTests {
         let fence = NoteFence(path: "a.swift", lines: LineRange(start: 2, end: 4))
         let resolution = NoteAnchor.resolve(fence, in: file, captured: captured)
         #expect(resolution.range == LineRange(start: 5, end: 7))
-        #expect(resolution.status == .relocated(from: 2))
+        #expect(resolution.status == .relocated(from: LineRange(start: 2, end: 4)))
         // Unmoved, the written position wins its tie with an identical block further down.
         let twins = ["x", "func a() {", "    two()", "}", "func a() {", "    two()", "}"]
         #expect(NoteAnchor.resolve(fence, in: twins, captured: captured).status == .exact)
@@ -185,6 +185,54 @@ struct NoteAnchorTests {
         let resolution = NoteAnchor.resolve(NoteFence(path: "a.swift", lines: LineRange(start: 40, end: 50)), in: source, captured: nil)
         #expect(resolution.range == nil)
         #expect(resolution.status == .stale("lines 40-50 are past the end of the file (9 lines)"))
+    }
+
+    /// The debugger study's evidence tile: temporary logging went in above and inside the range.
+    @Test func capturedTextCarriesTheRangeEndWhenLinesGoInOrOutInsideIt() {
+        let captured = ["def parse_args(self, args):", "    state = ParsingState(args)", "    self._process_args(state)", "    return state.opts"]
+        let file = ["import x", ""] + captured + ["", "def other():", "    pass"]
+        let fence = NoteFence(path: "p.py", lines: LineRange(start: 3, end: 6))
+        let logged = ["import x", "# TEMP", ""] + captured.prefix(2) + ["    print('TEMP', state)  # TEMP", "    print('TEMP')  # TEMP"] + captured.suffix(2) + ["", "def other():", "    pass"]
+        let grown = NoteAnchor.resolve(fence, in: logged, captured: captured)
+        #expect(grown.range == LineRange(start: 4, end: 9))
+        #expect(grown.status == .relocated(from: LineRange(start: 3, end: 6)))
+
+        // A line removed from the middle: the range ends on its last line, not the next one's.
+        let removed = ["import x", "", captured[0], captured[1], captured[3], "", "def other():"]
+        #expect(NoteAnchor.resolve(fence, in: removed, captured: captured).range == LineRange(start: 3, end: 5))
+
+        // An edited last line is still the range's last line.
+        let edited = ["import x", ""] + captured.prefix(3) + ["    return state.opts  # checked"] + ["", "def other():"]
+        #expect(NoteAnchor.resolve(fence, in: edited, captured: captured).range == LineRange(start: 3, end: 6))
+
+        // Unchanged, it is exactly as written.
+        #expect(NoteAnchor.resolve(fence, in: file, captured: captured).status == .exact)
+    }
+
+    @Test func aChangedFirstLineStillFindsTheRestOfTheCapturedText() {
+        let captured = ["def stop(self):", "    os.dup2(self.saved, self.fd)", "    self.tmp.seek(0)", "    return self.tmp.read()"]
+        let file = ["class X:", "    pass", ""] + ["def finish(self):"] + captured.dropFirst() + [""]
+        let fence = NoteFence(path: "t.py", lines: LineRange(start: 1, end: 4), anchor: "def stop(self):")
+        let resolution = NoteAnchor.resolve(fence, in: file, captured: captured)
+        #expect(resolution.range == LineRange(start: 4, end: 7))
+        // With only the anchor line to go by (a restart), it is lost.
+        #expect(NoteAnchor.resolve(fence, in: file, captured: nil).range == nil)
+    }
+
+    /// click's `core.py` has two `value_from_envvar`s opening with the same line; logging put
+    /// inside the first must not hand its range to the second, whose next line happens to be
+    /// blank like the captured one.
+    @Test func linesInsertedInsideDontHandTheRangeToATwinFirstLine() {
+        let captured = ["rv = self.resolve_envvar_value(ctx)", "", "if rv is not None and self.nargs != 1:", "    return self.type.split_envvar_value(rv)", "", "return rv"]
+        let twin = ["rv = self.resolve_envvar_value(ctx)", "", "# Absent environment variable", "if rv is None:", "    return None", ""]
+        let logged = ["x", captured[0], "print('TEMP rv', rv)", "print('TEMP nargs')"] + captured.dropFirst() + ["", "class Option:"] + twin
+        let fence = NoteFence(path: "core.py", lines: LineRange(start: 2, end: 7))
+        #expect(NoteAnchor.resolve(fence, in: logged, captured: captured).range == LineRange(start: 2, end: 9))
+        // With the block deleted, the twin's first line doesn't make it the range: stale.
+        let deleted = ["x", "", "class Option:"] + twin
+        let lost = NoteAnchor.resolve(fence, in: deleted, captured: captured)
+        #expect(lost.range == nil)
+        #expect(lost.status == .stale("lines 2-7 no longer hold the code they showed"))
     }
 
     @Test func symbolsResolveToTheirBody() {
@@ -228,6 +276,70 @@ struct NoteAnchorTests {
         ]
         #expect(NoteAnchor.symbolRange("Store.get", in: python) == LineRange(start: 2, end: 5))
         #expect(NoteAnchor.symbolRange("Store", in: python) == LineRange(start: 1, end: 8))
+    }
+
+    /// click's `core.py`: `Parameter` runs 700+ lines, its methods far past the first 400.
+    @Test func pythonMethodDeepInsideALargeClass() {
+        var core = ["class Parameter(ABC):", #"    r"""A parameter to a command comes in two versions: they are either"#,
+                    "    :class:`Option`\\s or :class:`Argument`\\s.", #"    """"#, ""]
+        for index in 0..<120 {
+            core += ["    def helper_\(index)(self, ctx: Context) -> None:", "        value = ctx.lookup(\(index))", "        return None", ""]
+        }
+        let method = core.count
+        core += [
+            "    def resolve_envvar_value(self, ctx: Context) -> str | None:",
+            #"        """Returns the value found in the environment variable(s) attached to this"#,
+            "        parameter (i.e. the",
+            "        environment variable is present but has an empty string).",
+            #"        """"#,
+            "        if not self.envvar:",
+            "            return None",
+            "        return os.environ.get(self.envvar)",
+            "",
+            "    def value_from_envvar(self, ctx: Context) -> t.Any:",
+            "        return None",
+            "",
+            "",
+            "class Option(Parameter):",
+            "    def resolve_envvar_value(self, ctx: Context) -> str | None:",
+            "        return None",
+        ]
+        #expect(NoteAnchor.symbolRange("Parameter.resolve_envvar_value", in: core) == LineRange(start: method + 1, end: method + 8))
+        #expect(NoteAnchor.symbolRange("Option.resolve_envvar_value", in: core) == LineRange(start: core.count - 1, end: core.count))
+        // The class itself is still capped.
+        #expect(NoteAnchor.symbolRange("Parameter", in: core)?.end == 400)
+    }
+
+    /// click's `testing.py`: a signature over several lines closes at the def's own indent.
+    @Test func pythonDefWithAMultiLineSignature() {
+        let testing = [
+            "class CliRunner:",
+            "    def make_env(",
+            "        self, overrides: cabc.Mapping[str, str | None] | None = None",
+            "    ) -> cabc.Mapping[str, str | None]:",
+            #"        """Returns the environment overrides for invoking a script.""""#,
+            "        rv = dict(self.env)",
+            "        if overrides:",
+            "            rv.update(overrides)",
+            "        return rv",
+            "",
+            "    @contextlib.contextmanager",
+            "    def isolation(",
+            "        self,",
+            "        input: str | bytes | t.IO[t.Any] | None = None,",
+            "        env: cabc.Mapping[str, str | None] | None = None,",
+            "        color: bool = False,",
+            "    ) -> cabc.Generator[tuple[io.BytesIO, io.BytesIO, io.BytesIO]]:",
+            "        bytes_input = make_input_stream(input, self.charset)",
+            "        yield (bytes_input, bytes_input, bytes_input)",
+            "",
+            "    def invoke(self, cli, args=None, extra={}, **kw):",
+            "        return self.run(cli, args, extra)",
+        ]
+        #expect(NoteAnchor.symbolRange("CliRunner.make_env", in: testing) == LineRange(start: 2, end: 9))
+        #expect(NoteAnchor.symbolRange("isolation", in: testing) == LineRange(start: 12, end: 19))
+        // A `{}` default in the parameter list opens no brace body.
+        #expect(NoteAnchor.symbolRange("CliRunner.invoke", in: testing) == LineRange(start: 21, end: 22))
     }
 
     @Test func symbolWinsOverLineRangeAndFallsBackToIt() {
@@ -487,6 +599,41 @@ struct NoteSourceTests {
         #expect(appended.proposalLines == [2, 3, 4])
         let atEnd = await NoteSource.excerpt(for: NoteFence(info: "ts file=src/a.ts#L4-5 propose"), root: root, captured: nil, body: ["four", "five", "six"])
         #expect(atEnd.proposalLines == [4, 5, 5], "appended at end of file it follows the last line")
+    }
+
+    /// The docs study: a proposal dropping a stale assertion from a Markdown example.
+    @Test func anAppliedProposalShowsAsAppliedNotAsADiffOfTheNextLines() async throws {
+        let example = ["def test_sync():", "    runner = CliRunner()", "    result = runner.invoke(cli)", "    assert 'Debug mode is on' in result.output", "    assert result.exit_code == 0", "```"]
+        try write("src/doc.md", ["Intro", "```python"] + example + ["", "More"])
+        let fence = NoteFence(info: "python file=src/doc.md#L3-7 propose")
+        let body = example.prefix(3) + [example[4]]
+        let before = await NoteSource.excerpt(for: fence, root: root, captured: nil, body: Array(body))
+        #expect(!before.applied)
+        #expect(before.diff?.contains(.removed(old: 3, "    assert 'Debug mode is on' in result.output")) == true)
+
+        try write("src/doc.md", ["Intro", "```python"] + body + ["```", "", "More"])
+        let after = await NoteSource.excerpt(for: fence, root: root, captured: before.lines, body: Array(body))
+        #expect(after.applied)
+        #expect(after.state == .applied)
+        #expect(after.diff == nil)
+        #expect(after.range == LineRange(start: 3, end: 6))
+    }
+
+    @Test func aProposalThatOnlyDropsItsLastLinesIsNotAppliedUntilItIs() async throws {
+        try write("src/a.ts", ["function f() {", "  one()", "  two()", "}", "", "g()"])
+        let fence = NoteFence(info: "ts file=src/a.ts#L1-4 propose")
+        let body = ["function f() {", "  one()"]
+        let fresh = await NoteSource.excerpt(for: fence, root: root, captured: nil, body: body)
+        #expect(!fresh.applied)
+        #expect(fresh.diff?.filter { if case .removed = $0 { true } else { false } }.count == 2)
+
+        // Already what the file reads, the first line rewritten (so the anchor is lost) and all.
+        try write("src/a.ts", ["", "function f(x) {", "  one(x)", "}"])
+        let rewritten = await NoteSource.excerpt(for: NoteFence(info: #"ts file=src/a.ts#L1-3 anchor="function f() {" propose"#), root: root,
+                                                 captured: ["function f() {", "  one()", "}"], body: ["function f(x) {", "  one(x)", "}"])
+        #expect(rewritten.applied)
+        #expect(rewritten.range == LineRange(start: 2, end: 4))
+        #expect(rewritten.statusJSON["state"] == .string("applied"))
     }
 
     @Test func optionLikeRevisionsAreRejected() async throws {
@@ -803,5 +950,108 @@ struct NoteMentionTests {
         #expect(context.contains("    Nothing yet."), "a note of 32 lines arrives whole")
         #expect(context.contains("    line 80\n    … 20 more lines (canvas get \(big.id))"))
         #expect(!context.contains("line 81"))
+    }
+}
+
+/// `object.get` says how a note's fences and a code tile's range resolve now, so an agent checks
+/// "are the excerpts still true?" without reading renders.
+@MainActor
+final class AnchorStatusApiTests {
+    let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("cv-anchor-\(UUID().uuidString.prefix(8))")
+    let board: Board
+    let server: SocketServer
+
+    init() throws {
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("root/src"), withIntermediateDirectories: true)
+        let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60))
+        board = registry.open(root: dir.appendingPathComponent("root"))
+        let router = ApiRouter(registry: registry)
+        server = SocketServer(path: dir.appendingPathComponent("s").path) { request, connection in
+            await router.handle(request, connection: connection)
+        }
+        try server.start()
+    }
+
+    deinit {
+        server.stop()
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    func write(_ path: String, _ lines: [String]) throws {
+        try (lines.joined(separator: "\n") + "\n").write(to: dir.appendingPathComponent("root").appendingPathComponent(path), atomically: true, encoding: .utf8)
+    }
+
+    func get(_ id: ObjectID) async throws -> JSONValue {
+        let client = try LineClient(path: dir.appendingPathComponent("s").path)
+        client.send(#"{"id":"1","method":"object.get","params":{"id":"\#(id)"}}"#)
+        let reply = try await client.next()
+        #expect(reply["ok"] == .bool(true), "\(reply["error"] ?? .null)")
+        return reply["result"] ?? .null
+    }
+
+    @Test func noteFencesReportTheirState() async throws {
+        try write("src/a.py", ["import os", "", "def a():", "    return 1", "", "def b():", "    return 2"])
+        let markdown = """
+        ```python file=src/a.py#L3-4 anchor="def a():"
+        ```
+
+        ```python file=src/a.py#L1-2 anchor="def b():"
+        ```
+
+        ```python file=src/a.py symbol=gone
+        ```
+
+        ```python file=src/a.py#L6-7 propose
+        def b():
+            return 2
+        ```
+
+        ```python file=src/nope.py#L1
+        ```
+        """
+        let note = board.create(type: .note, props: .object(["markdown": .string(markdown)]))
+        let fences = try #require(try await get(note.id)["fences"]?.array)
+        #expect(fences.map { $0["state"]?.string } == ["live", "relocated", "stale", "applied", "missing"])
+        #expect(fences.map { $0["markdownLines"] } == [[1], [4], [7], [10], [15]])
+        #expect(fences[0]["range"] == LineRange(start: 3, end: 4).json)
+        #expect(fences[1]["range"] == LineRange(start: 6, end: 7).json && fences[1]["written"] == LineRange(start: 1, end: 2).json)
+        #expect(fences[2]["symbol"] == "gone" && fences[2]["reason"] == "symbol gone not found" && fences[2]["range"] == nil)
+        #expect(fences[3]["propose"] == .bool(true) && fences[3]["range"] == LineRange(start: 6, end: 7).json)
+        #expect(fences[4]["path"] == "src/nope.py" && fences[4]["reason"] == "no file src/nope.py")
+    }
+
+    @Test func codeTileRangesReanchorAsBookkeepingAndReportTheirState() async throws {
+        try write("src/a.py", ["import os", "", "def a():", "    return 1", "", "def b():", "    return 2"])
+        let code = board.create(type: .code, props: .object(["path": "src/a.py", "range": LineRange(start: 6, end: 7).json, "anchor": "def b():", "caption": "b"]))
+        #expect(try await get(code.id)["rangeStatus"] == .object(["state": "live", "range": LineRange(start: 6, end: 7).json]))
+
+        // Lines went in above: the range is re-found by its anchor.
+        try write("src/a.py", ["import os", "import sys", "", "", "def a():", "    return 1", "", "def b():", "    return 2"])
+        let moved = try #require(try await get(code.id)["rangeStatus"])
+        #expect(moved["state"] == "relocated" && moved["range"] == LineRange(start: 8, end: 9).json && moved["written"] == LineRange(start: 6, end: 7).json)
+
+        // The tile writes the found range back: no new rev, no undo step.
+        let steps = board.history.undoSteps.count
+        try board.reanchor(code.id, range: LineRange(start: 8, end: 9), anchor: "def b():")
+        #expect(board.objects[code.id]?.rev == code.rev)
+        #expect(board.history.undoSteps.count == steps)
+        #expect(try await get(code.id)["rangeStatus"]?["state"] == "live")
+
+        try write("src/a.py", ["import os"])
+        let gone = try #require(try await get(code.id)["rangeStatus"])
+        #expect(gone["state"] == "stale" && gone["range"] == nil)
+
+        // Aimed elsewhere without an anchor, the old one goes: it named another line.
+        try board.update(code.id, props: .object(["range": LineRange(start: 1, end: 1).json]), caller: "obj_agent")
+        #expect(board.objects[code.id]?.props["anchor"] == nil)
+        try board.update(code.id, props: .object(["caption": "still b"]), caller: "obj_agent")
+        try board.reanchor(code.id, range: LineRange(start: 1, end: 1), anchor: "import os")
+        try board.update(code.id, props: .object(["caption": "b again"]), caller: "obj_agent")
+        #expect(board.objects[code.id]?.props["anchor"] == "import os", "an update that doesn't re-aim keeps it")
+
+        // Follow tiles re-aim themselves; they neither anchor nor report a range state.
+        let follow = board.create(type: .code, props: .object(["path": "src/a.py", "range": LineRange(start: 1, end: 1).json, "followOf": "obj_t"]))
+        #expect(try await get(follow.id)["rangeStatus"] == nil)
+        #expect(throws: BoardError.self) { try board.reanchor(follow.id, range: LineRange(start: 1, end: 1), anchor: nil) }
     }
 }

@@ -18,9 +18,51 @@ public struct NoteExcerpt: Equatable, Sendable {
     /// Nothing to read: the file doesn't exist (on disk, or at the pinned commit), or the
     /// pinned commit doesn't. A stale anchor on a file that is there is not missing.
     public var missing = false
+    /// A proposal whose text the file already reads (`NoteAnchor.applied`): `range` is where,
+    /// `lines` the file's, and there is no diff.
+    public var applied = false
+
+    public init(path: String, range: LineRange?, lines: [String], status: NoteAnchor.Status, diff: [NoteDiff.Line]? = nil,
+                fileLineCount: Int = 0, missing: Bool = false, applied: Bool = false) {
+        self.path = path
+        self.range = range
+        self.lines = lines
+        self.status = status
+        self.diff = diff
+        self.fileLineCount = fileLineCount
+        self.missing = missing
+        self.applied = applied
+    }
 
     public var isStale: Bool {
         if case .stale = status { true } else { false }
+    }
+
+    /// What `object.get` reports for the fence (schema `AnchorStatus`).
+    public enum State: String, Sendable {
+        case live, relocated, stale, applied, missing
+    }
+
+    public var state: State {
+        if missing { return .missing }
+        if applied { return .applied }
+        switch status {
+        case .exact: return .live
+        case .relocated: return .relocated
+        case .stale: return .stale
+        }
+    }
+
+    /// `state`, the range it resolved to, the range as written when it moved, and why it is stale.
+    public var statusJSON: [String: JSONValue] {
+        var out: [String: JSONValue] = ["state": .string(state.rawValue)]
+        if let range { out["range"] = range.json }
+        switch status {
+        case .relocated(let from): out["written"] = from.json
+        case .stale(let reason): out["reason"] = .string(reason)
+        case .exact: break
+        }
+        return out
     }
 
     /// For each `diff` row, the real source line it mentions: its own line for kept and removed
@@ -74,10 +116,20 @@ public enum NoteSource {
         }
         let source = lines(of: text)
         let resolution = NoteAnchor.resolve(fence, in: source, captured: captured, body: body)
-        guard let range = resolution.range else {
+        let shown = resolution.range.map { Array(source[($0.start - 1)..<$0.end]) }
+        if fence.mode == .propose {
+            // Already applied: a body starting anywhere it would overlap the resolved range, or,
+            // with the anchor lost (the proposal rewrote its first line), anywhere in the file.
+            let starts = resolution.range.map { ($0.start - max(1, body.count))...($0.end - 1) }
+            let near = (resolution.range?.start ?? fence.lines?.start ?? 1) - 1
+            if let at = NoteAnchor.applied(body, original: captured ?? shown ?? [], in: source, starts: starts, near: near) {
+                let status: NoteAnchor.Status = at == resolution.range ? resolution.status : fence.lines.map { $0 == at ? .exact : .relocated(from: $0) } ?? .exact
+                return NoteExcerpt(path: path, range: at, lines: Array(source[(at.start - 1)..<at.end]), status: status, fileLineCount: source.count, applied: true)
+            }
+        }
+        guard let range = resolution.range, let shown else {
             return NoteExcerpt(path: path, range: nil, lines: captured ?? [], status: resolution.status, fileLineCount: source.count)
         }
-        let shown = Array(source[(range.start - 1)..<range.end])
         let diff = fence.mode == .propose ? NoteDiff.lines(shown, body) : nil
         return NoteExcerpt(path: path, range: range, lines: shown, status: resolution.status, diff: diff, fileLineCount: source.count)
     }

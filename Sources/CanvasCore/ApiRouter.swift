@@ -107,6 +107,14 @@ public final class ApiRouter {
     /// What a browser tile's page reported since it loaded (`PageLog`); nil when its page isn't
     /// loaded (never shown or rendered, or released while out of view).
     public var readPageLog: ((Board, ObjectID) async -> PageLog?)?
+    /// A note tile's anchored fences resolved against disk now, with the text it captured, by
+    /// fence key (the tile shows them too); nil without the tile, and `object.get` resolves them
+    /// itself.
+    public var noteExcerpts: ((Board, ObjectID) async -> [String: NoteExcerpt]?)?
+    /// A code tile's range resolved against disk now with the text the tile last found there
+    /// (it may re-anchor the range first); nil without the tile, and `object.get` resolves the
+    /// range by `props.anchor` alone.
+    public var codeRangeStatus: ((Board, ObjectID) async -> NoteExcerpt?)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
@@ -900,7 +908,8 @@ public final class ApiRouter {
     /// now (`ChangeSet.json`), next to the actions the user took in `props.reviewed`; a terminal's
     /// adds `lastCommand`, the last command its shell finished (not a prop: it changes no `rev`);
     /// a browser tile's adds `page`, what its page reported since it loaded (`PageLog`), after
-    /// the `since` cursor when given.
+    /// the `since` cursor when given; a note's adds `fences`, how each anchored fence resolves
+    /// now; a code tile showing a range it anchors adds `rangeStatus`, the same for its range.
     private func get(_ p: JSONValue) async throws -> JSONValue {
         let result = try dispatch("object.get", p)
         guard let id = p["id"]?.string, let board = registry.board(containing: id), let object = board.objects[id] else { return result }
@@ -914,6 +923,22 @@ public final class ApiRouter {
         }
         if object.type == .terminal, let last = terminalStatus?(board, id).lastCommand {
             return result.merging(.object(["lastCommand": last.command.json(finishedAt: last.finishedAt)]))
+        }
+        if object.type == .note {
+            let fences = NoteMarkdown.anchoredFences(in: NoteMarkdown.parse(object.props["markdown"]?.string ?? ""))
+            var excerpts = await noteExcerpts?(board, id) ?? [:]
+            let root = board.linkRoot(of: object)
+            for fence in fences where excerpts[fence.key] == nil {
+                excerpts[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
+            }
+            return result.merging(.object(["fences": NoteMarkdown.status(of: fences, excerpts: excerpts)]))
+        }
+        if object.type == .code, let fence = CodeAnchor.fence(object.props) {
+            var excerpt = await codeRangeStatus?(board, id)
+            if excerpt == nil { excerpt = await NoteSource.excerpt(for: fence, root: board.root, captured: nil) }
+            // The tile may have written a re-found range back meanwhile.
+            let current = try dispatch("object.get", p)
+            return current.merging(.object(["rangeStatus": .object(excerpt?.statusJSON ?? [:])]))
         }
         guard object.type == .changes else { return result }
         let set = await ChangeSet.load(root: board.root, spec: ChangesSpec(object.props), highlight: false)

@@ -86,7 +86,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         switch self {
         case .terminal: ["cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "scale"]
         case .browser: ["url", "title", "pageTitle", "scale"]
-        case .code: ["path", "range", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "scale"]
+        case .code: ["path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "scale"]
         case .note: ["markdown", "title", "root", "scale"]
         case .html: ["html", "title", "root", "allowNetwork", "state", "scale"]
         case .changes: ["root", "base", "paths", "title", "reviewed", "viewed", "scale"]
@@ -142,6 +142,11 @@ public struct LineRange: Codable, Equatable, Sendable {
     public init(start: Int, end: Int) {
         self.start = start
         self.end = end
+    }
+
+    /// `{"start": N, "end": M}`, as props and API results carry it.
+    public var json: JSONValue {
+        .object(["start": .number(Double(start)), "end": .number(Double(end))])
     }
 }
 

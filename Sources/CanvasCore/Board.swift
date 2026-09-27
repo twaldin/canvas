@@ -321,7 +321,7 @@ public final class Board {
     /// Frame size a new object gets without one; a tile's includes its title bar.
     public static func defaultSize(_ type: ObjectType) -> (w: Double, h: Double) {
         switch type {
-        case .terminal: (820, 546)
+        case .terminal: (1000, 620)
         case .browser: (1000, 726)
         case .code: (640, 446)
         case .note: (280, 266)

@@ -737,10 +737,11 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// A new terminal (at a document point, else beside the viewport center) with keyboard focus.
+    /// A new terminal with keyboard focus: at a document point (its top-left), else at the
+    /// viewport center, either way moved to the nearest free spot on whole points (`Board.place`).
     func createTerminal(at point: NSPoint? = nil) {
         let size = Board.defaultSize(.terminal)
-        let frame = point.map { Frame(x: $0.x - CanvasDocumentView.origin.x, y: $0.y - CanvasDocumentView.origin.y, w: size.w, h: size.h) }
+        let frame = point.map { board.place(Frame(x: $0.x - CanvasDocumentView.origin.x, y: $0.y - CanvasDocumentView.origin.y, w: size.w, h: size.h)) }
         let object = board.create(type: .terminal, props: .object(["cwd": .string(board.root.path), "command": .array([])]), frame: frame)
         DispatchQueue.main.async { [weak self] in
             (self?.tiles[object.id]?.content as? TerminalTile)?.focus()

@@ -290,6 +290,20 @@ struct BoardTests {
         #expect(board.place(width: 640, height: 446, near: nil) == Frame(x: -320, y: -780, w: 640, h: 446))
     }
 
+    @Test func clearingAllMarkersClearsEveryOneWithItsEvent() throws {
+        let board = makeBoard()
+        let notes = (0..<3).map { board.create(type: .note, props: .object(["markdown": .string("n\($0)")])) }
+        for note in notes { try board.raiseAttention(note.id, message: nil, caller: nil) }
+        var cleared: [ObjectID] = []
+        board.onEvent = { event in
+            if case .attentionChanged(let id, nil) = event { cleared.append(id) }
+        }
+        #expect(board.clearAllAttention() == notes.map(\.id).sorted())
+        #expect(board.attention.isEmpty)
+        #expect(cleared.sorted() == notes.map(\.id).sorted(), "each marker's view goes")
+        #expect(board.clearAllAttention().isEmpty)
+    }
+
     @Test func codeMentionContextIncludesTheRealExcerpt() async throws {
         let board = makeBoard()
         let file = root.appendingPathComponent("restore.ts")

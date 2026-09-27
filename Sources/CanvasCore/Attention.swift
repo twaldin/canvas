@@ -61,6 +61,15 @@ extension Board {
         return true
     }
 
+    /// Removes every marker on the board (the user cleared them all at once); the ids cleared.
+    /// Markers aren't board history, so this is no undo step.
+    @discardableResult
+    public func clearAllAttention() -> [ObjectID] {
+        let ids = attention.keys.sorted()
+        for id in ids { clearAttention(id) }
+        return ids
+    }
+
     /// A program in terminal `tile` asked for the user: a desktop notification (OSC 9, OSC 777
     /// `notify`) or a bell. The marker goes on the terminal itself, raised by the app rather than
     /// an agent (no `raisedBy`, so no turn ever clears it; looking at the terminal does). Repeats

@@ -103,3 +103,40 @@ extension Board {
         if changed { onChange?() }
     }
 }
+
+/// What a board's agents need from the user, for places that stand for the whole board (its
+/// tab): a blocked agent (waiting on an approval or answer) first, else one that finished and
+/// hasn't been seen (`done`). Working and idle agents need nothing and say nothing.
+public struct NeedsYou: Equatable, Sendable {
+    public enum Level: Int, Comparable, Sendable {
+        case done, blocked
+        public static func < (lhs: Level, rhs: Level) -> Bool { lhs.rawValue < rhs.rawValue }
+    }
+
+    public var level: Level
+    /// Terminals at that level.
+    public var terminals: [ObjectID]
+    /// The first such terminal's lifecycle message (a blocked agent's "approve Edit?").
+    public var message: String?
+
+    public init(level: Level, terminals: [ObjectID], message: String?) {
+        self.level = level
+        self.terminals = terminals
+        self.message = message
+    }
+
+    /// Nil when no terminal is blocked or done.
+    public static func of<Objects: Sequence>(_ objects: Objects) -> NeedsYou? where Objects.Element == CanvasObject {
+        var found: [Level: [CanvasObject]] = [:]
+        for object in objects where object.type == .terminal {
+            switch object.props["lifecycle"]?["state"]?.string {
+            case LifecycleState.blocked.rawValue: found[.blocked, default: []].append(object)
+            case LifecycleState.done.rawValue: found[.done, default: []].append(object)
+            default: break
+            }
+        }
+        guard let level = found.keys.max(), let terminals = found[level]?.sorted(by: { $0.id < $1.id }) else { return nil }
+        let message = terminals.lazy.compactMap { $0.props["lifecycle"]?["message"]?.string }.first { !$0.isEmpty }
+        return NeedsYou(level: level, terminals: terminals.map(\.id), message: message)
+    }
+}

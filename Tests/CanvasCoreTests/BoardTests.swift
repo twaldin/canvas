@@ -290,6 +290,26 @@ struct BoardTests {
         #expect(board.place(width: 640, height: 446, near: nil) == Frame(x: -320, y: -780, w: 640, h: 446))
     }
 
+    @Test func aBoardNeedsYouWhenAnAgentIsBlockedElseWhenOneFinishedUnseen() throws {
+        let board = makeBoard()
+        let a = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
+        let b = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
+        #expect(NeedsYou.of(board.objects.values) == nil, "no agents: nothing")
+        try board.reportLifecycle(tile: a.id, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        try board.reportLifecycle(tile: b.id, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp")
+        #expect(NeedsYou.of(board.objects.values) == nil, "working and idle say nothing")
+
+        try board.reportLifecycle(tile: a.id, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp")
+        #expect(NeedsYou.of(board.objects.values) == NeedsYou(level: .done, terminals: [a.id], message: nil), "finished while nobody looked")
+
+        try board.reportLifecycle(tile: b.id, kind: "omp", state: .blocked, message: "approve Edit?", seq: 2, source: "canvas-omp")
+        #expect(NeedsYou.of(board.objects.values) == NeedsYou(level: .blocked, terminals: [b.id], message: "approve Edit?"), "blocked outranks done")
+
+        try board.reportLifecycle(tile: b.id, kind: "omp", state: .working, message: nil, seq: 3, source: "canvas-omp")
+        board.markSeen(a.id)
+        #expect(NeedsYou.of(board.objects.values) == nil, "approved and seen: quiet again")
+    }
+
     @Test func clearingAllMarkersClearsEveryOneWithItsEvent() throws {
         let board = makeBoard()
         let notes = (0..<3).map { board.create(type: .note, props: .object(["markdown": .string("n\($0)")])) }

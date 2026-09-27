@@ -114,7 +114,7 @@ Getting lost on a big board must always have a one-step way back.
 - Session memory: each tile records agent kind and session id for resume.
 - Attention markers belong to a turn: an agent's new marker clears the ones it raised before its lifecycle last went to `working` from idle, done, or no state (the user's latest prompt), while markers from the same answer stay together, including those raised before an approval the user answered (blocked → working continues the turn). Unseen markers are stored with the board, so they survive restarts.
 - Agent-to-agent: `canvas agent list|prompt|wait|read`, across all canvases in the app. A wait is a read, so the clients re-send it when an app restart cuts it off, with the time it has left.
-- Notifications: tile badges, lifecycle color on zoomed-out cards, macOS notifications when the app is not frontmost, and attention markers from terminal notifications and bells (OSC 9/777, BEL) for programs without a lifecycle integration.
+- Notifications: tile badges, lifecycle color on zoomed-out cards, edge pills for blocked agents out of view, a dot on the board's tab (orange: an agent on it is blocked; a quieter green: one finished unseen, `done`; nothing for working or idle; the tooltip names it and its message, `NeedsYou`), so an agent waiting on a background tab is seen, macOS notifications when the app is not frontmost, and attention markers from terminal notifications and bells (OSC 9/777, BEL) for programs without a lifecycle integration.
 
 ### Language service
 

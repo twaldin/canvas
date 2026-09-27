@@ -203,6 +203,20 @@ enum DevInput {
             // tracks the rest of a real gesture itself and drops directly delivered steps). A
             // single step is a phaseless wheel notch, which AppKit animates as a smooth scroll.
             if fields["phase"] != nil { cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1) }
+            // `--gesture`: the burst as a trackpad gesture with its phases (began and ended carry no
+            // movement), for views that own a gesture from its first event (a changes tile's scroll).
+            if fields["gesture"] != nil, let phase = fields["phase"], let field = CGEventField(rawValue: 99) {
+                let phases: [String: Int64] = ["began": 1, "changed": 2, "ended": 4]
+                cg.setIntegerValueField(field, value: phases[phase] ?? 2)
+                if phase != "changed" {
+                    cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: 0)
+                    cg.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: 0)
+                    cg.setIntegerValueField(.scrollWheelEventDeltaAxis1, value: 0)
+                    cg.setIntegerValueField(.scrollWheelEventDeltaAxis2, value: 0)
+                    cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: 0)
+                    cg.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis2, value: 0)
+                }
+            }
             // A window-less event's locationInWindow is its screen location, which only matches the
             // window near the primary display's origin; hand it to the view under the point instead
             // of relying on sendEvent's hit test (windows on other displays got nothing).

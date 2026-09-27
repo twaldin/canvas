@@ -549,9 +549,9 @@ public final class ApiRouter {
         return .object(result)
     }
 
-    /// Where renders and snapshots without `out` go: out of the user's repo, where the OS
-    /// clears temporary files.
-    static var scratchImages: URL { FileManager.default.temporaryDirectory.appendingPathComponent("canvas-renders", isDirectory: true) }
+    /// Where renders and snapshots without `out` go: out of the user's repo, in the app's
+    /// temporary directory; the app deletes the ones older than a day at launch (`Housekeeping`).
+    public static var scratchImages: URL { FileManager.default.temporaryDirectory.appendingPathComponent("canvas-renders", isDirectory: true) }
 
     /// Format and path from `out` (absolute, in an existing directory; format from its
     /// extension), else a new file `<name>-<ms>-<n>` in `scratchImages` in `format` (default png).

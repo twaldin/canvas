@@ -6,9 +6,12 @@ enum AppPaths {
     /// installed app (docs/testing.md).
     static let support: URL = {
         if let home = ProcessInfo.processInfo.environment["CANVAS_HOME"] { return URL(fileURLWithPath: home, isDirectory: true) }
-        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Canvas", isDirectory: true)
+        return defaultSupport
     }()
+    private static let defaultSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Canvas", isDirectory: true)
+    /// The installed app's home, not a `CANVAS_HOME` elsewhere (its own browser profile, `BrowserProfile`).
+    static let isDefaultHome = support.standardizedFileURL.path == defaultSupport.standardizedFileURL.path
     static let apiSocket = support.appendingPathComponent("canvas.sock").path
     static let cmuxSocket = support.appendingPathComponent("cmux.sock").path
     /// Launching the app with CMUX_SOCKET_PASSWORD makes the cmux socket require it; terminal
@@ -45,5 +48,12 @@ enum AppPaths {
         return (["/opt/homebrew/bin/zmx", "/usr/local/bin/zmx"] + path).first { FileManager.default.isExecutableFile(atPath: $0) }
     }()
 
+    /// Where zmx writes each session's log (`<session>.log`): `$XDG_STATE_HOME/zmx/logs`, else
+    /// `~/.local/state/zmx/logs`. Canvas deletes its sessions' logs (`Housekeeping`).
+    static let zmxLogs: URL = {
+        let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state", isDirectory: true)
+        return state.appendingPathComponent("zmx/logs", isDirectory: true)
+    }()
     static let userShell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
 }

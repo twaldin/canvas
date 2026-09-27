@@ -47,6 +47,7 @@ public enum CanvasBasics {
             Item(term: "Green dot", text: "done: it finished and you haven't looked yet."),
             Item(term: "Grey dot", text: "idle: waiting for your next prompt. No dot: no agent reporting."),
             Item(term: "Dot on a board's tab", text: "orange: an agent there is blocked; green: one finished unseen."),
+            Item(term: "Quit · closing a tab", text: "agents and shells keep running in the background and are back when you open the folder again; closing a terminal tile ends its session."),
         ]),
         Section(title: "Needs you", items: [
             Item(term: "Pink ring and bubble", text: "an attention marker: an agent (or a bell) says \"look here\". It clears when you select or look at the tile."),

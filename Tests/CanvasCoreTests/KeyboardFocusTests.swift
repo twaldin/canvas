@@ -90,6 +90,9 @@ struct KeyboardFocusTests {
         #expect(SessionProcesses.closingText([jobs]) == "Closing it ends its shell and 2 background processes (vite, cargo watch).")
         #expect(SessionProcesses.closingText([nil]) == "Closing it ends anything running in it.", "the shell not found yet")
         #expect(SessionProcesses.closingText([omp, prompt, nil]) == "Closing them ends omp, 1 idle shell, 1 background process (pnpm exec next) and anything running in the other.")
+        // Closing a board's tab ends nothing: its sheet says what keeps running (footprint F4).
+        #expect(SessionProcesses.keepRunningText([omp, prompt, nil]) == "omp, 1 idle shell, 1 background process (pnpm exec next) and 1 terminal keep running")
+        #expect(SessionProcesses.keepRunningText([SessionProcesses(shell: 1, foreground: 2, processes: [.init(pid: 2, parent: 1, argv: ["codex"])])]) == "codex keeps running")
     }
 
     @Test func sessionProcessesAreTheShellsDescendants() {

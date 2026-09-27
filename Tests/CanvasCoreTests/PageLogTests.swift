@@ -111,12 +111,14 @@ struct PageLogTests {
 
         let records = try #require(run("JSON.stringify(globalThis.__ompCmuxResponses)").toString())
         let json = try JSONDecoder().decode(JSONValue.self, from: Data(records.utf8))
-        #expect(json["nextId"]?.int == 3)
+        #expect(json["nextId"]?.int == 4)
         let saved = try #require(json["records"]?.array)
-        #expect(saved.map { $0["status"]?.int } == [404, 200])
-        #expect(saved.map { $0["id"]?.int } == [1, 2])
-        #expect(saved.allSatisfy { $0["method"]?.string == "GET" && $0["resourceType"]?.string == "fetch" && $0["headers"]?["content-type"]?.string == "application/json" })
-        #expect(saved.first?["body"]?.string?.count == 65536, "bodies are capped")
+        // The fetch that never got an answer is a record too, as the page log counts it (confirm6 F2).
+        #expect(saved.map { $0["status"]?.int } == [0, 404, 200])
+        #expect(saved.first?["url"]?.string == "http://offline.test/x" && saved.first?["statusText"]?.string == "Load failed")
+        let answered = Array(saved.dropFirst())
+        #expect(answered.allSatisfy { $0["method"]?.string == "GET" && $0["resourceType"]?.string == "fetch" && $0["headers"]?["content-type"]?.string == "application/json" })
+        #expect(answered.first?["body"]?.string?.count == 65536, "bodies are capped")
     }
 
     @Test func aChattyPageNeverPushesOutItsErrors() throws {

@@ -39,9 +39,11 @@ enum DevInput {
         return flags
     }
 
+    /// A button whose key equivalent is `key`. The Delete key types DEL (`\u{7f}`), and AppKit
+    /// matches it to a backspace equivalent (`\u{8}`, the close sheets' ⌘⌫) as well.
     private static func button(in view: NSView?, keyEquivalent key: String) -> NSButton? {
         guard let view else { return nil }
-        if let button = view as? NSButton, !key.isEmpty, button.keyEquivalent == key { return button }
+        if let button = view as? NSButton, !key.isEmpty, button.keyEquivalent == key || key == "\u{7f}" && button.keyEquivalent == "\u{8}" { return button }
         return view.subviews.lazy.compactMap { button(in: $0, keyEquivalent: key) }.first
     }
 

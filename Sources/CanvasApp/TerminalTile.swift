@@ -149,12 +149,15 @@ final class TerminalTile: NSView, TileContent {
     }
 
     /// Ends a deleted terminal's persistent session (`Board.onTerminalsEnded`: every delete path,
-    /// UI, API, batch, undo/redo). Never another instance's session (`ownerGuard`).
+    /// UI, API, batch, undo/redo), then deletes zmx's log of it (`Housekeeping.sessionLog`), which
+    /// zmx keeps forever. Never another instance's session or log (`ownerGuard`).
     static func killSession(tile: ObjectID) {
         guard let zmx = AppPaths.zmx else { return }
+        let session = sessionName(tile)
+        let log = AppPaths.zmxLogs.appendingPathComponent(Housekeeping.sessionLog(session: session)).path
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", ownerGuard(refusal: "exit 0") + "exec \"$1\" kill \"$2\"", "canvas-kill", zmx, sessionName(tile), homeLabel]
+        process.arguments = ["-c", ownerGuard(refusal: "exit 0") + "\"$1\" kill \"$2\"\nexec rm -f -- \"$4\"", "canvas-kill", zmx, session, homeLabel, log]
         try? process.run()
     }
 

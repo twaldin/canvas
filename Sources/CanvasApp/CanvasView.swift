@@ -863,7 +863,9 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    private func remove(_ ids: [ObjectID], selectingNext: Bool = false) {
+    /// Deletes objects as one undo step without asking (the close sheet, or the board's own
+    /// close sheet in `CanvasWindowController`, has).
+    func remove(_ ids: [ObjectID], selectingNext: Bool = false) {
         let closed = ids.compactMap { tiles[$0]?.frame }
         board.transaction {
             for id in ids.sorted() { try? board.delete(id) }

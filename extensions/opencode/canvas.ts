@@ -20,9 +20,9 @@ const RUN = resolve(import.meta.dir, "../agent-hooks/run");
 type Json = Record<string, any>;
 type Event = { type: string; properties: Json };
 /** The part of opencode's plugin input this plugin uses (@opencode-ai/plugin `PluginInput`). */
-type Input = { directory: string; client: { session: { get(options: { path: { id: string } }): Promise<{ data?: { parentID?: string } }> } } };
+type Input = { directory: string };
 
-export const CanvasPlugin = async ({ directory, client: opencode }: Input) => {
+export const CanvasPlugin = async ({ directory }: Input) => {
   const tile = process.env.CANVAS_TILE_ID;
   // CANVAS_AGENT: bin/opencode integrated this opencode (the wrapper's other checks passed).
   if (process.env.CANVAS_ENV !== "1" || !tile || !process.env.CANVAS_SOCKET || process.env.CANVAS_AGENT !== "opencode" || process.env.CANVAS_AGENT_HOOKS === "0") return {};
@@ -33,25 +33,26 @@ export const CanvasPlugin = async ({ directory, client: opencode }: Input) => {
   let seq = Date.now() * 1000;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
-  /** Session id → whether it is a subagent's (a task's child session). */
-  const children = new Map<string, boolean>();
+  /**
+   * Subagents' (tasks') sessions, from their created/updated events. The plugin's own SDK client
+   * can't be asked instead: a request to opencode's server from inside an event handler never
+   * answers, and events are delivered one at a time.
+   */
+  const children = new Set<string>();
 
   function report(state: "working" | "blocked" | "idle", message?: string, call?: string): void {
     clearTimeout(idleTimer);
-    const send = () => quietly(client.api.agent.report({ tile: tile!, kind: "opencode", state, message, seq: ++seq, source: SOURCE, call }));
+    // By the clock: opencode can load the plugin twice in one process (one instance per
+    // project/directory it opens), and a counter from each start would reorder their reports.
+    const send = () => {
+      seq = Math.max(seq + 1, Date.now() * 1000);
+      return quietly(client.api.agent.report({ tile: tile!, kind: "opencode", state, message, seq, source: SOURCE, call }));
+    };
     // Debounced: a retry or a tool-only continuation shouldn't flicker the badge.
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
   }
 
-  async function isChild(session: string | undefined): Promise<boolean> {
-    if (!session) return false;
-    if (!children.has(session)) {
-      const info = await opencode.session.get({ path: { id: session } }).catch(() => undefined);
-      children.set(session, Boolean(info?.data?.parentID));
-    }
-    return children.get(session) === true;
-  }
 
   function follow(location: Location | undefined): void {
     if (location) void quietly(client.api.follow.report({ tile: tile!, path: location.path, range: location.range, action: location.action }));
@@ -69,10 +70,11 @@ export const CanvasPlugin = async ({ directory, client: opencode }: Input) => {
       const props = event.properties ?? {};
       switch (event.type) {
         case "session.created":
-          children.set(props.info?.id, Boolean(props.info?.parentID));
+        case "session.updated":
+          if (props.info?.parentID) children.add(props.info.id);
           return;
         case "session.status": {
-          if (await isChild(props.sessionID)) return;
+          if (children.has(props.sessionID)) return;
           const type = props.status?.type;
           if (type === "busy" && !busy) report("working");
           if (type === "idle") report("idle");
@@ -80,7 +82,7 @@ export const CanvasPlugin = async ({ directory, client: opencode }: Input) => {
           return;
         }
         case "session.idle":
-          if (await isChild(props.sessionID)) return;
+          if (children.has(props.sessionID)) return;
           busy = false;
           report("idle");
           return;
@@ -106,7 +108,7 @@ export const CanvasPlugin = async ({ directory, client: opencode }: Input) => {
     // The user's prompt: this session is the tile's (resume), and the tray rides along as a
     // synthetic part, which the model reads and the TUI doesn't show.
     "chat.message": async (input: { sessionID: string }, output: { message: { id: string }; parts: Json[] }) => {
-      if (await isChild(input.sessionID)) return;
+      if (children.has(input.sessionID)) return;
       void quietly(client.api.agent.report_session({ tile: tile!, kind: "opencode", sessionId: input.sessionID }));
       const drained = await client.api.tray.drain({ peek: true }).catch(() => undefined);
       if (!drained?.context) return;
@@ -115,12 +117,12 @@ export const CanvasPlugin = async ({ directory, client: opencode }: Input) => {
     },
 
     "experimental.chat.system.transform": async (input: { sessionID?: string }, output: { system: string[] }) => {
-      if (!(await isChild(input.sessionID))) output.system.push(guidance);
+      if (!input.sessionID || !children.has(input.sessionID)) output.system.push(guidance);
     },
 
     "tool.execute.after": async (input: { tool: string; sessionID: string; args: Json }, output: { metadata?: Json }) => {
       // Subagents' reads would drag the follow tile around.
-      if (await isChild(input.sessionID)) return;
+      if (children.has(input.sessionID)) return;
       const args = input.args ?? {};
       const path = typeof args.filePath === "string" ? absolute(args.filePath, directory) : undefined;
       if (output.metadata?.error) return;

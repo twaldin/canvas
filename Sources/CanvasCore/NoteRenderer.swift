@@ -12,10 +12,13 @@ public final class NoteRenderer {
     static let maxRows = 400
 
     private let excerpts: [String: NoteExcerpt]
+    /// Images by markdown destination (`NoteImages.load`); an image missing here shows as its alt text.
+    private let images: [String: NSImage]
     private let out = NSMutableAttributedString()
 
-    public init(excerpts: [String: NoteExcerpt]) {
+    public init(excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:]) {
         self.excerpts = excerpts
+        self.images = images
     }
 
     /// Nesting state for block rendering.
@@ -167,8 +170,16 @@ public final class NoteRenderer {
             }
             inlines(markup, attributes, into: target)
         case let image as Markdown.Image:
-            attributes[.foregroundColor] = NSColor.secondaryLabelColor
-            target.append(NSAttributedString(string: "[image: \(image.plainText)]", attributes: attributes))
+            if let source = image.source, let picture = images[source] {
+                let attachment = NoteImageAttachment()
+                attachment.image = picture
+                attachment.allowsTextAttachmentView = false
+                attributes[.attachment] = attachment
+                target.append(NSAttributedString(string: "\u{FFFC}", attributes: attributes))
+            } else {
+                attributes[.foregroundColor] = NSColor.secondaryLabelColor
+                target.append(NSAttributedString(string: "[image: \(image.plainText)]", attributes: attributes))
+            }
         case let html as InlineHTML:
             target.append(NSAttributedString(string: html.rawHTML, attributes: attributes))
         case is SoftBreak:
@@ -362,5 +373,50 @@ public final class NoteRenderer {
 
     private func append(_ string: String, _ attributes: [NSAttributedString.Key: Any]) {
         out.append(NSAttributedString(string: string, attributes: attributes))
+    }
+}
+
+/// A note's `![alt](path)` picture: its natural size, scaled down to the line's width (never up),
+/// drawn by the text layout itself (no attachment view), so on-screen notes, renders, and
+/// `ObjectMeasure` all lay it out the same way.
+final class NoteImageAttachment: NSTextAttachment {
+    override func attachmentBounds(for attributes: [NSAttributedString.Key: Any], location: any NSTextLocation, textContainer: NSTextContainer?,
+                                   proposedLineFragment: CGRect, position: CGPoint) -> CGRect {
+        guard let size = image?.size, size.width > 0, size.height > 0 else { return .zero }
+        let width = min(size.width, max(1, proposedLineFragment.width - position.x - 4))
+        return CGRect(x: 0, y: 0, width: width, height: (size.height * width / size.width).rounded())
+    }
+}
+
+/// The images a note's markdown shows: board-relative paths, and absolute paths (or `file://`
+/// URLs) inside the board root or the temp directory (`LocalImage.sandboxed`), read off the main
+/// thread. Keyed by the markdown destination as written.
+@MainActor
+public enum NoteImages {
+    public static func sources(in document: Document) -> [String] {
+        var out: [String] = []
+        func walk(_ markup: Markup) {
+            if let image = markup as? Markdown.Image, let source = image.source, !source.isEmpty, !out.contains(source) { out.append(source) }
+            for child in markup.children { walk(child) }
+        }
+        walk(document)
+        return out
+    }
+
+    /// The files `sources` name, where a note may show them.
+    public static func files(_ sources: [String], root: URL) -> [String: URL] {
+        var files: [String: URL] = [:]
+        for source in sources { files[source] = LocalImage.sandboxed(source, root: root) }
+        return files
+    }
+
+    public static func load(_ sources: [String], root: URL) async -> [String: NSImage] {
+        var images: [String: NSImage] = [:]
+        for (source, file) in files(sources, root: root) {
+            guard let read = await LocalImage.read(file), let image = NSImage(data: read.data) else { continue }
+            image.size = read.size
+            images[source] = image
+        }
+        return images
     }
 }

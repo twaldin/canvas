@@ -31,6 +31,8 @@ public enum MentionContext {
             return "terminal \"\(clip(text, 28))\""
         case .group(let objects, let name):
             return name ?? "\(objects.count) objects"
+        case .image(_, let path, let x, let y):
+            return "\(PathLabel.short(path)) at (\(x), \(y))"
         case .object(let id):
             guard let object = board.objects[id] else { return id }
             let name = object.type == .code ? PathLabel.short(title(of: object)) : title(of: object)
@@ -69,6 +71,11 @@ public enum MentionContext {
             for id in objects {
                 if let object = board.objects[id] { lines.append("    - \(describe(object, on: board, caller: caller))") }
             }
+        case .image(let object, let path, let x, let y):
+            let file = LocalImage.tileFile(path, root: board.root)
+            let size = await offPool { LocalImage.naturalSize(of: file) }
+            let extent = size.map { " of \(Int($0.width))×\(Int($0.height))" } ?? " (file unreadable)"
+            lines.append("[\(index)] image \(path) · pixel (\(x), \(y))\(extent), from its top-left · tile \(object)\(edited)")
         case .object(let id):
             if let object = board.objects[id] {
                 lines.append("[\(index)] \(describe(object, on: board, caller: caller))\(edited)")
@@ -164,6 +171,7 @@ public enum MentionContext {
         case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["markdown"]?.string?.split(separator: "\n").first.map(String.init) ?? ""
         case .html: return props["title"]?.string ?? "html"
         case .changes: return props["title"]?.string ?? "changes vs \(ChangesSpec(props).baseProp)"
+        case .image: return props["title"]?.string ?? props["path"]?.string ?? "image"
         case .shape: return props["text"]?.string ?? props["kind"]?.string ?? ""
         case .arrow: return props["label"]?.string ?? props["relation"]?.string ?? ""
         case .group: return props["title"]?.string ?? ""

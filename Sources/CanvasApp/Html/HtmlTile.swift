@@ -48,6 +48,8 @@ final class HtmlTile: NSView, TileContent {
     nonisolated override var isFlipped: Bool { true }
 
     var objectID: ObjectID { object.id }
+    /// Where the page's board-relative `<img src>` paths resolve.
+    var boardRoot: URL { board.root }
     var html: String { object.props["html"]?.string ?? "" }
     private var allowNetwork: [String] { object.props["allowNetwork"]?.array?.compactMap(\.string) ?? [] }
     private var pageURL: URL { HtmlKit.pageURL(tile: object.id) }
@@ -296,6 +298,23 @@ final class HtmlTile: NSView, TileContent {
         switch await tile.loadOffscreen(size: CGSize(width: width, height: 1), appearance: NSApp.effectiveAppearance, limit: measureLimit) {
         case .success(let extent): return extent
         case .failure(.rules(let reason)), .failure(.unsettled(let reason)): throw ObjectMeasure.Failure.unavailable("cannot measure the page: \(reason)")
+        }
+    }
+
+    /// Loads the page offscreen exactly as `render(_:)` does (never the user's live page) and runs
+    /// `body` on it once it settled; nil and the reason when it didn't (or `body` threw).
+    func withOffscreenPage<T>(size: CGSize, appearance: NSAppearance, _ body: (WKWebView) async throws -> T) async -> (T?, String?) {
+        guard await beginOffscreen() else { return (nil, "another render of this tile is still running") }
+        defer { endOffscreen() }
+        switch await loadOffscreen(size: size, appearance: appearance) {
+        case .success: break
+        case .failure(.rules(let reason)), .failure(.unsettled(let reason)): return (nil, reason)
+        }
+        guard let web = renderWebView else { return (nil, "the page went away") }
+        do {
+            return (try await body(web), nil)
+        } catch {
+            return (nil, "\(error.localizedDescription)")
         }
     }
 

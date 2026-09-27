@@ -944,6 +944,13 @@ final class CanvasView: NSScrollView {
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        menu.addItem(MenuAction.item("Copy as Image") { [weak self] in self?.copySelectionAsImage() })
+        menu.addItem(MenuAction.item("Save as PNG…") { [weak self] in self?.saveSelectionAsPNG() })
+        if count == 1, board.objects[id]?.type == .html {
+            menu.addItem(MenuAction.item("Save as HTML…") { [weak self] in self?.saveHTML(id) })
+            menu.addItem(MenuAction.item("Open in Browser") { [weak self] in self?.openHTMLInBrowser(id) })
+        }
+        menu.addItem(.separator())
         menu.addItem(MenuAction.item(count > 1 ? "Copy Object IDs" : "Copy Object ID") { [weak self] in self?.copyIDs() })
         return menu
     }
@@ -1343,7 +1350,8 @@ final class CanvasView: NSScrollView {
 
     var viewState: ViewState {
         ViewState(viewport: viewport, promptTarget: promptTarget, focused: focusedTile, selection: selection.sorted(),
-                  enteredGroup: enteredGroup, visible: window?.occlusionState.contains(.visible) ?? false)
+                  enteredGroup: enteredGroup, visible: window?.occlusionState.contains(.visible) ?? false,
+                  appearance: effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light")
     }
 
     /// Viewport and selection changes are logged once they settle; this makes sure that happens

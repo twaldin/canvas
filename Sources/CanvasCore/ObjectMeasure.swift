@@ -4,7 +4,8 @@ import Markdown
 /// Intrinsic sizes: the full object frame (tile title bar included) that shows an object's
 /// content without scrolling or clipping. Code follows `CodeMetrics`, notes lay out the note
 /// tile's own `NoteRenderer` output with TextKit 2 at a width, text shapes use the drawing
-/// layer's font, HTML pages are laid out by the app's WebKit (`html`). Other types (browser,
+/// layer's font, HTML pages are laid out by the app's WebKit (`html`), images are their picture
+/// (`LocalImage`). Other types (browser,
 /// terminal, ink, arrows, groups) have no intrinsic size.
 @MainActor
 public enum ObjectMeasure {
@@ -56,7 +57,8 @@ public enum ObjectMeasure {
             for fence in NoteMarkdown.anchoredFences(in: document) {
                 excerpts[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
             }
-            size = note(document, width: natural ?? defaultNoteWidth, excerpts: excerpts)
+            let images = await NoteImages.load(NoteImages.sources(in: document), root: root)
+            size = note(document, width: natural ?? defaultNoteWidth, excerpts: excerpts, images: images)
         case .shape:
             guard let spec = ShapeSpec(props) else { throw Failure.invalidParams("shape props need a kind") }
             return try shape(spec, width: width.map { CGFloat($0) })
@@ -68,6 +70,15 @@ public enum ObjectMeasure {
             // The rows of every changed file, as wide as the longest line up to `width`.
             let set = await ChangeSet.load(root: root, spec: ChangesSpec(props), highlight: false)
             size = ChangesMetrics.fit(set, maxWidth: natural)
+        case .image:
+            // The picture at one point per pixel, scaled down to `width` (default 960), plus the
+            // title bar and the caption strip.
+            guard let path = props["path"]?.string, !path.isEmpty else { throw Failure.invalidParams("an image needs props.path") }
+            let file = LocalImage.tileFile(path, root: root)
+            guard let pixels = await offPool({ LocalImage.naturalSize(of: file) }) else { throw Failure.notFound("no readable image at \(file.path)") }
+            let picture = LocalImage.fitted(pixels, maxWidth: natural ?? LocalImage.defaultMaxWidth)
+            let caption = props["caption"]?.string.map { $0.isEmpty ? 0 : LocalImage.captionHeight } ?? 0
+            size = CGSize(width: picture.width, height: RenderMath.tileTitleHeight + picture.height + caption)
         case .browser, .terminal, .arrow, .group:
             throw Failure.unsupported("\(type.rawValue) objects have no intrinsic size")
         }
@@ -133,8 +144,8 @@ public enum ObjectMeasure {
     }
 
     /// A note of `width` points whose rendered markdown fits without scrolling.
-    public static func note(_ document: Document, width: CGFloat, excerpts: [String: NoteExcerpt]) -> CGSize {
-        let text = NoteRenderer(excerpts: excerpts).render(document, placeholder: notePlaceholder)
+    public static func note(_ document: Document, width: CGFloat, excerpts: [String: NoteExcerpt], images: [String: NSImage] = [:]) -> CGSize {
+        let text = NoteRenderer(excerpts: excerpts, images: images).render(document, placeholder: notePlaceholder)
         let height = noteTextHeight(text, width: width - 2 * noteInset.width)
         return CGSize(width: width, height: (CodeMetrics.titleHeight + 2 * noteInset.height + height).rounded(.up))
     }

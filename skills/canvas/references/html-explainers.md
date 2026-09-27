@@ -10,6 +10,8 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
 ```
 
 - `html` is a body fragment or a full document. Update it with `object.update` (the tile re-renders in place); keep the same tile rather than creating a new one per revision.
+  The tile keeps its height: pass `size="fit"` in the same update (`canvas.object.update(id=tile, props={"html": page}, size="fit")`) to refit it to the new page.
+- Images: `<img src="out/fig.png">` loads a board file (or an absolute path in the temp directory); no base64 needed. A chart on its own belongs in an image tile (`type: image`, api.md). Match the user's `view.get` `appearance` (dark: transparent background, light text).
 - Sandboxed: no network (list hosts in `allowNetwork: ["localhost:3000", "*.example.com"]` when you truly need them), no native access, no approvals or credentials inside the tile, ever.
 - Preloaded, nothing to include:
   - **Tailwind v4**, themed to the app. Use the semantic colors so the tile matches light and dark mode:

@@ -78,7 +78,7 @@ public enum Actor: Codable, Equatable, Sendable {
 }
 
 public enum ObjectType: String, Codable, Sendable, CaseIterable {
-    case terminal, browser, code, note, html, changes, shape, arrow, group
+    case terminal, browser, code, note, html, changes, image, shape, arrow, group
 
     /// The props this type defines (schema `TerminalProps` … `GroupProps`). Others are kept but
     /// reported: `object.create`/`object.update` name them in `warnings`.
@@ -90,6 +90,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         case .note: ["markdown", "title", "scale"]
         case .html: ["html", "title", "allowNetwork", "state", "scale"]
         case .changes: ["base", "paths", "title", "reviewed", "scale"]
+        case .image: ["path", "caption", "title", "scale"]
         case .shape: ["kind", "text", "points", "color", "fill", "scale"]
         case .arrow: ["from", "to", "relation", "label", "color", "route"]
         case .group: ["members", "title", "color", "padding"]
@@ -153,8 +154,10 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     case dom(object: ObjectID, url: String, selector: String, text: String?)
     case terminal(object: ObjectID, text: String)
     case group(objects: [ObjectID], name: String?)
+    /// A point on an image tile's picture, in the image's own pixels from its top-left.
+    case image(object: ObjectID, path: String, x: Int, y: Int)
 
-    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, url, selector, text, objects, name }
+    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, url, selector, text, objects, name, x, y }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -167,6 +170,8 @@ public enum MentionTarget: Codable, Equatable, Sendable {
             self = .terminal(object: try c.decode(String.self, forKey: .object), text: try c.decode(String.self, forKey: .text))
         case "group":
             self = .group(objects: try c.decode([String].self, forKey: .objects), name: try c.decodeIfPresent(String.self, forKey: .name))
+        case "image":
+            self = .image(object: try c.decode(String.self, forKey: .object), path: try c.decode(String.self, forKey: .path), x: try c.decode(Int.self, forKey: .x), y: try c.decode(Int.self, forKey: .y))
         case "object":
             self = .object(try c.decode(String.self, forKey: .object))
         case let other:
@@ -202,6 +207,12 @@ public enum MentionTarget: Codable, Equatable, Sendable {
             try c.encode("group", forKey: .kind)
             try c.encode(objects, forKey: .objects)
             try c.encodeIfPresent(name, forKey: .name)
+        case .image(let object, let path, let x, let y):
+            try c.encode("image", forKey: .kind)
+            try c.encode(object, forKey: .object)
+            try c.encode(path, forKey: .path)
+            try c.encode(x, forKey: .x)
+            try c.encode(y, forKey: .y)
         }
     }
 
@@ -209,7 +220,7 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     public var objectIDs: [ObjectID] {
         switch self {
         case .object(let id): [id]
-        case .code(let object, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _): [object]
+        case .code(let object, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _), .image(let object, _, _, _): [object]
         case .group(let objects, _): objects
         }
     }

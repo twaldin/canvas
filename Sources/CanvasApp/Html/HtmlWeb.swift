@@ -20,14 +20,18 @@ enum HtmlRuleLists {
     }
 }
 
-/// Serves `canvas-kit://html/<tileId>` (the tile's html behind the kit head) and `/kit/…` from
-/// resources/kit. Everything else is 404, including other tiles' pages.
+/// Serves `canvas-kit://html/<tileId>` (the tile's html behind the kit head), `/kit/…` from
+/// resources/kit, and images: `<img src="out/chart.png">` (board-relative, resolved against the
+/// page URL) or an absolute path inside the board root or the temp directory
+/// (`LocalImage.pageFile`). Everything else is 404, including other tiles' pages.
 @MainActor
 final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
     private weak var tile: HtmlTile?
     private static let kitRoot = AppPaths.asset("kit")
     /// Kit files never change while the app runs; mapped reads keep repeat loads cheap.
     private static var kitCache: [String: Data] = [:]
+    /// Image requests still being read; a task WebKit stopped meanwhile gets no reply.
+    private var reading: Set<ObjectIdentifier> = []
 
     init(tile: HtmlTile) {
         self.tile = tile
@@ -43,15 +47,33 @@ final class HtmlSchemeHandler: NSObject, WKURLSchemeHandler {
                   let data = Self.kitCache[file.path] ?? (try? Data(contentsOf: file, options: .alwaysMapped)) {
             Self.kitCache[file.path] = data
             respond(task, url: url, data: data, type: HtmlKit.mimeType(file), cache: "max-age=31536000, immutable")
+        } else if let file = LocalImage.pageFile(requestPath: url.path, root: tile.boardRoot) {
+            let key = ObjectIdentifier(task)
+            reading.insert(key)
+            Task { @MainActor [weak self] in
+                let data = await offPool { try? Data(contentsOf: file) }
+                guard let self, self.reading.remove(key) != nil else { return }
+                if let data {
+                    self.respond(task, url: url, data: data, type: HtmlKit.mimeType(file), cache: "no-store")
+                } else {
+                    self.notFound(task, url: url)
+                }
+            }
         } else {
-            let response = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/plain"])!
-            task.didReceive(response)
-            task.didReceive(Data("not found".utf8))
-            task.didFinish()
+            notFound(task, url: url)
         }
     }
 
-    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
+    private func notFound(_ task: any WKURLSchemeTask, url: URL) {
+        let response = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/plain"])!
+        task.didReceive(response)
+        task.didReceive(Data("not found".utf8))
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {
+        reading.remove(ObjectIdentifier(task))
+    }
 
     private func respond(_ task: any WKURLSchemeTask, url: URL, data: Data, type: String, cache: String) {
         let headers = ["Content-Type": type, "Content-Length": String(data.count), "Cache-Control": cache]

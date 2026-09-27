@@ -129,6 +129,16 @@ export type ChangesProps = {
   scale?: Scale;
 };
 
+export type ImageProps = {
+  /** the image file: board-relative or absolute (png, jpg, gif, webp, heic, tiff, bmp, svg, or a pdf's first page). The tile shows it at its aspect ratio and reloads when the file changes on disk, so re-save a chart to the same path to update it */
+  path: string;
+  /** one line under the picture (truncated when longer than the tile is wide) */
+  caption?: string;
+  /** shown in the title bar and Go to (default: the file name) */
+  title?: string;
+  scale?: Scale;
+};
+
 export type ShapeProps = {
   kind: "rect" | "ellipse" | "text" | "ink";
   text?: string;
@@ -196,7 +206,7 @@ export type Size = {
   h: number;
 };
 
-export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "shape" | "arrow" | "group";
+export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "shape" | "arrow" | "group";
 
 export type CanvasObject = {
   id: Id;
@@ -210,7 +220,7 @@ export type CanvasObject = {
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;
-  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one) */
+  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one) */
   props: Record<string, unknown>;
 };
 
@@ -241,6 +251,15 @@ export type MentionTarget = {
   kind: "group";
   objects: Id[];
   name?: string;
+} | {
+  kind: "image";
+  object: Id;
+  /** the image tile's props.path */
+  path: string;
+  /** the point on the image, in the image's own pixels from its left edge */
+  x: number;
+  /** from its top edge */
+  y: number;
 };
 
 export type Mention = {
@@ -461,7 +480,7 @@ export type ObjectGetResult = {
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props: Record<string, unknown>;
   frame?: Frame | FitFrame;
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
@@ -482,7 +501,7 @@ export type ObjectUpdateParams = {
   frame?: FramePatch;
   /** measure the frame's size from the content */
   size?: "fit";
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props?: Record<string, unknown>;
   caller?: Id;
 };
@@ -501,7 +520,7 @@ export type ObjectDeleteResult = Record<string, unknown>;
 export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props: Record<string, unknown>;
   /** wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640) */
   width?: number;
@@ -783,6 +802,8 @@ export type ViewGetResult = {
   enteredGroup?: Id;
   /** the window is at least partly visible on a displayed Space */
   visible: boolean;
+  /** the window's appearance, which tiles and renders draw in: match charts and pages to it (dark: transparent or dark backgrounds, light text) */
+  appearance: "dark" | "light";
 };
 
 export type ViewRenderParams = {
@@ -868,13 +889,13 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), next to `props.reviewed` (what they staged or reverted). To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, at most 4000 tall). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, at most 4000 tall; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
-    /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
+    /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w: after changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
-    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: every file and hunk row (unfolded) under its header, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 tall. Other types are `unsupported`. */
+    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: every file and hunk row (unfolded) under its header, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;
@@ -926,7 +947,7 @@ export interface CanvasApi {
   view: {
     /** Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. A marker belongs to the caller's turn: raising one clears the markers the same caller raised in earlier turns (a turn starts when its lifecycle goes to working from idle, done, or no state; answering an approval, blocked → working, continues the turn); markers from this turn stay. The user seeing the object also clears it. Unseen markers are stored with the board and survive app restarts; deleting the object removes its marker. Never moves the user's viewport. */
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
-    /** What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, and whether the window is visible on screen. */
+    /** What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light). */
     get(params?: ViewGetParams): Promise<ViewGetResult>;
     /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them), `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. */
     render(params: ViewRenderParams): Promise<ViewRenderResult>;

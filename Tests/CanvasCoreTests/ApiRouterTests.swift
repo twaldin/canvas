@@ -215,7 +215,7 @@ final class ApiRouterTests {
     /// The window's state with `target` as the terminal the tray shows.
     func showTray(to target: ObjectID?) {
         router.viewState = { _ in
-            ViewState(viewport: Viewport(rect: Frame(x: 0, y: 0, w: 1000, h: 800), zoom: 1), promptTarget: target, focused: nil, selection: [], enteredGroup: nil, visible: true)
+            ViewState(viewport: Viewport(rect: Frame(x: 0, y: 0, w: 1000, h: 800), zoom: 1), promptTarget: target, focused: nil, selection: [], enteredGroup: nil, visible: true, appearance: "dark")
         }
     }
 

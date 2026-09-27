@@ -23,7 +23,7 @@ Read these before you build anything; each one cost earlier agents a round trip.
   Split a long explainer into grouped tiles rather than one tall page, and expand when the user asks.
   A 20-object first draft overwhelms; a compact one gets read.
 - **Let the canvas do the geometry.** Omit `frame` and a new object lands in the free spot nearest your terminal:
-  clear of every tile and group (other agents' too), inside the user's view when there's room. Read the returned frame to place related objects.
+  clear of every tile and group (other agents' too), inside the user's view when there's room within ~600 pt of your terminal, else beside you out of view: raise a marker (`view.attention`) on anything they should look at. Read the returned frame to place related objects.
   From a script outside any tile, it lands nearest the centre of the user's view instead.
   For deliberate layouts use `size: "fit"` and the layout helpers (`layout.place`/`stack`/`grid`/`translate`, then `layout.check`), not hand-computed coordinates:
   those collided with the follow tile and other agents' tiles.
@@ -31,8 +31,10 @@ Read these before you build anything; each one cost earlier agents a round trip.
   Never pass an `--out` inside the repo: it shows up in `git status`.
 - **Write locations as `path:line`.** The user can ⌘-click `src/a.ts:42`, `:42:7`, `:10-20` or `#L10-20` in your terminal output to open that code beside your terminal
   (resolved from your shell's cwd, then the board root; a bare `core.py:42` opens only when that name is unique or clearly nearest the cwd), so write repo-relative `path:line`, not bare names or prose like "in the store module".
+- **In a worktree, write paths relative to it.** If you work in a git worktree other than the board root, your notes and HTML tiles get your worktree as `root` automatically: write `tests/x.ts:16` (in backticks so it links), never `../wt-x/…`.
 - **Name what the user will look for.** Go to (⌘P) matches every tile's caption and terminal name and shows each code tile's caption under its path, so captions tell excerpts of one file apart;
   the tray labels the terminal mentions go to by its `name`: caption your code tiles and name terminals you create.
+- **Your objects carry your name.** Tiles you create show "by <your terminal's name>" in their title bar, and the user's own Go to, definition jumps and changes-tile clicks never re-aim a tile you made, captioned, or grouped.
 - **Code tiles tint their `range` only among other rows.** A `size: "fit"` tile shows exactly its range, untinted.
   To mark a few lines inside more context, give the tile a taller frame instead of fitting it.
 - **Line-bound arrows pin when their line is out of view.** An arrow end bound to `lines` of a code tile attaches at that row only while the tile shows it;
@@ -118,6 +120,8 @@ A drawn shape means nothing by itself: read what it encloses and connects (`canv
 A shape `over` a tile lies wholly on it and marks a region, in the tile's local units (a browser page starts 32 pt below the title bar); `partly over` means more than half of it, the region clipped to the tile. Look at that part with `canvas render <tile>`.
 On a browser or HTML tile the mention adds `page elements under it (<url>):` lines (`<selector> "<text>"`), read when the prompt was sent: re-check with the selectors or a render if the page may have changed.
 A `group` mention covers the user's whole selection or a group of drawings; a shape's text is quoted whole (newlines as `\n`).
+A terminal mention quotes its screen (middle trimmed); ``[n] command `go test ./...` · exit 1`` is one command's output: `canvas agent.read --target <id> --block last` reads it whole.
+Whether the user's last command passed: `lastCommand` (`{command, exit, durationMs}`) in `agent.list`/`object.get`, not the screen.
 Arrows the user draws bind to the tile or shape their end was released on or near, like `{object}` ends from the API.
 An `(edited)` marker means the object changed after the user staged it.
 
@@ -265,6 +269,7 @@ omp's `browser` tool opens a browser tile beside your terminal for each `browser
 The page's viewport is the tile's body (`innerWidth` = frame width, `innerHeight` = frame height − 58). The tool's `viewport`, `tab.setViewport`, `tab.emulate` and `tab.devices()` don't reach it: for a phone width resize the tile (`object.update` frame `{"w": 390, "h": 902}`).
 A browser tile's `title` is yours and never overwritten; the page's own title is `props.pageTitle` and doesn't bump `rev`.
 Pages you drive stay live for 60 s wherever the tile is; all tiles share one signed-out WebKit profile.
+Leave tiles and servers the user is looking at until they say they're done with them ("looks good" isn't done). Don't promise a page refreshes by itself after you change what it shows: reload or render it and check.
 Eval and CSP limits, rendering unloaded pages, and history credit: `references/browser.md`.
 
 ## Follow mode
@@ -276,7 +281,7 @@ Images, PDFs and other binaries, files under the temp dir, and files that no lon
 While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed ("N new ▸") before following again.
 If the user closes it, your terminal stops following until they turn "Follow Files" back on in your terminal's menu:
 don't re-create it or turn following back on yourself. Closing your terminal closes its follow tile.
-It happens automatically; don't create code tiles just to show what you are reading. It may be narrower than 640 pt so it fits in the user's view: don't resize it or lay out around its size.
+It happens automatically and is on by default (never tell the user to turn it on); don't create code tiles just to show what you are reading. It may be narrower than 640 pt so it fits in the user's view: don't resize it or lay out around its size.
 Create code tiles for code you want the user to keep looking at.
 
 ## Getting the user's attention
@@ -317,7 +322,8 @@ canvas agent.read --target reviewer --since prompt   # only what came after your
 ```
 
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
-Then `agent.read --since prompt` returns just the reply (`--lines N` gives the plain tail).
+Then `agent.read --since prompt` returns just the reply (`--lines N` gives the plain tail), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`).
+Hand over board objects instead of describing them: `agent.prompt` `mentions=[{"object": id}, {"object": code_id, "lines": {"start": 41, "end": 48}}]` reach the receiver as hidden context naming your terminal.
 Kind `omp`, `claude`, `codex`, `gemini` (before 0.60) or `opencode` reports a lifecycle (a fresh Codex from its first prompt). Kind `unknown` (a shell, aider, another CLI) has none:
 `agent.prompt` works, `agent.wait` fails once 15 s pass without a first report (enough for an agent you just started), so poll `agent.read --since prompt`; `program` and `title` (e.g. Gemini's '✋ Action Required') still hint at its state.
 Claude Code and Gemini CLI run no hook when their user presses Esc or denies an approval, so their tile keeps its last state until the next prompt.
@@ -351,9 +357,10 @@ Then address it with `board: <id>` (from the result) on every call, and start ag
 
 ## When the user asks how to use Canvas
 
-⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows move between tiles; Return gives the selected tile the keyboard, Esc gives it back;
-⌘J goes to the next thing that needs the user (blocked agents, then marked tiles); ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
-⌘9 fits everything, ⌘0 is 100%, ⌘=/⌘- zoom; ⌘T opens a terminal; ⌘G groups the selection; ⌘Z undoes the user's last change or an agent's (never follow re-aims or the app's own bookkeeping).
+⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal Esc goes to the program: ⌘Esc leaves any tile);
+⌘J goes to the next thing that needs the user (blocked agents, marked tiles, then finished agents not seen yet); ⌘[ / ⌘] go back and forward through their navigation; ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
+⌘9 fits everything, ⌘0 is 100%, ⌘=/⌘- zoom; ⌘T opens a terminal; ⌘G groups the selection; ⌘Z undoes the user's last change or an agent's (never navigation, follow re-aims or the app's own bookkeeping), and names an agent's step it undoes.
 Hyper-click (⌃⌥⇧⌘-click) stages a mention for the terminal the tray shows; Hyper-V pastes staged mentions into a terminal whose agent has no integration.
-⌘-click a `path:line` in terminal output to open it in the terminal's preview tile (⌥⌘-click keeps a separate tile). Code › Go to Definition ⌃⌘J, Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter).
-File › Review Changes ⇧⌘R; right-click empty canvas for New Terminal/Note/Browser Here; right-click a terminal for Follow Files. Every action is also in the menu bar (Help › search).
+⌘-click a `path:line` in terminal output to open it in the terminal's preview tile (⌥⌘-click keeps a separate tile). Code › Go to Definition ⌃⌘J, Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter); without a language server they answer from text search.
+File › Review Changes ⇧⌘R (goes to an existing one for the same root and base); right-click empty canvas for New Terminal/Note/Browser Here; right-click a terminal for Follow Files. Every action is also in the menu bar (Help › search).
+Help › Canvas Basics is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" from it, not from Canvas's source.

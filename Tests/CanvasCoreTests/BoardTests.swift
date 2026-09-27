@@ -301,6 +301,27 @@ struct BoardTests {
         #expect(inset.contains(placed), "\(placed) is not wholly inside \(inset)")
     }
 
+    @Test func aFollowTileBesideATerminalOnScreenLandsWhollyInViewShrunkWhenItMustBe() throws {
+        // The codex2 study: a default 1000×620 terminal in the middle of the study window's
+        // 1492-pt view leaves 198 pt beside it; a 640-pt follow tile there was half off-screen.
+        let board = makeBoard()
+        try "x\n".write(to: root.appendingPathComponent("a.ts"), atomically: true, encoding: .utf8)
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: -500, y: -310, w: 1000, h: 620))
+        let view = Frame(x: -746, y: -435, w: 1492, h: 870)
+        board.viewport = { view }
+        let follow = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: nil, action: "read"))
+        #expect(follow.frame == Frame(x: 524, y: -310, w: 198, h: 446), "right of the terminal, as wide as the view leaves, full height")
+        #expect(Frame(x: view.x + Board.placementGap, y: view.y + Board.placementGap, w: view.w - 2 * Board.placementGap, h: view.h - 2 * Board.placementGap).contains(follow.frame))
+        #expect(board.objects[follow.id]?.frame == follow.frame)
+
+        // With room in view, the full size; with the terminal offscreen, full size beside it.
+        let wide = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: 3000, y: 0, w: 1000, h: 620))
+        board.viewport = { Frame(x: 2900, y: -100, w: 2000, h: 900) }
+        #expect(try board.follow(tile: wide.id, path: "a.ts", range: nil, action: "read")?.frame == Frame(x: 4024, y: 0, w: 640, h: 446))
+        let away = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: 9000, y: 0, w: 1000, h: 620))
+        #expect(try board.follow(tile: away.id, path: "a.ts", range: nil, action: "read")?.frame == Frame(x: 10024, y: 0, w: 640, h: 446))
+    }
+
     @Test func aBoardNeedsYouWhenAnAgentIsBlockedElseWhenOneFinishedUnseen() throws {
         let board = makeBoard()
         let a = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))

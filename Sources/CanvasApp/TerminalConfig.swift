@@ -26,6 +26,9 @@ final class TerminalConfig {
     let dark: Style
     /// The user's `font-family` values, in order.
     let fontFamilies: [String]
+    /// Chords the user bound to Ghostty window, tab and split actions, which Canvas performs
+    /// instead (`GhosttyConfig.remaps`; the keybinds themselves never reach the library).
+    let remaps: [GhosttyConfig.KeyChord: GhosttyConfig.AppAction]
 
     private init() {
         // Canvas's base: the library's defaults (14 pt, block cursor); without a user theme, its
@@ -62,6 +65,14 @@ final class TerminalConfig {
         NSLog("Canvas: Ghostty config from %@: %d settings, theme %@ / %@, font %@ %.0f pt",
               loaded.isEmpty ? "(none)" : loaded.joined(separator: ", "), user.entries.count,
               user.lightTheme ?? "(default)", user.darkTheme ?? "(default)", fontFamilies.first ?? "(default)", Double(dark.fontSize))
+        remaps = user.remaps
+        for keybind in user.appKeybinds {
+            if let action = keybind.action, keybind.chord != nil {
+                NSLog("Canvas: Ghostty keybind `%@` runs Canvas's %@", keybind.entry.value, action == .newTerminal ? "New Terminal" : "Close Terminal")
+            } else {
+                NSLog("Canvas: dropped Ghostty keybind `%@`: %@", keybind.entry.value, keybind.action == nil ? "an app action Canvas doesn't have" : "a key sequence Canvas can't match")
+            }
+        }
     }
 
     func style(for appearance: NSAppearance) -> Style {

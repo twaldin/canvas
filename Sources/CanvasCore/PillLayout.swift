@@ -1,12 +1,13 @@
 import CoreGraphics
 
 /// Where the canvas's screen-sized "needs you" pills go, in window space (points, y down): a
-/// marker's bubble beside its object on screen, and an edge pill at the rim of the area the
-/// chrome leaves clear for each offscreen object that needs the user (a marker, a blocked
-/// agent). No pill covers another; a bubble sits above its object when that covers no other
-/// tile, else on the object's own title bar, else as near to either as the other pills allow;
-/// edge pills slide along their edge. Everything stays inside `clear` (between the toolbar and
-/// the tray), so no pill sits under the chrome.
+/// bubble beside each object on screen that needs the user (an attention marker's, or a blocked
+/// agent's terminal's), and an edge pill at the rim of the area the chrome leaves clear for each
+/// offscreen one. No pill covers another, and no bubble covers a blocked terminal other than its
+/// own (its approval prompt is what the user must read); a bubble sits above its object when that
+/// covers no other tile, else on the object's own title bar, else as near to either as the other
+/// pills allow; edge pills slide along their edge. Everything stays inside `clear` (between the
+/// toolbar and the tray), so no pill sits under the chrome.
 public enum PillLayout {
     /// Room kept between two pills, and between a bubble and the ring around its object.
     public static let spacing: CGFloat = 6
@@ -28,13 +29,17 @@ public enum PillLayout {
         public var size: CGSize
         /// Height of the object's title bar on screen; 0 for objects without one.
         public var titleBar: CGFloat
+        /// A blocked agent's terminal rather than an attention marker: placed first, and never
+        /// covered by another bubble.
+        public var blocked: Bool
 
-        public init(id: String, target: CGRect, ringInset: CGFloat, size: CGSize, titleBar: CGFloat) {
+        public init(id: String, target: CGRect, ringInset: CGFloat, size: CGSize, titleBar: CGFloat, blocked: Bool = false) {
             self.id = id
             self.target = target
             self.ringInset = ringInset
             self.size = size
             self.titleBar = titleBar
+            self.blocked = blocked
         }
     }
 
@@ -52,7 +57,10 @@ public enum PillLayout {
     }
 
     public struct Placement: Equatable, Sendable {
+        /// Attention markers' bubbles.
         public var bubbles: [String: CGRect]
+        /// Blocked terminals' bubbles.
+        public var blocked: [String: CGRect]
         public var edges: [String: CGRect]
     }
 
@@ -62,23 +70,28 @@ public enum PillLayout {
     }
 
     /// `tiles`: every tile's rect on screen (a bubble avoids covering tiles other than its own).
-    /// Bubbles are placed first, top to bottom, then edge pills, which also keep clear of them.
+    /// Blocked terminals' bubbles are placed first, then markers' (each group top to bottom),
+    /// then edge pills, which also keep clear of them.
     public static func place(markers: [Marker], edges: [Edge], tiles: [(id: String, rect: CGRect)], clear: CGRect) -> Placement {
         var placed: [CGRect] = []
         var bubbles: [String: CGRect] = [:]
-        let ordered = markers.sorted { ($0.target.minY, $0.target.minX, $0.id) < ($1.target.minY, $1.target.minX, $1.id) }
+        var blocked: [String: CGRect] = [:]
+        // What no bubble but a terminal's own may cover: each blocked terminal inside its ring.
+        let prompts = markers.filter(\.blocked).map { (id: $0.id, rect: $0.target.insetBy(dx: -$0.ringInset, dy: -$0.ringInset)) }
+        let ordered = markers.sorted { ($0.blocked ? 0 : 1, $0.target.minY, $0.target.minX, $0.id) < ($1.blocked ? 0 : 1, $1.target.minY, $1.target.minX, $1.id) }
         for marker in ordered {
-            let rect = bubble(marker, placed: placed, tiles: tiles, clear: clear)
-            bubbles[marker.id] = rect
+            let rect = bubble(marker, placed: placed, keepOff: prompts.filter { $0.id != marker.id }.map(\.rect), tiles: tiles, clear: clear)
+            if marker.blocked { blocked[marker.id] = rect } else { bubbles[marker.id] = rect }
             placed.append(rect)
         }
         var pills: [String: CGRect] = [:]
+        let onScreenPrompts = prompts.map(\.rect)
         for edge in edges.sorted(by: { $0.id < $1.id }) {
-            let rect = edgePill(edge, placed: placed, clear: clear)
+            let rect = edgePill(edge, placed: placed, keepOff: onScreenPrompts, clear: clear)
             pills[edge.id] = rect
             placed.append(rect)
         }
-        return Placement(bubbles: bubbles, edges: pills)
+        return Placement(bubbles: bubbles, blocked: blocked, edges: pills)
     }
 
     /// Inside `clear`, `margin` from its sides.
@@ -99,7 +112,9 @@ public enum PillLayout {
         [base] + placed.flatMap { [$0[keyPath: far] + spacing, $0[keyPath: axis] - spacing - length] }
     }
 
-    private static func bubble(_ marker: Marker, placed: [CGRect], tiles: [(id: String, rect: CGRect)], clear: CGRect) -> CGRect {
+    /// `keepOff`: other blocked terminals (ring included), which the bubble treats like pills.
+    private static func bubble(_ marker: Marker, placed pills: [CGRect], keepOff: [CGRect], tiles: [(id: String, rect: CGRect)], clear: CGRect) -> CGRect {
+        let placed = pills + keepOff
         let size = marker.size
         let ring = marker.target.insetBy(dx: -marker.ringInset, dy: -marker.ringInset)
         // Above the ring, left-aligned with it; then on the object's own title bar.
@@ -140,7 +155,9 @@ public enum PillLayout {
         return best?.rect ?? bases[0]
     }
 
-    private static func edgePill(_ edge: Edge, placed: [CGRect], clear: CGRect) -> CGRect {
+    /// `keepOff`: blocked terminals on screen, which an edge pill slides off along its edge when
+    /// the edge has room (it never leaves the edge for them).
+    private static func edgePill(_ edge: Edge, placed: [CGRect], keepOff: [CGRect], clear: CGRect) -> CGRect {
         let size = edge.size
         let center = CGPoint(x: clear.midX, y: clear.midY)
         let dx = edge.target.x - center.x, dy = edge.target.y - center.y
@@ -149,17 +166,18 @@ public enum PillLayout {
         let t = min(dx == 0 ? .infinity : halfW / abs(dx), dy == 0 ? .infinity : halfH / abs(dy))
         let point = t.isFinite ? CGPoint(x: center.x + dx * t, y: center.y + dy * t) : center
         let ideal = clamp(CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height), into: clear, margin: edgeMargin)
-        guard overlapsPill(ideal, placed) else { return ideal }
-        // Along the edge it sits on first; stepping inward only when the edge is full.
+        guard overlapsPill(ideal, placed) || overlapsPill(ideal, keepOff) else { return ideal }
+        // Along the edge it sits on first, off blocked terminals where the edge allows; stepping
+        // inward only when the edge is full of pills.
         let horizontal = ideal.minY <= clear.minY + 0.5 || ideal.maxY >= clear.maxY - 0.5
-        let xs = escapes(ideal.minX, length: size.width, placed: placed, axis: \.minX, far: \.maxX)
-        let ys = escapes(ideal.minY, length: size.height, placed: placed, axis: \.minY, far: \.maxY)
-        var best: (rect: CGRect, cost: (Int, Int, CGFloat))?
+        let xs = escapes(ideal.minX, length: size.width, placed: placed + keepOff, axis: \.minX, far: \.maxX)
+        let ys = escapes(ideal.minY, length: size.height, placed: placed + keepOff, axis: \.minY, far: \.maxY)
+        var best: (rect: CGRect, cost: (Int, Int, Int, CGFloat))?
         for x in xs {
             for y in ys {
                 let rect = clamp(CGRect(x: x, y: y, width: size.width, height: size.height), into: clear, margin: edgeMargin)
                 let across = horizontal ? abs(rect.minY - ideal.minY) : abs(rect.minX - ideal.minX)
-                let cost = (overlapsPill(rect, placed) ? 1 : 0, across > 0.5 ? 1 : 0, hypot(rect.minX - ideal.minX, rect.minY - ideal.minY).rounded())
+                let cost = (overlapsPill(rect, placed) ? 1 : 0, across > 0.5 ? 1 : 0, overlapsPill(rect, keepOff) ? 1 : 0, hypot(rect.minX - ideal.minX, rect.minY - ideal.minY).rounded())
                 if best == nil || cost < best!.cost { best = (rect, cost) }
             }
         }

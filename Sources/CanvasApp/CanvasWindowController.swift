@@ -420,11 +420,57 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// The chord a key press is, as Ghostty keybinds name it: its modifiers and unshifted
+    /// character, or the key's name for keys without one.
+    static func keyChord(for event: NSEvent) -> GhosttyConfig.KeyChord? {
+        guard event.type == .keyDown else { return nil }
+        let flags = event.modifierFlags
+        var modifiers: GhosttyConfig.Modifiers = []
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if let name = namedKeys[event.keyCode] { return .init(modifiers, name) }
+        guard let character = event.characters(byApplyingModifiers: [])?.lowercased(), character.count == 1 else { return nil }
+        return .init(modifiers, character)
+    }
+
+    private static let namedKeys: [UInt16: String] = [
+        36: "enter", 48: "tab", 49: "space", 51: "backspace", 53: "escape", 117: "delete", 115: "home", 119: "end",
+        116: "page_up", 121: "page_down", 123: "arrow_left", 124: "arrow_right", 125: "arrow_down", 126: "arrow_up",
+        122: "f1", 120: "f2", 99: "f3", 118: "f4", 96: "f5", 97: "f6", 98: "f7", 100: "f8", 101: "f9", 109: "f10", 103: "f11", 111: "f12",
+    ]
+
+    /// Menu items a focused terminal keeps: editing (Copy, Paste, Select All) and ⌘⌫, which
+    /// Ghostty sends as "delete line" and which must never delete the canvas selection.
+    private static let terminalMenuActions: Set<Selector> = [#selector(NSText.copy(_:)), #selector(NSText.paste(_:)), #selector(NSText.selectAll(_:)), #selector(AppDelegate.deleteSelection(_:))]
+
+    /// The main-menu item `event` is the key equivalent of.
+    static func menuItem(for event: NSEvent, in menu: NSMenu?) -> NSMenuItem? {
+        guard event.type == .keyDown, let menu, let chord = keyChord(for: event) else { return nil }
+        for item in menu.items {
+            if let found = menuItem(for: event, in: item.submenu) { return found }
+            guard !item.keyEquivalent.isEmpty else { continue }
+            var modifiers: GhosttyConfig.Modifiers = []
+            let mask = item.keyEquivalentModifierMask
+            if mask.contains(.command) { modifiers.insert(.command) }
+            if mask.contains(.shift) || item.keyEquivalent != item.keyEquivalent.lowercased() { modifiers.insert(.shift) }
+            if mask.contains(.option) { modifiers.insert(.option) }
+            if mask.contains(.control) { modifiers.insert(.control) }
+            if chord == .init(modifiers, item.keyEquivalent.lowercased()) { return item }
+        }
+        return nil
+    }
+
     /// Board shortcuts taken ahead of the focused view (see `CanvasWindow`). ⌘W closes the
     /// selection or the focused terminal and, with neither, goes on to the window's own close;
     /// ⌘F finds in a code tile and otherwise stays with the terminal or page. Hyper-V pastes the
     /// tray's mentions; a focused terminal would otherwise send the chord to its program as an
-    /// encoded key (zsh prints it at the prompt).
+    /// encoded key (zsh prints it at the prompt). In a focused terminal, the user's Ghostty
+    /// bindings of new window, tab or split open a terminal beside it and close surface closes it
+    /// (`TerminalConfig.remaps`), and Canvas's menu shortcuts beat Ghostty's own bindings (its
+    /// defaults bind ⌘T, ⌘N, ⌘Z, ⌘Q, ⌘⇧[ and ⌘⇧] to tab, window and app actions the embedded
+    /// library can't perform, so the key would do nothing).
     func handleKeyEquivalent(_ event: NSEvent) -> Bool {
         if let action = Self.navigationAction(for: event) {
             perform(action, with: self)
@@ -439,12 +485,26 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             pasteMentions(nil)
             return true
         }
-        guard event.type == .keyDown, modifiers == .command, window?.attachedSheet == nil else { return false }
-        switch event.charactersIgnoringModifiers {
-        case "w": return canvas.closeSelectionOrFocused()
-        case "f": return canvas.findInCodeTile()
-        default: return false
+        guard event.type == .keyDown, window?.attachedSheet == nil else { return false }
+        if modifiers == .command {
+            switch event.charactersIgnoringModifiers {
+            case "w": if canvas.closeSelectionOrFocused() { return true }
+            case "f": if canvas.findInCodeTile() { return true }
+            default: break
+            }
         }
+        guard let terminal = canvas.focusedTerminal else { return false }
+        if let chord = Self.keyChord(for: event), let action = TerminalConfig.shared.remaps[chord] {
+            switch action {
+            case .newTerminal: canvas.createTerminal(beside: terminal)
+            case .closeTerminal: canvas.delete([terminal])
+            }
+            return true
+        }
+        if let item = Self.menuItem(for: event, in: NSApp.mainMenu), let action = item.action, !Self.terminalMenuActions.contains(action) {
+            return NSApp.mainMenu?.performKeyEquivalent(with: event) == true
+        }
+        return false
     }
 }
 

@@ -92,6 +92,43 @@ struct PillLayoutTests {
         #expect(rect.minX < tile.midX && rect.minY == tile.minY, "\(rect): on the tile's title bar, hiding a sliver of its neighbour")
     }
 
+    @Test func noBubbleCoversABlockedTerminalButItsOwn() {
+        // Shot 15 of the codex2 study: a marked note below a blocked terminal's bottom-left corner,
+        // a neighbour right of the note. Above the note, its bubble would hide 60 pt of the
+        // terminal's last row (the approval prompt); on the note's title bar, much of the neighbour.
+        let terminal = CGRect(x: 330, y: 100, width: 400, height: 400)
+        let note = CGRect(x: 100, y: 512, width: 133, height: 43)
+        let neighbour = CGRect(x: 240, y: 512, width: 460, height: 300)
+        let tiles = [("t", terminal), ("note", note), ("n", neighbour)].map { (id: $0.0, rect: $0.1) }
+        let noteMarker = marker("note", note, width: 300, titleBar: 12)
+
+        let unblocked = PillLayout.place(markers: [noteMarker], edges: [], tiles: tiles, clear: clear)
+        #expect(try! #require(unblocked.bubbles["note"]).intersects(terminal), "an ordinary tile: a sliver of it is the cheapest to hide")
+
+        var blocked = marker("t", terminal, width: 240)
+        blocked.blocked = true
+        let placed = PillLayout.place(markers: [noteMarker, blocked], edges: [], tiles: tiles, clear: clear)
+        let bubble = try! #require(placed.bubbles["note"])
+        let prompt = try! #require(placed.blocked["t"])
+        #expect(!bubble.intersects(terminal.insetBy(dx: -10, dy: -10)), "\(bubble) covers the blocked terminal or its ring")
+        #expect(placed.bubbles["t"] == nil && placed.blocked["note"] == nil)
+        assertApart([bubble, prompt])
+        #expect(clear.contains(prompt))
+    }
+
+    @Test func anEdgePillSlidesAlongItsEdgeOffABlockedTerminal() {
+        // A blocked terminal reaching past the bottom of the view, and a marked note below it
+        // offscreen: the note's pill belongs on the bottom edge, where it would sit on the terminal.
+        let terminal = CGRect(x: 490, y: 400, width: 1000, height: 620)
+        var blocked = marker("t", terminal, width: 240)
+        blocked.blocked = true
+        let placed = PillLayout.place(markers: [blocked], edges: [.init(id: "note", target: CGPoint(x: 720, y: 2000), size: CGSize(width: 200, height: 32))],
+                                      tiles: [(id: "t", rect: terminal)], clear: clear)
+        let pill = try! #require(placed.edges["note"])
+        #expect(pill.maxY == clear.maxY, "still on the bottom edge")
+        #expect(!pill.intersects(terminal.insetBy(dx: -10, dy: -10)), "\(pill) covers the blocked terminal")
+    }
+
     @Test func aLongMessageTruncatesToTheObjectsWidth() {
         #expect(PillLayout.bubbleWidth(natural: 900, ringWidth: 300) == 300)
         #expect(PillLayout.bubbleWidth(natural: 900, ringWidth: 60) == PillLayout.minBubbleWidth, "a tiny object still gets a readable bubble")

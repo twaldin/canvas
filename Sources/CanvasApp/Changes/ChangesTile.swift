@@ -662,6 +662,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         case (_, "s"): actOnCurrent(.stage)
         case (_, "r"): actOnCurrent(.revert)
         case (_, "/"): focusFilter()
+        case (_, "m"): mentionCurrent()
         default: super.keyDown(with: event)
         }
     }
@@ -841,28 +842,39 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
-        guard let painter, let set else { return nil }
+        guard let painter else { return nil }
         switch painter.hit(at: point, width: bounds.width, scroll: scroll) {
-        case .line(let file, let hunk, let line)?:
-            guard let location = set.location(file: file, hunk: hunk, line: line) else { return nil }
-            return mention(file: file, path: location.path, lines: LineRange(start: location.line, end: location.line), side: location.side,
-                           diff: set.mentionDetail(file: file, hunk: hunk, lines: line..<(line + 1)))
-        case .hunk(let file, let hunk)?, .button(_, let file, let hunk?)?:
-            let changed = set.files[file], target = changed.hunks[hunk]
-            let whole = target.mentionLines
-            return mention(file: file, path: whole.side == .old ? changed.oldBoardPath ?? changed.boardPath : changed.boardPath, lines: whole.lines, side: whole.side,
-                           diff: set.mentionDetail(file: file, hunk: hunk, lines: nil))
-        default:
-            return nil
+        case .line(let file, let hunk, let line)?: return mention(file: file, hunk: hunk, lines: [line])
+        case .hunk(let file, let hunk)?, .button(_, let file, let hunk?)?: return mention(file: file, hunk: hunk, lines: nil)
+        default: return nil
         }
+    }
+
+    /// Edit › Mention and `m`: the selected lines, else the current hunk (also while the tile is
+    /// only selected: j/k pick hunks then too).
+    func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
+        currentMention
+    }
+
+    private var currentMention: MentionTarget? {
+        if let selection { return mention(file: selection.file, hunk: selection.hunk, lines: selection.lines) }
+        return current.flatMap { mention(file: $0.file, hunk: $0.hunk, lines: nil) }
+    }
+
+    /// `m` with the keyboard in the tile: stages the selected lines, else the current hunk, as a
+    /// Hyper-click on them would (a second `m` unstages it).
+    private func mentionCurrent() {
+        guard let target = currentMention else { return show(message: "pick a hunk first (j/k or click)") }
+        HyperMonitor.toggle(target, on: board)
     }
 
     /// A mention names the lines on their side and the base they were diffed against, so the
     /// prompt quotes them however the tile changes before the tray drains, and says what they
-    /// are in the diff (`ChangeSet.mentionDetail`).
-    private func mention(file: Int, path: String, lines: LineRange, side: DiffSide, diff: String?) -> MentionTarget {
-        let symbol = set?.files[file].symbol(line: lines.start, side: side)
-        return .code(object: object.id, path: path, lines: lines, side: set?.base == nil ? nil : side.rawValue, symbol: symbol, commit: set?.base, diff: diff)
+    /// are in the diff (`ChangeSet.mention`).
+    private func mention(file: Int, hunk: Int, lines: Set<Int>?) -> MentionTarget? {
+        guard let set, let found = set.mention(file: file, hunk: hunk, lines: lines) else { return nil }
+        let symbol = set.files[file].symbol(line: found.lines.start, side: found.side)
+        return .code(object: object.id, path: found.path, lines: found.lines, side: set.base == nil ? nil : found.side.rawValue, symbol: symbol, commit: set.base, diff: found.detail)
     }
 
     func outline(for target: MentionTarget) -> NSRect? {

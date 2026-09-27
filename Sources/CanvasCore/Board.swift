@@ -59,6 +59,9 @@ public struct BoardSnapshot: Codable, Sendable {
     public var tray: [Mention]?
     /// Attention markers the user hasn't seen yet; optional so older board files still load.
     public var attention: [Attention]?
+    /// What the prompt target rule remembers (`PromptTarget.State`); optional so older board
+    /// files still load.
+    public var promptTarget: PromptTarget.State?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -72,6 +75,11 @@ public final class Board {
     public private(set) var tray: [Mention] = []
     /// Unseen attention markers by object (see Attention.swift).
     public internal(set) var attention: [ObjectID: Attention] = [:]
+    /// What the prompt target rule remembers; saved with the board, so the tray targets the
+    /// same terminal after a restart. Set by the board's window.
+    public var promptTarget = PromptTarget.State() {
+        didSet { if promptTarget != oldValue { onChange?() } }
+    }
     /// Mentions agents attached to their `agent.prompt` for each terminal, waiting for its next
     /// drained prompt (Handoff.swift); in memory only.
     public internal(set) var handoffs: [ObjectID: [Handoff]] = [:]
@@ -182,11 +190,14 @@ public final class Board {
         }
         tray = (snapshot.tray ?? []).filter { $0.target.objectIDs.allSatisfy { objects[$0] != nil } }
         for marker in snapshot.attention ?? [] where objects[marker.object] != nil { attention[marker.object] = marker }
+        promptTarget = snapshot.promptTarget ?? PromptTarget.State()
+        promptTarget.prune(objects)
     }
 
     public var snapshot: BoardSnapshot {
         BoardSnapshot(format: Self.format, id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray,
-                      attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object })
+                      attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object },
+                      promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -652,9 +663,12 @@ public final class Board {
     /// other calls (parallel siblings, subagents) finish meanwhile; finishing one re-raises the
     /// next. `working` without a call (a new prompt) and `idle` end every wait. A finished call
     /// reported out of order (lower `seq`) still ends its own wait but changes nothing else.
+    /// `serial`: with `blocked` and a call, the agent asks one approval at a time (Codex), so this
+    /// request is the one on screen and every earlier wait is over (an approval answered whose
+    /// completion never matched or hasn't arrived): the message is always the current request's.
     /// `final`: with `idle`, the last answer of the turn that just ended (`finalAnswers`), kept
     /// until the next turn starts.
-    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil) throws {
+    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil, serial: Bool = false) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
         guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
@@ -670,6 +684,7 @@ public final class Board {
         var message = message
         switch (state, call) {
         case (.blocked, let call?):
+            if serial { pendingApprovals[tile] = [] }
             pendingApprovals[tile, default: []].append((call, message))
         case (.working, let call?):
             resolveApproval(tile, call: call)

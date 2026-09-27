@@ -11,6 +11,8 @@ omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens 
 - The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus 58 (26 pt title bar, 32 pt address bar), at any zoom.
   The tool's `viewport`/`emulate` options are ignored here. To test a width, resize the tile
   (`canvas object.update <id> --json '{"frame":{"w":390,"h":844}}'`); the user sees the same tile.
+  A frame grows right and down from its corner, over whatever is there: grow away from the user's terminals (give `x`/`y` too, e.g. `x` = its right edge − the new width when a terminal sits to its right),
+  or resize and then `canvas.layout.place(id=tile, near=<your terminal>, side="left")`. The update result's `overlaps` names what the new frame newly covers; never leave it covering a terminal.
 - `tab.evaluate` must return plain values (omp rejects functions that return a promise on this backend); poll with `waitForFunction` for async state.
   On strict-CSP pages (e.g. GitHub) pass functions, not code strings: string code runs through the page's `eval`, which CSP blocks.
 - A page you drive or render stays live for 60 s after your last command wherever its tile is (offscreen, window minimized, another Space):

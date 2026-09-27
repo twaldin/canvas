@@ -103,11 +103,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             case .status: break
             }
         }
-        navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? [] }
+        navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? NavigatorPanel.SymbolAnswer(rows: []) }
         nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
+        tray.targetMenu = { [weak self] in self?.targetMenu() }
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
         canvas.onPromptTargetTitle = { [weak self] in self?.scheduleTrayTitle() }
         responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
@@ -188,17 +189,50 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
 
-    /// Terminals in the order they last had keyboard focus, most recent last.
-    private var focusOrder: [ObjectID] = []
-
-    /// `PromptTarget`: the last focused terminal running an agent, else the last focused
-    /// terminal, else the board's only one, so a lone agent never needs a click and an editor
-    /// or shell opened beside an agent doesn't take its mentions.
+    /// `PromptTarget`: the terminal picked from the tray's menu, else the last focused terminal
+    /// running an agent, else the board's only agent terminal, else the last focused terminal,
+    /// else the board's only one, so a lone agent never needs a click and an editor or shell
+    /// opened beside an agent doesn't take its mentions. What it remembers is saved with the
+    /// board (`Board.promptTarget`).
     private func settlePromptTarget() {
-        focusOrder.removeAll { board.objects[$0] == nil }
-        let target = PromptTarget.choose(focusOrder: focusOrder, objects: board.objects)
+        board.promptTarget.prune(board.objects)
+        let target = PromptTarget.choose(board.promptTarget, objects: board.objects)
         if canvas.promptTarget != target { canvas.promptTarget = target }
         if affinity?.target != target { affinity = nil }
+    }
+
+    /// The tray's target menu: the user picks the terminal mentions go to without leaving the
+    /// page they're on; it stays the target until another terminal takes the keyboard.
+    private func chooseTarget(_ id: ObjectID) {
+        guard board.objects[id]?.type == .terminal else { return }
+        board.promptTarget.choose(id)
+        settlePromptTarget()
+    }
+
+    /// The board's terminals, those running an agent first, each named as its header names it;
+    /// the current target is checked.
+    private func targetMenu() -> NSMenu? {
+        let terminals = PromptTarget.menuOrder(board.objects)
+        guard !terminals.isEmpty else { return nil }
+        let menu = NSMenu(title: "Send Mentions To")
+        menu.autoenablesItems = false
+        var agents = true
+        for terminal in terminals {
+            let isAgent = PromptTarget.runsAgent(terminal)
+            if agents, !isAgent, menu.numberOfItems > 0 { menu.addItem(.separator()) }
+            agents = isAgent
+            let name = board.terminalLabel?(terminal.id) ?? PromptTarget.label(terminal, shownTitle: canvas.tiles[terminal.id]?.title)
+            let item = NSMenuItem(title: name, action: #selector(targetMenuPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = terminal.id
+            item.state = terminal.id == canvas.promptTarget ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func targetMenuPicked(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? ObjectID { chooseTarget(id) }
     }
 
     /// The mentions the tray held when last seen, to tell which one was just staged.
@@ -219,8 +253,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             checkouts[terminal.id] = GitWorktree.containing(board.workingDirectory(of: terminal.id))
         }
         guard let agent = PromptTarget.affinity(checkout: checkout, current: canvas.promptTarget, checkouts: checkouts, objects: board.objects) else { return }
-        focusOrder.removeAll { $0 == agent }
-        focusOrder.append(agent)
+        board.promptTarget.focused(agent)
         settlePromptTarget()
         affinity = (agent, checkout.name)
     }
@@ -230,8 +263,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         var view = responder as? NSView
         while let current = view {
             if let terminal = current as? TerminalTile {
-                focusOrder.removeAll { $0 == terminal.objectID }
-                focusOrder.append(terminal.objectID)
+                board.promptTarget.focused(terminal.objectID)
                 settlePromptTarget()
                 board.markSeen(terminal.objectID)
                 canvas.terminalFocused(terminal.objectID)
@@ -344,10 +376,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Go to's symbol rows for `name`: the workspace symbols of the projects this board's code
     /// tiles show (else of the language most of the board root's files are in), from the app's
     /// language servers, started if needed. Files outside the board root are left out. When no
-    /// server for those files' languages could answer (not installed, crashed), one status row
-    /// says why, with its install hint, as Outline does, rather than claiming there are no such
-    /// symbols.
-    private func workspaceSymbols(named name: String) async -> [NavigatorRow] {
+    /// server for those files' languages could answer (not installed, crashed), the answer's
+    /// note says why, with its install hint, for the panel's footer (never a row).
+    private func workspaceSymbols(named name: String) async -> NavigatorPanel.SymbolAnswer {
         let root = board.root
         var files = board.objects.values.filter { $0.type == .code }.compactMap { $0.props["path"]?.string }.map(board.absoluteURL)
         if files.isEmpty {
@@ -362,7 +393,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             }
             if let most = counts.max(by: { $0.value < $1.value })?.key, let path = first[most] { files = [root.appendingPathComponent(path)] }
         }
-        guard !files.isEmpty else { return [] }
+        guard !files.isEmpty else { return NavigatorPanel.SymbolAnswer(rows: []) }
         func ask() async -> Result<[LSPWorkspaceSymbol], Error> {
             do { return .success(try await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)) } catch { return .failure(error) }
         }
@@ -381,9 +412,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         switch answer {
         case .success(let found): symbolsFound = found
         case .failure(let error):
-            if error is CancellationError { return [] }
-            let reason = (error as? LocalizedError)?.errorDescription ?? "\(error)"
-            return [NavigatorRow(target: .status, title: reason, kind: "", dot: nil, toolTip: reason)]
+            if error is CancellationError { return NavigatorPanel.SymbolAnswer(rows: []) }
+            return NavigatorPanel.SymbolAnswer(rows: [], note: (error as? LocalizedError)?.errorDescription ?? "\(error)")
         }
         var symbols = symbolsFound
         if !symbols.isEmpty { symbolsAnswered = Date() }
@@ -403,7 +433,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                                      subtitle: [symbol.container, "\(path):\(line)"].compactMap { $0 }.joined(separator: " · "), toolTip: "\(path):\(line)"))
             if rows.count == NavigatorPanel.maxFileRows { break }
         }
-        return rows
+        return NavigatorPanel.SymbolAnswer(rows: rows)
     }
 
     @objc func zoomToFit(_ sender: Any?) {
@@ -519,6 +549,21 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Edit › Mention (⇧⌘M): stages what the user is on (`KeyboardMention`), as a Hyper-click on
+    /// it would (again unstages it); the keyboard stays where it is. Beeps with nothing to
+    /// mention.
+    @objc func mentionCurrent(_ sender: Any?) {
+        let keyboardTile = canvas.focusedTile
+        let selection = canvas.selection
+        let content = (keyboardTile ?? (selection.count == 1 ? selection.first : nil)).flatMap { canvas.tiles[$0]?.content }
+        let board = board
+        Task { @MainActor in
+            let current = await content?.keyboardMention(hasKeyboard: keyboardTile != nil)
+            guard let target = KeyboardMention.target(keyboardTile: keyboardTile, selection: selection, current: current, on: board) else { return NSSound.beep() }
+            HyperMonitor.toggle(target, on: board)
+        }
+    }
+
     // MARK: The context menus' actions in the menu bar
 
     @objc func goToNextNeedsYou(_ sender: Any?) {
@@ -594,6 +639,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(ungroupSelection(_:)):
             return board.objects.values.contains { $0.type == .group && (selection.contains($0.id) || GroupSpec($0.props)?.members.contains(where: selection.contains) == true) }
         case #selector(pasteMentions(_:)): return !board.tray.isEmpty && canvas.promptTarget != nil
+        case #selector(mentionCurrent(_:)): return canvas.focusedTile != nil || !selection.isEmpty
         case #selector(exitGroup(_:)): return canvas.enteredGroup != nil
         case #selector(enterGroup(_:)): return canvas.selectedGroup != nil
         case #selector(copyObjectIDs(_:)):

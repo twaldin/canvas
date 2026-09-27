@@ -193,23 +193,68 @@ struct KeyboardNavigationTests {
         return CanvasObject(id: id, type: .terminal, frame: Frame(x: 0, y: 0, w: 10, h: 10), z: 0, parent: nil, createdBy: .user, createdAt: Date(), props: .object(props))
     }
 
-    @Test func promptTargetIsTheLastFocusedAgentThenTheLastFocusedThenTheOnlyTerminal() {
+    @Test func promptTargetPrefersAgentsOverShellsTheUserTypedIn() {
+        func choose(_ order: [ObjectID], chosen: ObjectID? = nil, _ objects: [ObjectID: CanvasObject]) -> ObjectID? {
+            PromptTarget.choose(PromptTarget.State(focusOrder: order, chosen: chosen), objects: objects)
+        }
         let omp = terminal("omp", agent: "omp", running: true)
         let nvim = terminal("nvim")
         let shell = terminal("shell")
         let objects = [omp.id: omp, nvim.id: nvim, shell.id: shell]
-        #expect(PromptTarget.choose(focusOrder: ["omp", "nvim"], objects: objects) == "omp", "an editor opened later doesn't take the target")
-        #expect(PromptTarget.choose(focusOrder: ["nvim", "shell"], objects: objects) == "shell", "no agent focused: the last focused terminal")
-        #expect(PromptTarget.choose(focusOrder: [], objects: [nvim.id: nvim]) == "nvim", "a lone terminal needs no focus")
-        #expect(PromptTarget.choose(focusOrder: [], objects: objects) == nil, "several, none focused")
-        #expect(PromptTarget.choose(focusOrder: ["gone", "shell"], objects: objects) == "shell", "closed terminals are skipped")
-        // Two agents: the one focused last.
+        #expect(choose(["omp", "nvim"], objects) == "omp", "an editor focused later doesn't take the target")
+        #expect(choose([], objects) == "omp", "the only agent needs no click beside a dev-server shell")
+        #expect(choose(["nvim", "shell"], objects) == "omp", "a shell typed in never takes it from the only agent")
+        #expect(choose([], [nvim.id: nvim]) == "nvim", "a lone terminal needs no focus")
+        #expect(choose(["gone", "shell"], [nvim.id: nvim, shell.id: shell]) == "shell", "no agent: the last focused, closed terminals skipped")
+        #expect(choose([], [nvim.id: nvim, shell.id: shell]) == nil, "several plain terminals, none focused")
+        // Two agents: the one focused last; none focused: the last focused terminal, else none.
         let claude = terminal("claude", agent: "claude", running: true)
         let both = objects.merging([claude.id: claude]) { $1 }
-        #expect(PromptTarget.choose(focusOrder: ["claude", "omp", "shell"], objects: both) == "omp")
+        #expect(choose(["claude", "omp", "shell"], both) == "omp")
+        #expect(choose(["shell"], both) == "shell", "several agents, none ever focused: the shell the user typed in")
+        #expect(choose([], both) == nil)
         // An agent that exited (lifecycle cleared, kind remembered) is a plain terminal again.
         let exited = terminal("omp", agent: "omp", running: false)
-        #expect(PromptTarget.choose(focusOrder: ["omp", "nvim"], objects: [exited.id: exited, nvim.id: nvim]) == "nvim")
+        #expect(choose(["omp", "nvim"], [exited.id: exited, nvim.id: nvim]) == "nvim")
+        // The tray menu's pick beats every rule until another terminal takes the keyboard.
+        #expect(choose(["omp", "shell"], chosen: "shell", objects) == "shell")
+        #expect(choose(["omp"], chosen: "gone", objects) == "omp", "a picked terminal that closed no longer counts")
+    }
+
+    @MainActor @Test func promptTargetMenuPickHoldsUntilAnotherTerminalIsFocused() throws {
+        var state = PromptTarget.State()
+        state.focused("omp")
+        state.choose("shell")
+        state.focused("shell")
+        #expect(state.chosen == "shell", "typing into the picked terminal keeps the pick")
+        state.focused("nvim")
+        #expect(state.chosen == nil)
+        let omp = terminal("omp", agent: "omp", running: true)
+        let objects = [omp.id: omp, "shell": terminal("shell"), "nvim": terminal("nvim")]
+        #expect(PromptTarget.choose(state, objects: objects) == "omp", "the pick gone, agents win again")
+        // Saved with the board: the target survives a restart.
+        let board = Board(id: "b", root: URL(fileURLWithPath: "/tmp"))
+        board.create(type: .terminal, props: .object(["cwd": .string("/")]))
+        let b = board.create(type: .terminal, props: .object(["cwd": .string("/")]))
+        board.promptTarget.choose(b.id)
+        let data = try JSONEncoder().encode(board.snapshot)
+        let restored = Board(snapshot: try JSONDecoder().decode(BoardSnapshot.self, from: data))
+        #expect(PromptTarget.choose(restored.promptTarget, objects: restored.objects) == b.id)
+    }
+
+    @Test func trayMenuListsAgentTerminalsFirstInReadingOrder() {
+        func at(_ object: CanvasObject, x: Double, y: Double) -> CanvasObject {
+            var moved = object
+            moved.frame = Frame(x: x, y: y, w: 10, h: 10)
+            return moved
+        }
+        let objects = [
+            "shell": at(terminal("shell"), x: 0, y: 0),
+            "omp": at(terminal("omp", agent: "omp", running: true), x: 500, y: 0),
+            "codex": at(terminal("codex", agent: "codex", running: true), x: 0, y: 400),
+            "nvim": at(terminal("nvim"), x: 0, y: 200),
+        ]
+        #expect(PromptTarget.menuOrder(objects).map(\.id) == ["omp", "codex", "shell", "nvim"])
     }
 
     @Test func trayNamesTheTargetByNameThenTitle() {

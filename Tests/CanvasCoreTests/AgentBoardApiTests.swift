@@ -219,6 +219,26 @@ final class AgentBoardApiTests {
         }
     }
 
+    @Test func promptRefusesWhenTheForegroundProgramIsNotTheAgent() async throws {
+        let tile = try agent(name: "omp-in-tmux")
+        var typed: [String] = []
+        router.submitToTerminal = { _, _, text in typed.append(text); return true }
+        var program: String? = "tmux"
+        router.terminalStatus = { _, _ in TerminalStatus(program: program) }
+        let refused = try await call("agent.prompt", #"{"target":"\#(tile)","text":"what does walk.rs do?"}"#)
+        #expect(refused["error"]?["code"] == .string("conflict"))
+        #expect(refused["error"]?["message"]?.string?.contains("foreground program is tmux, not omp") == true)
+        #expect(typed.isEmpty, "nothing reached tmux's active pane")
+        #expect(try await call("agent.prompt", #"{"target":"\#(tile)","text":"anyway","force":true}"#)["ok"] == .bool(true))
+        program = "omp"
+        #expect(try await call("agent.prompt", #"{"target":"\#(tile)","text":"next"}"#)["ok"] == .bool(true))
+        #expect(typed == ["anyway", "next"])
+        // A plain shell (no agent reporting) takes whatever the caller types, as before.
+        let shell = terminal()
+        program = "npm run dev"
+        #expect(try await call("agent.prompt", #"{"target":"\#(shell)","text":"rs"}"#)["ok"] == .bool(true))
+    }
+
     @Test func mentionsGivenToAPromptReachOnlyTheTargetsNextDrain() async throws {
         let source = dir.appendingPathComponent("root/src/a.ts")
         try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)

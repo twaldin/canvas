@@ -420,6 +420,12 @@ final class HtmlTile: NSView, TileContent {
         return domTarget(element)
     }
 
+    /// Edit › Mention: the page's text selection; nil without one: the whole tile.
+    func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
+        guard let web = webView, let element = await WebMentions.selection(in: web) else { return nil }
+        return domTarget(element)
+    }
+
     func pageElements(in rect: NSRect) async -> PageElements? {
         let region = rect.intersection(bounds)
         guard let web = webView, !region.isNull, region.width > 0, region.height > 0,

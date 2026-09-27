@@ -1,23 +1,84 @@
 import Foundation
 
 /// Which terminal the selection tray drains into (and Superwhisper pastes into): the terminal
-/// last focused that runs an agent, else the last focused terminal, else the board's only one.
-/// Opening an editor or a plain shell next to an agent never takes the target from the agent.
+/// the user picked from the tray's menu, until another terminal takes the keyboard; else the
+/// last focused terminal running an agent; else the board's only agent terminal; else the last
+/// focused terminal; else the board's only one. A plain shell or an editor never takes the
+/// target from an agent, unless no agent was ever focused and there are several (or none).
 public enum PromptTarget {
-    /// `focusOrder`: terminals in the order they last took keyboard focus, most recent last
-    /// (ids no longer on the board are skipped). Nil when no rule applies.
-    public static func choose(focusOrder: [ObjectID], objects: [ObjectID: CanvasObject]) -> ObjectID? {
-        let focused = focusOrder.reversed().compactMap { id in objects[id].flatMap { $0.type == .terminal ? $0 : nil } }
+    /// What the rule remembers, saved with the board so the target survives a restart.
+    public struct State: Codable, Equatable, Sendable {
+        /// Terminals in the order they last took keyboard focus (or were made the target by
+        /// worktree affinity or the tray's menu), most recent last.
+        public var focusOrder: [ObjectID]
+        /// The terminal picked from the tray's menu; it stays the target until another terminal
+        /// takes the keyboard.
+        public var chosen: ObjectID?
+
+        public init(focusOrder: [ObjectID] = [], chosen: ObjectID? = nil) {
+            self.focusOrder = focusOrder
+            self.chosen = chosen
+        }
+
+        /// A terminal took the keyboard (or worktree affinity made it the target).
+        public mutating func focused(_ id: ObjectID) {
+            focusOrder.removeAll { $0 == id }
+            focusOrder.append(id)
+            if chosen != id { chosen = nil }
+        }
+
+        /// The user picked a terminal from the tray's menu.
+        public mutating func choose(_ id: ObjectID) {
+            focused(id)
+            chosen = id
+        }
+
+        /// Forgets terminals no longer on the board.
+        public mutating func prune(_ objects: [ObjectID: CanvasObject]) {
+            focusOrder.removeAll { objects[$0] == nil }
+            if let id = chosen, objects[id] == nil { chosen = nil }
+        }
+    }
+
+    /// Nil when no rule applies (several terminals, none focused, not exactly one agent).
+    public static func choose(_ state: State, objects: [ObjectID: CanvasObject]) -> ObjectID? {
+        if let chosen = state.chosen, objects[chosen]?.type == .terminal { return chosen }
+        let focused = state.focusOrder.reversed().compactMap { id in objects[id].flatMap { $0.type == .terminal ? $0 : nil } }
         if let agent = focused.first(where: runsAgent) { return agent.id }
-        if let last = focused.first { return last.id }
         let terminals = objects.values.filter { $0.type == .terminal }
+        let agents = terminals.filter(runsAgent)
+        if agents.count == 1 { return agents[0].id }
+        if let last = focused.first { return last.id }
         return terminals.count == 1 ? terminals.first?.id : nil
+    }
+
+    /// The tray menu's terminals: those running an agent first, then the rest, each in reading
+    /// order (top to bottom, then left to right).
+    public static func menuOrder(_ objects: [ObjectID: CanvasObject]) -> [CanvasObject] {
+        objects.values.filter { $0.type == .terminal }.sorted { a, b in
+            let agentA = runsAgent(a), agentB = runsAgent(b)
+            if agentA != agentB { return agentA }
+            if a.frame.y != b.frame.y { return a.frame.y < b.frame.y }
+            if a.frame.x != b.frame.x { return a.frame.x < b.frame.x }
+            return a.id < b.id
+        }
     }
 
     /// An agent is running in the terminal: an agent of known kind reports its lifecycle (omp's
     /// extension, the Claude and Codex hooks) and clears it when it exits.
     public static func runsAgent(_ terminal: CanvasObject) -> Bool {
         terminal.props["lifecycle"]?["state"]?.string != nil && terminal.props["agent"]?["kind"]?.string != nil
+    }
+
+    /// What `agent.prompt` would type into instead of the agent: the terminal's foreground
+    /// program (`TerminalStatus.program`) when an agent of `kind` reports there but the program
+    /// isn't it (tmux or an editor it runs, a pager): nil when it is the agent (its name is one
+    /// of the program's words, ignoring case: `omp`, `codex resume`, `node …/gemini`), and
+    /// when either is unknown.
+    public static func foreignProgram(kind: String?, program: String?) -> String? {
+        guard let kind = kind?.lowercased(), !kind.isEmpty, let program, !program.isEmpty else { return nil }
+        let words = program.lowercased().split(separator: " ").map { $0.split(separator: ".").first.map(String.init) ?? String($0) }
+        return words.contains(kind) ? nil : program
     }
 
     /// Worktree affinity: a mention staged from a file in another checkout (a worktree of the

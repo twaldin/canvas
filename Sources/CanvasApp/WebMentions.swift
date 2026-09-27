@@ -33,6 +33,12 @@ enum WebMentions {
         return decode(result)
     }
 
+    /// The page's text selection: the innermost element holding all of it, `text` the selected
+    /// text (whitespace collapsed); nil with nothing selected.
+    static func selection(in webView: WKWebView) async -> Element? {
+        decode(try? await webView.callAsyncJavaScript("return window.__canvasMentions?.selection() ?? null", arguments: [:], contentWorld: world))
+    }
+
     /// The elements under a rect (web view coordinates, top-left origin): the outermost ones it
     /// mostly covers that show something (text, an image, a control), in document order, else
     /// the smallest such element it touches within a line (an underline, a margin note). At
@@ -131,10 +137,24 @@ enum WebMentions {
         }
         return { elements: found.slice(0, limit).map(describe), more: Math.max(0, found.length - limit) };
       }
+      // The page's text selection: the element holding all of it, with the selected text.
+      function selection() {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+        const text = sel.toString().trim().replace(/\s+/g, ' ');
+        if (!text) return null;
+        let node = sel.getRangeAt(0).commonAncestorContainer;
+        if (node.nodeType !== 1) node = node.parentElement;
+        if (!node) return null;
+        const found = describe(node);
+        found.text = text.slice(0, 500);
+        return found;
+      }
       window.__canvasMentions = {
         at(x, y) { const el = hit(x, y); return el ? describe(el) : null; },
         find(sel) { try { const el = document.querySelector(sel); return el ? describe(el) : null; } catch { return null; } },
         within,
+        selection,
       };
     })();
     """#

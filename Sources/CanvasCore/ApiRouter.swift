@@ -169,8 +169,16 @@ public final class ApiRouter {
                     return Self.ok(id, size == nil ? result : withOverlaps(result))
                 }
                 let size = try await fitSize(method, params)
+                // A frame given outright (a browser tile resized to a desktop viewport) that now
+                // covers objects it didn't says so, as a refit does.
+                let covered = method == "object.update" && size == nil && params["frame"] != nil
+                    ? params["id"]?.string.flatMap { id in (try? board(forObject: id)).map { Set($0.overlaps(of: id)) } } : nil
                 let result = try dispatch(method, try fitted(method, params, size: size))
-                return Self.ok(id, size == nil ? result : withOverlaps(result))
+                if size != nil { return Self.ok(id, withOverlaps(result)) }
+                guard let covered else { return Self.ok(id, result) }
+                let reported = withOverlaps(result)
+                let now = Set(reported["overlaps"]?.array?.compactMap(\.string) ?? [])
+                return Self.ok(id, now.isSubset(of: covered) ? result : reported)
             default: break
             }
             return Self.ok(id, try dispatch(method, params))
@@ -410,6 +418,12 @@ public final class ApiRouter {
         if Self.state(of: terminal) == LifecycleState.blocked.rawValue, p["force"]?.bool != true {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
+        }
+        // An agent reporting from inside tmux (or an editor it started) isn't what the typing reaches.
+        if PromptTarget.runsAgent(terminal), p["force"]?.bool != true,
+           let program = PromptTarget.foreignProgram(kind: terminal.props["agent"]?["kind"]?.string, program: terminalStatus?(board, terminal.id).program) {
+            let kind = terminal.props["agent"]?["kind"]?.string ?? "the agent"
+            throw Failure("conflict", "\(terminal.id)'s foreground program is \(program), not \(kind): the text would go to it (in tmux, to whichever pane is active); force: true sends it anyway")
         }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
         let mentions = try (p["mentions"]?.array ?? []).map { try HandoffMention(json: $0).target(on: board) }
@@ -679,7 +693,13 @@ public final class ApiRouter {
             let board = try board(p)
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
             guard var props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
-            let frame = try p["frame"].map { try Self.frame($0, onto: nil) }
+            // Just w and h: that size, placed as a create without a frame is (near the caller).
+            let frame = try p["frame"].map { value in
+                if value["x"]?.number == nil, value["y"]?.number == nil, let w = value["w"]?.number, let h = value["h"]?.number {
+                    return board.place(width: w, height: h, near: caller(p), stacking: true)
+                }
+                return try Self.frame(value, onto: nil)
+            }
             if type == .note || type == .html {
                 if let root = props["root"]?.string, !root.isEmpty {
                     try board.checkLinkRoot(root)
@@ -769,7 +789,7 @@ public final class ApiRouter {
             let tile = try string(p, "tile")
             guard let state = LifecycleState(rawValue: try string(p, "state")) else { throw Failure("invalid_params", "unknown state") }
             try board(forObject: tile).reportLifecycle(tile: tile, kind: try string(p, "kind"), state: state, message: p["message"]?.string, seq: p["seq"]?.int,
-                                                       source: p["source"]?.string, call: p["call"]?.string, final: p["final"]?.string)
+                                                       source: p["source"]?.string, call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false)
             return .object([:])
 
         case "agent.report_session":
@@ -1010,7 +1030,7 @@ public final class ApiRouter {
                 guard let number = given.number else { throw Failure("invalid_params", "frame.\(key) must be a number") }
                 return number
             }
-            guard let current else { throw Failure("invalid_params", "frame needs x, y, w, and h (missing \(key)); with size: \"fit\", x and y (and w) are enough") }
+            guard let current else { throw Failure("invalid_params", "frame needs x, y, w, and h (missing \(key)); w and h alone place it automatically; with size: \"fit\", x and y (and w) are enough") }
             return current
         }
         return Frame(x: try side("x", base?.x), y: try side("y", base?.y), w: try side("w", base?.w), h: try side("h", base?.h))

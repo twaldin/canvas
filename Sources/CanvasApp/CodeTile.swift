@@ -714,6 +714,15 @@ extension CodeTile {
         return target(entries: segment.entry...segment.entry, painter: painter, document: document)
     }
 
+    /// Edit › Mention: the selected text's lines; else, with the keyboard in the rows, the range
+    /// the tile shows (nil without one: the whole tile).
+    func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
+        guard let document, showsCurrent, let painter = rowsView.painter else { return nil }
+        if let selected = rowsView.selectedEntries { return target(entries: selected, painter: painter, document: document) }
+        guard hasKeyboard, let range = displayed.range, let lines = document.lines(for: range) else { return nil }
+        return code(LineRange(start: lines.lowerBound, end: lines.upperBound), side: document.side, in: document)
+    }
+
     /// The lines a run of entries shows: displayed lines when there are any, else peeked base
     /// lines.
     private func target(entries: ClosedRange<Int>, painter: CodePainter, document: CodeDocument) -> MentionTarget? {

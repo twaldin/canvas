@@ -106,23 +106,40 @@ export type HtmlProps = {
 };
 
 export type ChangesProps = {
+  /** another worktree of the board's repository to review (absolute or board-relative, e.g. ../wt-agent; default: the board root). Anything that isn't a worktree of the board's repository lists nothing and says so. Its files have absolute paths */
+  root?: string;
   /** what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch) | a commit */
   base?: string;
-  /** files or directories to limit it to, board-relative or absolute (default: the board root); a path outside the board's repository lists nothing and says so */
+  /** files or directories to limit it to, relative to `root` (default the board root) or absolute (default: all of it); a path outside that worktree lists nothing and says so */
   paths?: string[];
   title?: string;
-  /** written by the tile: the Stage and Revert actions the user took, oldest first (⌘Z of one removes its entry). Agents read it; writing it changes nothing in git */
+  /** written by the tile: the Stage and Discard actions the user took, oldest first (⌘Z of one removes its entry). Agents read it; writing it changes nothing in git */
   reviewed?: ({
+    /** revert: the user's Discard */
     action?: "stage" | "revert";
-    /** board-relative */
+    /** board-relative, else absolute */
     path?: string;
-    scope?: "hunk" | "file";
+    /** lines: some lines of one hunk the user selected */
+    scope?: "hunk" | "lines" | "file";
     status?: "added" | "modified" | "deleted" | "renamed";
-    /** the hunk's `@@ -a,b +c,d @@` (scope hunk) */
+    /** the hunk's stable id as `object.get` gave it (scope hunk or lines) */
+    hunk?: string;
+    /** the hunk's `@@ -a,b +c,d @@` at the time (scope hunk or lines) */
     header?: string;
+    /** how the tile named the hunk: `Lines 15–46` */
+    label?: string;
+    /** added lines the action covered */
     added?: number;
+    /** removed lines the action covered */
     removed?: number;
+    /** the unified patch applied (at most 200 lines): staged as is to the index; a discard's is the base → working tree diff applied reversed (`applied: reversed`), so its `-` lines are what came back and its `+` lines what went */
+    patch?: string;
+    applied?: "reversed";
+    /** the patch had more lines */
+    truncated?: boolean;
   })[];
+  /** written by the tile: files the user marked Viewed (path → a fingerprint of their diff then). A file counts as viewed (folded, `changes.files[].viewed`) only while its diff is unchanged */
+  viewed?: Record<string, unknown>;
   scale?: Scale;
 };
 
@@ -224,6 +241,8 @@ export type MentionTarget = {
   symbol?: string;
   /** with side old or absent: the commit whose version of path holds the lines (deleted diff rows, pinned excerpts); with side new: the diff base. Absent: the working tree */
   commit?: string;
+  /** a changes tile's line or hunk: what the lines are in the diff and the hunk's index state, e.g. `added line · unstaged hunk`, `removed line · partly staged hunk`, `whole hunk +3 −1 · staged` */
+  diff?: string;
 } | {
   kind: "dom";
   object: Id;
@@ -435,7 +454,11 @@ export type ObjectGetResult = {
       removed?: number;
       /** why it has no hunks: binary file, too large to show, submodule, mode changed */
       notice?: string;
+      /** the user marked it Viewed and its diff hasn't changed since */
+      viewed?: true;
       hunks?: ({
+        /** stable while the hunk's lines stay the same (line numbers aside); `props.reviewed[].hunk` names it */
+        id?: string;
         /** `@@ -a,b +c,d @@` as `git diff -U3` prints it */
         header?: string;
         old?: {
@@ -448,8 +471,12 @@ export type ObjectGetResult = {
         };
         added?: number;
         removed?: number;
-        /** unstaged: the working tree differs from the index there; staged: the index has it; committed: HEAD has it (a base older than HEAD) */
-        status?: "unstaged" | "staged" | "committed";
+        /** unstaged: the working tree differs from the index there; partial: the index holds some of it (staged, then edited again: committing what's staged leaves the rest out); staged: the index has it; committed: HEAD has it (a base older than HEAD) */
+        status?: "unstaged" | "partial" | "staged" | "committed";
+        /** the hunk as unified-diff lines (` `, `-`, `+`, then the text), at most 200 */
+        lines?: string[];
+        /** the hunk has more than 200 lines */
+        truncated?: true;
       })[];
     })[];
   };
@@ -469,6 +496,8 @@ export type ObjectCreateParams = {
 };
 export type ObjectCreateResult = {
   object: CanvasObject;
+  /** a changes tile: the caller's existing tile for the same root, base, and paths came back (updated) instead of a new one */
+  reused?: true;
   /** present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway */
   warnings?: string[];
 };
@@ -863,15 +892,15 @@ export interface CanvasApi {
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
   object: {
-    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), next to `props.reviewed` (what they staged or reverted). To look at an object, `view.render` it. */
+    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, at most 4000 tall). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
-    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: every file and hunk row (unfolded) under its header, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 tall. Other types are `unsupported`. */
+    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall. Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;

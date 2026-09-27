@@ -40,10 +40,11 @@ Error codes: `not_found` (no such object/agent/board; a code tile's file or `pin
   Measure, fit, `layout.check`, `view.render` sizes, and line anchors account for it; everything you get back is in canvas points.
 - Terminal tiles: `{"cwd": "/path", "command": ["omp"]}` starts an agent in a new tile (its session survives app restarts). Only start agents the user asked for.
   Deleting a terminal tile (`object.delete`, or in a batch that succeeds) ends its session and whatever runs in it, as closing it does for the user.
-- Changes tiles (`type: changes`, `ChangesProps`): `{"base": "HEAD"}` (the default: uncommitted work, staged or not; also `merge-base` or a commit), optional `paths` (files or dirs) and `title`.
-  The user reviews there: hunks as a unified diff, Stage and Revert per hunk and per file, each one ⌘Z. To show them what you changed, create one (`size: "fit"` sizes it to every hunk, at most 4000 pt tall) rather than an HTML diff.
-  `object.get` adds `changes`: `files` (board-relative `path`, `status` added/modified/deleted/renamed, `added`/`removed`, `hunks` with `header`, `old`/`new` `{start, count}`, and `status` unstaged/staged/committed) as git has them now, so hunks the user reverted are gone and staged ones say so;
-  `props.reviewed` lists what they staged or reverted (`action`, `path`, `scope`, `header`). The tile writes `reviewed`; changing it yourself does nothing to git.
+- Changes tiles (`type: changes`, `ChangesProps`): `{"base": "HEAD"}` (the default: uncommitted work, staged or not; also `merge-base` or a commit), optional `root` (another worktree of the board's repository, e.g. `"../wt-agent"`: review your worktree on the board where your terminal is), `paths` (files or dirs in it) and `title`.
+  The user reviews there: hunks as a unified diff, Stage and Discard per file, hunk, or selected lines, each one ⌘Z; a Viewed box folds a file until its diff changes. To show them what you changed, create one (`size: "fit"` sizes it to every hunk, at most 4000 pt tall, and it grows as you add hunks) rather than an HTML diff. Creating it again with the same `root`/`base`/`paths` returns your existing tile (`reused: true`).
+  `object.get` adds `changes`: `files` (`path`, board-relative or absolute outside the board root; `status` added/modified/deleted/renamed; `added`/`removed`; `viewed`; `hunks` with a stable `id`, `header`, `old`/`new` `{start, count}`, `status` unstaged/partial/staged/committed, and `lines`: the unified text, at most 200 with `truncated`) as git has them now, so hunks the user discarded are gone and staged ones say so (`partial`: staged, then changed again);
+  `props.reviewed` lists what they staged or discarded (`action` stage/revert, `path`, `scope` file/hunk/lines, `hunk` id, `header`, `patch`: the patch applied, reversed for a discard). The tile writes `reviewed` and `viewed`; changing them yourself does nothing to git.
+  A mention of a diff line says what it is: `… diff vs HEAD 1a2b3c4, new side (working tree) · added line · unstaged hunk`.
 
 ## Layout
 
@@ -55,7 +56,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   a range whose longest line fits stays exactly that narrow, longer lines soft-wrap and the height counts their extra rows, and a caption wider than that truncates.
   Notes: the rendered markdown, live fences resolved, at `width` (default 280). Text shapes: at `width`, or one unwrapped line per paragraph.
   HTML: the page laid out `width` wide (default 640) once it has rendered (Mermaid, `<canvas-code>` excerpts), as tall as its document, at most 4000 pt (a longer page scrolls in the tile).
-  Changes: every file and hunk row, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 pt. Browser tiles are `unsupported`.
+  Changes: the file list and every file and hunk row (deleted and viewed files folded), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 pt. Browser tiles are `unsupported`.
 - `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note, text, or an HTML page, or to cap a code tile's width);
   an update re-measures at the object's current position and width (code: at `frame.w` or the 960 pt default, never its current width, so a re-fit can widen it).
 - `canvas.layout.place(id=a, near=b, side="right", gap=40, align="start")` (`side`: right, left, above, below; `align`: start, center, end)

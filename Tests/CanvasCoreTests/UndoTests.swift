@@ -119,6 +119,43 @@ struct UndoTests {
         #expect(board.objects[note.id] != nil)
     }
 
+    @Test func followReportsAndWriteBacksAreNotTheUsersUndoSteps() throws {
+        let board = makeBoard()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for name in ["a.py", "b.py"] { try "one\ntwo\n".write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8) }
+        let agent = terminal(on: board)
+        let page = board.create(type: .browser, props: .object(["url": .string("http://localhost:3000")]))
+        let follow = try #require(try board.follow(tile: agent.id, path: "a.py", range: LineRange(start: 1, end: 1), action: "read"))
+        let steps = board.history.undoSteps.count
+        #expect(steps == 2, "the follow tile appearing is no step")
+
+        // The user moves the follow tile aside, then does something of their own.
+        try board.update(follow.id, frame: Frame(x: 3000, y: 0, w: follow.frame.w, h: follow.frame.h))
+        let note = board.create(type: .note, props: .object(["markdown": .string("mine")]))
+        // Meanwhile the agent re-aims its follow tile, the page retitles itself, and the app
+        // writes back what a note resolved.
+        try board.follow(tile: agent.id, path: "b.py", range: LineRange(start: 2, end: 2), action: "edit")
+        try board.update(page.id, props: .object(["title": .string("Dashboard")]), actor: .system)
+        try board.update(note.id, props: .object(["markdown": .string("mine, anchored")]), actor: .system)
+        try board.follow(tile: agent.id, path: "a.py", range: LineRange(start: 2, end: 2), action: "read")
+        #expect(board.history.undoSteps.count == steps + 2)
+
+        #expect(board.undo())
+        #expect(board.objects[note.id] == nil, "⌘Z undoes the user's last own action")
+        #expect(board.objects[page.id]?.props["title"]?.string == "Dashboard")
+        #expect(board.undo())
+        let back = try board.object(follow.id)
+        #expect(back.frame.x == follow.frame.x, "the user's move is undone")
+        #expect(back.props["path"]?.string == "a.py" && back.props["range"]?["start"]?.int == 2, "but not the agent's latest aim")
+        #expect(back.props["history"]?.array?.count == 3, "every report since stays listed")
+        #expect(board.redo() && board.redo())
+        #expect(try board.object(follow.id).frame.x == 3000)
+
+        // Undoing the terminal's creation takes its follow tile along.
+        while board.undo() {}
+        #expect(board.objects.isEmpty)
+    }
+
     @Test func aNewChangeAfterUndoDropsTheRedoBranch() throws {
         let board = makeBoard()
         let note = board.create(type: .note, props: .object(["markdown": .string("a")]))

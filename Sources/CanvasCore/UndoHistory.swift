@@ -1,8 +1,10 @@
 import Foundation
 
 /// Linear undo/redo of board content changes, whoever made them: ⌘Z undoes the latest change
-/// even when an agent made it. Bookkeeping that tracks a terminal rather than content (agent
-/// lifecycle, session, title) is never recorded and never rewound.
+/// even when an agent made it. Bookkeeping nobody chose to change is never recorded and never
+/// rewound: what tracks a terminal (agent lifecycle, session, title), a page's title, where a
+/// follow tile is aimed and its history, a follow tile appearing, and the app's own write-backs
+/// (`ActivityActor.system`), so ⌘Z reaches the user's last own action through an agent's work.
 @MainActor
 public final class UndoHistory {
     public enum Change: Sendable {
@@ -16,6 +18,19 @@ public final class UndoHistory {
 
     /// Props a terminal's integrations keep current on their own.
     static let terminalBookkeeping: Set<String> = ["lifecycle", "agent", "title"]
+    /// Props a follow tile's agent keeps current with every report (`Board.follow`).
+    static let followBookkeeping: Set<String> = ["path", "range", "lastAction", "history"]
+
+    /// The props of `object` nobody sets on purpose: a terminal's lifecycle, session and title;
+    /// a page's title (the app's write-back); a follow tile's aim and history.
+    static func bookkeeping(_ object: CanvasObject) -> Set<String> {
+        switch object.type {
+        case .terminal: terminalBookkeeping
+        case .browser: ["title"]
+        case .code where object.props["followOf"]?.string != nil: followBookkeeping
+        default: []
+        }
+    }
 
     public private(set) var undoSteps: [[Change]] = []
     public private(set) var redoSteps: [[Change]] = []
@@ -32,13 +47,15 @@ public final class UndoHistory {
     private var mergeFloor = 0
     /// Set while an undo or redo applies its changes, which must not record themselves.
     var replaying = false
+    /// Above zero while changes nobody chose (`Board.unrecorded`) are being made.
+    var muted = 0
 
     public init(limit: Int = 200) {
         self.limit = limit
     }
 
     func record(_ change: Change) {
-        guard !replaying else { return }
+        guard !replaying, muted == 0 else { return }
         switch change {
         case .updated(let before, let after):
             if Self.content(before) == Self.content(after) { return }
@@ -110,8 +127,12 @@ public final class UndoHistory {
     }
 
     static func contentProps(_ object: CanvasObject) -> JSONValue {
-        guard object.type == .terminal, var props = object.props.object else { return object.props }
-        for key in terminalBookkeeping { props.removeValue(forKey: key) }
+        props(of: object, without: bookkeeping(object))
+    }
+
+    static func props(of object: CanvasObject, without keys: Set<String>) -> JSONValue {
+        guard !keys.isEmpty, var props = object.props.object else { return object.props }
+        for key in keys { props.removeValue(forKey: key) }
         return .object(props)
     }
 
@@ -122,8 +143,8 @@ public final class UndoHistory {
         object.z = target.z
         object.parent = target.parent
         var props = contentProps(target).object ?? [:]
-        if current.type == .terminal, let live = current.props.object {
-            for key in terminalBookkeeping { props[key] = live[key] }
+        if let live = current.props.object {
+            for key in bookkeeping(current) { props[key] = live[key] }
         }
         object.props = .object(props)
         return object
@@ -147,6 +168,14 @@ extension Board {
     public func transaction<T>(_ body: () throws -> T) rethrows -> T {
         history.begin()
         defer { endStep() }
+        return try body()
+    }
+
+    /// Makes changes no one chose, which ⌘Z skips (a follow tile appearing or re-aiming, the
+    /// app's write-backs): nothing inside is recorded, and later undos keep what it did.
+    func unrecorded<T>(_ body: () throws -> T) rethrows -> T {
+        history.muted += 1
+        defer { history.muted -= 1 }
         return try body()
     }
 
@@ -214,10 +243,12 @@ extension Board {
 
     /// Deletes an object for undo/redo and returns what to bring back later: the live object,
     /// whose content matches the recorded snapshot (later steps were already reverted) and whose
-    /// bookkeeping (agent session, lifecycle, title) is the latest the integrations reported.
+    /// bookkeeping (agent session, lifecycle, title) is the latest the integrations reported. A
+    /// terminal's follow tile, whose appearance was never a step, goes with it.
     private func removeLive(_ recorded: CanvasObject) -> CanvasObject {
         guard let live = objects[recorded.id] else { return recorded }
         try? delete(recorded.id)
+        if live.type == .terminal { for follow in followTiles(of: live.id) { try? delete(follow.id) } }
         return live
     }
 

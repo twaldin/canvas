@@ -6,7 +6,7 @@ A native macOS infinite canvas for coding agents. Agents run unmodified in real 
 
 ## What's on the canvas
 
-- **Terminal tiles.** Rendered by libghostty. Sessions live in [zmx](https://github.com/neurosnap/zmx), so they survive an app restart, and after a reboot omp, Claude Code and Codex tiles resume their recorded session. They use your Ghostty config (theme, font, keybinds), turn a program's notification or bell into an attention marker, and ⌘-click opens a `path:line` in the output as a code tile.
+- **Terminal tiles.** Rendered by libghostty. Sessions live in [zmx](https://github.com/neurosnap/zmx), so they survive an app restart, and after a reboot omp, Claude Code and Codex tiles resume their recorded session. They use your Ghostty config (theme, colors, font family, keybinds; Canvas keeps its own font size, and zoom scales text), turn a program's notification or bell into an attention marker, and ⌘-click opens a `path:line` in the output as a code tile.
 - **Code tiles.** The whole file, scrolled to a range. A gitsigns-style gutter shows changes against the merge-base (or HEAD); click a sign to peek at the old lines. Language-server hover, go to definition, references, and outline. A follow tile tracks what an agent reads and edits.
 - **Notes.** Markdown with fences that stay live against the files they quote.
 - **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid, code excerpts).

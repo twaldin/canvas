@@ -148,11 +148,15 @@ struct GhosttyConfigTests {
     }
 
     @Test func userSettingsBeatTheThemeAndCanvasKeepsItsOwn() {
-        let config = GhosttyConfig(entries: [Entry("background", "#101010"), Entry("command", "fish"), Entry("background-opacity", "0.8"), Entry("font-size", "24")])
+        let config = GhosttyConfig(entries: [Entry("background", "#101010"), Entry("command", "fish"), Entry("background-opacity", "0.8"), Entry("font-size", "24"),
+                                             Entry("background-image", "~/wall.png"), Entry("font-family", "JetBrains Mono")])
         let settings = config.settings(theme: [Entry("background", "#ffffff"), Entry("palette", "0=#000000")])
         #expect(GhosttyConfig.value("background", in: settings) == "#101010")
+        #expect(GhosttyConfig.value("font-family", in: settings) == "JetBrains Mono")
         #expect(GhosttyConfig.value("command", in: settings) == nil)
         #expect(GhosttyConfig.value("background-opacity", in: settings) == "1")
+        #expect(GhosttyConfig.value("font-size", in: settings) == nil, "tile sizes assume Ghostty's default size; zoom scales text")
+        #expect(GhosttyConfig.value("background-image", in: settings) == nil, "cards and renders can't draw it")
         #expect(settings.first == Entry("background", "#ffffff"), "the theme comes first")
     }
 

@@ -34,9 +34,13 @@ public struct GhosttyConfig: Equatable, Sendable {
         self.darkTheme = darkTheme
     }
 
-    /// Settings Canvas owns: the tile's own command and directory, and an opaque background (a
-    /// see-through tile would show the canvas grid through the text). The user's are dropped.
-    public static let ownedKeys: Set<String> = ["command", "initial-command", "working-directory", "wait-after-command", "background-opacity"]
+    /// Settings Canvas owns: the tile's own command and directory, an opaque background (a
+    /// see-through tile would show the canvas grid through the text), the font size (tile sizes
+    /// are chosen for Ghostty's default and canvas zoom scales the text; a large size meant for a
+    /// full-screen terminal would halve a tile's columns), and no background image (cards and
+    /// renders can't draw it, so every live/card flip would change the tile). The user's are
+    /// dropped.
+    public static let ownedKeys: Set<String> = ["command", "initial-command", "working-directory", "wait-after-command", "background-opacity", "font-size", "background-image"]
     public static let overrides: [Entry] = [Entry("background-opacity", "1")]
 
     /// Ghostty's default config files, in the order it loads them on macOS: the XDG config

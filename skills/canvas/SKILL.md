@@ -10,7 +10,8 @@ Next to it live code/diff tiles, markdown notes, browser tiles, sandboxed HTML t
 You and the user read and change the same objects.
 The canvas is the shared working state; your transcript stays in your terminal.
 
-You are in Canvas when `CANVAS_ENV=1`.
+You are in Canvas when `CANVAS_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
+(lifecycle, mentions, follow mode, this skill; `CANVAS_AGENT_HOOKS=0` turns it off for Claude and Codex).
 Your tile's environment also has `CANVAS_TILE_ID` (you), `CANVAS_BOARD_ID`,
 `CANVAS_BOARD_ROOT` (the repo/worktree this canvas belongs to), and `CANVAS_SOCKET`.
 
@@ -23,10 +24,15 @@ Read these before you build anything; each one cost earlier agents a round trip.
   A 20-object first draft overwhelms; a compact one gets read.
 - **Let the canvas do the geometry.** Omit `frame` and a new object lands in the free spot nearest your terminal:
   clear of every tile and group (other agents' too), inside the user's view when there's room. Read the returned frame to place related objects.
+  From a script outside any tile, it lands nearest the centre of the user's view instead.
   For deliberate layouts use `size: "fit"` and the layout helpers (`layout.place`/`stack`/`grid`/`translate`, then `layout.check`), not hand-computed coordinates:
   those collided with the follow tile and other agents' tiles.
 - **Renders go to a temp file.** `canvas render obj_…` without `--out` writes a new PNG under `$TMPDIR/canvas-renders/` and returns its `path`.
   Never pass an `--out` inside the repo: it shows up in `git status`.
+- **Write locations as `path:line`.** The user can ⌘-click `src/a.ts:42`, `:42:7`, `:10-20` or `#L10-20` in your terminal output to open that code beside your terminal
+  (resolved from your shell's cwd, then the board root), so prefer repo-relative `path:line` over prose like "in the store module".
+- **Name what the user will look for.** Go to (⌘P) matches every tile's caption and terminal name,
+  and the tray labels the terminal mentions go to by its `name`: caption your code tiles and name terminals you create.
 - **Code tiles tint their `range` only among other rows.** A `size: "fit"` tile shows exactly its range, untinted.
   To mark a few lines inside more context, give the tile a taller frame instead of fitting it.
 - **Line-bound arrows pin when their line is out of view.** An arrow end bound to `lines` of a code tile attaches at that row only while the tile shows it;
@@ -57,12 +63,16 @@ Read these before you build anything; each one cost earlier agents a round trip.
   ```sh
   canvas methods                                   # every method with its description
   canvas methods view.render                       # its params (types, defaults, required) and result
+  canvas methods CodeProps                         # a type's props (any *Props: NoteProps, HtmlProps, …)
   canvas board.get
   canvas object.create --type note --json '{"props":{"markdown":"# Plan"}}'
   canvas get obj_… --as graph                      # object.get shorthand
   canvas render obj_…                              # view.render shorthand (also obj_a,obj_b or x,y,w,h); prints the PNG path
   ```
-  Errors print `code: message` and exit 1.
+  `--json @params.json` (or `@-` for stdin) reads params from a file, handy for big HTML.
+  object.create/update print prop values over 1 KB elided (`--full` prints everything; the API result is whole).
+  Errors print `code: message` and exit 1. "The socket exists but connecting to it failed … a sandbox may be blocking" means your sandbox blocks the unix socket, not that the app is down:
+  run canvas commands outside it (Codex: escalated) or ask the user to allow the socket.
 - TypeScript/Bun: `new CanvasClient({ socketPath?, tile?, board? })` from `clients/ts/src/index.ts`, methods under `client.api.<ns>.<method>({…})`.
 
 Results are objects, never bare values:
@@ -74,7 +84,7 @@ Results are objects, never bare values:
 | `layout.place`/`stack`/`translate` | `{frames: {id: frame}}`; `layout.grid` adds `columns` and `rows` |
 | `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, overflow, truncated}` |
 | `view.render`, `view.snapshot` | `{path, width, height, scale, objects}` plus `canvasRect` (render) or `viewport` (snapshot) |
-| `agent.prompt`, `agent.wait` | `{agent}`; `agent.read` → `{agent, text, lines}` |
+| `agent.prompt` | `{agent, waitable, submittedAt}`; `agent.wait` → `{agent}`; `agent.read` → `{agent, text, lines}` (`truncated` with `since`) |
 
 `caller` (you) and `board` are filled from the client's tile and board (explicit, else `CANVAS_TILE_ID`/`CANVAS_BOARD_ID`),
 so objects you create are attributed to you and placed next to your terminal.
@@ -97,6 +107,9 @@ When the user Hyper-clicks things on the canvas and then prompts you, the prompt
 ```
 
 "this", "these", "here", "that box" in the prompt refer to these entries, in order.
+A mention of your own terminal says `(your terminal)`; other terminals are named, so "this terminal" means the one mentioned, not yours.
+Mentions arrive only in prompts submitted in the terminal the tray shows (`view.get` `promptTarget`);
+`tray.drain` from any other terminal returns nothing but `held` and `target`, so never call it to check the tray: use `tray.list`.
 Excerpts are short; read the real file or `canvas get <id>` for more.
 A drawn shape means nothing by itself: read what it encloses and connects (`canvas get <id> --as graph`) or look at it (`canvas render <id>`).
 A shape `over` a tile marks a region of it, in the tile's local units: look at that part with `canvas render <tile>`.
@@ -186,7 +199,8 @@ Details and an example: `references/api.md` "Layout".
 | Structure: boxes, labels, relations | `shape` / `arrow`, see below |
 | A web page | `browser`: `{"url": "http://localhost:3000"}` (your browser tool opens its own; see Browser tiles) |
 
-Code paths may point outside the board root (`../other-repo/src/x.ts` or an absolute path); the tile reads git from that file's own repository.
+Code paths may point outside the board root (`../other-repo/src/x.ts` or an absolute path, e.g. a worktree); the tile reads git from that file's own repository, `pinnedCommit` included.
+A path or commit that doesn't exist is `not_found`.
 
 Any tile or text shape takes `scale` in its props (0.25–8, default 1): it draws everything inside bigger or smaller while laying out as if its frame were frame ÷ scale.
 To make a tile readable from further out without changing what it shows, set `scale` and multiply `w`/`h` by the same factor (or use `size: "fit"`, which measures at the scale).
@@ -219,6 +233,7 @@ A code tile shows the whole current file, scrolled so `range` sits a few rows be
   It gets as wide as the range's longest line up to 960 pt (pass `frame.w` for another maximum),
   and longer lines soft-wrap onto indented continuation rows, so keep long lines in the range rather than trimming around them.
   It is at least as wide as its caption, up to the same maximum.
+  With a `range`, fit sizes the range even when `symbol` is set; `symbol` alone fits the declaration but the tile still shows the file from the top, so pass the range.
 - **`pinnedCommit`** (a sha, tag, branch, or `HEAD~N`) shows the file as of that commit, read-only: no gutter signs, and working-tree edits don't change it.
   The header says "pinned at <sha>". Use it for old-vs-new comparisons (a pinned tile next to a live one of the same path)
   and for a PR head you haven't checked out: `git fetch origin pull/<n>/head`, then pin to the fetched sha (`git rev-parse FETCH_HEAD`).
@@ -278,7 +293,7 @@ omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens 
 - The tool doesn't return the tile id. Find it with `canvas board.history --limit 5` (`agent:<your tile> created … browser <url>`)
   or `canvas board.get` (browser tiles whose `createdBy` is your tile).
   Tiles made with `object.create` or by the user can't be driven by the tool: change their `props.url` with `object.update` and look with `canvas render`.
-- The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus the 32 pt address bar.
+- The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus 58 (26 pt title bar, 32 pt address bar), at any zoom.
   The tool's `viewport`/`emulate` options are ignored here. To test a width, resize the tile
   (`canvas object.update <id> --json '{"frame":{"w":390,"h":844}}'`); the user sees the same tile.
 - `tab.evaluate` must return plain values (omp rejects functions that return a promise on this backend); poll with `waitForFunction` for async state.
@@ -288,12 +303,15 @@ omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens 
 - `canvas render <tile>` loads a page that was never shown and waits up to `--timeoutMs` (8 s).
   `--full` doesn't capture below the fold on browser tiles; make the tile taller instead.
 - All browser tiles share one WebKit profile, separate from the user's own browser and signed out: use `gh` or APIs for logged-in state.
-- The user can click links and buttons in a tile directly; your tiles opening and closing are credited to your terminal in `board.history`.
+- The user can click links and buttons in a tile directly. `board.history` credits your terminal with the tiles you open and close
+  and with URL changes your commands cause within 10 s (pushState and back included; a `_blank` link opens a tile beside the page, never moving the view);
+  the user's clicks are `user`, changes the page makes later on its own `system`.
 
 ## Follow mode
 
 Your terminal has one follow tile: the canvas re-aims it at every source file in the project you read, edit, or write,
 flashes the lines each edit or write changed, and keeps a short history.
+Files in another worktree of the board's repository count too (the tile shows the absolute path with that worktree's changes).
 Images, PDFs and other binaries, files under the temp dir, and files that no longer exist never re-aim it.
 While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed ("N new ▸") before following again.
 If the user closes it, your terminal stops following until they turn "Follow Files" back on in your terminal's menu:
@@ -312,6 +330,7 @@ canvas view.attention --id obj_… --clear                         # take it bac
 
 Markers are keyed by the object (raising again replaces the message); the user selecting or looking at the object clears it too.
 Raise one marker per thing your answer points at; they stay together until the user looks, even across app restarts.
+A long job outside any agent can flag its terminal without the API: `printf '\e]777;notify;Build;done\a'` (or OSC 9, or a bell) raises a marker there unless the user is typing in it.
 Your next marker after the user's next prompt clears your earlier turns' markers (the result lists them in `cleared`), so don't clear old ones yourself.
 
 ## Whose objects are whose
@@ -327,14 +346,17 @@ Every agent change is undoable with ⌘Z, but that is a safety net, not a licens
 Agents in other terminal tiles (any canvas in the app) are reachable by tile id or tile name:
 
 ```sh
-canvas agent.list                                    # tile, kind, name, lifecycle (working/blocked/idle/done)
-canvas agent.prompt --target reviewer --text "Review the diff in src/store.ts"
+canvas agent.list                                    # every terminal: tile, kind, name, lifecycle (working/blocked/idle/done)
+canvas agent.prompt --target reviewer --text "Review the diff in src/store.ts"   # → waitable, submittedAt
 canvas agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `until` narrows it
-canvas agent.read --target reviewer --lines 80       # the tail of its terminal text (inline images read as [image])
+canvas agent.read --target reviewer --since prompt   # only what came after your last agent.prompt (inline images read as [image])
 ```
 
-`agent.wait` after `agent.prompt` waits for the work you just asked for, not the previous idle.
-Read the result with `agent.read` (or have the other agent write a note).
+When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
+Then `agent.read --since prompt` returns just the reply (`--lines N` gives the plain tail).
+Kind `omp`, `claude` or `codex` reports a lifecycle (a fresh Codex from its first prompt). Kind `unknown` (a shell, aider, another CLI) has none:
+`agent.prompt` works, `agent.wait` fails at once, so poll `agent.read --since prompt`.
+Claude Code runs no hook when its user presses Esc or denies an approval, so its tile keeps its last state until the next prompt.
 Don't prompt an agent that is `blocked`; it is waiting for its user.
 
 ## Compositions
@@ -360,3 +382,10 @@ pass `--select true` only when the user asked to see it.
 Then address it with `board: <id>` (from the result) on every call, and start agents there by creating terminal tiles on that board.
 `canvas board.list` shows every stored board, including archived ones whose worktree is gone.
 `canvas board.export` writes a readable snapshot to `<root>/.canvas/board.json` for committing when the user asks to save the board with the repo.
+
+## When the user asks how to use Canvas
+
+⌘P goes to any tile or opens a repo file; ⌥⌘-arrows move between tiles; ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
+⌘9 fits everything, ⌘0 is 100%, ⌘=/⌘- zoom; ⌘T opens a terminal; ⌘G groups the selection; ⌘Z undoes any change, agents' included.
+Hyper-click (⌃⌥⇧⌘-click) stages a mention for the terminal the tray shows; Hyper-V pastes staged mentions into a terminal whose agent has no integration.
+⌘-click a `path:line` in terminal output to open it. Right-click empty canvas for New Terminal/Note/Browser Here; right-click a terminal for Follow Files.

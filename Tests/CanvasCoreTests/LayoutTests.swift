@@ -284,6 +284,67 @@ final class LayoutApiTests {
         #expect(lane.frame.maxY == code.frame.maxY + 24, "the padding starts where the tile's drawn box ends")
     }
 
+    @Test func aTileRefittedToItsRangeShowsExactlyItAndNoTint() async throws {
+        // The owner study's repro: a code tile at the default frame, then refit at a new width.
+        let created = try await result("object.create", .object(["type": "code", "props": Self.code(10, 19), "frame": .object(["x": 0, "y": 0, "w": 640, "h": 446])]))
+        let id = try #require(created["object"]?["id"]?.string)
+        _ = try await result("object.update", .object(["id": .string(id), "size": "fit", "frame": .object(["x": 0, "y": 0, "w": 760])]))
+        let fit = try board.object(id)
+        let rows = CodeRows(lineCount: 100)
+        let range = rows.index(ofLine: 10)..<rows.rows(ofLine: 19).upperBound
+        func shown(_ frame: Frame) -> (rows: Range<Int>, tinted: Bool) {
+            let viewport = CGFloat(frame.h) - CodeMetrics.chromeHeight(caption: false)
+            let scroll = CodeMetrics.scrollOffset(toRow: range.lowerBound, count: range.count, viewport: viewport, totalRows: rows.count)
+            return (CodeMetrics.visibleRows(scroll: scroll, viewport: viewport, totalRows: rows.count),
+                    CodeMetrics.tintsRange(range, scroll: scroll, viewport: viewport, totalRows: rows.count))
+        }
+        // Aimed at its range, the fitted tile shows exactly the range's rows: nothing to tint.
+        let fitted = shown(fit.frame)
+        #expect(fitted.rows == range && !fitted.tinted)
+        let last = CodeMetrics.lineY(line: 19, frame: fit.frame, props: fit.props, rows: rows)
+        #expect(last == CGFloat(fit.frame.y + fit.frame.h) - CodeMetrics.verticalPadding - CodeMetrics.rowHeight / 2, "the range's last line is the bottom row, not cut off")
+        // The taller default frame shows context around the range, so the range is tinted.
+        let tall = shown(Frame(x: 0, y: 0, w: 640, h: 446))
+        #expect(tall.rows.lowerBound == range.lowerBound - CodeMetrics.rangeContext && tall.rows.upperBound > range.upperBound && tall.tinted)
+        // A whole-file range in a tile taller than the file: every visible row is the range.
+        #expect(!CodeMetrics.tintsRange(0..<100, scroll: 0, viewport: 2000, totalRows: 100))
+        // Scrolled so rows outside the range show, even a fit tile tints it.
+        let viewport = CGFloat(fit.frame.h) - CodeMetrics.chromeHeight(caption: false)
+        #expect(CodeMetrics.tintsRange(range, scroll: CGFloat(range.lowerBound - 1) * CodeMetrics.rowHeight, viewport: viewport, totalRows: rows.count))
+    }
+
+    @Test func notesCreatedWithoutAHeightFitTheirMarkdown() async throws {
+        let markdown: JSONValue = "# Findings\n\nThe daemon exits when phase 4b throws.\n\n- checkpoint doesn't move\n- crash loop"
+        func measured(_ props: JSONValue, width: Int?) async throws -> CGSize {
+            var params: [String: JSONValue] = ["type": "note", "props": props]
+            if let width { params["width"] = .number(Double(width)) }
+            return Self.size(try await result("object.measure", .object(params)))
+        }
+        func created(_ params: [String: JSONValue]) async throws -> CanvasObject {
+            var params = params
+            params["type"] = "note"
+            let reply = try await result("object.create", .object(params))
+            return try board.object(try #require(reply["object"]?["id"]?.string))
+        }
+        let plain: JSONValue = .object(["markdown": markdown])
+        let at420 = try await measured(plain, width: 420), atDefault = try await measured(plain, width: nil)
+        let atWidth = try await created(["props": plain, "frame": .object(["x": 0, "y": 0, "w": 420])])
+        #expect(atWidth.frame == Frame(x: 0, y: 0, w: 420, h: Double(at420.height)))
+        let placed = try await created(["props": plain])
+        #expect(placed.frame.w == Double(ObjectMeasure.defaultNoteWidth) && placed.frame.h == Double(atDefault.height))
+        let sized = try await created(["props": plain, "frame": .object(["x": 0, "y": 0, "w": 420, "h": 90])])
+        #expect(sized.frame.h == 90, "an explicit height is kept (the note scrolls)")
+
+        // A title names the tile; it doesn't change what the note measures.
+        let titled: JSONValue = .object(["markdown": markdown, "title": "Bug report"])
+        let titledSize = try await measured(titled, width: 420)
+        #expect(titledSize == at420)
+        let note = try await created(["props": titled, "frame": .object(["x": 0, "y": 600, "w": 420])])
+        #expect(note.props["title"] == "Bug report" && note.frame.h == atWidth.frame.h)
+        let staged = try await result("tray.stage", .object(["target": .object(["kind": "object", "object": .string(note.id)])]))
+        #expect(staged["mention"]?["label"]?.string?.contains("Bug report") == true, "mentions name the note by its title")
+    }
+
     @Test func scaledTilesLayOutAtTheirNaturalSizeAndReportCanvasPoints() async throws {
         let scaled = Self.code(10, 19).merging(.object(["scale": 2]))
         let natural = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19)])))
@@ -630,6 +691,40 @@ struct LayoutBoardTests {
         #expect(board.revision == before + 1)
         board.undo()
         #expect(try board.object(outer.id).frame == outer.frame && (try board.object(a.id).frame) == a.frame)
+    }
+
+    @Test func unfilledRectsAndEllipsesAreAnnotationsNotOverlaps() {
+        let a = note(0, 0, 300, 200), b = note(400, 0, 300, 200)
+        #expect(board.geometry.layoutCheck().overlaps.isEmpty)
+        // Drawn across both notes (not around either), the way users mark a column or a pair.
+        let box = board.create(type: .shape, props: .object(["kind": "rect"]), frame: Frame(x: 200, y: 100, w: 300, h: 200))
+        let ring = board.create(type: .shape, props: .object(["kind": "ellipse"]), frame: Frame(x: 250, y: -50, w: 100, h: 400))
+        let filled = board.create(type: .shape, props: .object(["kind": "rect", "fill": "semi"]), frame: Frame(x: 250, y: 150, w: 100, h: 100))
+        let overlaps = Set(board.geometry.layoutCheck().overlaps)
+        #expect(overlaps == [[a.id, filled.id].sorted()], "only the filled rect covers anything: \(overlaps)")
+        #expect(board.geometry.layoutCheck(scope: [box.id, ring.id, b.id]).overlaps.isEmpty)
+    }
+
+    @Test func anArrowCaptionIsItsLabelElseItsRelationAndAnEmptyLabelHidesIt() throws {
+        let a = note(0, 0), b = note(600, 0)
+        func caption(_ props: [String: JSONValue]) -> String? {
+            var props = props
+            props["from"] = .object(["object": .string(a.id)])
+            props["to"] = .object(["object": .string(b.id)])
+            return ArrowSpec(.object(props)).flatMap(DrawingStyle.arrowLabel)?.text.string
+        }
+        #expect(caption(["relation": "calls"]) == "calls", "without a label the relation shows")
+        #expect(caption(["relation": "calls", "label": "retries"]) == "retries")
+        #expect(caption(["relation": "calls", "label": ""]) == nil, "an explicitly empty label shows nothing")
+        #expect(caption([:]) == nil)
+        // Labels are placed (and checked) only for arrows that draw one.
+        let hidden = board.create(type: .arrow, props: .object(["from": .object(["object": .string(a.id)]), "to": .object(["object": .string(b.id)]), "relation": "calls", "label": ""]))
+        let shown = board.create(type: .arrow, props: .object(["from": .object(["object": .string(b.id)]), "to": .object(["object": .string(a.id)]), "relation": "calls"]))
+        let labels = board.geometry.labelRects(routes: board.geometry.routes())
+        #expect(labels[hidden.id] == nil && labels[shown.id] != nil)
+        // Clearing the label back to absent brings the relation back.
+        try board.update(hidden.id, props: .object(["label": .null]))
+        #expect(board.geometry.labelRects(routes: board.geometry.routes())[hidden.id] != nil)
     }
 
     // MARK: Line-bound arrows

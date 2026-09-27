@@ -120,6 +120,12 @@ public struct FileDiff: Sendable, Equatable {
         case submodule
         /// The file kept changing while it was being diffed; the next write reloads it.
         case unstable
+        /// The file as of a commit (a tile's `pinnedCommit`): `new` holds it, `base` is the
+        /// commit's full SHA, `baseLabel` the revision as written. No diff.
+        case pinned
+        /// A pinned commit that can't be shown: `baseLabel` says why (unknown commit, the file
+        /// isn't in it, outside git, binary or too large).
+        case pinUnavailable
     }
 
     public var state: State

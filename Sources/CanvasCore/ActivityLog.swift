@@ -248,7 +248,7 @@ extension ActivityLog {
                 return ":\(start)-\(range["end"]?.int ?? start)"
             } ?? ""
             return "code \(props["path"]?.string ?? "?")\(range)"
-        case .note: return "note" + quoted(props["markdown"]?.string)
+        case .note: return "note" + quoted(props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["markdown"]?.string)
         case .html: return "html" + quoted(props["title"]?.string)
         case .browser: return "browser \(props["url"]?.string ?? "")"
         case .terminal: return "terminal" + quoted(props["name"]?.string ?? props["title"]?.string)

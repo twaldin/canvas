@@ -278,9 +278,13 @@ final class CanvasView: NSScrollView {
             if object.type == .group {
                 groups[object.id]?.update(object)
             } else if let tile = tiles[object.id] {
+                // The user's own resize already laid the content out at this size; any other
+                // (an agent's update or fit, undo) re-aims a code tile at its range.
+                let body = tile.content.frame.size
                 tile.place(Self.docRect(object.frame), scale: CGFloat(object.scale))
                 let restacks = tile.z != object.z
                 tile.update(object)
+                if tile.content.frame.size != body, let code = tile.content as? CodeTile { code.resizedElsewhere() }
                 if restacks { restack() }
                 if object.type == .terminal { lifecycleChanged(object) }
             } else {

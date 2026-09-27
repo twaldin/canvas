@@ -75,7 +75,8 @@ final class CodeLineCache {
 struct CodePainter {
     let document: CodeDocument
     let rows: CodeRows
-    /// Displayed lines tinted as the object's `range`.
+    /// Displayed lines of the object's `range`: tinted while rows outside it are visible
+    /// (`CodeMetrics.tintsRange`).
     var rangeLines: ClosedRange<Int>?
     /// Displayed lines an edit just changed, and the accent's current strength (0…1).
     var flash: (lines: [Range<Int>], strength: CGFloat)?
@@ -166,7 +167,8 @@ struct CodePainter {
 
     /// Draws the rows crossing `rect` (document coordinates). Rows never paint into the
     /// `verticalPadding` bands at the top and bottom of `rect`, so a tile scrolled to its range
-    /// shows none of the lines around it (a fit tile shows exactly it).
+    /// shows none of the lines around it (a fit tile shows exactly it). `rect` is the viewport:
+    /// the range is tinted only when it shows rows outside the range.
     func draw(in context: CGContext, rect: CGRect, cache: CodeLineCache?) {
         NSColor.textBackgroundColor.setFill()
         rect.fill()
@@ -181,6 +183,11 @@ struct CodePainter {
         let segments = visible.map { rows.segment($0) }
         let width = rect.maxX
         let selection = self.selection.flatMap { $0.start < $0.end ? $0 : nil }
+        let tinted = rangeLines.flatMap { lines -> ClosedRange<Int>? in
+            let first = rows.index(ofLine: lines.lowerBound)
+            let range = first..<max(first, rows.rows(ofLine: lines.upperBound).upperBound)
+            return CodeMetrics.tintsRange(range, scroll: rect.minY, viewport: rect.height, totalRows: rows.count) ? lines : nil
+        }
 
         // Row tints, then selection, under the text.
         for (row, segment) in zip(visible, segments) {
@@ -191,7 +198,7 @@ struct CodePainter {
                 CodeTheme.peek.setFill()
                 frame.fill()
             case .line(let number):
-                if let rangeLines, rangeLines.contains(number) {
+                if let tinted, tinted.contains(number) {
                     CodeTheme.range.setFill()
                     frame.fill()
                 }
@@ -219,10 +226,10 @@ struct CodePainter {
         context.restoreGState()
         cache?.commit()
 
-        drawGutter(in: context, rows: visible, segments: segments, rect: rect)
+        drawGutter(in: context, rows: visible, segments: segments, rect: rect, tinted: tinted)
     }
 
-    private func drawGutter(in context: CGContext, rows visible: Range<Int>, segments: [CodeRows.Segment?], rect: CGRect) {
+    private func drawGutter(in context: CGContext, rows visible: Range<Int>, segments: [CodeRows.Segment?], rect: CGRect, tinted: ClosedRange<Int>?) {
         let gutter = CGRect(x: 0, y: rect.minY, width: gutterWidth, height: rect.height)
         NSColor.textBackgroundColor.setFill()
         gutter.fill()
@@ -241,7 +248,7 @@ struct CodePainter {
             switch segment.row {
             case .line(let line):
                 number = line
-                color = rangeLines?.contains(line) == true ? .secondaryLabelColor : .tertiaryLabelColor
+                color = tinted?.contains(line) == true ? .secondaryLabelColor : .tertiaryLabelColor
                 if let sign = document.signs.first(where: { $0.lines.contains(line) }) {
                     (sign.kind == .added ? CodeTheme.added : CodeTheme.modified).setFill()
                     CGRect(x: signX, y: top, width: CodeMetrics.signWidth - 1, height: CodeMetrics.rowHeight).fill()

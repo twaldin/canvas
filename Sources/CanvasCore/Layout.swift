@@ -313,22 +313,20 @@ extension BoardGeometry {
     }
 
     /// Overlaps, arrow crossings, and label overlaps involving `scope` (every object when nil).
-    /// Not overlaps: a group and its (nested) members, and an unfilled rect/ellipse around what
-    /// it contains (a drawn region). Arrow routes and labels are computed as drawn (parallel
-    /// offsets, `avoid`, line-bound ends with `rows`, labels placed by `labelRect`); an arrow
-    /// never crosses its own ends or what contains them.
+    /// Not overlaps: a group and its (nested) members, and anything with an unfilled rect or
+    /// ellipse (an annotation drawn over or around things, like ink). Arrow routes and labels
+    /// are computed as drawn (parallel offsets, `avoid`, line-bound ends with `rows`, labels
+    /// placed by `labelRect`); an arrow never crosses its own ends or what contains them.
     public func layoutCheck(scope: Set<ObjectID>? = nil, rows: [ObjectID: CodeRows] = [:]) -> LayoutReport {
         let solid = objects.values.filter { object in
             switch object.type {
             case .arrow: return false
-            case .shape: return ShapeSpec(object.props)?.kind != .ink
+            case .shape:
+                guard let spec = ShapeSpec(object.props) else { return true }
+                return spec.kind != .ink && !((spec.kind == .rect || spec.kind == .ellipse) && spec.fill == .none)
             default: return true
             }
         }.sorted { $0.id < $1.id }
-        func isRegion(_ object: CanvasObject) -> Bool {
-            guard object.type == .shape, let spec = ShapeSpec(object.props) else { return false }
-            return (spec.kind == .rect || spec.kind == .ellipse) && spec.fill == .none
-        }
         var groupMembers: [ObjectID: Set<ObjectID>] = [:]
         func members(of group: CanvasObject) -> Set<ObjectID> {
             if let cached = groupMembers[group.id] { return cached }
@@ -349,7 +347,6 @@ extension BoardGeometry {
                 guard scope == nil || scope!.contains(a.id) || scope!.contains(b.id), a.frame.intersects(b.frame) else { continue }
                 if a.type == .group, members(of: a).contains(b.id) { continue }
                 if b.type == .group, members(of: b).contains(a.id) { continue }
-                if isRegion(a) && a.frame.contains(b.frame) || isRegion(b) && b.frame.contains(a.frame) { continue }
                 overlaps.append([a.id, b.id])
             }
         }

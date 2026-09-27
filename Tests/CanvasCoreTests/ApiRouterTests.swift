@@ -104,6 +104,22 @@ final class ApiRouterTests {
         #expect(try await client.next()["error"]?["code"] == .string("unavailable"))
     }
 
+    @Test func boardGetSummarizesAFollowTilesHistoryAndObjectGetHasItWhole() async throws {
+        let tile = terminal()
+        for line in [10, 40, 90] {
+            try board.follow(tile: tile, path: "src/a.ts", range: LineRange(start: line, end: line + 5), action: "read")
+        }
+        let follow = try #require(board.objects.values.first { $0.props["followOf"]?.string == tile })
+        let client = try connect()
+        client.send(#"{"id":"g","method":"board.get","params":{"board":"\#(board.id)"}}"#)
+        let objects = try await client.next()["result"]?["objects"]?.array ?? []
+        let listed = try #require(objects.first { $0["id"] == .string(follow.id) })
+        #expect(listed["props"]?["history"]?.string?.contains("3") == true, "history is a short summary: \(listed["props"]?["history"] ?? .null)")
+        #expect(listed["props"]?["range"]?["start"] == .number(90), "what the tile shows now stays whole")
+        client.send(#"{"id":"o","method":"object.get","params":{"id":"\#(follow.id)"}}"#)
+        #expect(try await client.next()["result"]?["object"]?["props"]?["history"]?.array?.count == 3)
+    }
+
     @Test func boardOpenOpensADirectoryOnceAndRejectsBadRoots() async throws {
         let second = dir.appendingPathComponent("second")
         try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)

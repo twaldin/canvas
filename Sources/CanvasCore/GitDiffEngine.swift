@@ -217,6 +217,28 @@ public actor GitDiffEngine {
         return diff
     }
 
+    /// `file` as of `revision` for a code tile pinned to it (`pinnedCommit`): the whole text at
+    /// that commit, no diff (`.pinned`), or `.pinUnavailable` with the reason in `baseLabel`.
+    /// The working tree plays no part, so the tile doesn't change when the file does.
+    public func pinned(file: URL, revision: String) async -> FileDiff {
+        func unavailable(_ reason: String, repository: String? = nil) -> FileDiff {
+            FileDiff(state: .pinUnavailable, base: nil, baseLabel: reason, old: SideText(""), new: SideText(""), hunks: [], repository: repository)
+        }
+        guard NoteSource.isRevision(revision) else { return unavailable("not a revision: \(revision)") }
+        guard let repository = await repository(containing: file) else { return unavailable("not in a git repository") }
+        let toplevel = repository.toplevel
+        guard let sha = await Self.resolve(.commit(revision), in: toplevel, runner: runner).sha else {
+            return unavailable("unknown commit \(revision)", repository: toplevel.path)
+        }
+        let path = Self.relative(Self.realPath(file), to: toplevel)
+        guard let data = try? await runner.run(["cat-file", "blob", "--end-of-options", "\(sha):\(path)"], in: toplevel, maxOutput: Self.maxFileSize) else {
+            return unavailable("not in \(sha.prefix(7))", repository: toplevel.path)
+        }
+        if Self.looksBinary(data) { return unavailable("binary at \(sha.prefix(7))", repository: toplevel.path) }
+        let text = await offPool { SideText(String(decoding: data, as: UTF8.self)) }
+        return FileDiff(state: .pinned, base: sha, baseLabel: revision, old: SideText(""), new: text, hunks: [], repository: toplevel.path)
+    }
+
     /// The base a code tile would diff `file` against, resolving it if needed.
     public func resolvedBase(for file: URL, base: DiffBase) async -> ResolvedBase? {
         guard let repository = await repository(containing: file) else { return nil }

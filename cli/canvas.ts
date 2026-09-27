@@ -7,11 +7,10 @@
 //   canvas get <id> [--as raw|graph]       object.get
 //   canvas render <id|id,id|x,y,w,h> [--out f.png] [--scale 2] [--full] ...   view.render
 // view.render and view.snapshot write the image to --out (relative to the cwd; format from the
-// extension) or a temp file, and print the result metadata with its `path`, never base64.
+// extension) or, without it, to a new file under $TMPDIR/canvas-renders/, and print the result
+// metadata with its `path`.
 // Connection: CANVAS_SOCKET, CANVAS_TILE_ID, CANVAS_BOARD_ID (every Canvas terminal tile sets them).
 // Errors print `code: message` to stderr and exit 1.
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import catalog from "../schema/canvas-api.json";
 import { CanvasClient, CanvasError, ENV_DEFAULTS } from "../clients/ts/src/index";
 
@@ -32,8 +31,6 @@ type Schema = {
 type MethodSpec = { description: string; params: Schema; result: Schema };
 const methods = catalog.methods as Record<string, MethodSpec>;
 const definitions = catalog.definitions as Record<string, Schema>;
-// Image methods never print base64: without --out the image goes to a temp file.
-const IMAGE_METHODS: Record<string, true> = { "view.render": true, "view.snapshot": true };
 
 function usage(): never {
   console.error(
@@ -188,14 +185,9 @@ try {
   if (method === "object.get" && params.as === "image") {
     throw new CanvasError("invalid_params", "`get --as image` was removed; use `canvas render <id>` (view.render)");
   }
-  if (IMAGE_METHODS[method] && params.out === undefined) {
-    params.out = join(tmpdir(), `canvas-${method.replace(".", "-")}-${Date.now()}.${params.format === "jpeg" ? "jpg" : "png"}`);
-    delete params.format;
-  }
   const envKeys = Object.keys(spec.params.properties ?? {}).filter((k) => k in ENV_DEFAULTS);
   client = new CanvasClient();
   const result = await client.call(method, params, envKeys);
-  if (result && typeof result === "object") delete (result as Record<string, unknown>).imageBase64;
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   if (error instanceof CanvasError) console.error(`${error.code}: ${error.message}`);

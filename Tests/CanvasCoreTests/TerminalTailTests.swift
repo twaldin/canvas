@@ -43,6 +43,18 @@ struct TerminalTailTests {
         }
     }
 
+    @Test func inlineImagePlaceholdersReadAsOneImageLine() {
+        // What omp prints for an image: rows of U+10EEEE cells, each with row/column diacritics.
+        let diacritics: [Character] = ["\u{0305}", "\u{030D}", "\u{030E}", "\u{0310}"]
+        let rows = (0..<4).map { row in "  " + diacritics.map { column in "\u{10EEEE}\(diacritics[row])\(column)" }.joined() }
+        let text = (["read shot.png"] + rows + ["  done \u{10EEEE}\u{0305}\u{0305} inline", "tail"]).joined(separator: "\n")
+        let result = tail(text, limit: 10)
+        #expect(result.text == "read shot.png\n  [image]\n  done [image] inline\ntail")
+        #expect(!result.text.unicodeScalars.contains("\u{10EEEE}"))
+        // Split mid-character, the same.
+        #expect(tail(text, limit: 10, chunk: 3).text == result.text)
+    }
+
     @Test func emptyOrAllBlankTextHasNoLines() {
         #expect(tail("", limit: 5).lines == 0)
         #expect(tail("   \n\n  \n", limit: 5) == ("", 0))

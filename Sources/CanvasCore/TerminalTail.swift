@@ -2,7 +2,9 @@ import Foundation
 
 /// The last `limit` lines of a terminal's text, fed chunk by chunk so a long scrollback is never
 /// held whole. Lines lose trailing whitespace (terminals pad rows) and trailing blank lines are
-/// dropped (the empty screen rows below the cursor).
+/// dropped (the empty screen rows below the cursor). Inline images (kitty graphics Unicode
+/// placeholders: U+10EEEE cells carrying combining diacritics, what omp prints for an image)
+/// read as `[image]`, one line for all of an image's rows.
 public struct TerminalTail: Sendable {
     public let limit: Int
     private var lines: [String] = []
@@ -41,17 +43,44 @@ public struct TerminalTail: Sendable {
     }
 
     private mutating func add(_ bytes: Data) {
-        let line = String(decoding: bytes, as: UTF8.self)
+        var line = String(decoding: bytes, as: UTF8.self)
         guard let last = line.lastIndex(where: { !$0.isWhitespace }) else {
             blanks += 1
             return
+        }
+        line = String(line[...last])
+        if line.unicodeScalars.contains(Self.placeholder) {
+            line = Self.replacingImages(in: line)
+            // The rows under one image each hold a run of placeholders.
+            if blanks == 0, line.trimmingCharacters(in: .whitespaces) == Self.image, lines.last == line { return }
         }
         if blanks > 0 {
             lines.append(contentsOf: repeatElement("", count: min(blanks, limit)))
             blanks = 0
         }
-        lines.append(String(line[...last]))
+        lines.append(line)
         // Amortized trim: drop the excess once it reaches `limit`, not on every line.
         if lines.count >= 2 * limit { lines.removeFirst(lines.count - limit) }
+    }
+
+    /// Kitty's image placeholder character; its row, column, and image-id diacritics are
+    /// combining marks, so each cell is one `Character` starting with it.
+    static let placeholder: Unicode.Scalar = "\u{10EEEE}"
+    static let image = "[image]"
+
+    /// `line` with each run of placeholder cells as `[image]`.
+    static func replacingImages(in line: String) -> String {
+        var result = ""
+        var inRun = false
+        for character in line {
+            if character.unicodeScalars.first == placeholder {
+                if !inRun { result += image }
+                inRun = true
+            } else {
+                result.append(character)
+                inRun = false
+            }
+        }
+        return result
     }
 }

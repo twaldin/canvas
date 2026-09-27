@@ -243,16 +243,16 @@ final class ArrowLabelEditor: NSView, ShapeEditing, NSTextFieldDelegate, NSCombo
         session.begin(self, in: shapeLayer, focus: labelField)
     }
 
+    /// Writes only what changed: an arrow whose `label` is explicitly empty (no caption) keeps
+    /// it when only its relation is edited.
     func commit() {
         guard session.finish() else { return }
         let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let relation = relationField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if label != (arrow.props["label"]?.string ?? "") || relation != (arrow.props["relation"]?.string ?? "") {
-            _ = try? shapeLayer.board.update(arrow.id, props: .object([
-                "label": label.isEmpty ? .null : .string(label),
-                "relation": relation.isEmpty ? .null : .string(relation),
-            ]))
-        }
+        var patch: [String: JSONValue] = [:]
+        if label != (arrow.props["label"]?.string ?? "") { patch["label"] = label.isEmpty ? .null : .string(label) }
+        if relation != (arrow.props["relation"]?.string ?? "") { patch["relation"] = relation.isEmpty ? .null : .string(relation) }
+        if !patch.isEmpty { _ = try? shapeLayer.board.update(arrow.id, props: .object(patch)) }
         session.end(self, in: shapeLayer, restoreFocus: true)
     }
 

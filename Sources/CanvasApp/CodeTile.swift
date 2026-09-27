@@ -23,8 +23,8 @@ final class CodeTile: NSView, TileContent {
     private var resumeWork: DispatchWorkItem?
 
     private var document: CodeDocument?
-    /// Diff base the document was loaded against.
-    private var loadedBase: DiffBase?
+    /// What the document was loaded from (diff base or pinned commit).
+    private var loadedSource: Source?
     private var peeked: Set<Int> = []
     private var flash: (lines: [Range<Int>], start: TimeInterval)?
     private var flashTimer: Timer?
@@ -148,6 +148,21 @@ final class CodeTile: NSView, TileContent {
     var path: String { displayed.path }
     private var diffBaseProp: String { object.props["diffBase"]?.string ?? "merge-base" }
     private var diffBase: DiffBase { DiffBase(prop: object.props["diffBase"]?.string) }
+    /// A commit the tile shows the file at instead of the working tree (read-only, no diff).
+    private var pinnedCommit: String? { object.props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 } }
+    /// What a load reads: the file against its diff base, or at its pinned commit.
+    private var source: Source { Source(base: diffBase, pinned: pinnedCommit) }
+
+    private struct Source: Equatable {
+        var base: DiffBase
+        var pinned: String?
+
+        func document(path: String, url: URL) async -> CodeDocument {
+            let engine = GitDiffEngine.shared
+            let diff = if let pinned { await engine.pinned(file: url, revision: pinned) } else { await engine.diff(file: url, base: base) }
+            return await offPool { CodeDocument(path: path, diff: diff) }
+        }
+    }
     private var followOf: ObjectID? { object.props["followOf"]?.string }
     private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
@@ -164,7 +179,7 @@ final class CodeTile: NSView, TileContent {
                 scheduleResume()
             }
         }
-        if old.props["diffBase"] != object.props["diffBase"] { load() }
+        if old.props["diffBase"] != object.props["diffBase"] || old.props["pinnedCommit"] != object.props["pinnedCommit"] { load() }
         refreshHeader()
         resizeSubviews(withOldSize: bounds.size)
     }
@@ -230,8 +245,8 @@ final class CodeTile: NSView, TileContent {
 
     // MARK: Loading
 
-    /// Diff the file against its base (git, off the main thread), build the model off the main
-    /// thread, and install it. Deferred until the tile is live.
+    /// Diff the file against its base, or read it at its pinned commit (git, off the main
+    /// thread), build the model off the main thread, and install it. Deferred until the tile is live.
     private func load() {
         guard isLive else {
             needsLoad = true
@@ -241,15 +256,14 @@ final class CodeTile: NSView, TileContent {
         let path = displayed.path
         let url = board.absoluteURL(path)
         watch(url)
-        let base = diffBase
+        let source = source
         generation += 1
         let current = generation
         loadTask?.cancel()
         loadTask = Task { [weak self] in
             let engine = GitDiffEngine.shared
             let held = await engine.retain(containing: url)
-            let diff = await engine.diff(file: url, base: base)
-            let document = await offPool { CodeDocument(path: path, diff: diff) }
+            let document = await source.document(path: path, url: url)
             // Tiles loading together (a batch) install one per main turn.
             await MainTurns.next()
             guard let self, !Task.isCancelled, current == self.generation, self.isLive else {
@@ -259,33 +273,35 @@ final class CodeTile: NSView, TileContent {
             self.loadTask = nil
             if let previous = self.heldRepository { Task { await engine.release(previous) } }
             self.heldRepository = held
-            self.install(document, base: base)
+            self.install(document, source: source)
         }
     }
 
     /// The model without holding the repository, for renders and cards of tiles that aren't live.
     private func loadOffscreen() async -> CodeDocument? {
-        if showsCurrent, loadedBase == diffBase, let document { return document }
-        let path = displayed.path, base = diffBase
-        let diff = await GitDiffEngine.shared.diff(file: board.absoluteURL(path), base: base)
-        let document = await offPool { CodeDocument(path: path, diff: diff) }
+        if showsCurrent, loadedSource == source, let document { return document }
+        let path = displayed.path, source = source
+        let document = await source.document(path: path, url: board.absoluteURL(path))
         await MainTurns.next()
-        guard path == displayed.path, base == diffBase else { return nil }
-        if !showsCurrent || loadedBase != base || self.document?.text != document.text {
-            install(document, base: base)
+        guard path == displayed.path, source == self.source else { return nil }
+        if !showsCurrent || loadedSource != source || self.document?.text != document.text {
+            install(document, source: source)
             // Not live: the next time it is, revalidate against the watched file and bases.
             if !isLive { needsLoad = true }
         }
         return document
     }
 
-    private func install(_ document: CodeDocument, base: DiffBase) {
+    private func install(_ document: CodeDocument, source: Source) {
         let previous = self.document
+        let sameSource = loadedSource == source
         self.document = document
-        loadedBase = base
+        loadedSource = source
+        rowsView.canEdit = document.side == .new && !document.isPinned
         // Laid-out lines are keyed by line number, which a new text reassigns.
         rowsView.cache.removeAll()
-        let sameFile = previous.map { $0.path == document.path && $0.side == document.side } ?? false
+        // Another pinned commit is another text, not an edit.
+        let sameFile = previous.map { sameSource && $0.path == document.path && $0.side == document.side } ?? false
         if sameFile, let previous, let edit = CodeEdits.changes(from: previous.text, to: document.text) {
             peeked = []
             refreshPainter(keepSelection: false)
@@ -347,6 +363,14 @@ extension CodeTile {
         scroll(toRow: first, count: rows.rows(ofLine: range.end).upperBound - first)
     }
 
+    /// The frame was resized by someone other than the user dragging it (an agent's
+    /// `object.update` frame or `size: "fit"`, undo): show the range by the tile's rule again, so
+    /// a tile fitted to its range shows exactly it. The user's own resizes and scrolls keep the
+    /// line at the top where it was (`rewrap`).
+    func resizedElsewhere() {
+        showRange()
+    }
+
     /// Scroll `row` near the top with up to three rows of context above it, fewer when the tile
     /// can't show that context and all `count` rows too (`CodeMetrics.scrollOffset`: the rule
     /// line-bound arrows and offscreen routing assume).
@@ -389,7 +413,8 @@ extension CodeTile {
     }
 
     private func showHeader(for document: CodeDocument?) {
-        header.show(diffBase: diffBaseProp, status: document?.status ?? "loading…", warning: document?.warning,
+        // A pinned tile has no diff base to pick.
+        header.show(diffBase: pinnedCommit == nil ? diffBaseProp : nil, status: document?.status ?? "loading…", warning: document?.warning,
                     changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
         let before = header.height
         header.show(history: followOf == nil ? [] : history, current: displayed)
@@ -440,7 +465,7 @@ extension CodeTile {
 
     /// Open nvim at the clicked line in a terminal tile beside this one.
     private func editHere(at point: NSPoint) {
-        guard let document, showsCurrent, document.side == .new else { return }
+        guard let document, showsCurrent, document.side == .new, !document.isPinned else { return }
         let line = displayedLine(atY: point.y) ?? displayed.range?.start ?? 1
         let size = Board.defaultSize(.terminal)
         let frame = board.place(width: size.w, height: size.h, near: object.id)
@@ -584,7 +609,7 @@ extension CodeTile {
     /// quote base lines and name the base however the tile changes before the tray drains.
     private func code(_ lines: LineRange, side: DiffSide, in document: CodeDocument) -> MentionTarget {
         let commit = side == .old ? document.diff.base : document.mentionCommit
-        return .code(object: object.id, path: document.path, lines: lines, side: commit == nil ? nil : side.rawValue,
+        return .code(object: object.id, path: document.path, lines: lines, side: commit == nil || document.isPinned ? nil : side.rawValue,
                      symbol: document.enclosingSymbol(line: lines.start, side: side), commit: commit)
     }
 
@@ -698,7 +723,7 @@ extension CodeTile {
         Task { [weak self] in
             await MainTurns.next()
             guard let self else { return deliver(nil) }
-            if self.showsCurrent, self.loadedBase == self.diffBase, let document = self.document {
+            if self.showsCurrent, self.loadedSource == self.source, let document = self.document {
                 return deliver(self.image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image)
             }
             guard let document = await self.loadOffscreen() else { return deliver(nil) }

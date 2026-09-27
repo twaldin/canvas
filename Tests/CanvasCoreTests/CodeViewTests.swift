@@ -143,6 +143,38 @@ struct GitSignTests {
     }
 }
 
+/// A code tile pinned to a commit (`pinnedCommit`) shows the file as of that commit.
+struct PinnedCodeTests {
+    @Test func aPinnedTileShowsTheFileAtItsCommitReadOnlyWithoutADiff() async throws {
+        let repo = try await TempRepo()
+        try await repo.write("f.txt", numbered(1...10))
+        let old = try await repo.commit("old")
+        try await repo.git("tag", "v1")
+        var lines = (1...10).map { "line \($0)" }
+        lines[2] = "line 3 changed"
+        lines.append("line 11")
+        try await repo.write("f.txt", lines.joined(separator: "\n") + "\n")
+        try await repo.commit("new")
+        try await repo.write("f.txt", "working tree only\n")
+        let engine = GitDiffEngine(watchesRepositories: false)
+
+        for revision in [old, String(old.prefix(9)), "v1", "HEAD~1"] {
+            let document = CodeDocument(path: "f.txt", diff: await engine.pinned(file: repo.url("f.txt"), revision: revision))
+            #expect(document.isPinned && document.text.text == numbered(1...10), "\(revision)")
+            #expect(document.signs.isEmpty && document.notice == nil, "no working-tree diff gutter")
+            #expect(document.status.contains(String(old.prefix(7))), "\(document.status)")
+            #expect(document.mentionCommit == old, "mentions read the pinned lines at the commit")
+        }
+        let head = CodeDocument(path: "f.txt", diff: await engine.pinned(file: repo.url("f.txt"), revision: "HEAD"))
+        #expect(head.text.lineCount == 11 && head.text.line(3) == "line 3 changed")
+
+        for (revision, path) in [("0000000", "f.txt"), ("--output=x", "f.txt"), (old, "g.txt")] {
+            let document = CodeDocument(path: path, diff: await engine.pinned(file: repo.url(path), revision: revision))
+            #expect(!document.isPinned && document.notice != nil && document.text.lineCount == 0, "\(revision) \(path)")
+        }
+    }
+}
+
 struct EditFlashTests {
     @Test func aWriteFlashesOnlyTheLinesItInsertedOrReplaced() throws {
         let before = SideText(numbered(1...20))

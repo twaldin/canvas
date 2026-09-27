@@ -142,7 +142,7 @@ public enum MentionContext {
         case .terminal: return props["title"]?.string ?? props["agent"]?["kind"]?.string ?? "terminal"
         case .browser: return props["title"]?.string ?? props["url"]?.string ?? ""
         case .code: return props["path"]?.string ?? ""
-        case .note: return props["markdown"]?.string?.split(separator: "\n").first.map(String.init) ?? ""
+        case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["markdown"]?.string?.split(separator: "\n").first.map(String.init) ?? ""
         case .html: return props["title"]?.string ?? "html"
         case .shape: return props["text"]?.string ?? props["kind"]?.string ?? ""
         case .arrow: return props["label"]?.string ?? props["relation"]?.string ?? ""

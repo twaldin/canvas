@@ -521,6 +521,13 @@ public struct CodeDocument: Sendable {
         case .unstable:
             status = ""
             notice = "file kept changing while diffing; waiting for the next write"
+        case .pinned:
+            let sha = String(diff.base?.prefix(7) ?? "")
+            let revision = diff.baseLabel.flatMap { sha.hasPrefix($0) || $0.hasPrefix(sha) ? nil : $0 }
+            status = "pinned at \(sha)" + (revision.map { " (\($0))" } ?? "") + " · read-only"
+        case .pinUnavailable:
+            status = "pinned"
+            notice = "\(path): \(diff.baseLabel ?? "pinned commit unavailable")"
         }
         self.notice = notice
         self.warning = warning
@@ -611,10 +618,13 @@ public struct CodeDocument: Sendable {
     }
 
     /// The commit mentions of this tile's lines name: the diff base while the tile shows changes
-    /// against it, or the base a deleted file's rows come from.
+    /// against it, the base a deleted file's rows come from, or the pinned commit.
     public var mentionCommit: String? {
-        signs.isEmpty && side == .new ? nil : diff.base
+        signs.isEmpty && side == .new && !isPinned ? nil : diff.base
     }
+
+    /// The file as of a pinned commit (`pinnedCommit`): read-only, never the working tree.
+    public var isPinned: Bool { diff.state == .pinned }
 
     public func enclosingSymbol(line: Int, side: DiffSide) -> String? {
         let symbols = side == self.side ? symbols : oldSymbols

@@ -173,6 +173,24 @@ public enum CodeMetrics {
         return max(0, offset)
     }
 
+    /// Visual rows a rows viewport `viewport` points tall shows when scrolled by `scroll`: rows
+    /// never draw into the `verticalPadding` bands, and a sliver under a point doesn't count.
+    /// Clamped to `totalRows`.
+    public static func visibleRows(scroll: CGFloat, viewport: CGFloat, totalRows: Int) -> Range<Int> {
+        let top = scroll, bottom = scroll + viewport - 2 * verticalPadding
+        let first = max(0, Int(((top + 1) / rowHeight).rounded(.down)))
+        let end = min(totalRows, Int(((bottom - 1) / rowHeight).rounded(.up)))
+        return first..<max(first, end)
+    }
+
+    /// Whether a code tile tints its range (visual rows `range`): only while it shows rows
+    /// outside it. When the range fills everything visible (a tile fitted to its range, a
+    /// whole-file range) the tint would mark every row and say nothing.
+    public static func tintsRange(_ range: Range<Int>, scroll: CGFloat, viewport: CGFloat, totalRows: Int) -> Bool {
+        let visible = visibleRows(scroll: scroll, viewport: viewport, totalRows: totalRows)
+        return !visible.isEmpty && (visible.lowerBound < range.lowerBound || visible.upperBound > range.upperBound)
+    }
+
     /// Where an arrow bound to `line` attaches on a code tile, in points from the top of its
     /// frame: the middle of the line's first visual row (`rows`, or one row per line), with the
     /// rows scrolled by `scroll` below `rowsTop`, clamped into the rows viewport

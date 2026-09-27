@@ -23,6 +23,9 @@ final class CodeRowsView: NSView {
     /// The offset changed (by the user or programmatically).
     var onScroll: (() -> Void)?
     var onEditHere: ((NSPoint) -> Void)?
+    /// Whether "Edit Here" is offered: the rows are the working-tree file (not a deleted file's
+    /// base, not a pinned commit).
+    var canEdit = true
 
     let cache = CodeLineCache()
     private var anchor: CodeRows.Position?
@@ -50,8 +53,12 @@ final class CodeRowsView: NSView {
         onScroll?()
     }
 
+    /// The range tint depends on which rows the whole viewport shows, so a resize redraws all of
+    /// it, not just the newly exposed strip.
     override func setFrameSize(_ newSize: NSSize) {
+        let resized = newSize != frame.size
         super.setFrameSize(newSize)
+        if resized { needsDisplay = true }
         scroll(toY: bounds.minY)
     }
 
@@ -184,10 +191,12 @@ final class CodeRowsView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        let edit = NSMenuItem(title: "Edit Here", action: #selector(editHere(_:)), keyEquivalent: "")
-        edit.target = self
-        edit.representedObject = NSValue(point: convert(event.locationInWindow, from: nil))
-        menu.addItem(edit)
+        if canEdit {
+            let edit = NSMenuItem(title: "Edit Here", action: #selector(editHere(_:)), keyEquivalent: "")
+            edit.target = self
+            edit.representedObject = NSValue(point: convert(event.locationInWindow, from: nil))
+            menu.addItem(edit)
+        }
         if selectedText != nil {
             let copy = NSMenuItem(title: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
             copy.target = self

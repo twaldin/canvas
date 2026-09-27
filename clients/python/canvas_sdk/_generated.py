@@ -86,6 +86,7 @@ class CodeProps(TypedDict):
 
 class NoteProps(TypedDict):
     markdown: Required[str]
+    title: NotRequired[str]
     scale: NotRequired["Scale"]
 
 class HtmlProps(TypedDict):
@@ -115,7 +116,7 @@ class GroupProps(TypedDict):
     padding: NotRequired[float]
 
 class FitFrame(TypedDict):
-    """with size: fit, where the object goes; the rest of its frame is measured"""
+    """with size: fit (or for a new note), where the object goes; the rest of its frame is measured"""
     x: Required[float]
     y: Required[float]
     w: NotRequired[float]
@@ -215,7 +216,7 @@ class BoardApi:
         self._call = call
 
     def get(self, *, board: "Id" | None = None, since: int | None = None) -> dict[str, Any]:
-        """Board manifest: all objects (props summarized for heavy types) plus a change cursor. Objects created or changed since `since` are flagged."""
+        """Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged."""
         params = {"board": board, "since": since}
         return self._call("board.get", params, ["board"])
 
@@ -250,7 +251,7 @@ class ObjectApi:
         return self._call("object.get", params, [])
 
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
+        """Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
         params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "caller": caller}
         return self._call("object.create", params, ["board","caller"])
 
@@ -300,7 +301,7 @@ class LayoutApi:
         return self._call("layout.grid", params, ["caller"])
 
     def check(self, *, board: "Id" | None = None, ids: list["Id"] | None = None, rect: "Frame" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text whose content doesn't fit its frame (points missing in x and y; code: its range's rows), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated."""
+        """Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text whose content doesn't fit its frame (points missing in x and y; code: its range's rows), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated."""
         params = {"board": board, "ids": ids, "rect": rect, "caller": caller}
         return self._call("layout.check", params, ["board","caller"])
 
@@ -370,7 +371,7 @@ class AgentApi:
         return self._call("agent.wait", params, [])
 
     def read(self, *, target: str, lines: int | None = None) -> dict[str, Any]:
-        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed."""
+        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line."""
         params = {"target": target, "lines": lines}
         return self._call("agent.read", params, [])
 

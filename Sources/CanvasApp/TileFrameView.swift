@@ -163,7 +163,7 @@ final class TileFrameView: NSView {
         case .code:
             let path = props["path"]?.string ?? "code"
             return props["followOf"] != nil ? "↳ \(path)" : path
-        case .note: return "Note"
+        case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "Note"
         case .browser: return props["title"]?.string ?? props["url"]?.string ?? "Browser"
         case .html: return props["title"]?.string ?? "HTML"
         default: return object.type.rawValue.capitalized

@@ -76,6 +76,7 @@ export type CodeProps = {
     range?: LineRange;
     action: "read" | "edit" | "write" | "lsp" | "search";
   })[];
+  /** a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: "pinned at <sha>"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so */
   pinnedCommit?: string;
   scale?: Scale;
 };
@@ -83,6 +84,8 @@ export type CodeProps = {
 export type NoteProps = {
   /** Markdown. Code fence info strings pick a mode: ```ts file=path#L10-40``` (or symbol=Name, optionally with file=) is a live excerpt of the file; add `propose` to render the fence body as a diff against that range; file=path@<sha>#L10-40 pins to a commit; anchor="first line text" re-finds the range when lines move. Any other fence is free-written; path:line references in it are clickable. */
   markdown: string;
+  /** shown in the tile's title bar (default "Note") and Go to */
+  title?: string;
   scale?: Scale;
 };
 
@@ -123,6 +126,7 @@ export type ArrowProps = {
   to: Binding;
   /** semantic edge type, e.g. hypothesis_about, calls, depends_on */
   relation?: string;
+  /** caption drawn beside the route. Absent: the arrow shows its `relation` (secondary color) instead; "" shows no caption */
   label?: string;
   /** palette name or #rrggbb, as ShapeProps.color */
   color?: string;
@@ -141,7 +145,7 @@ export type GroupProps = {
   padding?: number;
 };
 
-/** with size: fit, where the object goes; the rest of its frame is measured */
+/** with size: fit (or for a new note), where the object goes; the rest of its frame is measured */
 export type FitFrame = {
   x: number;
   y: number;
@@ -681,18 +685,16 @@ export type ViewRenderParams = {
   exclude?: ObjectType[];
   /** canvas points added around the target */
   padding?: number;
-  /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths */
+  /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/canvas-renders/ (out of the repo) */
   out?: string;
-  /** inline format when no `out` is given */
+  /** format of the temporary file when no `out` is given */
   format?: "png" | "jpeg";
   /** how long to wait for content (HTML pages, file reads) before drawing placeholders */
   timeoutMs?: number;
 };
 export type ViewRenderResult = {
-  /** absolute path written (when `out` was given) */
-  path?: string;
-  /** encoded image (when no `out` was given) */
-  imageBase64?: string;
+  /** absolute path written: `out`, or the temporary file */
+  path: string;
   format: "png" | "jpeg";
   /** pixels */
   width: number;
@@ -708,16 +710,14 @@ export type ViewRenderResult = {
 
 export type ViewSnapshotParams = {
   board?: Id;
-  /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths */
+  /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/canvas-renders/ (out of the repo) */
   out?: string;
-  /** inline format when no `out` is given */
+  /** format of the temporary file when no `out` is given */
   format?: "png" | "jpeg";
 };
 export type ViewSnapshotResult = {
-  /** absolute path written (when `out` was given) */
-  path?: string;
-  /** encoded image (when no `out` was given) */
-  imageBase64?: string;
+  /** absolute path written: `out`, or the temporary file */
+  path: string;
   format: "png" | "jpeg";
   /** pixels */
   width: number;
@@ -743,7 +743,7 @@ export interface CanvasApi {
     ping(params?: SystemPingParams): Promise<SystemPingResult>;
   };
   board: {
-    /** Board manifest: all objects (props summarized for heavy types) plus a change cursor. Objects created or changed since `since` are flagged. */
+    /** Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged. */
     get(params?: BoardGetParams): Promise<BoardGetResult>;
     /** Activity log: who created, changed, or deleted what (including objects that existed only for seconds), where the user's viewport settled, what they selected, follow-tile re-aims, and app starts. Plain request/response, cheap to poll: pass the returned `cursor` as `since` next time. In memory, newest 2000 entries per board; an app restart starts a new log with a `restart` entry. */
     history(params?: BoardHistoryParams): Promise<BoardHistoryResult>;
@@ -757,7 +757,7 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
@@ -777,7 +777,7 @@ export interface CanvasApi {
     translate(params: LayoutTranslateParams): Promise<LayoutTranslateResult>;
     /** Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups. */
     grid(params: LayoutGridParams): Promise<LayoutGridResult>;
-    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members, and an unfilled rect/ellipse around what it contains, don't count), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text whose content doesn't fit its frame (points missing in x and y; code: its range's rows), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated. */
+    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, code/note/text whose content doesn't fit its frame (points missing in x and y; code: its range's rows), and code captions cut off by the frame. Follow tiles are fixed-size viewers and never count as overflow or truncated. */
     check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
   tray: {
@@ -805,7 +805,7 @@ export interface CanvasApi {
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
     /** Wait until the target agent reaches one of the given states. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
-    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. */
+    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. */
     read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {

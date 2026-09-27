@@ -181,7 +181,18 @@
         + (excerpt.symbol ? `<span class="ck-symbol">${escapeHTML(excerpt.symbol)}</span>` : '')
         + (excerpt.stale ? `<span class="ck-stale" title="${escapeHTML(excerpt.reason || '')}">stale</span>` : '')
         + '</div>';
-      const rows = excerpt.lines.map((text, i) => `<div class="ck-line" data-line="${excerpt.start + i}"><span class="ck-ln">${excerpt.start + i}</span><span>${highlight(text, excerpt.language)}</span></div>`).join('');
+      // Long lines soft-wrap like a code tile's rows: continuations indented by the line's own
+      // indentation (tabs to 4 columns) plus 2 columns.
+      const indent = (text) => {
+        let column = 0;
+        for (const ch of text) {
+          if (ch === ' ') column += 1;
+          else if (ch === '\t') column += 4 - (column % 4);
+          else break;
+        }
+        return column + 2;
+      };
+      const rows = excerpt.lines.map((text, i) => `<div class="ck-line" data-line="${excerpt.start + i}"><span class="ck-ln">${excerpt.start + i}</span><span class="ck-text" style="--ck-indent:${indent(text)}ch">${highlight(text, excerpt.language)}</span></div>`).join('');
       const notes = (excerpt.stale && excerpt.reason ? `<div class="ck-note">${escapeHTML(excerpt.reason)}</div>` : '')
         + (excerpt.truncated ? `<div class="ck-note">… truncated</div>` : '');
       this.innerHTML = `${head}<div class="ck-body">${rows}${notes}</div>`;

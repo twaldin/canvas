@@ -35,6 +35,7 @@ final class CodeHeaderBar: NSView {
     private var baseSelected = 0
     private var statusLine = NSAttributedString()
     private var changes = false
+    private var diffs = true
     private var follow = false
     private var missed = 0
     private var history: [Location] = []
@@ -134,9 +135,14 @@ final class CodeHeaderBar: NSView {
 
     /// `diffBase` is the prop (`merge-base`, `head`, or a commit); `warning` shows before the
     /// status in orange.
-    func show(diffBase: String, status text: String, warning: String?, changes: Bool, follow: Bool, missed: Int) {
-        baseChoices = ["merge-base", "HEAD"] + (["merge-base", "head", "HEAD"].contains(diffBase) ? [] : [String(diffBase.prefix(12))])
-        baseSelected = diffBase == "merge-base" ? 0 : diffBase.lowercased() == "head" ? 1 : 2
+    /// `diffBase` nil: the tile shows no diff (pinned to a commit), so there is no base to pick
+    /// and no changes to step through.
+    func show(diffBase: String?, status text: String, warning: String?, changes: Bool, follow: Bool, missed: Int) {
+        diffs = diffBase != nil
+        if let diffBase {
+            baseChoices = ["merge-base", "HEAD"] + (["merge-base", "head", "HEAD"].contains(diffBase) ? [] : [String(diffBase.prefix(12))])
+            baseSelected = diffBase == "merge-base" ? 0 : diffBase.lowercased() == "head" ? 1 : 2
+        }
         let line = NSMutableAttributedString()
         if let warning {
             line.append(NSAttributedString(string: "⚠︎ \(warning)", attributes: [.foregroundColor: NSColor.systemOrange, .font: NSFont.systemFont(ofSize: 11, weight: .medium)]))
@@ -190,6 +196,7 @@ final class CodeHeaderBar: NSView {
         controls.status.toolTip = statusLine.string
         controls.previous.isEnabled = changes
         controls.next.isEnabled = changes
+        for control in [controls.base, controls.previous, controls.next] as [NSView] { control.isHidden = !diffs }
         controls.pin.isHidden = !follow
         controls.pending.isHidden = missed == 0
         controls.pending.title = "\(missed) new ▸"
@@ -228,9 +235,11 @@ final class CodeHeaderBar: NSView {
             view.frame = NSRect(x: x, y: (middle - height / 2).rounded(), width: width, height: height)
             x += width + 2
         }
-        place(controls.base, width: controls.base.fittingSize.width)
-        place(controls.previous, width: 20)
-        place(controls.next, width: 20)
+        if diffs {
+            place(controls.base, width: controls.base.fittingSize.width)
+            place(controls.previous, width: 20)
+            place(controls.next, width: 20)
+        }
         var end = bounds.width - Self.reservedTrailing
         for button in [controls.pin, controls.pending] where !button.isHidden {
             let size = button.fittingSize

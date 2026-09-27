@@ -16,7 +16,8 @@ with a filtered environment) connects explicitly; `canvas` then uses that connec
 Every method mirrors schema/canvas-api.json. `caller` and `board` are filled from the
 client's tile and board. Params that are Python keywords take a trailing underscore:
 `canvas.object.get(id="obj_…", as_="graph")`. Image methods take `out=` (relative paths
-resolve against this process's cwd; the app writes the file).
+resolve against this process's cwd; the app writes the file); without it the app writes a new
+file under $TMPDIR/canvas-renders/. Either way the result's `path` names it.
 
 After an app restart the next call reconnects on its own. Connection failures raise
 `CanvasError` with code `unavailable`; when the request was already sent, the message says

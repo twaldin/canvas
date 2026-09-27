@@ -308,7 +308,7 @@ public final class ApiRouter {
         let timeout = min(max(p["timeoutMs"]?.int ?? 8000, 0), 60_000)
         let request = RenderRequest(target: target, scale: scale, full: p["full"]?.bool ?? false, exclude: exclude,
                                     padding: max(0, p["padding"]?.number ?? 0), timeout: .milliseconds(timeout))
-        let (format, out) = try imageDestination(p)
+        let (format, out) = try imageDestination(p, name: "render")
         guard let renderView else { throw Failure("unsupported", "rendering needs the app UI") }
         let output = try await renderView(board, request, format)
         var result = try await deliver(output, to: out)
@@ -321,7 +321,7 @@ public final class ApiRouter {
     /// `view.snapshot`: the window as shown, with the viewport it shows.
     private func snapshot(_ p: JSONValue) async throws -> JSONValue {
         let board = try board(p)
-        let (format, out) = try imageDestination(p)
+        let (format, out) = try imageDestination(p, name: "snapshot")
         guard let snapshotBoard else { throw Failure("unsupported", "snapshots need the app UI") }
         guard let shot = snapshotBoard(board, format) else { throw Failure("unavailable", "board \(board.id) has no window") }
         var result = try await deliver(shot.output, to: out)
@@ -331,38 +331,51 @@ public final class ApiRouter {
         return .object(result)
     }
 
-    /// Format from `out`'s extension (which must be absolute and writable), else `format`.
-    private func imageDestination(_ p: JSONValue) throws -> (ImageFormat, String?) {
+    /// Where renders and snapshots without `out` go: out of the user's repo, where the OS
+    /// clears temporary files.
+    static var scratchImages: URL { FileManager.default.temporaryDirectory.appendingPathComponent("canvas-renders", isDirectory: true) }
+
+    /// Format and path from `out` (absolute, in an existing directory; format from its
+    /// extension), else a new file `<name>-<ms>-<n>` in `scratchImages` in `format` (default png).
+    private func imageDestination(_ p: JSONValue, name: String) throws -> (ImageFormat, String) {
         if let out = p["out"]?.string {
             guard out.hasPrefix("/") else { throw Failure("invalid_params", "out must be an absolute path (clients resolve relative paths)") }
             guard let format = ImageFormat(path: out) else { throw Failure("invalid_params", "out must end in .png, .jpg, or .jpeg") }
             return (format, out)
         }
-        guard let name = p["format"]?.string else { return (.png, nil) }
-        guard let format = ImageFormat(rawValue: name) else { throw Failure("invalid_params", "format must be png or jpeg") }
-        return (format, nil)
+        var format = ImageFormat.png
+        if let requested = p["format"]?.string {
+            guard let named = ImageFormat(rawValue: requested) else { throw Failure("invalid_params", "format must be png or jpeg") }
+            format = named
+        }
+        scratchCount += 1
+        let file = "\(name)-\(Int(Date().timeIntervalSince1970 * 1000))-\(scratchCount).\(format == .png ? "png" : "jpg")"
+        return (format, Self.scratchImages.appendingPathComponent(file).path)
     }
 
-    private func deliver(_ output: RenderOutput, to out: String?) async throws -> [String: JSONValue] {
-        var result: [String: JSONValue] = [
-            "format": .string(output.format.rawValue), "width": .number(Double(output.width)), "height": .number(Double(output.height)),
-        ]
-        guard let out else {
-            result["imageBase64"] = .string(output.image.base64EncodedString())
-            return result
-        }
+    /// Numbers scratch images, so renders in the same millisecond never overwrite each other.
+    private var scratchCount = 0
+
+    private func deliver(_ output: RenderOutput, to out: String) async throws -> [String: JSONValue] {
         let image = output.image
+        let scratch = Self.scratchImages
         let failure: String? = await offPool {
             do {
-                try image.write(to: URL(fileURLWithPath: out), options: .atomic)
+                let url = URL(fileURLWithPath: out)
+                if url.deletingLastPathComponent().path == scratch.path {
+                    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+                }
+                try image.write(to: url, options: .atomic)
                 return nil
             } catch {
                 return error.localizedDescription
             }
         }
         if let failure { throw Failure("unavailable", "cannot write \(out): \(failure)") }
-        result["path"] = .string(out)
-        return result
+        return [
+            "path": .string(out), "format": .string(output.format.rawValue),
+            "width": .number(Double(output.width)), "height": .number(Double(output.height)),
+        ]
     }
 
     func dispatch(_ method: String, _ p: JSONValue) throws -> JSONValue {
@@ -641,13 +654,15 @@ public final class ApiRouter {
         return .object(["w": .number(size.width), "h": .number(size.height)])
     }
 
-    /// The measured size an `object.create`/`object.update` with `size: "fit"` gets; nil without
-    /// `size`. Notes and text wrap at the given frame's `w` (an update keeps its current width);
-    /// code takes the given `w` as its widest (default `CodeMetrics.defaultFitWidth`, also on an
-    /// update, so a re-fit can widen a tile as well as narrow it).
-    /// `pending` are the params of creates earlier in the same batch, for updates of `$n`.
+    /// The measured size an `object.create`/`object.update` with `size: "fit"` gets, or a note
+    /// created without a frame height (sized to fit its markdown); nil otherwise. Notes and text
+    /// wrap at the given frame's `w` (a new note defaults to `ObjectMeasure.defaultNoteWidth`; an
+    /// update keeps its current width); code takes the given `w` as its widest (default
+    /// `CodeMetrics.defaultFitWidth`, also on an update, so a re-fit can widen a tile as well as
+    /// narrow it). `pending` are the params of creates earlier in the same batch, for updates of `$n`.
     func fitSize(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> CGSize? {
-        guard let size = p["size"] else { return nil }
+        let fitsNote = method == "object.create" && p["type"]?.string == ObjectType.note.rawValue && p["frame"]?["h"] == nil
+        guard let size = p["size"] ?? (fitsNote ? .string("fit") : nil) else { return nil }
         guard size.string == "fit" else { throw Failure("invalid_params", "size must be \"fit\"") }
         let width = p["frame"]?["w"]?.number
         if method == "object.create" {
@@ -872,21 +887,26 @@ public final class ApiRouter {
     }
 
     /// The visual rows line anchors sit on for each of `tiles` (code tiles with an excerpt): its
-    /// whole file wrapped at its natural frame width, the way the tile shows it, or one row per
-    /// line when the file can't be read. Each file is read once and wrapped once per width, concurrently.
+    /// whole file (at its `pinnedCommit`, if any) wrapped at its natural frame width, the way the
+    /// tile shows it, or one row per line when the file can't be read. Each file is read once and
+    /// wrapped once per width, concurrently.
     static func lineRows(of tiles: [CanvasObject], excerpts: [ObjectID: NoteExcerpt], root: URL) async -> [ObjectID: CodeRows] {
-        let paths = Set(tiles.compactMap { $0.props["path"]?.string })
-        let texts = await withTaskGroup(of: (String, String?).self) { group in
-            for path in paths { group.addTask { (path, try? await NoteSource.read(path, commit: nil, root: root)) } }
-            var texts: [String: String] = [:]
-            for await (path, text) in group { texts[path] = text }
+        struct File: Hashable { var path: String, commit: String? }
+        func file(_ tile: CanvasObject) -> File? {
+            tile.props["path"]?.string.map { File(path: $0, commit: tile.props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 }) }
+        }
+        let files = Set(tiles.compactMap(file))
+        let texts = await withTaskGroup(of: (File, String?).self) { group in
+            for file in files { group.addTask { (file, try? await NoteSource.read(file.path, commit: file.commit, root: root)) } }
+            var texts: [File: String] = [:]
+            for await (file, text) in group { texts[file] = text }
             return texts
         }
-        struct Key: Hashable { var path: String, width: Double }
-        let keys = Set(tiles.compactMap { tile in tile.props["path"]?.string.flatMap { texts[$0] != nil ? Key(path: $0, width: tile.naturalFrame.w) : nil } })
+        struct Key: Hashable { var file: File, width: Double }
+        let keys = Set(tiles.compactMap { tile in file(tile).flatMap { texts[$0] != nil ? Key(file: $0, width: tile.naturalFrame.w) : nil } })
         let wrapped = await withTaskGroup(of: (Key, CodeRows).self) { group in
             for key in keys {
-                let text = texts[key.path]!
+                let text = texts[key.file]!
                 group.addTask { (key, await offPool { CodeRows(file: text, width: CGFloat(key.width)) }) }
             }
             var wrapped: [Key: CodeRows] = [:]
@@ -895,7 +915,7 @@ public final class ApiRouter {
         }
         var rows: [ObjectID: CodeRows] = [:]
         for tile in tiles {
-            if let path = tile.props["path"]?.string, let found = wrapped[Key(path: path, width: tile.naturalFrame.w)] {
+            if let file = file(tile), let found = wrapped[Key(file: file, width: tile.naturalFrame.w)] {
                 rows[tile.id] = found
             } else if let excerpt = excerpts[tile.id] {
                 rows[tile.id] = CodeRows(lineCount: excerpt.fileLineCount)
@@ -933,7 +953,8 @@ public final class ApiRouter {
         return caller
     }
 
-    /// Heavy props (HTML source, long markdown) are trimmed in the manifest; object.get returns them whole.
+    /// Heavy props (HTML source, long markdown, a follow tile's location history) are trimmed in
+    /// the manifest; object.get returns them whole.
     func summarized(_ object: CanvasObject) -> CanvasObject {
         var copy = object
         if object.type == .html, let html = object.props["html"]?.string {
@@ -941,6 +962,9 @@ public final class ApiRouter {
         }
         if object.type == .note, let markdown = object.props["markdown"]?.string, markdown.count > 400 {
             copy.props = object.props.merging(.object(["markdown": .string(String(markdown.prefix(400)) + "…")]))
+        }
+        if object.type == .code, let history = object.props["history"]?.array {
+            copy.props = object.props.merging(.object(["history": .string("(\(history.count) locations, use object.get)")]))
         }
         return copy
     }

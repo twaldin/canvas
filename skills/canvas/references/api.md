@@ -119,12 +119,17 @@ and `attention.changed` (`{id, active, message?, raisedBy?}`: a marker raised, o
 `idle`, `done` (idle with results the user hasn't looked at yet), or `unknown` (no integration reporting: a shell, aider, a CLI without Canvas hooks; its `kind` is `unknown` too).
 `kind` is the integrated agent (`omp`, `claude`, `codex`, `gemini`, `opencode`); `program` is what runs in the terminal's foreground (`gemini`, `cargo test`; absent at a shell prompt) and `title` the title that program set (e.g. Gemini CLI's "✋ Action Required (glow)"), for any terminal.
 `agent.read` returns up to 2000 lines of the terminal's text, trailing blank lines removed; `since="prompt"` returns only what followed your last `agent.prompt` to it (`truncated` when there was more).
-`agent.prompt` returns `waitable`: then `agent.wait` right after it waits for that prompt's turn (it ignores the state from before the prompt), so wait for `done` directly:
+`final=True` returns just the agent's last answer (the final message of its last finished turn, reported by omp, Codex, Claude Code and Gemini CLI; not opencode) instead of its screen; it fails with `unavailable` while the agent is still in its turn and when no answer is known (interrupted turn, no integration, app restarted): then read `since="prompt"`.
+`agent.prompt` returns `waitable`: then `agent.wait` right after it waits for that prompt's turn (it ignores the state from before the prompt), so wait for `done` directly.
+Hand over board objects with `mentions` instead of describing them: the receiver gets them as hidden `<canvas-mentions from="<your tile>">` context with that prompt, resolved like the user's Hyper-click mentions (note text, code excerpts), and they never touch the user's tray.
+Each is `{"object": id}`, plus `"lines": {"start", "end"}` for a code tile (without lines, the range it shows) or `"point": {"x", "y"}` for an image tile's pixel; the objects must be on the receiver's board, and the receiver must run an integrated agent (else `unavailable`):
 ```python
-canvas.agent.prompt(target="fees", text="review the diff, read-only")
+canvas.agent.prompt(target="fees", text="review the findings note against the code, read-only",
+                    mentions=[{"object": note_id}, {"object": code_id, "lines": {"start": 41, "end": 48}}])
 canvas.agent.wait(target="fees", timeout_ms=900_000)      # done, idle, or blocked
-reply = canvas.agent.read(target="fees", since="prompt")["text"]
+reply = canvas.agent.read(target="fees", final=True)["text"]
 ```
+CLI: `canvas agent.prompt --target fees --text "…" --mentions '[{"object":"obj_…"}]'`, then `canvas agent.read --target fees --final`.
 On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` gives it 15 s to report (an agent you just launched there) and then fails with `unavailable`; for a shell or a CLI without integration, poll `agent.read(since="prompt")` instead.
 `agent.prompt` to a `blocked` agent fails with `conflict` naming what it waits on (an approval or a question on its screen would take your text): tell the user, or `agent.wait` for it to move on.
 `force=True` sends anyway, e.g. to a Claude Code or Gemini CLI agent that stays `blocked` after the user pressed Esc on or denied an approval. It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to another agent's approval.

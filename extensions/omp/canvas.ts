@@ -1,7 +1,7 @@
 // Canvas integration for omp. Active only inside a Canvas terminal tile (CANVAS_ENV=1).
 //  - drains the selection tray into the prompt you submit (hidden context, two-phase so a
 //    cancelled prompt loses nothing)
-//  - reports lifecycle (working / blocked / idle) and session identity for resume
+//  - reports lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
 //  - provides the shipped `canvas` skill (skills/canvas) to the agent, only inside Canvas
 // Load explicitly with `omp -e /path/to/canvas.ts`, or install into ~/.omp/agent/extensions.
@@ -39,6 +39,8 @@ export default function canvas(pi: ExtensionAPI): void {
   let approvals = 0;
   const calls = new Map<string, ToolCall>();
   let staged: Staged | undefined;
+  // The last answer of the turn that just ended, sent with its idle report (agent.read final).
+  let final: string | undefined;
 
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
 
@@ -47,7 +49,7 @@ export default function canvas(pi: ExtensionAPI): void {
     clearTimeout(idleTimer);
     const firstBlocker = blockers.values().next().value;
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
-    const send = () => quietly(client.api.agent.report({ tile: tile!, kind: "omp", state, message: firstBlocker, seq: ++seq, source: SOURCE }));
+    const send = () => quietly(client.api.agent.report({ tile: tile!, kind: "omp", state, message: firstBlocker, seq: ++seq, source: SOURCE, final: state === "idle" ? final : undefined }));
     // Debounce idle so retries and tool-only continuations don't flicker the badge.
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
@@ -95,6 +97,7 @@ export default function canvas(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     reporting = ctx.hasUI;
     active = !ctx.isIdle();
+    final = undefined;
     blockers.clear();
     staged = undefined;
     if (reporting) watchApprovals(ctx.ui);
@@ -115,6 +118,7 @@ export default function canvas(pi: ExtensionAPI): void {
 
   pi.on("agent_start", () => {
     active = true;
+    final = undefined;
     commitStaged();
     publish();
   });
@@ -123,6 +127,7 @@ export default function canvas(pi: ExtensionAPI): void {
   // continuation, or background jobs whose results will resume it), so this is not a settle.
   pi.on("agent_end", (event) => {
     active = event.willContinue === true;
+    if (!active) final = lastAnswer(event.messages);
     publish();
   });
 
@@ -205,4 +210,12 @@ export default function canvas(pi: ExtensionAPI): void {
     const range = typeof start === "number" && start > 0 ? { start, end: typeof end === "number" && end >= start ? end : start } : undefined;
     void quietly(client.api.follow.report({ tile: tile!, path: absolute, range, action }));
   }
+}
+
+/** The text of the run's last assistant message (omp's own Stop reading); none when it has no text (an abort). */
+function lastAnswer(messages: readonly { role?: unknown; content?: unknown }[]): string | undefined {
+  const last = messages.findLast((message) => message.role === "assistant");
+  if (!last || !Array.isArray(last.content)) return undefined;
+  const text = last.content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+  return text.trim() ? text : undefined;
 }

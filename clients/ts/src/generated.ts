@@ -302,6 +302,19 @@ export type ResolvedMention = {
   graph?: Record<string, unknown>;
 };
 
+/** A board object `agent.prompt` attaches for the receiving agent, as a Hyper-click would mention it: a code tile's lines, an image tile's pixel, else the whole object */
+export type PromptMention = {
+  /** an object on the target terminal's board */
+  object: Id;
+  /** code tiles only: these lines of its file (at its pinned commit, if any). Without it a code tile showing a range mentions that range */
+  lines?: LineRange;
+  /** image tiles only: a pixel of the picture, in the image's own pixels from its top-left */
+  point?: {
+    x: number;
+    y: number;
+  };
+};
+
 export type Agent = {
   tile: Id;
   /** the board the terminal is on */
@@ -709,7 +722,7 @@ export type TrayDrainParams = {
 };
 export type TrayDrainResult = {
   mentions: ResolvedMention[];
-  /** ready-to-inject prompt context block; empty string when the tray was empty or its mentions are for another terminal */
+  /** ready-to-inject prompt context: the tray's block, then one block per agent that attached mentions for the caller; empty string when there is nothing for the caller */
   context: string;
   /** present when the caller isn't the terminal the tray shows: the mentions left staged for it */
   held?: number;
@@ -732,6 +745,8 @@ export type AgentReportParams = {
   source?: string;
   /** identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input) */
   call?: string;
+  /** only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts) */
+  final?: string;
 };
 export type AgentReportResult = Record<string, unknown>;
 
@@ -759,6 +774,10 @@ export type AgentPromptParams = {
   /** agent name or tile id */
   target: string;
   text: string;
+  /** objects on the target's board to attach, e.g. [{"object": "obj_…"}, {"object": "obj_…", "lines": {"start": 41, "end": 48}}] */
+  mentions?: PromptMention[];
+  /** the prompting terminal, named to the receiver with the mentions; clients fill from CANVAS_TILE_ID */
+  caller?: Id;
   /** send even though the target is `blocked` (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval */
   force?: boolean;
 };
@@ -768,6 +787,8 @@ export type AgentPromptResult = {
   submittedAt: string;
   /** the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: "prompt"` */
   waitable: boolean;
+  /** present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice) */
+  mentions?: Mention[];
 };
 
 export type AgentWaitParams = {
@@ -786,6 +807,8 @@ export type AgentReadParams = {
   lines?: number;
   /** only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started */
   since?: "prompt";
+  /** the last answer instead of the screen; takes no `lines` or `since` */
+  final?: boolean;
 };
 export type AgentReadResult = {
   agent: Agent;
@@ -953,7 +976,7 @@ export interface CanvasApi {
     stage(params: TrayStageParams): Promise<TrayStageResult>;
     /** Remove one staged mention. */
     unstage(params: TrayUnstageParams): Promise<TrayUnstageResult>;
-    /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets no mentions and an empty context, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title). */
+    /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets none of them, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. A `caller` also gets the mentions other agents attached for it with `agent.prompt` `mentions` (never shown in the tray), after the tray's, in a block per sending terminal (`<canvas-mentions … from="obj_…">` and a line naming it); `tray.commit` of their ids removes them too. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title). */
     drain(params?: TrayDrainParams): Promise<TrayDrainResult>;
     /** Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. */
     commit(params: TrayCommitParams): Promise<TrayCommitResult>;
@@ -967,11 +990,11 @@ export interface CanvasApi {
     release(params: AgentReleaseParams): Promise<AgentReleaseResult>;
     /** Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, aider, a CLI without Canvas hooks) has kind and lifecycle `unknown`. */
     list(params?: AgentListParams): Promise<AgentListResult>;
-    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. */
+    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`. */
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
     /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
-    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. */
+    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory). */
     read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {
@@ -1037,7 +1060,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       report_session: (params: AgentReportSessionParams) => call("agent.report_session", params ?? {}, []) as Promise<AgentReportSessionResult>,
       release: (params: AgentReleaseParams) => call("agent.release", params ?? {}, []) as Promise<AgentReleaseResult>,
       list: (params?: AgentListParams) => call("agent.list", params ?? {}, []) as Promise<AgentListResult>,
-      prompt: (params: AgentPromptParams) => call("agent.prompt", params ?? {}, []) as Promise<AgentPromptResult>,
+      prompt: (params: AgentPromptParams) => call("agent.prompt", params ?? {}, ["caller"]) as Promise<AgentPromptResult>,
       wait: (params: AgentWaitParams) => call("agent.wait", params ?? {}, []) as Promise<AgentWaitResult>,
       read: (params: AgentReadParams) => call("agent.read", params ?? {}, []) as Promise<AgentReadResult>,
     },

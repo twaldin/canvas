@@ -755,7 +755,7 @@ final class CanvasView: NSScrollView {
             deleteSelection()
             return true
         }
-        guard let id = focusedTile, tiles[id]?.content is TerminalTile else { return false }
+        guard let id = focusedTerminal else { return false }
         delete([id])
         return true
     }
@@ -788,6 +788,13 @@ final class CanvasView: NSScrollView {
         let props: JSONValue = .object(["cwd": .string(board.root.path), "command": .array([])])
         guard let point else { return openForUser(.terminal, props: props) }
         takeKeyboard(createHere(.terminal, props: props, at: point).id)
+    }
+
+    /// A new terminal in `terminal`'s directory beside it (a Ghostty new window, tab or split
+    /// binding pressed in it), placed, revealed, and focused like any object the user asks for.
+    func createTerminal(beside terminal: ObjectID) {
+        let cwd = board.objects[terminal]?.props["cwd"]?.string ?? board.root.path
+        openForUser(.terminal, props: .object(["cwd": .string(cwd), "command": .array([])]), near: terminal)
     }
 
     /// New Terminal/Note/Browser Here: the object's top-left at a document point, moved to the
@@ -834,6 +841,11 @@ final class CanvasView: NSScrollView {
             responder = view.superview
         }
         return nil
+    }
+
+    /// The terminal holding keyboard focus.
+    var focusedTerminal: ObjectID? {
+        focusedTile.flatMap { tiles[$0]?.content is TerminalTile ? $0 : nil }
     }
 
     /// ⌥⌘-arrow: the nearest tile that way from the focused tile, else the selection, else the

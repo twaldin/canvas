@@ -126,9 +126,9 @@ public struct GhosttyConfig: Equatable, Sendable {
     }
 
     /// What a tile loads under one scheme: the theme's settings, the user's (without the keys
-    /// Canvas owns), then Canvas's overrides.
+    /// Canvas owns and the keybinds of app-level actions, `appKeybind`), then Canvas's overrides.
     public func settings(theme: [Entry]) -> [Entry] {
-        (theme + entries).filter { !Self.ownedKeys.contains($0.key) && $0.key != "config-file" && $0.key != "theme" } + Self.overrides
+        (theme + entries).filter { !Self.ownedKeys.contains($0.key) && $0.key != "config-file" && $0.key != "theme" && Self.appKeybind($0) == nil } + Self.overrides
     }
 
     /// The last value set for `key` in `settings`; an empty value resets it to the default.
@@ -147,5 +147,149 @@ public struct GhosttyConfig: Equatable, Sendable {
     static func unquoted(_ value: String) -> String {
         guard value.count >= 2, value.hasPrefix("\""), value.hasSuffix("\"") else { return value }
         return String(value.dropFirst().dropLast())
+    }
+}
+
+// MARK: Keybinds
+
+/// Ghostty's embedded library hands window, tab, and split actions back to its host, and a key
+/// bound to one is claimed by the terminal whether or not the host does anything with it: with
+/// `keybind = super+t=new_window` imported, ⌘T in a focused terminal made no tile and the next
+/// typing went to the agent. So the user's keybinds of those actions never reach the library:
+/// new window, tab and split become Canvas's New Terminal beside the focused terminal, close
+/// surface closes it (the close sheet), and the rest are dropped (the app logs them).
+extension GhosttyConfig {
+    public enum AppAction: String, Equatable, Sendable {
+        case newTerminal, closeTerminal
+    }
+
+    public struct Modifiers: OptionSet, Hashable, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        public static let command = Modifiers(rawValue: 1)
+        public static let shift = Modifiers(rawValue: 2)
+        public static let option = Modifiers(rawValue: 4)
+        public static let control = Modifiers(rawValue: 8)
+    }
+
+    /// A single key press: modifiers and a key, which is its unshifted character ("t", "=", "[")
+    /// or a name for keys without one ("enter", "arrow_up", "f5").
+    public struct KeyChord: Hashable, Sendable {
+        public var modifiers: Modifiers
+        public var key: String
+
+        public init(_ modifiers: Modifiers, _ key: String) {
+            self.modifiers = modifiers
+            self.key = key
+        }
+    }
+
+    /// A user keybind of an app-level action. `chord` is nil for a trigger Canvas can't match
+    /// (a key sequence); `action` is nil for an action Canvas has no equivalent of (dropped).
+    public struct AppKeybind: Equatable, Sendable {
+        public var entry: Entry
+        public var chord: KeyChord?
+        public var action: AppAction?
+    }
+
+    public static let newTerminalActions: Set<String> = ["new_window", "new_tab", "new_split"]
+    public static let closeTerminalActions: Set<String> = ["close_surface"]
+    /// App-level actions without a Canvas equivalent: windows, tabs, splits, fullscreen, the
+    /// app's own config, updates and undo. A bound key would do nothing and reach no program.
+    public static let unsupportedActions: Set<String> = [
+        "close_tab", "close_window", "close_all_windows", "goto_tab", "previous_tab", "next_tab", "last_tab", "move_tab",
+        "toggle_tab_overview", "prompt_tab_title", "goto_split", "toggle_split_zoom", "resize_split", "equalize_splits",
+        "goto_window", "toggle_fullscreen", "toggle_maximize", "toggle_window_decorations", "toggle_window_float_on_top",
+        "toggle_quick_terminal", "toggle_visibility", "toggle_background_opacity", "toggle_command_palette",
+        "toggle_secure_input", "reset_window_size", "float_window", "quit", "open_config", "reload_config", "inspector",
+        "check_for_updates", "undo", "redo", "show_gtk_inspector", "show_on_screen_keyboard", "prompt_surface_title",
+        "copy_title_to_clipboard",
+    ]
+
+    /// The user's keybinds of app-level actions, in load order.
+    public var appKeybinds: [AppKeybind] { entries.compactMap(Self.appKeybind) }
+
+    /// The chords Canvas performs for the user's bindings: a later binding of the same chord
+    /// (another action, `unbind`) replaces one, and `keybind = clear` drops them all.
+    public var remaps: [KeyChord: AppAction] {
+        var remaps: [KeyChord: AppAction] = [:]
+        for entry in entries where entry.key == "keybind" {
+            if entry.value == "clear" {
+                remaps.removeAll()
+                continue
+            }
+            guard let (trigger, _) = Self.keybind(entry.value), let chord = Self.chord(trigger) else { continue }
+            remaps[chord] = Self.appKeybind(entry)?.action
+        }
+        return remaps
+    }
+
+    /// `entry` when it is a keybind of an app-level action.
+    public static func appKeybind(_ entry: Entry) -> AppKeybind? {
+        guard entry.key == "keybind", let (trigger, action) = keybind(entry.value) else { return nil }
+        let name = String(action.prefix { $0 != ":" })
+        let mapped: AppAction? = newTerminalActions.contains(name) ? .newTerminal : closeTerminalActions.contains(name) ? .closeTerminal : nil
+        guard mapped != nil || unsupportedActions.contains(name) else { return nil }
+        return AppKeybind(entry: entry, chord: chord(trigger), action: mapped)
+    }
+
+    /// A `keybind` value's trigger and action. The separator is the first `=` that isn't itself a
+    /// key (a key follows the start, `+`, `>` or a `prefix:`), so `super+==new_tab` binds ⌘=.
+    public static func keybind(_ value: String) -> (trigger: String, action: String)? {
+        let characters = Array(value)
+        for index in characters.indices where characters[index] == "=" && index > 0 && !"+>:".contains(characters[index - 1]) {
+            let trigger = String(characters[..<index]).trimmingCharacters(in: .whitespaces)
+            let action = String(characters[(index + 1)...]).trimmingCharacters(in: .whitespaces)
+            return trigger.isEmpty || action.isEmpty ? nil : (trigger, action)
+        }
+        return nil
+    }
+
+    /// A trigger's chord (`super+shift+t`, `ctrl+equal`, `global:cmd+key_t`); nil for a sequence
+    /// (`ctrl+a>n`) or anything else Canvas can't match.
+    public static func chord(_ trigger: String) -> KeyChord? {
+        var rest = Substring(trigger)
+        while let prefix = ["global:", "all:", "unconsumed:", "performable:"].first(where: { rest.hasPrefix($0) }) { rest = rest.dropFirst(prefix.count) }
+        guard !rest.contains(">") else { return nil }
+        let rawKey: Substring
+        let names: [Substring]
+        if rest == "+" || rest.hasSuffix("++") {
+            rawKey = "+"
+            names = rest == "+" ? [] : rest.dropLast(2).split(separator: "+", omittingEmptySubsequences: false)
+        } else {
+            let parts = rest.split(separator: "+", omittingEmptySubsequences: false)
+            rawKey = parts.last ?? ""
+            names = parts.dropLast()
+        }
+        var modifiers: Modifiers = []
+        for name in names {
+            switch name.lowercased() {
+            case "super", "cmd", "command": modifiers.insert(.command)
+            case "shift": modifiers.insert(.shift)
+            case "alt", "opt", "option": modifiers.insert(.option)
+            case "ctrl", "control": modifiers.insert(.control)
+            default: return nil
+            }
+        }
+        guard let key = key(String(rawKey)) else { return nil }
+        return KeyChord(modifiers, key)
+    }
+
+    private static let keyNames: [String: String] = [
+        "equal": "=", "minus": "-", "plus": "+", "comma": ",", "period": ".", "slash": "/", "backslash": "\\",
+        "semicolon": ";", "quote": "'", "apostrophe": "'", "backquote": "`", "grave": "`", "grave_accent": "`",
+        "bracket_left": "[", "left_bracket": "[", "bracket_right": "]", "right_bracket": "]", "space": " ",
+        "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+        "return": "enter", "esc": "escape", "up": "arrow_up", "down": "arrow_down", "left": "arrow_left", "right": "arrow_right",
+    ]
+
+    private static func key(_ raw: String) -> String? {
+        guard !raw.isEmpty else { return nil }
+        if raw.count == 1 { return raw.lowercased() }
+        let name = raw.lowercased()
+        if let mapped = keyNames[name] { return mapped }
+        // Physical keys: `key_t`, `digit_1`.
+        for prefix in ["key_", "digit_"] where name.hasPrefix(prefix) && name.count == prefix.count + 1 { return String(name.dropFirst(prefix.count)) }
+        return name
     }
 }

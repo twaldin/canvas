@@ -184,4 +184,37 @@ struct GhosttyConfigTests {
         ])
         #expect(GhosttyConfig.defaultFiles(home: home, environment: ["XDG_CONFIG_HOME": "/tmp/x"]).first?.path == "/tmp/x/ghostty/config")
     }
+
+    @Test func appActionKeybindsNeverReachGhosttyAndNewWindowTabSplitOpenATerminal() {
+        typealias Chord = GhosttyConfig.KeyChord
+        let config = load(["/c": """
+            keybind = super+t=new_window
+            keybind = ctrl+shift+enter=new_split:right
+            keybind = super+w=close_surface
+            keybind = super+==new_tab
+            keybind = global:super+key_n=new_tab
+            keybind = super+shift+w=close_window
+            keybind = super+ctrl+f=toggle_fullscreen
+            keybind = ctrl+a>n=new_tab
+            keybind = ctrl+shift+x=text:hello
+            keybind = super+k=clear_screen
+            """], top: ["/c"])
+        #expect(GhosttyConfig.values("keybind", in: config.settings(theme: [])) == ["ctrl+shift+x=text:hello", "super+k=clear_screen"],
+                "only bindings the library performs itself are handed to it")
+        #expect(config.remaps == [
+            Chord(.command, "t"): .newTerminal, Chord([.control, .shift], "enter"): .newTerminal, Chord(.command, "w"): .closeTerminal,
+            Chord(.command, "="): .newTerminal, Chord(.command, "n"): .newTerminal,
+        ])
+        #expect(config.appKeybinds.filter { $0.action == nil || $0.chord == nil }.map(\.entry.value) == [
+            "super+shift+w=close_window", "super+ctrl+f=toggle_fullscreen", "ctrl+a>n=new_tab",
+        ], "dropped: actions Canvas has no equivalent of, and a sequence it can't match")
+    }
+
+    @Test func aLaterBindingOfTheSameChordOrAClearUndoesARemap() {
+        let rebound = load(["/c": "keybind = super+t=new_window\nkeybind = super+d=new_split\nkeybind = super+t=unbind"], top: ["/c"])
+        #expect(rebound.remaps == [GhosttyConfig.KeyChord(.command, "d"): .newTerminal])
+        #expect(GhosttyConfig.values("keybind", in: rebound.settings(theme: [])) == ["super+t=unbind"])
+        let cleared = load(["/c": "keybind = super+t=new_window\nkeybind = clear\nkeybind = ctrl+shift+t=new_tab"], top: ["/c"])
+        #expect(cleared.remaps == [GhosttyConfig.KeyChord([.control, .shift], "t"): .newTerminal])
+    }
 }

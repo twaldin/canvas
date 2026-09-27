@@ -114,13 +114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // screen's by Ghostty's own wrap flags.
             let terminal = self?.content(of: tile, on: board) as? TerminalTile
             let columns = terminal?.columns, screen = terminal?.screenRows() ?? []
-            // A blocking subprocess read: keep it on GCD so it can't park Swift's cooperative
-            // threads, which the socket servers' request tasks need.
-            return await withCheckedContinuation { continuation in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(returning: TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines, columns: columns, screen: screen))
-                }
-            }
+            // A blocking subprocess read (`offPool`).
+            return await offPool { TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines, columns: columns, screen: screen) }
         }
         let router = router
         let server = SocketServer(path: AppPaths.apiSocket) { request, connection in

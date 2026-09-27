@@ -96,7 +96,10 @@ protocol TileContent: NSView {
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void)
     /// While `view.snapshot` renders the window with `cacheDisplay`, cover content that renders
     /// outside AppKit's drawing (Metal, WebKit) with an image of it; `false` restores the live view.
+    /// Synchronous, so whatever the cover needs from a process is fetched first (`prepareSnapshot`).
     func showSnapshot(_ show: Bool)
+    /// Before `showSnapshot(true)`: fetch, off the main actor, what the cover is drawn from.
+    func prepareSnapshot() async
     /// What a Hyper-click at `point` (in this view's coordinates) would mention. Called on every
     /// hover move, so it must be cheap; tiles whose content answers asynchronously (web views)
     /// return their latest cached answer and post `.tileMentionHoverChanged` when it changes.
@@ -153,6 +156,8 @@ extension TileContent {
     var surfaceLuminance: Double? { nil }
 
     func showSnapshot(_ show: Bool) {}
+
+    func prepareSnapshot() async {}
 
     var liveZoom: CGFloat { CanvasView.liveThreshold }
 

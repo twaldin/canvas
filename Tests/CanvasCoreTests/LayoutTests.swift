@@ -627,6 +627,9 @@ struct LayoutBoardTests {
         let above = note(-300, -400, 800, 380)
         let frame = try board.refitFrame(tile.id, to: CGSize(width: 200, height: 300))
         #expect(frame == Frame(x: -224, y: 4, w: 200, h: 300), "beside the tile below (left ties right; top-left first), clear of the one above, the gap kept")
+        // Wholly in view only right of the one above (529 pt away): a slot partly in view nearby wins.
+        board.viewport = { Frame(x: -250, y: -100, w: 2000, h: 400) }
+        #expect(try board.refitFrame(tile.id, to: CGSize(width: 200, height: 300)) == frame)
         _ = try board.update(tile.id, frame: frame)
         #expect(board.overlaps(of: tile.id).isEmpty && board.overlaps(of: below.id).isEmpty && board.overlaps(of: above.id).isEmpty)
     }

@@ -293,8 +293,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Go to's symbol rows for `name`: the workspace symbols of the projects this board's code
     /// tiles show (else of the language most of the board root's files are in), from the app's
     /// language servers, started if needed. Files outside the board root are left out. When no
-    /// server could answer (not installed, crashed), one status row says why, with its install
-    /// hint, as Outline does, rather than claiming there are no such symbols.
+    /// server for those files' languages could answer (not installed, crashed), one status row
+    /// says why, with its install hint, as Outline does, rather than claiming there are no such
+    /// symbols.
     private func workspaceSymbols(named name: String) async -> [NavigatorRow] {
         let root = board.root
         var files = board.objects.values.filter { $0.type == .code }.compactMap { $0.props["path"]?.string }.map(board.absoluteURL)

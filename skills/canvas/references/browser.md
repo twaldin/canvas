@@ -7,7 +7,8 @@ omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens 
 
 - The tool doesn't return the tile id. Find it with `canvas board.history --limit 5` (`agent:<your tile> created … browser <url>`)
   or `canvas board.get` (browser tiles whose `createdBy` is your tile).
-  Tiles made with `object.create` or by the user can't be driven by the tool: change their `props.url` with `object.update` and look with `canvas render`.
+- To drive a tile you didn't open (the user's, or one made with `object.create`), open it by id: `browser.open({name: "game", url: "canvas:obj_…"})` drives that tile from its current page instead of opening a new one, and `browser.close` lets go of it (the tile stays). Use a tab name you haven't opened yet.
+  To reload any browser tile after an edit: `canvas object.reload --id <tile>` (waits for the load), then `canvas get <tile> --since <cursor>`; never flip `props.url` to a dummy query (it fills the user's Back history).
 - The page's viewport is the tile's body: `innerWidth` is the frame width, `innerHeight` the frame height minus 58 (26 pt title bar, 32 pt address bar), at any zoom.
   The tool's `viewport`/`emulate` options are ignored here. To test a width, resize the tile
   (`canvas object.update <id> --json '{"frame":{"w":390,"h":844}}'`); the user sees the same tile.

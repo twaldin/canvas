@@ -182,6 +182,35 @@ final class CmuxRouterTests {
         #expect(board.activity.entries.last { $0.kind == .deleted }?.actor == .agent(agent.id))
     }
 
+    @Test func openingACanvasTileAddressDrivesThatTileAndClosingLetsGoOfIt() async throws {
+        let agent = terminal(at: Frame(x: 0, y: 0, w: 400, h: 300))
+        let users = browser()
+        let count = board.objects.count
+        let client = try connect()
+        // omp's browser.open({url: "canvas:<tile id>"}): no new tile, the user's one.
+        client.send(#"{"id":"o","method":"browser.open_split","params":{"url":"canvas:\#(users.id)","surface_id":"\#(agent.id)"}}"#)
+        let opened = try await client.next()["result"]
+        #expect(opened?["surface_id"] == .string(users.id))
+        #expect(opened?["url"] == .string("http://localhost:1/"), "its current page")
+        #expect(board.objects.count == count)
+        client.send(#"{"id":"r","method":"browser.reload","params":{"surface_id":"\#(users.id)"}}"#)
+        _ = try await client.next()
+        #expect(drivers == [agent.id], "the agent drives it")
+        // Two opens, two closes: the tile stays through both.
+        client.send(#"{"id":"o2","method":"browser.open_split","params":{"url":"canvas://\#(users.id)"}}"#)
+        _ = try await client.next()
+        for id in ["c1", "c2"] {
+            client.send(#"{"id":"\#(id)","method":"surface.close","params":{"surface_id":"\#(users.id)"}}"#)
+            #expect(try await client.next()["ok"] == .bool(true))
+        }
+        #expect(board.objects[users.id] != nil, "closing lets go of someone else's tile")
+        // An address that names no browser tile fails like any unknown surface.
+        client.send(#"{"id":"x","method":"browser.open_split","params":{"url":"canvas:\#(agent.id)"}}"#)
+        #expect(try await client.next()["error"]?["code"] == .string("invalid_params"))
+        client.send(#"{"id":"y","method":"browser.open_split","params":{"url":"canvas:obj_gone"}}"#)
+        #expect(try await client.next()["error"]?["code"] == .string("not_found"))
+    }
+
     @Test func commandsNameTheTerminalDrivingThePage() async throws {
         let agent = terminal(at: Frame(x: 0, y: 0, w: 400, h: 300))
         let other = terminal(at: Frame(x: 0, y: 400, w: 400, h: 300))

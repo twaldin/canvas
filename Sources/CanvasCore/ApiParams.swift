@@ -15,6 +15,7 @@ enum ApiParams {
         "object.update": (["id", "rev", "frame", "size", "props", "caller"], ["id"]),
         "object.delete": (["id", "caller"], ["id"]),
         "object.measure": (["board", "type", "props", "width", "caller"], ["type", "props"]),
+        "object.reload": (["id", "timeoutMs", "caller"], ["id"]),
         "object.batch": (["board", "ops", "caller"], ["ops"]),
         "layout.place": (["id", "near", "side", "gap", "align", "caller"], ["id", "near"]),
         "layout.stack": (["ids", "direction", "gap", "wrapAt", "align", "origin", "caller"], ["ids"]),

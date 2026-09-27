@@ -159,6 +159,22 @@ struct TerminalCommandTests {
         #expect(TerminalCommandTracker.promptTitle(cwd: "/tmp/x", home: "/Users/me") == "/tmp/x")
     }
 
+    @Test func aCommandStartsOnceItsTitleComesAndEndsAtTheNextPrompt() {
+        // The header's status (the previous command's exit and duration) clears as one starts.
+        var tracker = TerminalCommandTracker()
+        let t0 = Date()
+        tracker.prompt(at: t0)
+        let promptTitle = tracker.title("~/src/app", at: t0.addingTimeInterval(0.01), promptTitle: "~/src/app")
+        #expect(!promptTitle, "the prompt's own title")
+        let started = tracker.title("aider --model x", at: t0.addingTimeInterval(2), promptTitle: "~/src/app")
+        #expect(started)
+        #expect(tracker.runningCommand == "aider --model x")
+        let retitled = tracker.title("aider: thinking", at: t0.addingTimeInterval(3), promptTitle: "~/src/app")
+        #expect(!retitled, "the program retitling isn't a new command")
+        _ = tracker.finished(exit: 0, durationNanos: 1_000_000, at: t0.addingTimeInterval(9), shellAtPrompt: true, agentReporting: false)
+        #expect(tracker.runningCommand == nil)
+    }
+
     @Test func anAgentTUIsOwnMarksAndSpinnerTitlesAreNotCommandsButTheShellsFailureStillIs() {
         var tracker = TerminalCommandTracker()
         let t0 = Date()

@@ -247,7 +247,10 @@ final class TerminalTile: NSView, TileContent {
 
     fileprivate func titleChanged(_ title: String) {
         oscTitle = title
-        commands.title(title, at: Date(), promptTitle: TerminalCommandTracker.promptTitle(cwd: reportedCwd, home: NSHomeDirectory()))
+        // A new command: the header's status was the previous one's.
+        if commands.title(title, at: Date(), promptTitle: TerminalCommandTracker.promptTitle(cwd: reportedCwd, home: NSHomeDirectory())) {
+            onStatus?(nil, false, nil)
+        }
         refreshProgram()
         publishLabel()
     }
@@ -266,6 +269,9 @@ final class TerminalTile: NSView, TileContent {
     private var shellLookup: Date?
 
     /// Reads the foreground program again (a few syscalls once the session's shell is known).
+    /// A program starting clears the header's last-command status (the integration's title,
+    /// when it comes, does too); back at the prompt, an agent reporting by notification has
+    /// exited (`Board.terminalProgram`).
     func refreshProgram() {
         guard let shell else { return findShell() }
         let state = ForegroundProgram.state(shell: shell)
@@ -275,7 +281,9 @@ final class TerminalTile: NSView, TileContent {
         case .gone, .prompt: nil
         }
         commands.running(program: program)
+        board.terminalProgram(objectID, is: program)
         guard program != self.program else { return }
+        if self.program == nil, program != nil { onStatus?(nil, false, nil) }
         self.program = program
         publishLabel()
     }
@@ -313,9 +321,11 @@ final class TerminalTile: NSView, TileContent {
     }
 
     /// What the header calls this terminal: its name, else the program running in it, with the
-    /// title that program set (`TerminalName.label`); nil when it has none of them.
+    /// title that program set (`TerminalName.label`; for an unnamed terminal, not the command
+    /// line the shell titled it with: `aider`, not `aider --model … --read …`); nil when it has
+    /// none of them.
     var label: String? {
-        TerminalName.label(name: name ?? program, title: oscTitle?.trimmingCharacters(in: .whitespaces))
+        TerminalName.label(name: name ?? program, title: oscTitle?.trimmingCharacters(in: .whitespaces), command: name == nil ? commands.runningCommand : nil)
     }
 
     // MARK: Notices
@@ -326,8 +336,19 @@ final class TerminalTile: NSView, TileContent {
         return window.firstResponder === terminal
     }
 
-    /// A program asked for the user (OSC 9 / OSC 777 `notify`, or BEL): an attention marker on
-    /// this terminal, unless the user is already looking at it.
+    /// When the user last typed in this terminal (`typed`).
+    private var lastKeyAt: Date?
+
+    /// The user typed a key in this terminal (the window saw it on its way here). Return may start
+    /// work for an agent reporting by notification: its state is unknown again
+    /// (`Board.notifyingAgentSubmitted`).
+    func typed(_ event: NSEvent) {
+        lastKeyAt = Date()
+        if [36, 76].contains(event.keyCode) { board.notifyingAgentSubmitted(objectID) }
+    }
+
+    /// A long command finished while nobody looked: an attention marker on this terminal, unless
+    /// the user is already looking at it.
     fileprivate func notice(_ message: String, bell: Bool) {
         guard !isWatched else { return }
         if board.raiseTerminalNotice(objectID, message: message, bell: bell) {
@@ -335,10 +356,21 @@ final class TerminalTile: NSView, TileContent {
         }
     }
 
-    /// BEL: a marker naming what rang it (`TerminalCommand.bellMessage`).
+    /// A program asked for the user (OSC 9 / OSC 777 `notify`, or BEL): the lifecycle of the
+    /// agent holding the foreground (`NotifyingAgent`), else an attention marker on this
+    /// terminal, unless the user is already looking at it (`Board.terminalNotified`).
+    fileprivate func notified(_ message: String, bell: Bool) {
+        refreshProgram()
+        let answersKey = lastKeyAt.map { Date().timeIntervalSince($0) <= NotifyingAgent.bellAfterKey } ?? false
+        let effect = board.terminalNotified(objectID, message: message, bell: bell, program: program, watched: isWatched, answersKey: answersKey)
+        guard effect != .none else { return }
+        NSLog("Canvas: terminal %@ %@: %@%@", objectID, bell ? "rang the bell" : "sent a notification", message, effect == .lifecycle ? " (its agent waits)" : "")
+    }
+
+    /// BEL: named by what rang it (`TerminalCommand.bellMessage`).
     fileprivate func bell() {
         refreshProgram()
-        notice(TerminalCommand.bellMessage(program: program, shell: shellName, last: lastCommand, at: Date()), bell: true)
+        notified(TerminalCommand.bellMessage(program: program, shell: shellName, last: lastCommand, at: Date()), bell: true)
     }
 
     // MARK: Commands
@@ -356,8 +388,8 @@ final class TerminalTile: NSView, TileContent {
     fileprivate func commandFinished(exit: Int?, durationNanos: UInt64) {
         var atPrompt = true
         if let shell, case .running = ForegroundProgram.state(shell: shell) { atPrompt = false }
-        let lifecycle = board.objects[objectID]?.props["lifecycle"]?["state"]?.string
-        let reporting = lifecycle != nil && lifecycle != LifecycleState.unknown.rawValue
+        // An agent reporting by notification ran as the shell's command, whose D is the user's.
+        let reporting = board.objects[objectID].map(NotifyingAgent.integrationReports) ?? false
         guard let command = commands.finished(exit: exit, durationNanos: durationNanos, at: Date(), shellAtPrompt: atPrompt, agentReporting: reporting) else { return }
         lastCommand = (command, Date())
         let detail = ([command.command ?? "The last command"] + [command.exit.map { "exit \($0)" }, command.durationMs.map(TerminalCommand.duration)].compactMap { $0 })
@@ -843,7 +875,7 @@ private final class TerminalEvents: NSObject, TerminalSurfaceTitleDelegate, Term
     }
 
     func terminalDidRequestDesktopNotification(title: String, body: String) {
-        tile?.notice(Board.noticeMessage(title: title, body: body), bell: false)
+        tile?.notified(Board.noticeMessage(title: title, body: body), bell: false)
     }
 
     func terminalDidChangeWorkingDirectory(_ path: String) {

@@ -115,6 +115,10 @@ public final class ApiRouter {
     /// (it may re-anchor the range first); nil without the tile, and `object.get` resolves the
     /// range by `props.anchor` alone.
     public var codeRangeStatus: ((Board, ObjectID) async -> NoteExcerpt?)?
+    /// Reloads a browser tile's page as its reload button does (a failed load is retried),
+    /// crediting what follows to the terminal given, and waits up to `timeoutMs` for it to load:
+    /// its `url`, whether it `loaded` in time, and a load failure's reason (`failed`).
+    public var reloadBrowser: ((Board, ObjectID, _ caller: ObjectID?, _ timeoutMs: Int) async throws -> JSONValue)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
@@ -174,6 +178,7 @@ public final class ApiRouter {
             if method == "object.get" { return Self.ok(id, try await get(params)) }
             switch method {
             case "object.measure": return Self.ok(id, try await measure(params))
+            case "object.reload": return Self.ok(id, try await reload(params))
             case "object.batch": return Self.ok(id, try await batch(params))
             case "layout.check": return Self.ok(id, try await check(params))
             case "object.create", "object.update":
@@ -270,13 +275,15 @@ public final class ApiRouter {
 
     /// The response for a satisfied waiter, or nil while it must keep waiting. A terminal with no
     /// lifecycle gets `firstReportGrace` to start reporting; one whose agent exited (`exited`, a
-    /// release) or that stays silent can never satisfy it.
+    /// release) or that stays silent can never satisfy it. An agent reporting by notification
+    /// (`NotifyingAgent`) at `unknown` waits for its next notification.
     private func reply(to waiter: Waiter, on board: Board, exited: Bool = false) -> JSONValue? {
         guard let terminal = board.objects[waiter.tile] else {
             return Self.error(waiter.id, Failure("not_found", "terminal \(waiter.tile) was closed"))
         }
         let state = Self.state(of: terminal)
         if state == LifecycleState.unknown.rawValue, !waiter.until.contains(state) {
+            if !exited, NotifyingAgent.reports(terminal) { return nil }
             guard exited || Date() >= waiter.firstReportDeadline else { return nil }
             return Self.error(waiter.id, Self.lifecycleUnknown(terminal))
         }
@@ -449,7 +456,7 @@ public final class ApiRouter {
         }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
         let mentions = try (p["mentions"]?.array ?? []).map { try HandoffMention(json: $0).target(on: board) }
-        if !mentions.isEmpty, !PromptTarget.runsAgent(terminal) {
+        if !mentions.isEmpty, !PromptTarget.drains(terminal) {
             throw Failure("unavailable", "\(terminal.id) runs no agent with a Canvas integration, so nothing there would take the mentions; name the objects in the text instead")
         }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
@@ -462,9 +469,11 @@ public final class ApiRouter {
             board.commit(handed.map { $0.id })
             throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
         }
-        // Only a reporting agent's next report can end the pre-prompt state.
-        let waitable = Self.state(of: current) != LifecycleState.unknown.rawValue
-        if waitable { pendingPrompts.insert(terminal.id) }
+        // Only a reporting agent's next report can end the pre-prompt state. An agent reporting
+        // by notification is `unknown` from now until its next one (`NotifyingAgent`).
+        let notifying = NotifyingAgent.reports(current)
+        let waitable = notifying || Self.state(of: current) != LifecycleState.unknown.rawValue
+        if notifying { board.notifyingAgentSubmitted(terminal.id) } else if waitable { pendingPrompts.insert(terminal.id) }
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
         var result: [String: JSONValue] = [
             "agent": agentEntry(current, on: board),
@@ -894,6 +903,23 @@ public final class ApiRouter {
         }
         return value
     }
+
+    /// `object.reload`: a browser tile's page loaded again (`reloadBrowser`), any browser tile on
+    /// any open board, whoever opened it; other tiles reload what they show by themselves.
+    private func reload(_ p: JSONValue) async throws -> JSONValue {
+        let id = try string(p, "id")
+        let board = try board(forObject: id)
+        guard let object = board.objects[id] else { throw Failure("not_found", "no object \(id)") }
+        guard object.type == .browser else {
+            throw Failure("invalid_params", "\(id) is a \(object.type.rawValue) tile: only browser tiles reload (code, note and changes tiles follow their files by themselves; an HTML tile re-renders when its props change)")
+        }
+        let timeout = p["timeoutMs"]?.int ?? Self.reloadTimeoutMs
+        guard timeout >= 0 else { throw Failure("invalid_params", "timeoutMs must be 0 or more") }
+        guard let reloadBrowser else { throw Failure("unsupported", "reloading pages needs the app UI") }
+        return try await reloadBrowser(board, id, p["caller"]?.string, timeout)
+    }
+
+    static let reloadTimeoutMs = 15_000
 
     /// `object.measure`: the intrinsic frame size for a type and props (notes and text wrap at
     /// `width`). Paths resolve against the caller's (or the given) board.

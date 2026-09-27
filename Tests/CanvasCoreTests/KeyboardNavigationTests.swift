@@ -221,6 +221,29 @@ struct KeyboardNavigationTests {
         #expect(choose(["omp"], chosen: "gone", objects) == "omp", "a picked terminal that closed no longer counts")
     }
 
+    @Test func anAgentWithoutAnIntegrationIsATargetLikeAnyAgentAndHyperVGoesWhereTheUserTypes() {
+        func choose(_ order: [ObjectID], _ objects: [ObjectID: CanvasObject]) -> ObjectID? {
+            PromptTarget.choose(PromptTarget.State(focusOrder: order), objects: objects)
+        }
+        // aider as its wrapper announced it (`NotifyingAgent`).
+        var aider = terminal("aider", agent: "aider")
+        aider.props = aider.props.merging(.object(["lifecycle": .object(["state": .string("unknown"), "via": .string(NotifyingAgent.via)])]))
+        let omp = terminal("omp", agent: "omp", running: true)
+        let dev = terminal("dev")
+        let objects = [aider.id: aider, omp.id: omp, dev.id: dev]
+        #expect(choose(["aider"], objects) == "aider", "focused, it keeps the target from an integrated agent created beside it")
+        #expect(choose(["omp", "aider"], objects) == "aider", "given the keyboard back, it takes the target again")
+        #expect(choose(["aider", "dev"], objects) == "aider", "a dev-server shell focused later still doesn't take it")
+        #expect(choose(["aider", "omp"], objects) == "omp")
+        #expect(PromptTarget.drains(omp) && !PromptTarget.drains(aider), "only an integration takes the tray with its prompt")
+        // Hyper-V pastes into the terminal holding the keyboard, else the tray's target.
+        #expect(PromptTarget.pasteTarget(keyboard: "aider", target: "omp", objects: objects) == "aider")
+        #expect(PromptTarget.pasteTarget(keyboard: "dev", target: "omp", objects: objects) == "dev")
+        #expect(PromptTarget.pasteTarget(keyboard: nil, target: "omp", objects: objects) == "omp")
+        #expect(PromptTarget.pasteTarget(keyboard: "gone", target: "omp", objects: objects) == "omp", "not a terminal on the board")
+        #expect(PromptTarget.pasteTarget(keyboard: nil, target: nil, objects: objects) == nil)
+    }
+
     @MainActor @Test func promptTargetMenuPickHoldsUntilAnotherTerminalIsFocused() throws {
         var state = PromptTarget.State()
         state.focused("omp")

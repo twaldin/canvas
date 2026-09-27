@@ -1778,17 +1778,19 @@ final class CanvasView: NSScrollView {
 
     // MARK: Seen
 
-    /// Keyboard focus in a terminal counts as seeing it (the controller also marks the board).
-    func terminalFocused(_ id: ObjectID) {
-        seenLocally.insert(id)
-        board.clearAttention(id)
+    /// The user gave tile `id` the keyboard or typed in it: that counts as seeing it, as selecting
+    /// it does (its marker clears; a terminal's done agent is seen).
+    func keyboardUsed(_ id: ObjectID) {
+        didSee(id)
         scheduleLiveness()
     }
 
     private func lifecycleChanged(_ terminal: CanvasObject) {
         let lifecycle = terminal.props["lifecycle"]
-        // A new `working` report starts a new unseen stretch (Board resets its seen set too).
-        if lifecycle?["state"]?.string == LifecycleState.working.rawValue, lifecycle?["seen"]?.bool != true {
+        // A new `working` report starts a new unseen stretch (Board resets its seen set too), as
+        // does the notification of an agent reporting by notification (`NotifyingAgent`: `done`).
+        let state = lifecycle?["state"]?.string
+        if state == LifecycleState.working.rawValue || state == LifecycleState.done.rawValue, lifecycle?["seen"]?.bool != true {
             seenLocally.remove(terminal.id)
         }
         // A blocked terminal's ring and bubble come and go with the state, the moment it changes.

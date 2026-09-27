@@ -12,6 +12,12 @@ public final class CmuxRouter {
     /// Runs a validated command in a browser tile; the result gains `surface_id`. The last
     /// argument is the terminal driving it (`driver(of:on:connection:)`), nil when unknown.
     public var perform: (@MainActor (Board, CanvasObject, CmuxBrowserCommand, ObjectID?) async throws -> JSONValue)?
+    /// Existing browser tiles a client opened as `canvas:<tile id>` (`adopt`), each with how many
+    /// opens haven't closed yet: closing one of those lets go of the tile instead of deleting it.
+    private var adopted: [ObjectID: Int] = [:]
+
+    /// The address that opens an existing browser tile instead of a new one: `canvas:obj_…`.
+    public static let tileScheme = "canvas:"
 
     public init(registry: BoardRegistry, password: String? = nil) {
         self.registry = registry
@@ -73,7 +79,12 @@ public final class CmuxRouter {
         case "surface.list": return try list(params)
         case "surface.close":
             let (board, browser) = try browserSurface(params)
-            try board.delete(browser.id, caller: driver(of: browser, on: board, connection: connection))
+            if let opens = adopted[browser.id] {
+                // Someone else's tile: the client lets go of it, and it stays on the board.
+                adopted[browser.id] = opens > 1 ? opens - 1 : nil
+            } else {
+                try board.delete(browser.id, caller: driver(of: browser, on: board, connection: connection))
+            }
             return .object(["surface_id": .string(browser.id), "workspace_id": .string(board.id)])
         default:
             guard let command = try CmuxBrowserCommand.parse(method: method, params: params) else {
@@ -96,17 +107,22 @@ public final class CmuxRouter {
     }
 
     /// A new browser tile beside the calling terminal (`surface_id`), else in the viewport of
-    /// the workspace board (`workspace_id`) or the frontmost board.
+    /// the workspace board (`workspace_id`) or the frontmost board. `url` `canvas:<tile id>`
+    /// opens that existing browser tile instead (`adopt`).
     private func openSplit(_ params: JSONValue, connection: SocketServer.Connection) throws -> JSONValue {
         let callerID = try CmuxBrowserCommand.optional(params, "surface_id", \.string)
         let workspace = try CmuxBrowserCommand.optional(params, "workspace_id", \.string)
         let caller = callerID.flatMap { id in registry.board(containing: id).map { ($0, $0.objects[id]!) } }
+        let raw = try CmuxBrowserCommand.optional(params, "url", \.string) ?? "about:blank"
+        let anchor = caller.flatMap { $0.1.type == .terminal ? $0.1.id : nil }
+        if raw.hasPrefix(Self.tileScheme) {
+            let id = raw.dropFirst(Self.tileScheme.count)
+            return try adopt(String(id.hasPrefix("//") ? id.dropFirst(2) : id), anchor: anchor, connection: connection)
+        }
         guard let board = caller?.0 ?? workspace.flatMap({ registry.boards[$0] }) ?? registry.frontmost.flatMap({ registry.boards[$0] }) else {
             throw CmuxError("not_found", "no open canvas for this surface or workspace")
         }
-        let raw = try CmuxBrowserCommand.optional(params, "url", \.string) ?? "about:blank"
         guard let url = BrowserURL.normalize(raw) else { throw CmuxError.invalidParams("not a URL: \(raw)") }
-        let anchor = caller.flatMap { $0.1.type == .terminal ? $0.1.id : nil }
         let browser = board.create(type: .browser, props: .object(["url": .string(url.absoluteString)]), caller: anchor)
         if let anchor { connection.caller = anchor }
         return .object([
@@ -115,6 +131,23 @@ public final class CmuxRouter {
             "url": .string(url.absoluteString),
             "created_split": .bool(true),
             "placement_strategy": .string(anchor == nil ? "viewport" : "beside_caller"),
+        ])
+    }
+
+    /// `browser.open_split` with `url` `canvas:<tile id>`: omp's browser tool has no parameter
+    /// for an existing surface, so this address makes it drive an existing browser tile (the
+    /// user's, one made with `object.create`) as it drives its own, from its current page.
+    /// Closing it from the tool lets go of the tile, which stays on the board.
+    private func adopt(_ id: ObjectID, anchor: ObjectID?, connection: SocketServer.Connection) throws -> JSONValue {
+        let (board, browser) = try browserSurface(.object(["surface_id": .string(id)]))
+        adopted[browser.id, default: 0] += 1
+        if let anchor { connection.caller = anchor }
+        return .object([
+            "surface_id": .string(browser.id),
+            "workspace_id": .string(board.id),
+            "url": .string(browser.props["url"]?.string ?? "about:blank"),
+            "created_split": .bool(false),
+            "placement_strategy": .string("existing"),
         ])
     }
 

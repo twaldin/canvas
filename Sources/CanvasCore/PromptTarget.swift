@@ -2,9 +2,10 @@ import Foundation
 
 /// Which terminal the selection tray drains into (and Superwhisper pastes into): the terminal
 /// the user picked from the tray's menu, until another terminal takes the keyboard; else the
-/// last focused terminal running an agent; else the board's only agent terminal; else the last
-/// focused terminal; else the board's only one. A plain shell or an editor never takes the
-/// target from an agent, unless no agent was ever focused and there are several (or none).
+/// last focused terminal running an agent (`runsAgent`, an agent without an integration once it
+/// said it waits); else the board's only agent terminal; else the last focused terminal; else
+/// the board's only one. A plain shell or an editor never takes the target from an agent, unless
+/// no agent was ever focused and there are several (or none).
 public enum PromptTarget {
     /// What the rule remembers, saved with the board so the target survives a restart.
     public struct State: Codable, Equatable, Sendable {
@@ -65,9 +66,25 @@ public enum PromptTarget {
     }
 
     /// An agent is running in the terminal: an agent of known kind reports its lifecycle (omp's
-    /// extension, the Claude and Codex hooks) and clears it when it exits.
+    /// extension, the Claude and Codex hooks), or an agent without an integration said it waits
+    /// (`NotifyingAgent`: a terminal notification, or its wrapper as it started), and clears it
+    /// when it exits.
     public static func runsAgent(_ terminal: CanvasObject) -> Bool {
         terminal.props["lifecycle"]?["state"]?.string != nil && terminal.props["agent"]?["kind"]?.string != nil
+    }
+
+    /// The terminal's agent integration takes staged mentions with its next prompt (the tray
+    /// drains there); any other target needs Hyper-V to paste them, an agent that only reports by
+    /// notification included.
+    public static func drains(_ terminal: CanvasObject) -> Bool {
+        runsAgent(terminal) && !NotifyingAgent.reports(terminal)
+    }
+
+    /// Where Hyper-V (Paste Mentions into Terminal) pastes: the terminal holding the keyboard,
+    /// where the user is typing; else the tray's target.
+    public static func pasteTarget(keyboard: ObjectID?, target: ObjectID?, objects: [ObjectID: CanvasObject]) -> ObjectID? {
+        if let keyboard, objects[keyboard]?.type == .terminal { return keyboard }
+        return target.flatMap { objects[$0]?.type == .terminal ? $0 : nil }
     }
 
     /// What `agent.prompt` would type into instead of the agent: the terminal's foreground

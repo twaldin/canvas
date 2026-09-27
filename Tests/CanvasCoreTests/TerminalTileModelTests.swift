@@ -242,6 +242,58 @@ struct TerminalBoardTests {
         #expect(board.raiseTerminalNotice(terminal.id, message: "Build: done", bell: false), "a plain shell again")
     }
 
+    @Test func aNotificationFromAProgramIsItsAgentWaiting() throws {
+        let board = makeBoard()
+        let tile = board.create(type: .terminal, props: .object([:])).id
+        func lifecycle() -> JSONValue? { board.objects[tile]?.props["lifecycle"] }
+        #expect(board.terminalNotified(tile, message: "aider: waiting for you", bell: false, program: "aider --model x", watched: false) == .lifecycle)
+        #expect(lifecycle()?["state"] == .string("done"), "it waits and the user hasn't looked")
+        #expect(lifecycle()?["message"] == .string("aider: waiting for you"))
+        #expect(board.objects[tile]?.props["agent"]?["kind"] == .string("aider"))
+        #expect(board.attention[tile] == nil, "its dot says it, no marker too")
+        #expect(NeedsYou.of(board.objects.values)?.level == .done)
+        #expect(NeedsYouItem.all(board.objects, attention: board.attention).map(\.reason) == [.done])
+        let terminal = try #require(board.objects[tile])
+        #expect(PromptTarget.runsAgent(terminal) && !PromptTarget.drains(terminal), "an agent for the tray, but Hyper-V pastes to it")
+        // Seen: idle, still reporting by notification.
+        board.markSeen(tile)
+        #expect(lifecycle()?["state"] == .string("idle"))
+        #expect(lifecycle()?["via"] == .string(NotifyingAgent.via))
+        // Return typed: it may work or not, so unknown; its next notification is unseen again.
+        #expect(board.notifyingAgentSubmitted(tile))
+        #expect(lifecycle()?["state"] == .string("unknown"))
+        #expect(!board.notifyingAgentSubmitted(tile), "unknown already")
+        board.terminalNotified(tile, message: "aider: waiting for you", bell: false, program: "aider", watched: false)
+        #expect(lifecycle()?["state"] == .string("done"))
+        // While the user looks at it: idle, seen.
+        board.terminalNotified(tile, message: "aider: waiting for you", bell: false, program: "aider", watched: true)
+        #expect(lifecycle()?["state"] == .string("idle"))
+        // A program it runs (its editor) doesn't end it; the shell's prompt does.
+        board.terminalProgram(tile, is: "vim")
+        #expect(lifecycle() != nil)
+        board.terminalProgram(tile, is: nil)
+        #expect(lifecycle() == nil && board.objects[tile]?.props["agent"] == nil, "a plain shell again")
+    }
+
+    @Test func notificationsOnlyBecomeALifecycleForAProgramWithoutAnIntegration() throws {
+        let board = makeBoard()
+        let shell = board.create(type: .terminal, props: .object([:])).id
+        #expect(board.terminalNotified(shell, message: "Bell after `make`", bell: true, program: nil, watched: false) == .marker, "the shell at its prompt")
+        #expect(board.objects[shell]?.props["lifecycle"] == nil)
+        let vim = board.create(type: .terminal, props: .object([:])).id
+        #expect(board.terminalNotified(vim, message: "vim rang the bell", bell: true, program: "vim", watched: false, answersKey: true) == .marker, "a bell answering the key just typed")
+        #expect(board.objects[vim]?.props["lifecycle"] == nil)
+        #expect(board.terminalNotified(vim, message: "vim rang the bell", bell: true, program: "vim", watched: true, answersKey: true) == .none)
+        let omp = board.create(type: .terminal, props: .object([:])).id
+        try board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        #expect(board.terminalNotified(omp, message: "omp: Complete", bell: false, program: "omp", watched: false) == .none)
+        #expect(board.objects[omp]?.props["lifecycle"]?["state"] == .string("working"), "an integration's lifecycle stays its own")
+        // A kind a program had before (omp exited, its kind remembered) isn't the notifier's.
+        let reused = board.create(type: .terminal, props: .object(["agent": .object(["kind": .string("omp"), "sessionId": .string("s")])])).id
+        board.terminalNotified(reused, message: "crush: done", bell: false, program: "crush", watched: false)
+        #expect(board.objects[reused]?.props["agent"] == .object(["kind": .string("crush")]))
+    }
+
     @Test func anApprovalStaysBlockedUntilItsOwnCallFinishes() throws {
         let board = makeBoard()
         let tile = board.create(type: .terminal, props: .object([:])).id
@@ -359,6 +411,10 @@ struct TerminalNameTests {
         #expect(TerminalName.label(name: "cargo test", title: nil) == "cargo test")
         #expect(TerminalName.label(name: nil, title: "~/dev/glow") == "~/dev/glow")
         #expect(TerminalName.label(name: " ", title: "") == nil)
+        // The shell titles an unnamed terminal with the command line it runs: the program says it.
+        let command = "aider --model gemini/gemini-2.5-pro --read /tmp/conventions.md"
+        #expect(TerminalName.label(name: "aider", title: command, command: command) == "aider")
+        #expect(TerminalName.label(name: "aider", title: "aider: editing url.go", command: command) == "aider: editing url.go", "a title the program set itself")
     }
 }
 

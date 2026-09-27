@@ -166,7 +166,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let target = canvas.promptTarget.flatMap { board.objects[$0] }
         var title = target.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
         if let affinity, affinity.target == target?.id { title = title.map { "\($0) · works in \(affinity.checkout)" } }
-        tray.show(board.tray, targetTitle: title, targetDrains: target.map(PromptTarget.runsAgent) ?? false,
+        tray.show(board.tray, targetTitle: title, targetDrains: target.map(PromptTarget.drains) ?? false,
                   hasTerminal: board.objects.values.contains { $0.type == .terminal })
     }
 
@@ -274,19 +274,29 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         affinity = (agent, checkout.name)
     }
 
-    /// Keyboard focus inside a terminal tile counts for the prompt target and marks it seen.
+    /// Keyboard focus inside a terminal tile counts for the prompt target; in any tile it counts as
+    /// seeing it (`CanvasView.keyboardUsed`).
     private func firstResponderChanged(_ responder: NSResponder?) {
         var view = responder as? NSView
         while let current = view {
             if let terminal = current as? TerminalTile {
                 board.promptTarget.focused(terminal.objectID)
                 settlePromptTarget()
-                board.markSeen(terminal.objectID)
-                canvas.terminalFocused(terminal.objectID)
-                return
+                break
             }
             view = current.superview
         }
+        if let tile = canvas.focusedTile { canvas.keyboardUsed(tile) }
+    }
+
+    /// A key typed (not a ⌘ shortcut) on its way to the tile holding the keyboard: typing there
+    /// counts as seeing it, as its focus does (an agent's question answered in a terminal that
+    /// already had the keyboard clears the marker about it), and a terminal hears of it
+    /// (`TerminalTile.typed`).
+    func keyTyped(_ event: NSEvent) {
+        guard !event.modifierFlags.contains(.command), let tile = canvas.focusedTile else { return }
+        canvas.keyboardUsed(tile)
+        (canvas.tiles[tile]?.content as? TerminalTile)?.typed(event)
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
@@ -601,11 +611,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.sendToBack()
     }
 
-    /// Hyper-V (Edit ▸ Paste Mentions into Terminal): the tray's context block pasted into the
-    /// prompt-target terminal as one bracketed paste without Enter, for agents with no prompt hook
-    /// to drain it (aider, a bare shell); the pasted mentions leave the tray.
+    /// Hyper-V (Edit ▸ Paste Mentions into Terminal): the tray's context block pasted as one
+    /// bracketed paste without Enter into the terminal holding the keyboard, else the prompt
+    /// target (`PromptTarget.pasteTarget`), for agents with no prompt hook to drain it (aider, a
+    /// bare shell); the pasted mentions leave the tray.
     @objc func pasteMentions(_ sender: Any?) {
-        guard !board.tray.isEmpty, let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile else { return }
+        guard !board.tray.isEmpty, let target = pasteTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile else { return }
         let board = board
         Task { @MainActor [weak terminal] in
             let drained = await board.drain(peek: true, caller: target)
@@ -613,6 +624,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             guard !drained.context.isEmpty, let terminal, terminal.paste(drained.context + "\n") else { return }
             board.commit(drained.mentions.map(\.id))
         }
+    }
+
+    private var pasteTarget: ObjectID? {
+        PromptTarget.pasteTarget(keyboard: canvas.focusedTerminal, target: canvas.promptTarget, objects: board.objects)
     }
 
     /// Edit › Mention (⇧⌘M): stages what the user is on (`KeyboardMention`), as a Hyper-click on
@@ -732,7 +747,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(groupSelection(_:)): return selection.count >= 2
         case #selector(ungroupSelection(_:)):
             return board.objects.values.contains { $0.type == .group && (selection.contains($0.id) || GroupSpec($0.props)?.members.contains(where: selection.contains) == true) }
-        case #selector(pasteMentions(_:)): return !board.tray.isEmpty && canvas.promptTarget != nil
+        case #selector(pasteMentions(_:)): return !board.tray.isEmpty && pasteTarget != nil
         case #selector(mentionCurrent(_:)): return canvas.focusedTile != nil || !selection.isEmpty
         case #selector(exitGroup(_:)): return canvas.enteredGroup != nil
         case #selector(enterGroup(_:)): return canvas.selectedGroup != nil
@@ -925,6 +940,12 @@ final class CanvasWindow: NSWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if let controller = windowController as? CanvasWindowController, controller.handleKeyEquivalent(event) { return true }
         return super.performKeyEquivalent(with: event)
+    }
+
+    /// Typing reaches the focused tile through here (`CanvasWindowController.keyTyped`).
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, let controller = windowController as? CanvasWindowController { controller.keyTyped(event) }
+        super.sendEvent(event)
     }
 }
 

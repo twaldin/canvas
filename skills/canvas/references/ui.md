@@ -21,6 +21,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 - **Lifecycle dot** in a terminal's title bar (its tooltip says the same):
   blue *working* (busy), orange *blocked* (waits for the user to approve or answer), green *done* (finished, not seen yet), grey *idle* (waiting for the next prompt).
   No dot: no agent reports a lifecycle in that terminal.
+  An agent without an integration (aider through Canvas's `aider` wrapper, any CLI that sends a terminal notification or bell) turns green *done* when it says it waits and has no dot while it may be working; it never shows blue or orange.
 - **Blocked**: the terminal also gets an orange ring and a bubble with a raised hand and the approval text; clicking the bubble brings the terminal into view (its bottom, where the question is, when it is taller than the window) and puts the keyboard in it.
   Off screen, an orange pill at the edge of the view points at it.
 - **Tab dot** on a board's tab: orange, an agent there is blocked; green, one finished unseen.
@@ -57,7 +58,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
   Hyper-drag on empty canvas mentions everything inside the box as one group.
 - **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles.
 - **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so): the terminal the user last typed in that runs an agent, else the board's only agent terminal (a dev-server shell beside it never takes it), else the last terminal typed in.
-  Clicking "→ name" opens a menu of the board's terminals (agents first) to pick another; it is kept across restarts. ⌃⌥⇧⌘V pastes them into a terminal without an agent integration.
+  Clicking "→ name" opens a menu of the board's terminals (agents first) to pick another; it is kept across restarts. ⌃⌥⇧⌘V pastes them, for an agent without an integration, into the terminal the user is typing in, else into that target.
 - **Drawing toolbar** at the top: select (V), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
   The default ink (Black) is drawn dark over light pages and images and light over the dark canvas; other colors stay as chosen.
 

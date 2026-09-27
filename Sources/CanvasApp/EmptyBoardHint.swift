@@ -20,7 +20,7 @@ final class EmptyBoardHint: NSVisualEffectView {
         stack.spacing = 14
         let lines: [(String, NSFont, NSColor)] = [
             ("Press ⌘T for a terminal, then run any agent CLI.", .systemFont(ofSize: 15, weight: .medium), .labelColor),
-            ("omp, claude, codex, gemini, and opencode report when they need you, follow their reads, and get your mentions.", .systemFont(ofSize: 13), .secondaryLabelColor),
+            ("omp, claude, codex, gemini, and opencode report when they need you, follow their reads, and get your mentions; aider says when it waits.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("Or right-click anywhere → New Terminal Here.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("Hyper is ⌃⌥⇧⌘: Hyper-click code, notes, shapes, or web pages to point your agent at them.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("New here? Help › Canvas Basics explains the dots, markers, tray, and keys.", .systemFont(ofSize: 13), .tertiaryLabelColor),

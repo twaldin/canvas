@@ -123,6 +123,32 @@ final class ApiRouterTests {
         #expect(unknown["result"]?["agent"]?["tile"] == .string(shell))
     }
 
+    @Test func anAgentReportingByNotificationIsWaitedOnUntilItsNextNotification() async throws {
+        let aider = terminal()
+        // bin/aider says an agent runs here as aider starts.
+        try board.reportLifecycle(tile: aider, kind: "aider", state: .unknown, message: nil, seq: nil, source: nil)
+        router.firstReportGrace = 0.1
+        let client = try connect()
+        let prompted = try await call(client, "agent.prompt", ["target": .string(aider), "text": "fix the trailing slash"])
+        #expect(prompted["result"]?["waitable"] == .bool(true))
+        client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(aider)"}}"#)
+        try await Task.sleep(for: .milliseconds(300))
+        client.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == .string("ping"), "past the first-report grace, still waiting")
+        board.terminalNotified(aider, message: "aider: waiting for you", bell: false, program: "aider", watched: false)
+        let reply = try await client.next()
+        #expect(reply["id"] == .string("w"))
+        #expect(reply["result"]?["agent"]?["lifecycle"]?["state"] == .string("done"))
+        #expect(reply["result"]?["agent"]?["lifecycle"]?["message"] == .string("aider: waiting for you"))
+        // The next prompt: unknown again until the next notification, never the stale done.
+        _ = try await call(client, "agent.prompt", ["target": .string(aider), "text": "/add url.go"])
+        #expect(board.objects[aider]?.props["lifecycle"]?["state"] == .string("unknown"))
+        // Nothing in it drains handed mentions.
+        let note = board.create(type: .note, props: .object(["markdown": .string("x")])).id
+        let handed = try await call(client, "agent.prompt", ["target": .string(aider), "text": "see this", "mentions": .array([.object(["object": .string(note)])])])
+        #expect(handed["error"]?["code"] == .string("unavailable"))
+    }
+
     @Test func listedAgentsSayWhichBoardAndRootTheyAreOn() async throws {
         let here = terminal()
         let otherRoot = dir.appendingPathComponent("other")

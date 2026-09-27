@@ -65,6 +65,35 @@ extension BrowserTile {
         }
     }
 
+    /// `object.reload`: the page loaded again as the reload button loads it (a failed load is
+    /// retried), whether or not the tile is on screen, credited to `driver`; then up to
+    /// `timeoutMs` for it to finish loading.
+    func reloadPage(driver: ObjectID?, timeoutMs: Int) async throws -> JSONValue {
+        let webView = ensureWebView()
+        await markDriven()
+        credit.agent(driver)
+        defer {
+            credit.agent(driver)
+            scheduleSnapshotRefresh()
+        }
+        if loadFailure != nil { retryFailedLoad(restart: true) } else { track(webView.reload()) }
+        var loaded = false
+        if timeoutMs > 0 {
+            do {
+                try await wait(for: .loadState(.complete), deadline: Date().addingTimeInterval(Double(timeoutMs) / 1000))
+                loaded = true
+            } catch let error as CmuxError where error.code == "timeout" {}
+        }
+        var result = location(ensureWebView())
+        result["id"] = .string(objectID)
+        if let failure = loadFailure {
+            result["failed"] = .string(failure.reason)
+            loaded = false
+        }
+        result["loaded"] = .bool(loaded)
+        return .object(result)
+    }
+
     private func location(_ webView: WKWebView) -> [String: JSONValue] {
         ["url": .string(webView.url?.absoluteString ?? object.props["url"]?.string ?? "about:blank")]
     }

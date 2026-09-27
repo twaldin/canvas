@@ -1,4 +1,4 @@
-# Shared by Canvas's agent wrappers bin/claude, bin/codex, bin/gemini and bin/opencode
+# Shared by Canvas's agent wrappers bin/claude, bin/codex, bin/gemini, bin/opencode and bin/aider
 # (docs/contracts.md "Agent integrations"): find the real agent binary and decide whether to
 # integrate.
 

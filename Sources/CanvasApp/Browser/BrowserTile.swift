@@ -541,7 +541,7 @@ final class BrowserTile: NSView, TileContent {
     /// Loads the failed address again; the failure stays up until the page commits, so a
     /// retry that fails again never flashes a blank page. `restart` (Retry, Reload, the tile
     /// coming back into view) begins a fresh round of automatic retries.
-    private func retryFailedLoad(restart: Bool) {
+    func retryFailedLoad(restart: Bool) {
         guard let failure = loadFailure else { return }
         if restart { failedLoads = nil }
         retryTask?.cancel()

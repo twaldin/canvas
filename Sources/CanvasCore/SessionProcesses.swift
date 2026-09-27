@@ -26,8 +26,14 @@ public struct SessionProcesses: Equatable, Sendable {
         self.processes = processes
     }
 
-    /// Shells only wrap what they run (`bash -c 'pnpm dev'`): what they run is named instead.
-    static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "fish", "login"]
+    /// Whether `argv0` runs a shell (a login shell's `-zsh` too). Shells only wrap what they run
+    /// (`bash -c 'pnpm dev'`, `login`): what they run is named instead.
+    public static func isShell(_ argv0: String) -> Bool {
+        let name = argv0.split(separator: "/").last.map(String.init) ?? argv0
+        return shells.contains(name.hasPrefix("-") ? String(name.dropFirst()) : name)
+    }
+
+    private static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "fish", "ksh", "tcsh", "csh", "nu", "elvish", "xonsh", "login"]
 
     /// The foreground program's name (`TerminalName.program`); nil at the prompt.
     public var program: String? {
@@ -40,7 +46,7 @@ public struct SessionProcesses: Equatable, Sendable {
     public var background: [String] {
         let byPid = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         func named(_ process: Process) -> Bool {
-            process.pid != foreground && !(process.argv.first.map { Self.shells.contains(Self.base($0)) } ?? true)
+            process.pid != foreground && !(process.argv.first.map(Self.isShell) ?? true)
         }
         return processes.sorted { $0.pid < $1.pid }.filter { process in
             guard named(process) else { return false }
@@ -128,10 +134,5 @@ public struct SessionProcesses: Equatable, Sendable {
         case 1: return parts[0]
         default: return parts.dropLast().joined(separator: ", ") + " and " + parts[parts.count - 1]
         }
-    }
-
-    private static func base(_ word: String) -> String {
-        let name = word.split(separator: "/").last.map(String.init) ?? word
-        return name.hasPrefix("-") ? String(name.dropFirst()) : name
     }
 }

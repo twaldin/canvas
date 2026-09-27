@@ -170,22 +170,8 @@ final class TerminalTile: NSView, TileContent {
     /// `columns`: the terminal's width, so rows it soft-wrapped read as one line; `screen`: the
     /// live screen as Ghostty reads it (`screenRows`), whose rows join by Ghostty's wrap flags.
     nonisolated static func history(session: String, lines limit: Int, columns: Int? = nil, screen: [TerminalTail.ScreenRow] = []) -> TerminalTail.Tail? {
-        guard let zmx = AppPaths.zmx else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = ["history", session]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        // Drain while zmx writes: it blocks once the pipe buffer fills, so waiting first would deadlock.
         var tail = TerminalTail(limit: limit, columns: columns, screen: screen)
-        let reader = output.fileHandleForReading
-        while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
-            tail.append(chunk)
-        }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
+        guard Zmx.run(["history", session], { tail.append($0) }) else { return nil }
         return tail.finish()
     }
 
@@ -326,7 +312,7 @@ final class TerminalTile: NSView, TileContent {
     /// line the shell titled it with: `aider`, not `aider --model … --read …`); nil when it has
     /// none of them.
     var label: String? {
-        TerminalName.label(name: name ?? program, title: oscTitle?.trimmingCharacters(in: .whitespaces), command: name == nil ? commands.runningCommand : nil)
+        TerminalName.label(name: name ?? program, title: oscTitle?.trimmingCharacters(in: .whitespaces), command: name == nil ? commands.running : nil)
     }
 
     // MARK: Notices
@@ -346,15 +332,6 @@ final class TerminalTile: NSView, TileContent {
     func typed(_ event: NSEvent) {
         lastKeyAt = Date()
         if [36, 76].contains(event.keyCode) { board.notifyingAgentSubmitted(objectID) }
-    }
-
-    /// A long command finished while nobody looked: an attention marker on this terminal, unless
-    /// the user is already looking at it.
-    fileprivate func notice(_ message: String, bell: Bool) {
-        guard !isWatched else { return }
-        if board.raiseTerminalNotice(objectID, message: message, bell: bell) {
-            NSLog("Canvas: terminal %@ %@: %@", objectID, bell ? "rang the bell" : "sent a notification", message)
-        }
     }
 
     /// A program asked for the user (OSC 9 / OSC 777 `notify`, or BEL): the lifecycle of the
@@ -382,13 +359,13 @@ final class TerminalTile: NSView, TileContent {
     /// 133 D), which name their blocks in the terminal's text (`TerminalCommandLog`).
     private(set) var log = TerminalCommandLog()
     /// The last command the shell finished, and when.
-    var lastCommand: (command: TerminalCommand, finishedAt: Date)? { log.last.map { ($0.command, $0.finishedAt) } }
+    var lastCommand: TerminalCommandLog.Entry? { log.last }
 
     /// A command finished: the header shows its exit status or duration when it failed or ran
-    /// long, and one that ran `noticeAfterMs` or more raises a marker (the bell's rules: not
-    /// while the user looks at the terminal, never for an agent reporting a lifecycle). A mark
-    /// while a program holds the foreground, or while the tile's agent reports a lifecycle, is
-    /// that program's, not a shell command (`TerminalCommandTracker.finished`).
+    /// long, and one that ran `noticeAfterMs` or more raises a marker unless the user is looking
+    /// at the terminal (`Board.raiseTerminalNotice`: never for an agent reporting a lifecycle).
+    /// A mark while a program holds the foreground, or while the tile's agent reports a
+    /// lifecycle, is that program's, not a shell command (`TerminalCommandTracker.finished`).
     fileprivate func commandFinished(exit: Int?, durationNanos: UInt64) {
         var atPrompt = true
         if let shell, case .running = ForegroundProgram.state(shell: shell) { atPrompt = false }
@@ -399,8 +376,9 @@ final class TerminalTile: NSView, TileContent {
         let detail = ([command.command ?? "The last command"] + [command.exit.map { "exit \($0)" }, command.durationMs.map(TerminalCommand.duration)].compactMap { $0 })
             .joined(separator: " · ")
         onStatus?(command.status, (command.exit ?? 0) != 0, detail)
-        guard (command.durationMs ?? 0) >= TerminalCommand.noticeAfterMs else { return }
-        notice(command.noticeMessage, bell: false)
+        guard (command.durationMs ?? 0) >= TerminalCommand.noticeAfterMs, !isWatched,
+              board.raiseTerminalNotice(objectID, message: command.noticeMessage, bell: false) else { return }
+        NSLog("Canvas: terminal %@ finished a long command: %@", objectID, command.noticeMessage)
     }
 
     // MARK: Mentions
@@ -423,6 +401,7 @@ final class TerminalTile: NSView, TileContent {
             return .terminal(object: objectID, text: text)
         }
         guard let surface, let grid, let cell = cell(at: point) else { return .object(objectID) }
+        refreshProgram()
         if let block = commandBlock(row: cell.row, column: cell.column) {
             return .terminal(object: objectID, text: block.output, part: .command, command: block.command)
         }
@@ -449,7 +428,6 @@ final class TerminalTile: NSView, TileContent {
     /// The viewport cell under `point` (this view's coordinates); nil in the padding.
     private func cell(at point: NSPoint) -> (row: Int, column: Int)? {
         guard let grid else { return nil }
-        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
         let fromTop = terminal.bounds.height - point.y
         let column = Int(floor((point.x - padding.width) / grid.cell.width))
         let row = Int(floor((fromTop - padding.height) / grid.cell.height))
@@ -467,7 +445,6 @@ final class TerminalTile: NSView, TileContent {
     /// output of the program still running (it goes on to the cursor).
     private func commandBlock(row: Int, column: Int) -> (output: String, command: TerminalCommand?)? {
         guard let surface, let grid, let output = selectOutput(row: row, column: column) else { return nil }
-        refreshProgram()
         let lines = TerminalExcerpt.lines(output.text)
         // The program still running: its output goes on to the cursor.
         if program != nil, let cursor = cursorRow, let last = lines.last,
@@ -475,7 +452,7 @@ final class TerminalTile: NSView, TileContent {
         if let text = textToCursor(), let cursor = cursorRow, let below = read(viewport(0, row), active(grid.columns - 1, cursor)) {
             let clicked = text.count - below.split(separator: "\n", omittingEmptySubsequences: false).count
             let positions = log.positions(in: text)
-            if let index = log.block(holding: clicked, in: text), let entry = log[fromEnd: index], let line = positions[index],
+            if let index = log.block(holding: clicked, in: text, positions: positions), let entry = log[fromEnd: index], let line = positions[index],
                let first = text[(line + 1)...].firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
                text[first].trimmingCharacters(in: .whitespaces) == lines.first?.trimmingCharacters(in: .whitespaces) {
                 // The prompt's lines above its input line: between this output's end and the next
@@ -520,7 +497,6 @@ final class TerminalTile: NSView, TileContent {
         guard let handle = surface?.handle, let grid, !ghostty_surface_mouse_captured(handle), !ghostty_surface_has_selection(handle) else { return nil }
         // The current prompt at the top of the screen: that click would land on it.
         if let cursorRow, cursorRow < TerminalBlocks.promptRows { return nil }
-        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
         let none = GHOSTTY_MODS_NONE, command = GHOSTTY_MODS_SUPER
         ghostty_surface_mouse_pos(handle, Double(padding.width + (CGFloat(column) + 0.5) * grid.cell.width),
                                   Double(padding.height + (CGFloat(row) + 0.5) * grid.cell.height), none)
@@ -550,15 +526,20 @@ final class TerminalTile: NSView, TileContent {
         return (String(decoding: UnsafeRawBufferPointer(start: text, count: Int(out.text_len)), as: UTF8.self), out.tl_px_y)
     }
 
-    /// The row the cursor is on in the terminal's active screen (its last `rows` rows, whatever
-    /// the view is scrolled to); nil when unknown. Ghostty gives the cursor's cell by its bottom,
-    /// in points from the top.
-    private var cursorRow: Int? {
-        guard let handle = surface?.handle, let grid else { return nil }
+    /// The cursor's cell as Ghostty gives it to input methods: its bottom and height, in points
+    /// from the top; nil without a surface.
+    private var cursorCell: (bottom: CGFloat, height: CGFloat)? {
+        guard let handle = surface?.handle else { return nil }
         var x = 0.0, y = 0.0, width = 0.0, height = 0.0
         ghostty_surface_ime_point(handle, &x, &y, &width, &height)
-        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
-        let row = Int(((CGFloat(y - height) - padding.height) / grid.cell.height).rounded())
+        return (CGFloat(y), CGFloat(height))
+    }
+
+    /// The row the cursor is on in the terminal's active screen (its last `rows` rows, whatever
+    /// the view is scrolled to); nil when unknown.
+    private var cursorRow: Int? {
+        guard let cell = cursorCell, let grid else { return nil }
+        let row = Int(((cell.bottom - cell.height - padding.height) / grid.cell.height).rounded())
         return (0..<grid.rows).contains(row) ? row : nil
     }
 
@@ -578,7 +559,7 @@ final class TerminalTile: NSView, TileContent {
     /// Row `row` of the active screen, trailing blanks trimmed.
     private func activeRow(_ row: Int) -> String? {
         guard let grid else { return nil }
-        return read(active(0, row), active(grid.columns - 1, row)).map { String($0.reversed().drop(while: \.isWhitespace).reversed()) }
+        return read(active(0, row), active(grid.columns - 1, row)).map(TerminalTail.trimmed)
     }
 
     /// The text from `from` to `to` (inclusive), soft-wrapped rows joined; nil when Ghostty has
@@ -595,7 +576,6 @@ final class TerminalTile: NSView, TileContent {
     /// The last command's block as Ghostty selects it on the rows just above the prompt (its
     /// output exactly), while the view shows the active screen; nil when it can't be selected.
     private func selectedLastBlock() -> (command: TerminalCommand, output: String)? {
-        refreshProgram()
         guard let last = lastCommand?.command, program == nil, scrolledBack == 0, surface?.readSelection()?.isEmpty ?? true, let cursorRow else { return nil }
         for row in stride(from: cursorRow - 1, through: max(0, cursorRow - TerminalBlocks.promptRows - 1), by: -1) {
             guard let block = commandBlock(row: row, column: 0) else { continue }
@@ -613,6 +593,7 @@ final class TerminalTile: NSView, TileContent {
     /// to the next command's (`TerminalCommandLog.output`), less the prompt above that
     /// (`promptAbove`, measured whenever a Hyper-click selects a logged block).
     func block(_ index: Int) throws -> (command: TerminalCommand, output: String) {
+        refreshProgram()
         guard !log.entries.isEmpty else {
             throw ApiRouter.Failure("unavailable", "no command has finished in terminal \(objectID) since Canvas attached to it (its shell needs Ghostty's shell integration; read with lines instead)")
         }
@@ -652,11 +633,9 @@ final class TerminalTile: NSView, TileContent {
     /// break between), for `agent.read` `lines` (`TerminalTail.ScreenRow`); empty without a surface.
     func screenRows() -> [TerminalTail.ScreenRow] {
         guard let grid else { return [] }
-        let rows = (0..<grid.rows).map { row in
-            String((read(active(0, row), active(grid.columns - 1, row)) ?? "").reversed().drop(while: \.isWhitespace).reversed())
-        }
+        let rows = (0..<grid.rows).map { activeRow($0) ?? "" }
         return rows.indices.map { index in
-            let width = rows[index].reduce(0) { $0 + TerminalStyledTail.cellWidth($1) }
+            let width = TerminalStyledTail.width(rows[index])
             guard width >= grid.columns - 1, index + 1 < rows.count, !rows[index + 1].isEmpty,
                   let pair = read(active(0, index), active(grid.columns - 1, index + 1)) else { return .init(text: rows[index], wraps: false) }
             return .init(text: rows[index], wraps: !pair.contains("\n"))
@@ -699,20 +678,7 @@ final class TerminalTile: NSView, TileContent {
 
     /// Whether zmx still has `session`. Blocks until zmx exits; false without zmx.
     nonisolated static func sessionExists(_ session: String) -> Bool {
-        guard let zmx = AppPaths.zmx else { return false }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = ["list"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return false }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).contains { line in
-            let name = line.split(separator: "\t").first?.drop { $0 == " " || $0 == "*" } ?? ""
-            return name == "name=\(session)"
-        }
+        Zmx.list().map { Housekeeping.sessionNames(zmxList: $0).contains(session) } ?? false
     }
 
     // MARK: References
@@ -727,24 +693,26 @@ final class TerminalTile: NSView, TileContent {
     /// then by name among the board root's files (`BoardFiles`), nearest the cwd; a missing
     /// absolute path by its longest trailing part among them (`TerminalReferences.resolve`).
     private func link(at point: NSPoint) -> TerminalReferences.Hit? {
-        guard let surface, let grid, let cell = cell(at: point) else { return nil }
         let cwd = board.objects[objectID]?.props["cwd"]?.string
         let directories = [reportedCwd, cwd, board.root.path].compactMap { $0 }
         let files = BoardFiles.of(board.root)
         let listed = (root: files.root.path, files: files.current())
         let near = reportedCwd ?? cwd ?? board.root.path
+        return hit(at: point) { TerminalReferences.resolve($0, directories: directories, home: NSHomeDirectory(), isFile: TerminalReferences.isFile, listed: listed, near: near) }
+    }
+
+    /// The reference drawn at `point` that `resolve` finds a file for (`TerminalReferences.hit`).
+    private func hit(at point: NSPoint, resolve: (String) -> String?) -> TerminalReferences.Hit? {
+        guard let surface, let grid, let cell = cell(at: point) else { return nil }
         return TerminalReferences.hit(row: cell.row, column: cell.column, columns: grid.columns,
-                                      read: { $0 < grid.rows ? surface.viewportRow($0, columns: grid.columns) : nil },
-                                      resolve: { TerminalReferences.resolve($0, directories: directories, home: NSHomeDirectory(), isFile: TerminalReferences.isFile, listed: listed, near: near) })
+                                      read: { $0 < grid.rows ? surface.viewportRow($0, columns: grid.columns) : nil }, resolve: resolve)
     }
 
     /// A ⌘-click that found no file on a reference: the file may be newer than the board root's
     /// file list (a test just wrote it, and the click that made the list stale started the
     /// re-listing). Look again once the list is fresh, and open it then.
     private func retryLink(at point: NSPoint, newTile: Bool) {
-        guard let surface, let grid, let cell = cell(at: point),
-              TerminalReferences.hit(row: cell.row, column: cell.column, columns: grid.columns,
-                                     read: { $0 < grid.rows ? surface.viewportRow($0, columns: grid.columns) : nil }, resolve: { $0 }) != nil else { return }
+        guard hit(at: point, resolve: { $0 }) != nil else { return }
         BoardFiles.of(board.root).refresh { [weak self] _ in
             guard let self, let hit = self.link(at: point) else { return }
             self.open(hit, newTile: newTile)
@@ -754,7 +722,7 @@ final class TerminalTile: NSView, TileContent {
     /// The cells `runs` cover in the underline's (flipped) coordinates, `height` tall at the
     /// bottom of each cell (the whole cell when nil).
     private func rects(_ runs: [TerminalTextRows.Run], grid: TerminalRender.Grid, height: CGFloat? = nil) -> [NSRect] {
-        let padding = TerminalConfig.shared.style(for: effectiveAppearance).padding
+        let padding = self.padding
         return runs.map { run in
             let height = height ?? grid.cell.height
             return NSRect(x: padding.width + CGFloat(run.column) * grid.cell.width,
@@ -869,13 +837,12 @@ final class TerminalTile: NSView, TileContent {
     /// terminal view's coordinates: what attention pills keep off while the terminal has the
     /// keyboard. Nil until the surface attaches and lays out.
     var caretRow: NSRect? {
-        guard let handle = surface?.handle, let grid else { return nil }
-        var x = 0.0, y = 0.0, width = 0.0, height = 0.0
-        // Top-left origin; `y` is the bottom of the cursor's cell.
-        ghostty_surface_ime_point(handle, &x, &y, &width, &height)
-        let rowHeight = max(CGFloat(height), grid.cell.height)
-        return NSRect(x: 0, y: terminal.bounds.height - CGFloat(y), width: terminal.bounds.width, height: rowHeight)
+        guard let cell = cursorCell, let grid else { return nil }
+        return NSRect(x: 0, y: terminal.bounds.height - cell.bottom, width: terminal.bounds.width, height: max(cell.height, grid.cell.height))
     }
+
+    /// Space between the tile's edge and the grid (the user's `window-padding-x`/`-y`).
+    private var padding: CGSize { TerminalConfig.shared.style(for: effectiveAppearance).padding }
 
     /// The terminal's theme background (a light Ghostty theme draws the default ink dark).
     var surfaceLuminance: Double? {
@@ -885,21 +852,8 @@ final class TerminalTile: NSView, TileContent {
     /// The session's styled screen text: the last `rows` lines of `zmx history --vt` and the
     /// row the cursor ends on. Blocks until zmx exits; nil when zmx or the session is missing.
     nonisolated static func styledHistory(session: String, rows: Int) -> (lines: [TerminalLine], cursorRow: Int?)? {
-        guard let zmx = AppPaths.zmx else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = ["history", session, "--vt"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
         var tail = TerminalStyledTail(limit: rows)
-        let reader = output.fileHandleForReading
-        while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
-            tail.append(chunk)
-        }
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
+        guard Zmx.run(["history", session, "--vt"], { tail.append($0) }) else { return nil }
         let lines = tail.finish()
         return (lines, tail.cursorRow)
     }

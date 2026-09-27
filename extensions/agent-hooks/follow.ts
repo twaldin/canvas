@@ -122,7 +122,7 @@ export function patchLocation(patch: string, cwd: string): Location | undefined 
       hunks[hunks.length - 1].added.push(line.startsWith("+"));
     }
   }
-  const changes: Range[] = [];
+  const changes: Change[] = [];
   try {
     const lines = readFileSync(path, "utf8").split("\n");
     let from = 0;
@@ -132,18 +132,15 @@ export function patchLocation(patch: string, cwd: string): Location | undefined 
       const after = anchor >= 0 ? anchor + 1 : from;
       const at = lines.findIndex((_, i) => i >= after && hunk.kept.every((text, j) => lines[i + j] === text));
       if (at < 0) continue;
-      hunk.added.forEach((added, j) => {
-        if (!added) return;
-        const last = changes.at(-1);
-        if (last && last.end === at + j) last.end = at + j + 1;
-        else changes.push({ start: at + j + 1, end: at + j + 1 });
-      });
+      // Context lines end a run; so does the hunk's end.
+      changes.push(...hunk.added.map((added, j) => (added ? { added, line: at + j + 1 } : undefined)), undefined);
       from = at + hunk.kept.length;
     }
   } catch {
     // unreadable: no location
   }
-  return { path, changes: changes.length ? changes : undefined, action: "edit" };
+  const ranges = runs(changes);
+  return { path, changes: ranges.length ? ranges : undefined, action: "edit" };
 }
 
 /** Reads through the shell (Codex's way): `sed -n 'A,Bp' f`, `nl -ba f | sed -n 'A,Bp'`, `cat f`, `head -n N f`. */

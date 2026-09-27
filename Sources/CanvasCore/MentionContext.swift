@@ -123,7 +123,7 @@ public enum MentionContext {
                 if let exit = command?.exit { parts.append("exit \(exit)") }
                 if let duration = command?.durationMs { parts.append(TerminalCommand.duration(duration)) }
                 // Which block it is now: the terminal's log counts from its newest command.
-                let read = command.flatMap { board.terminalBlockIndex?(object, $0) }.map { " · all of it: canvas agent.read --target \(object) --block \($0)" } ?? ""
+                let read = command.flatMap { board.terminalBlockIndex?(object, $0) }.map { " · read it: canvas agent.read --target \(object) --block \($0)" } ?? ""
                 lines.append("[\(index)] \(parts.joined(separator: " · ")) · output of terminal tile \(object)\(name)\(read)\(edited)")
             }
             lines.append(contentsOf: terminalLines(part == .rows ? text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : TerminalExcerpt.lines(text)))
@@ -414,7 +414,8 @@ public enum MentionContext {
         return lines
     }
 
-    static func clip(_ text: String, _ limit: Int) -> String {
+    /// `text` on one line, cut to `limit` characters with an ellipsis.
+    nonisolated static func clip(_ text: String, _ limit: Int) -> String {
         let flat = text.replacingOccurrences(of: "\n", with: " ")
         return flat.count > limit ? String(flat.prefix(limit - 1)) + "…" : flat
     }

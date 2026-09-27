@@ -61,7 +61,7 @@ public struct TerminalTail: Sendable {
     }
 
     public let limit: Int
-    /// The terminal's width: a row that fills it goes on in the next (`joinsNext`), and the two
+    /// The terminal's width: a row that fills it goes on in the next (`fills`), and the two
     /// read as one line. Nil when unknown: every row is a line.
     public let columns: Int?
     /// The live screen as the terminal reads it, when known: its rows join by the terminal's own
@@ -88,28 +88,24 @@ public struct TerminalTail: Sendable {
         self.screen = screen
     }
 
-    /// Whether `row` (trailing blanks trimmed) is the first part of a line the terminal
-    /// soft-wrapped at `columns` into `next`: it fills the width and ends in text (`fills`), and
-    /// the next row doesn't start with a border (`continues`) nor the way `row` does (`startsAlike`:
+    /// Whether `row` (trailing blanks trimmed) may be the first part of a line the terminal
+    /// soft-wrapped at `columns`: it fills the width and ends in text. The next row goes on from
+    /// it unless that starts with a border (`continues`) or the way the line does (`startsAlike`:
     /// pytest's `FAILED …` rows, each cut at the width). A full-width box line, a TUI's frame
     /// (`│ … │`) or a separator a program padded to the width (`isRule`: pytest's
     /// `==== FAILURES ====`) stays its own row; a row that happens to end in text at the edge
     /// joins, which is how it reads. (zmx's history carries no wrap flag, so this is a guess; the
     /// live screen's rows join by the terminal's own flags, `ScreenRow`.)
-    public static func joinsNext(_ row: String, _ next: String, columns: Int) -> Bool {
-        fills(row, columns: columns) && continues(next) && !startsAlike(row, next)
-    }
-
     static func fills(_ row: String, columns: Int) -> Bool {
         guard let last = row.last, !isEdge(last), !isRule(row) else { return false }
-        return row.reduce(0) { $0 + TerminalStyledTail.cellWidth($1) } == columns
+        return TerminalStyledTail.width(row) == columns
     }
 
     /// A separator row: it starts and ends with a run of one punctuation character (`=`, `-`,
     /// `_`, `!`, `*`, `#`, `~`, `+`, `.`), maybe with a title between (`==== 2 failed ====`,
     /// `!!!! stopping after 1 failures !!!!`, `____ test_x ____`). Box drawing is an edge anyway.
     static func isRule(_ row: String) -> Bool {
-        let characters = Array(row.reversed().drop(while: \.isWhitespace).reversed())
+        let characters = Array(trimmed(row))
         guard let mark = characters.first, "=-_!*#~+.".contains(mark), characters.count >= 6 else { return false }
         return characters.prefix(3).allSatisfy { $0 == mark } && characters.suffix(3).allSatisfy { $0 == mark }
     }
@@ -126,8 +122,14 @@ public struct TerminalTail: Sendable {
         return next.hasPrefix(row[...space])
     }
 
-    private static func isEdge(_ character: Character) -> Bool {
+    /// Blank cells and a TUI's borders and scrollbars (box drawing, block elements).
+    static func isEdge(_ character: Character) -> Bool {
         character.isWhitespace || character.unicodeScalars.allSatisfy { (0x2500...0x259F).contains($0.value) }
+    }
+
+    /// `row` without the blanks a terminal pads it with.
+    public static func trimmed(_ row: some StringProtocol) -> String {
+        row.lastIndex { !$0.isWhitespace }.map { String(row[...$0]) } ?? ""
     }
 
     public mutating func append(_ bytes: Data) {
@@ -160,21 +162,21 @@ public struct TerminalTail: Sendable {
         count += 1
         let line = String(decoding: bytes, as: UTF8.self)
         if !screen.isEmpty {
-            recent.append((position, String(line.reversed().drop(while: \.isWhitespace).reversed())))
+            recent.append((position, Self.trimmed(line)))
             if recent.count >= 4 * screen.count { recent.removeFirst(recent.count - 2 * screen.count) }
         }
         add(line, at: position, joins: nil)
     }
 
     /// Adds row `line` read at `position`; `joins` says whether the row before goes on into it,
-    /// nil to guess (`joinsNext`).
+    /// nil to guess (`fills`).
     private mutating func add(_ row: String, at position: Int, joins known: Bool?) {
-        guard let last = row.lastIndex(where: { !$0.isWhitespace }) else {
+        var line = Self.trimmed(row)
+        guard !line.isEmpty else {
             blanks += 1
             wrapping = false
             return
         }
-        var line = String(row[...last])
         if line.unicodeScalars.contains(Self.placeholder) {
             wrapping = false
             line = Self.replacingImages(in: line)
@@ -215,7 +217,7 @@ public struct TerminalTail: Sendable {
     /// session's screen moved on, or it is another size). A line that started above the screen
     /// keeps the rows it guessed.
     private mutating func rejoinScreen() {
-        var shown = screen.map { String($0.text.reversed().drop(while: \.isWhitespace).reversed()) }
+        var shown = screen.map { Self.trimmed($0.text) }
         while shown.last?.isEmpty == true { shown.removeLast() }
         var rows = recent
         while rows.last?.text.isEmpty == true { rows.removeLast() }

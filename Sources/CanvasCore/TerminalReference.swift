@@ -346,29 +346,24 @@ public struct TerminalTextRows {
         guard !TerminalTail.isRule(upper) else { return nil }
         let above = Array(upper), below = Array(lower)
         var end = above.count
-        while end > 0, isMargin(above[end - 1]) { end -= 1 }
-        if end == above.count, upper.reduce(0, { $0 + TerminalStyledTail.cellWidth($1) }) >= columns { return Join() }
+        while end > 0, TerminalTail.isEdge(above[end - 1]) { end -= 1 }
+        if end == above.count, TerminalStyledTail.width(upper) >= columns { return Join() }
         var start = end
         while start > 0, isPathCharacter(above[start - 1]) { start -= 1 }
         guard start < end else { return nil }
         var lead = 0
-        while lead < below.count, isMargin(below[lead]) { lead += 1 }
+        while lead < below.count, TerminalTail.isEdge(below[lead]) { lead += 1 }
         guard lead < below.count, isPathCharacter(below[lead]) else { return nil }
         if isUnfinished(String(above[start..<end])) { return Join(trailing: above.count - end, leading: lead) }
         let inCell = above[end...].contains(where: isBorder) && above[end - 1].isNumber
         let digits = below[lead...].prefix { $0.isNumber }
-        guard inCell, !digits.isEmpty, below[(lead + digits.count)...].allSatisfy(isMargin) else { return nil }
+        guard inCell, !digits.isEmpty, below[(lead + digits.count)...].allSatisfy(TerminalTail.isEdge) else { return nil }
         return Join(trailing: above.count - end, leading: lead)
     }
 
     /// A box-drawing character: a table's or a TUI's border.
     private static func isBorder(_ character: Character) -> Bool {
         character.unicodeScalars.allSatisfy { (0x2500...0x257F).contains($0.value) }
-    }
-
-    /// Blank cells and a TUI's borders and scrollbars (box drawing, block elements).
-    private static func isMargin(_ character: Character) -> Bool {
-        character.isWhitespace || character.unicodeScalars.allSatisfy { (0x2500...0x259F).contains($0.value) }
     }
 
     private static func isPathCharacter(_ character: Character) -> Bool {

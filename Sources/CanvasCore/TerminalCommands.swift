@@ -35,7 +35,7 @@ public struct TerminalCommand: Codable, Equatable, Sendable {
     /// The attention marker's text: `go test ./... exited 1 · 42 s`, `make finished · 3 min 2 s`,
     /// naming the command that ran long (`significant`), not a compound line's setup.
     public var noticeMessage: String {
-        let name = command.map { TerminalExcerpt.clip(Self.significant($0), 60) } ?? "Command"
+        let name = command.map { MentionContext.clip(Self.significant($0), 60) } ?? "Command"
         let outcome = switch exit {
         case 0?: "finished"
         case let code?: "exited \(code)"
@@ -50,10 +50,10 @@ public struct TerminalCommand: Codable, Equatable, Sendable {
     /// A bell's marker text, naming what rang it: the foreground program (`pytest rang the
     /// bell`); at the prompt, the command that just finished (`Bell after \`make test\``), else
     /// the shell itself (`zsh rang the bell`: its line editor beeps at a key it has no use for).
-    public static func bellMessage(program: String?, shell: String?, last: (command: TerminalCommand, finishedAt: Date)?, at date: Date) -> String {
-        if let program { return "\(TerminalExcerpt.clip(program, 60)) rang the bell" }
+    public static func bellMessage(program: String?, shell: String?, last: TerminalCommandLog.Entry?, at date: Date) -> String {
+        if let program { return "\(MentionContext.clip(program, 60)) rang the bell" }
         if let last, let command = last.command.command, date.timeIntervalSince(last.finishedAt) <= bellAfterCommand {
-            return "Bell after `\(TerminalExcerpt.clip(significant(command), 60))`"
+            return "Bell after `\(MentionContext.clip(significant(command), 60))`"
         }
         return "\(shell ?? "The shell") rang the bell"
     }
@@ -200,8 +200,6 @@ public struct TerminalCommandTracker: Sendable {
 
     /// The command line the shell is running, as its integration titled the terminal with it;
     /// nil at the prompt or before that title came.
-    public var runningCommand: String? { command }
-    /// The command line running now, as its title named it; nil at the prompt.
     public var running: String? { command }
 
     /// The program seen running in the foreground (`TerminalName.program`), for a command whose
@@ -253,9 +251,7 @@ public enum TerminalExcerpt {
     /// Lines of terminal text: trailing blanks trimmed off each line (terminals pad rows), blank
     /// lines at either end dropped.
     public static func lines(_ text: String) -> [String] {
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { line in
-            String(line.reversed().drop { $0 == " " || $0 == "\t" || $0 == "\r" }.reversed())
-        }
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(TerminalTail.trimmed)
         while lines.last?.isEmpty == true { lines.removeLast() }
         while lines.first?.isEmpty == true { lines.removeFirst() }
         return lines
@@ -338,16 +334,11 @@ public enum TerminalExcerpt {
     /// indented to match.
     public static func around(_ rows: [String], index: Int, before: Int, after: Int) -> [String] {
         guard rows.indices.contains(index) else { return [] }
-        let trimmed = rows.map { String($0.reversed().drop { $0 == " " }.reversed()) }
+        let trimmed = rows.map(TerminalTail.trimmed)
         var from = max(0, index - before), to = min(trimmed.count - 1, index + after)
         while from < index, trimmed[from].isEmpty { from += 1 }
         while to > index, trimmed[to].isEmpty { to -= 1 }
         return (from...to).map { ($0 == index ? "> " : "  ") + trimmed[$0] }
-    }
-
-    static func clip(_ text: String, _ limit: Int) -> String {
-        let flat = text.replacingOccurrences(of: "\n", with: " ")
-        return flat.count > limit ? String(flat.prefix(limit - 1)) + "…" : flat
     }
 }
 
@@ -359,8 +350,7 @@ public enum TerminalBlocks {
     public static func rows(of text: String, columns: Int) -> Int {
         guard columns > 0 else { return 0 }
         return text.split(separator: "\n", omittingEmptySubsequences: false).reduce(0) { total, line in
-            let width = line.reduce(0) { $0 + TerminalStyledTail.cellWidth($1) }
-            return total + max(1, (width + columns - 1) / columns)
+            total + max(1, (TerminalStyledTail.width(line) + columns - 1) / columns)
         }
     }
 
@@ -375,7 +365,7 @@ public enum TerminalBlocks {
     public static func output(_ output: String, after command: String?) -> String {
         guard let command = command?.trimmingCharacters(in: .whitespaces), !command.isEmpty else { return output }
         let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
-        guard let line = lines.lastIndex(where: { $0.trimmingCharacters(in: .whitespaces).hasSuffix(command) }) else { return output }
+        guard let line = lines.lastIndex(where: { isCommandLine(String($0), of: command) }) else { return output }
         return lines[(line + 1)...].joined(separator: "\n")
     }
 
@@ -386,7 +376,7 @@ public enum TerminalBlocks {
     public static func command(promptRow: String?, outputEnd: Int, cursorRow: Int?, atPrompt: Bool, last: TerminalCommand?) -> TerminalCommand? {
         let shown = promptRow.map(commandLine).flatMap { $0.isEmpty ? nil : $0 }
         if let last, atPrompt, let cursorRow, cursorRow > outputEnd, cursorRow - outputEnd <= promptRows {
-            let matches = last.command.map { command in shown.map { $0.hasSuffix(command) } ?? true } ?? true
+            let matches = last.command.map { command in shown.map { isCommandLine($0, of: command) } ?? true } ?? true
             if matches {
                 var block = last
                 if block.command == nil { block.command = shown }
@@ -487,8 +477,8 @@ public struct TerminalCommandLog: Sendable {
     }
 
     /// Which command's output holds line `line` of `text`, from the end (-1 the last).
-    public func block(holding line: Int, in text: [String]) -> Int? {
-        let positions = positions(in: text)
+    public func block(holding line: Int, in text: [String], positions: [Int: Int]? = nil) -> Int? {
+        let positions = positions ?? self.positions(in: text)
         return positions.keys.first { index in output(index, in: text, promptAbove: 0, positions: positions)?.contains(line) == true }
     }
 }
@@ -550,9 +540,9 @@ public struct TerminalStatus: Sendable {
     /// What runs in the foreground (`TerminalName.program`); nil at the prompt.
     public var program: String?
     /// The last command the shell finished, and when.
-    public var lastCommand: (command: TerminalCommand, finishedAt: Date)?
+    public var lastCommand: TerminalCommandLog.Entry?
 
-    public init(title: String? = nil, program: String? = nil, lastCommand: (command: TerminalCommand, finishedAt: Date)? = nil) {
+    public init(title: String? = nil, program: String? = nil, lastCommand: TerminalCommandLog.Entry? = nil) {
         self.title = title
         self.program = program
         self.lastCommand = lastCommand

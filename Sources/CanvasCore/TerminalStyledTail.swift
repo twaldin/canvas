@@ -251,4 +251,9 @@ public struct TerminalStyledTail: Sendable {
                                            0xFFE0...0xFFE6, 0x20000...0x3FFFD]
         return wide.contains { $0.contains(value) } ? 2 : 1
     }
+
+    /// Terminal cells `text` occupies on one row (`cellWidth` of each character).
+    public static func width(_ text: some StringProtocol) -> Int {
+        text.reduce(0) { $0 + cellWidth($1) }
+    }
 }

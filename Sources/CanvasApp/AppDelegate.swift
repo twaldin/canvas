@@ -230,7 +230,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc func zoomToActual(_ sender: Any?) { keyController?.zoomToActual(sender) }
     @objc func zoomOut(_ sender: Any?) { keyController?.zoomOut(sender) }
+    @objc func zoomIn(_ sender: Any?) { keyController?.zoomIn(sender) }
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
+    @objc func toggleNavigator(_ sender: Any?) { keyController?.toggleNavigator(sender) }
     @objc func toggleLassoSelection(_ sender: Any?) { keyController?.toggleLassoSelection(sender) }
     @objc func exitGroup(_ sender: Any?) { keyController?.exitGroup(sender) }
     @objc func undoCanvas(_ sender: Any?) { keyController?.undoCanvas(sender) }
@@ -306,7 +308,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let lasso = item("Lasso Selection", #selector(toggleLassoSelection(_:)), "")
         lasso.state = CanvasView.lassoSelection ? .on : .off
         submenu("View", [
+            // ⌘P, not ⌘K: Ghostty binds ⌘K (clear screen) and terminal tiles take it first.
+            item("Go to…", #selector(toggleNavigator(_:)), "p"),
+            .separator(),
             item("Actual Size", #selector(zoomToActual(_:)), "0"),
+            item("Zoom In", #selector(zoomIn(_:)), "="),
             item("Zoom Out", #selector(zoomOut(_:)), "-"),
             item("Zoom to Fit", #selector(zoomToFit(_:)), "9"),
             .separator(),

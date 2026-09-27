@@ -7,6 +7,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     let board: Board
     let canvas: CanvasView
     private let tray = TrayBar(frame: .zero)
+    private let navigator = NavigatorPanel()
+    private let nothingHere = NothingHerePill(frame: .zero)
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
@@ -44,6 +46,29 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         ])
         window.contentView = container
         drawing = ShapeLayer.install(on: canvas, toolbarIn: container)
+        // Above the toolbar and tray, so the navigator is never covered.
+        for view in [nothingHere, navigator] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(view)
+        }
+        let navigatorWidth = navigator.widthAnchor.constraint(equalToConstant: 560)
+        navigatorWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            nothingHere.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            nothingHere.bottomAnchor.constraint(equalTo: tray.topAnchor, constant: -10),
+            navigator.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            navigator.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
+            navigatorWidth,
+            navigator.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
+        ])
+        navigator.onGo = { [weak self] target in
+            switch target {
+            case .allContent: self?.canvas.zoomToFit()
+            case .object(let id): self?.canvas.go(to: id)
+            }
+        }
+        nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
+        canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
@@ -138,6 +163,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func zoomOut(_ sender: Any?) {
         canvas.zoom(to: canvas.magnification / 2)
+    }
+
+    @objc func zoomIn(_ sender: Any?) {
+        canvas.zoom(to: canvas.magnification * 2)
+    }
+
+    /// Go to… opens (or closes) the navigator over this board.
+    @objc func toggleNavigator(_ sender: Any?) {
+        if navigator.isOpen {
+            navigator.close()
+        } else {
+            navigator.open(rows: canvas.navigatorRows())
+        }
     }
 
     @objc func zoomToFit(_ sender: Any?) {

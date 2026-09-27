@@ -130,6 +130,59 @@ public enum Layout {
         }
         return Grid(origins: origins, columns: columns, rows: rows)
     }
+
+    /// Objects within this many points of each other belong to one cluster for Zoom to Fit.
+    public static let clusterMargin: CGFloat = 1500
+
+    /// Groups `frames` into clusters: frames at most `margin` apart (edge to edge) join, and
+    /// clusters are transitive. Each cluster lists frame indices ascending; clusters are ordered
+    /// by their first index.
+    public static func clusters(_ frames: [CGRect], margin: CGFloat = clusterMargin) -> [[Int]] {
+        var parent = Array(frames.indices)
+        func root(_ index: Int) -> Int {
+            var index = index
+            while parent[index] != index {
+                parent[index] = parent[parent[index]]
+                index = parent[index]
+            }
+            return index
+        }
+        // Each frame grows by half the margin, so two frames `margin` apart just touch. Sweep in
+        // x order: a frame only meets later frames that start before it ends.
+        let grown = frames.map { $0.insetBy(dx: -margin / 2, dy: -margin / 2) }
+        let order = grown.indices.sorted { grown[$0].minX < grown[$1].minX }
+        for (position, index) in order.enumerated() {
+            let rect = grown[index]
+            for other in order[(position + 1)...] {
+                let candidate = grown[other]
+                if candidate.minX > rect.maxX { break }
+                if candidate.minY <= rect.maxY, rect.minY <= candidate.maxY {
+                    parent[root(other)] = root(index)
+                }
+            }
+        }
+        var members: [Int: [Int]] = [:]
+        for index in frames.indices { members[root(index), default: []].append(index) }
+        return members.values.sorted { $0[0] < $1[0] }
+    }
+
+    /// What Zoom to Fit shows: all of `frames` when their bounds, `padding` added on every side,
+    /// fit `viewport` at `minZoom` or closer; otherwise the bounds of the largest cluster (most
+    /// frames, then most total area), so a few far-off strays don't shrink the board to nothing.
+    /// Nil without frames.
+    public static func fitTarget(_ frames: [CGRect], viewport: CGSize, padding: CGFloat, minZoom: CGFloat, margin: CGFloat = clusterMargin) -> CGRect? {
+        func bounds(_ indices: some Sequence<Int>) -> CGRect? {
+            indices.reduce(nil) { union, index in union?.union(frames[index]) ?? frames[index] }
+        }
+        guard let all = bounds(frames.indices) else { return nil }
+        let zoom = min(viewport.width / (all.width + 2 * padding), viewport.height / (all.height + 2 * padding))
+        if zoom >= minZoom { return all }
+        func area(_ cluster: [Int]) -> CGFloat { cluster.reduce(0) { $0 + frames[$1].width * frames[$1].height } }
+        let largest = clusters(frames, margin: margin).max { lhs, rhs in
+            lhs.count != rhs.count ? lhs.count < rhs.count : area(lhs) < area(rhs)
+        }
+        return largest.flatMap { bounds($0) }
+    }
 }
 
 extension Board {

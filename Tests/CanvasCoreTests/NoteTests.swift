@@ -209,6 +209,24 @@ struct NoteAnchorTests {
         #expect(NoteAnchor.resolve(fence, in: file, captured: captured).status == .exact)
     }
 
+    /// The confirm7 study: the evidence range ended on the buggy line, which the agent replaced
+    /// with two comments and the fix; the range lost its last line instead of covering the fix.
+    @Test func aLastLineReplacedByCommentsAndTheFixStaysInTheRange() {
+        let captured = ["    if spos is not None:", "        rv = list(rv)", "        # reverse everything after the star", "        rv[spos + 1 :] = reversed(rv[spos + 2 :])"]
+        let fence = NoteFence(path: "parser.py", lines: LineRange(start: 2, end: 5))
+        let fixed = ["def f(rv, spos):"] + captured.prefix(3)
+            + ["        # the star keeps its slot;", "        # only what follows it is reversed", "        rv[spos + 1 :] = reversed(rv[spos + 1 :])"]
+            + ["    return rv", "", "def g():"]
+        let resolution = NoteAnchor.resolve(fence, in: fixed, captured: captured)
+        #expect(resolution.range == LineRange(start: 2, end: 7))
+        #expect(resolution.status == .relocated(from: LineRange(start: 2, end: 5)))
+
+        // Deleted outright, the last line takes nothing after it: not the next statement, nor a
+        // look-alike past a blank line.
+        let deleted = ["def f(rv, spos):"] + captured.prefix(3) + ["    return rv", "", "        rv[spos + 1 :] = []"]
+        #expect(NoteAnchor.resolve(fence, in: deleted, captured: captured).range == LineRange(start: 2, end: 4))
+    }
+
     @Test func aChangedFirstLineStillFindsTheRestOfTheCapturedText() {
         let captured = ["def stop(self):", "    os.dup2(self.saved, self.fd)", "    self.tmp.seek(0)", "    return self.tmp.read()"]
         let file = ["class X:", "    pass", ""] + ["def finish(self):"] + captured.dropFirst() + [""]

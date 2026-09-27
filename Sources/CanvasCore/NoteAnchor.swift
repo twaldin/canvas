@@ -114,7 +114,10 @@ public enum NoteAnchor {
     /// Last line (0-based) of `captured`'s content in `source` when it starts at `start` (`fit`),
     /// so lines inserted or removed inside the range carry its end with them. Captured lines gone
     /// from the end leave the range shorter rather than taking in the next, unrelated line,
-    /// unless that line reads like the one it replaced (`}` → `} // done`) or both are blank.
+    /// unless the line that replaced one reads like it (`}` → `} // done`) or both are blank. A
+    /// replacement may come after lines written with it (a buggy last line replaced by two
+    /// comments and the fix): the range takes those in too, looking as far as the next blank line
+    /// and at most `maxReplacementLead` lines.
     /// Nil when most of the content is gone: the range then keeps its written length.
     static func trackedEnd(of captured: [String], in source: [String], from start: Int) -> Int? {
         guard captured.count <= maxPlacementLines, start < source.count else { return nil }
@@ -126,14 +129,28 @@ public enum NoteAnchor {
         let lastKept = NoteDiff.lines(nonBlank(wanted, side: "c"), nonBlank(shown, side: "s")).reduce(-1) { last, line in
             if case .same(let old, _, _) = line { max(last, old) } else { last }
         }
-        for replaced in wanted.dropFirst(lastKept + 1) {
+        replacing: for replaced in wanted.dropFirst(lastKept + 1) {
             guard end + 1 < source.count else { break }
-            let next = normalized(source[end + 1])
-            guard replaced.isEmpty ? next.isEmpty : similar(replaced, next) else { break }
-            end += 1
+            if replaced.isEmpty {
+                guard normalized(source[end + 1]).isEmpty else { break }
+                end += 1
+                continue
+            }
+            for candidate in (end + 1)..<min(source.count, end + 2 + maxReplacementLead) {
+                let next = normalized(source[candidate])
+                if next.isEmpty { break }
+                if similar(replaced, next) {
+                    end = candidate
+                    continue replacing
+                }
+            }
+            break
         }
         return end
     }
+
+    /// Most lines written ahead of a range's replaced last line that the range still takes in.
+    static let maxReplacementLead = 4
 
     /// How many non-blank lines of `wanted` (normalized) a generous window of `source` from
     /// `start` keeps, and where the shortest stretch keeping that many ends (0-based). Blank

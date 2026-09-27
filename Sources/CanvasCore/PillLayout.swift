@@ -6,12 +6,13 @@ import CoreGraphics
 /// offscreen one. No pill covers another, and no pill covers a blocked terminal other than its
 /// own (its approval prompt is what the user must read) or the tile the user is typing in
 /// (`focused`). A bubble sits outside its object: above it, else beside it (right, then left),
-/// else below, wherever that covers no other tile; failing that, slid along one of those sides
-/// to a free stretch, or as near to one of those or to the top of the object's body as the
-/// other pills allow, weighing what it hides (other tiles' title bars count most). It never
-/// covers the object's own header (a tile's title bar, a browser's address bar), whose controls
-/// stay clickable. Edge pills are compact and cover no tile: each slides along its edge to a
-/// stretch with nothing under it, else goes to the window chrome's band (`bands`: the free
+/// else below, wherever that covers no other tile; failing that, in the nearest free stretch
+/// near one of those spots, cut short to fit it, or on its own object's body; failing that too,
+/// slid along one of those sides, or as near to one of those or to the top of the object's
+/// body as the other pills allow, weighing what it hides (other tiles' title bars count most).
+/// It never covers the object's own header (a tile's title bar, a browser's address bar), whose
+/// controls stay clickable. Edge pills are compact and cover no tile: each slides along its edge
+/// to a stretch with nothing under it, else goes to the window chrome's band (`bands`: the free
 /// parts of the toolbar row) as a chip, and only when neither has room sits on the edge off
 /// pills, blocked and focused terminals and title bars. Bubbles and edge pills stay inside
 /// `clear` (between the toolbar and the tray), so no pill sits under the chrome.
@@ -25,6 +26,10 @@ public enum PillLayout {
     /// `minBubbleWidth` (its text truncates, the whole message is its tooltip).
     public static let maxBubbleWidth: CGFloat = 480
     public static let minBubbleWidth: CGFloat = 240
+    /// A bubble cut short to keep off other tiles is never narrower than this.
+    public static let shortestBubble: CGFloat = 120
+    /// How far from its ring a bubble goes to keep off other tiles.
+    public static let maxStray: CGFloat = 200
 
     public struct Marker: Sendable {
         public var id: String
@@ -189,6 +194,40 @@ public enum PillLayout {
         // A spot outside that the clear area holds without pushing it onto the ring, covering
         // neither a pill nor more than a sliver of a tile.
         if let clean = outside.first(where: { !$0.intersects(ring) && !overlapsPill($0, placed) && covered($0) < 100 }) { return clean }
+        // Else the spot nearest its ring covering no other tile and no pill: in a free stretch
+        // of a row level with one of those spots or with an edge of what's around, left-aligned
+        // with the ring or beside it, or on its own object's body (the marker is about it) but
+        // never its header; cut short to that stretch down to `shortestBubble` (its whole text is
+        // its tooltip), at most `maxStray` from the ring. Hiding its own body counts as the
+        // length of bubble it hides, each point away from the ring twice (a bubble belongs
+        // against its ring), each point cut half. Incident study F6: a bubble crossed the
+        // neighbouring note's text.
+        var roomy: (rect: CGRect, cost: CGFloat)?
+        let room = spacing - 0.5
+        let obstacles = otherRects + placed.map { $0.insetBy(dx: -room, dy: -room) } + [header]
+        let levels = (outside + [inside]).map(\.minY) + (otherRects + placed).flatMap { [$0.maxY + spacing, $0.minY - spacing - size.height] }
+        for level in Set(levels.map { min(max($0, clear.minY), clear.maxY - size.height) }).sorted() {
+            let row = CGRect(x: clear.minX, y: level, width: clear.width, height: size.height)
+            // The row's free stretches, between the obstacles crossing it.
+            var stretches: [(start: CGFloat, end: CGFloat)] = []
+            var start = clear.minX + bubbleMargin
+            for obstacle in obstacles.filter({ $0.intersects(row) }).sorted(by: { $0.minX < $1.minX }) {
+                stretches.append((start, obstacle.minX))
+                start = max(start, obstacle.maxX)
+            }
+            stretches.append((start, clear.maxX - bubbleMargin))
+            for stretch in stretches where stretch.end - stretch.start >= shortestBubble {
+                let width = min(size.width, stretch.end - stretch.start)
+                for x in [ring.minX, ring.maxX + spacing, ring.minX - spacing - width] {
+                    let rect = CGRect(x: min(max(x, stretch.start), stretch.end - width), y: level, width: width, height: size.height)
+                    let gap = hypot(max(0, ring.minX - rect.maxX, rect.minX - ring.maxX), max(0, ring.minY - rect.maxY, rect.minY - ring.maxY))
+                    guard gap <= maxStray else { continue }
+                    let cost = area(rect, target) / size.height + 2 * gap + (size.width - width) / 2
+                    if roomy == nil || cost < roomy!.cost { roomy = (rect, cost) }
+                }
+            }
+        }
+        if let roomy { return roomy.rect }
         // Else, covering no pill and not the header, the spot with the least hidden (other
         // tiles, and its own object's body) plus distance moved from one of those spots (hidden
         // area counts as the length of bubble it hides, so a bubble never strays far from its

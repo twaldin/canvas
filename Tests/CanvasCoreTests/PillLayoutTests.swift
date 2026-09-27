@@ -165,22 +165,38 @@ struct PillLayoutTests {
 
     @Test func noBubbleCoversTheTileWithTheKeyboard() {
         // A marked note in the view's top-left corner, a wide terminal beside it (20 pt away)
-        // and a tile below it: every spot beside the note hides some of the terminal, the least
-        // a sliver of its left edge. While the user types in the terminal, the bubble goes past
-        // it instead.
+        // and a tile below it: every full-width spot beside the note hides some of the terminal.
+        // Cut short, the bubble fits between the view's edge and the terminal; while the user
+        // types in the terminal it never goes on it either.
         let note = CGRect(x: 20, y: 120, width: 200, height: 60)
         let terminal = CGRect(x: 240, y: 72, width: 760, height: 770)
         let below = CGRect(x: 20, y: 200, width: 200, height: 642)
         let tiles = [PillLayout.Tile(id: "note", rect: note, header: 12), .init(id: "t", rect: terminal, header: 26), .init(id: "b", rect: below, header: 26)]
         let noteMarker = marker("note", note, width: 300, header: 12)
+        for focused in [nil, "t"] {
+            let placed = PillLayout.place(markers: [noteMarker], edges: [], tiles: tiles, focused: focused, clear: clear)
+            let bubble = try! #require(placed.bubbles["note"])
+            #expect(!bubble.intersects(terminal), "\(bubble) covers the terminal (focused: \(focused ?? "none"))")
+            #expect(!bubble.intersects(below), "\(bubble) covers the tile below")
+            #expect(clear.contains(bubble))
+        }
+    }
 
-        let unfocused = PillLayout.place(markers: [noteMarker], edges: [], tiles: tiles, clear: clear)
-        #expect(try! #require(unfocused.bubbles["note"]).intersects(terminal), "an ordinary tile: a sliver of it is the cheapest to hide")
-
-        let focused = PillLayout.place(markers: [noteMarker], edges: [], tiles: tiles, focused: "t", clear: clear)
-        let bubble = try! #require(focused.bubbles["note"])
-        #expect(!bubble.intersects(terminal), "\(bubble) covers the focused terminal")
+    @Test func aBubbleCutsItselfShortRatherThanCoverANeighboursText() {
+        // Incident study F6: centered on the Hypotheses note at 100%, the marked log note is
+        // partly past the view's right edge, another note above it. Every full-width spot beside
+        // the log's ring runs onto Hypotheses (clamped into the view) or the note above; the
+        // bubble went across the end of a Hypotheses paragraph.
+        let hypotheses = CGRect(x: 380, y: 250, width: 805, height: 505)
+        let log = CGRect(x: 1310, y: 390, width: 400, height: 240)
+        let above = CGRect(x: 1310, y: 40, width: 400, height: 330)
+        let tiles = [("h", hypotheses), ("log", log), ("above", above)].map { PillLayout.Tile(id: $0.0, rect: $0.1, header: 26) }
+        let placed = PillLayout.place(markers: [marker("log", log, width: 420)], edges: [], tiles: tiles, clear: clear)
+        let bubble = try! #require(placed.bubbles["log"])
+        #expect(!bubble.intersects(hypotheses) && !bubble.intersects(above), "\(bubble) covers a neighbour")
         #expect(clear.contains(bubble))
+        #expect(bubble.width >= PillLayout.shortestBubble && bubble.width < 420, "\(bubble) is not cut to the room beside the ring")
+        #expect(abs(bubble.minY - (log.maxY + 10 + PillLayout.spacing)) < 1, "\(bubble) is not against the ring's bottom")
     }
 
     @Test func anEdgePillNeverCoversTheLineBeingTyped() {

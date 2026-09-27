@@ -14,8 +14,9 @@ let package = Package(
         .executable(name: "Canvas", targets: ["CanvasApp"]),
     ],
     dependencies: [
-        // Pinned: binary, headers and wrapper must move together (docs/design.md).
-        .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260922"),
+        // Vendored at 1.6.20260922 with one patch (Vendor/libghostty-spm/CANVAS-PATCH.md).
+        // Binary, headers and wrapper must move together (docs/design.md).
+        .package(path: "Vendor/libghostty-spm"),
         // Note tiles: CommonMark + GFM (tables, strikethrough, task lists) AST. Apache-2.0.
         .package(url: "https://github.com/swiftlang/swift-markdown.git", exact: "0.9.0"),
         // Syntax trees for code tiles. Grammar versions are the newest whose manifests depend on

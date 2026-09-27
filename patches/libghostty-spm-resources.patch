@@ -1,0 +1,31 @@
+diff --git a/Sources/GhosttyTerminal/Configuration/GhosttyRuntimeResources.swift b/Sources/GhosttyTerminal/Configuration/GhosttyRuntimeResources.swift
+index 659fc21..d839635 100644
+--- a/Sources/GhosttyTerminal/Configuration/GhosttyRuntimeResources.swift
++++ b/Sources/GhosttyTerminal/Configuration/GhosttyRuntimeResources.swift
+@@ -12,12 +12,24 @@ public enum GhosttyRuntimeResources {
+     /// Ghostty expects shell integration below this directory and its compiled
+     /// terminfo database in a sibling `terminfo` directory.
+     public static var directoryURL: URL? {
+-        Bundle.module.url(forResource: "Ghostty", withExtension: nil)
++        resourceBundle.url(forResource: "Ghostty", withExtension: nil)
+     }
+ 
+     /// The compiled terminfo database exported to child shells by Ghostty.
+     public static var terminfoDirectoryURL: URL? {
+-        Bundle.module.url(forResource: "terminfo", withExtension: nil)
++        resourceBundle.url(forResource: "terminfo", withExtension: nil)
++    }
++
++    /// The package's resource bundle. An app assembled from `swift build` output keeps it in
++    /// its Resources directory (codesign rejects bundles at the app's root), where the generated
++    /// `Bundle.module` accessor does not look: it checks the app's root and the absolute build
++    /// directory, and traps when neither exists.
++    private static var resourceBundle: Bundle {
++        if let url = Bundle.main.resourceURL?.appendingPathComponent("GhosttyKit_GhosttyTerminal.bundle"),
++           let bundle = Bundle(url: url) {
++            return bundle
++        }
++        return Bundle.module
+     }
+ 
+     static func configureEnvironment() {

@@ -332,7 +332,6 @@ final class CanvasView: NSScrollView {
     private func addGroup(_ object: CanvasObject) {
         guard groups[object.id] == nil, let view = GroupView(object: object) else { return }
         let id = object.id
-        view.scale = magnification
         view.onPress = { [weak self] event in self?.beginMove(event, pressing: id) }
         view.onDrag = { [weak self] event in self?.dragMove(event) }
         view.onRelease = { [weak self] event in self?.endMove(event) }
@@ -536,11 +535,14 @@ final class CanvasView: NSScrollView {
             path.move(to: gesture.points[0])
             gesture.points.dropFirst().forEach(path.line(to:))
             path.close()
+            path.lineWidth = 1 / max(magnification, 0.05)
             overlay.marquee = path
         } else {
             gesture.points = [gesture.start, point]
             let rect = HyperMonitor.rect(gesture.start, point)
-            overlay.marquee = NSBezierPath(rect: rect)
+            let path = NSBezierPath(rect: rect)
+            path.lineWidth = 1 / max(magnification, 0.05)
+            overlay.marquee = path
             // Box containment is cheap enough to show live.
             setSelection(gesture.base.union(objects(inDocRect: rect)))
         }
@@ -884,7 +886,6 @@ final class CanvasView: NSScrollView {
             marker.message = message
         } else {
             let marker = AttentionMarker(objectID: id, message: message)
-            marker.scale = magnification
             marker.onClick = { [weak self] in
                 self?.clearAttention(id)
                 self?.select(id, extend: false)
@@ -987,7 +988,7 @@ final class CanvasView: NSScrollView {
         })
     }
 
-    // MARK: Scene pass (zoom LOD, offscreen culling, chrome scale, chevrons, seen)
+    // MARK: Scene pass (zoom LOD, offscreen culling, chevrons, seen)
 
     @objc private func boundsChanged() {
         // Every pan and pinch step, not coalesced: the grid is one layer move.
@@ -1056,19 +1057,13 @@ final class CanvasView: NSScrollView {
             geometryDirty = false
             objectsMoved()
         }
-        // Mid-pinch, LOD flips and chrome rescaling wait for the gesture to end.
+        // Mid-pinch, LOD flips wait for the gesture to end.
         if !magnifying {
             let scale = magnification
             for tile in tiles.values { tile.setLive(shouldBeLive(tile, scale: scale)) }
             if scale != appliedScale {
                 appliedScale = scale
                 for tile in tiles.values { tile.zoomedOut = scale < Self.liveThreshold }
-                overlay.scale = scale
-                for group in groups.values { group.scale = scale }
-                for marker in markers.values { marker.scale = scale }
-                refreshGroups()
-                layoutMarkers()
-                refreshFocusHoles()
             }
         }
         updateEdges()

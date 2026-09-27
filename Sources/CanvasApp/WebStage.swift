@@ -36,4 +36,18 @@ enum WebStage {
         typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
         unsafeBitCast(webView.method(for: selector), to: Setter.self)(webView, selector, enabled)
     }
+
+    /// Runs `body` once the UI process has shown the page's next committed frame (WebKit SPI
+    /// `-[WKWebView _doAfterNextPresentationUpdate:]`), so what the page drew is on screen;
+    /// after a short delay when the SPI is absent.
+    static func afterNextPresentationUpdate(_ webView: WKWebView, _ body: @escaping @MainActor () -> Void) {
+        let selector = NSSelectorFromString("_doAfterNextPresentationUpdate:")
+        guard webView.responds(to: selector) else {
+            return DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { MainActor.assumeIsolated { body() } }
+        }
+        typealias Method = @convention(c) (AnyObject, Selector, @escaping @convention(block) () -> Void) -> Void
+        unsafeBitCast(webView.method(for: selector), to: Method.self)(webView, selector) {
+            DispatchQueue.main.async { MainActor.assumeIsolated { body() } }
+        }
+    }
 }

@@ -387,7 +387,10 @@ extension CodeTile {
     }
 
     private func refreshHeader() {
-        let document = showsCurrent ? document : nil
+        showHeader(for: showsCurrent ? document : nil)
+    }
+
+    private func showHeader(for document: CodeDocument?) {
         header.show(diffBase: diffBaseProp, status: document?.status ?? "loading…", warning: document?.warning,
                     changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
         let before = header.height
@@ -618,17 +621,26 @@ extension CodeTile {
 
     // MARK: Offscreen drawing
 
-    /// The body (header, caption, history, rows) drawn from the model: never from live views,
-    /// so it works offscreen, not live, and on any Space. The content is the range (the whole
-    /// file without one): its rows and longest line under the header, what `size: "fit"` shows
-    /// (the caption's own width is `layout.check`'s `truncated`, not content). `full` draws all
-    /// of it, scrolled to the range by the tile's rule.
+    /// The body (header, caption, history, rows) for renders and cards. Rows are drawn from the
+    /// model, never from live views, so it works offscreen, not live, and on any Space; the header
+    /// is the tile's own header view drawn offscreen, showing `document` when it isn't on screen,
+    /// so a card looks exactly like the live tile. The content is the range (the whole file
+    /// without one): its rows and longest line under the header, what `size: "fit"` shows (the
+    /// caption's own width is `layout.check`'s `truncated`, not content). `full` draws all of
+    /// it, scrolled to the range by the tile's rule.
     private func image(of document: CodeDocument, size: CGSize, scale: CGFloat, full: Bool, appearance: NSAppearance) -> (image: NSImage?, content: CGSize) {
         // Wrapped at the tile's width, exactly as the live rows are.
         let rows = document.rows(peeked: showsCurrent ? peeked : [], width: size.width)
         var painter = CodePainter(document: document, rows: rows)
         painter.rangeLines = displayed.range.flatMap(document.lines(for:))
+        // Off screen, the header shows this document; on screen it already shows the live one.
+        if header.window == nil {
+            showHeader(for: document)
+            if header.frame.width != size.width { header.frame.size.width = size.width }
+        }
+        header.prepareForSnapshot()
         let headerHeight = header.height
+        let headerImage = TileRenderRequest(size: header.bounds.size, scale: scale, full: false, appearance: appearance).image(of: header)
         let content = document.content(range: displayed.range, rows: rows, width: size.width, headerHeight: headerHeight)
         var fullScroll: CGFloat = 0
         if let lines = painter.rangeLines {
@@ -655,9 +667,7 @@ extension CodeTile {
             cg.scaleBy(x: 1, y: -1)
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
-            CodeHeaderBar.drawStatic(in: NSRect(x: 0, y: 0, width: imageSize.width, height: headerHeight), path: document.path, diffBase: diffBaseProp,
-                                     status: document.status, warning: document.warning, caption: object.props["caption"]?.string,
-                                     history: followOf == nil ? [] : history, current: displayed, missed: lock.missed)
+            headerImage?.drawUpright(in: NSRect(x: 0, y: 0, width: header.bounds.width, height: headerHeight))
             let rowsRect = CGRect(x: 0, y: scrollY, width: imageSize.width, height: max(0, imageSize.height - headerHeight))
             cg.saveGState()
             cg.clip(to: CGRect(x: 0, y: headerHeight, width: imageSize.width, height: rowsRect.height))

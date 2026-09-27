@@ -2,7 +2,8 @@ import AppKit
 import CanvasCore
 
 /// An agent's "look here" on one object: a pulsing ring around it and a message bubble above.
-/// Lives in document space above the tiles; only the bubble takes clicks (which dismiss it).
+/// Lives in document space above the tiles and scales with the canvas; only the bubble takes
+/// clicks (which dismiss it).
 @MainActor
 final class AttentionMarker: NSView {
     static let inset: CGFloat = 10
@@ -10,7 +11,6 @@ final class AttentionMarker: NSView {
 
     let objectID: ObjectID
     var message: String? { didSet { needsDisplay = true } }
-    var scale: CGFloat = 1 { didSet { if scale != oldValue { needsDisplay = true } } }
     var onClick: (() -> Void)?
 
     init(objectID: ObjectID, message: String?) {
@@ -33,24 +33,20 @@ final class AttentionMarker: NSView {
 
     nonisolated override var isFlipped: Bool { true }
 
-    private var factor: CGFloat { min(1 / max(scale, 0.01), 4) }
-
     /// Frame around a target's document rect, leaving room above for the bubble.
     func place(around target: NSRect) {
-        let top = Self.bubbleHeight * factor + 6 * factor
-        frame = NSRect(x: target.minX - Self.inset * factor, y: target.minY - Self.inset * factor - top,
-                       width: target.width + 2 * Self.inset * factor, height: target.height + 2 * Self.inset * factor + top)
+        let top = Self.bubbleHeight + 6
+        frame = NSRect(x: target.minX - Self.inset, y: target.minY - Self.inset - top,
+                       width: target.width + 2 * Self.inset, height: target.height + 2 * Self.inset + top)
     }
 
     private var bubbleRect: NSRect {
-        let size = bubbleText.size(withAttributes: bubbleAttributes)
-        return NSRect(x: 0, y: 0, width: min(bounds.width, size.width + 24 * factor), height: Self.bubbleHeight * factor)
+        let size = bubbleText.size(withAttributes: Self.bubbleAttributes)
+        return NSRect(x: 0, y: 0, width: min(bounds.width, size.width + 24), height: Self.bubbleHeight)
     }
 
     private var bubbleText: NSString { (message?.isEmpty == false ? message! : "Look here") as NSString }
-    private var bubbleAttributes: [NSAttributedString.Key: Any] {
-        [.font: NSFont.systemFont(ofSize: 13 * factor, weight: .semibold), .foregroundColor: NSColor.white]
-    }
+    private static let bubbleAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white]
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let superview else { return nil }
@@ -59,17 +55,17 @@ final class AttentionMarker: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let bubble = bubbleRect
-        let ringTop = bubble.maxY + 6 * factor
-        let ring = NSRect(x: 0, y: ringTop, width: bounds.width, height: bounds.height - ringTop).insetBy(dx: 2 * factor, dy: 2 * factor)
+        let ringTop = bubble.maxY + 6
+        let ring = NSRect(x: 0, y: ringTop, width: bounds.width, height: bounds.height - ringTop).insetBy(dx: 2, dy: 2)
         let path = NSBezierPath(roundedRect: ring, xRadius: 12, yRadius: 12)
-        path.lineWidth = 4 * factor
+        path.lineWidth = 4
         NSColor.systemOrange.setStroke()
         path.stroke()
         let pill = NSBezierPath(roundedRect: bubble, xRadius: bubble.height / 2, yRadius: bubble.height / 2)
         NSColor.systemOrange.setFill()
         pill.fill()
-        let size = bubbleText.size(withAttributes: bubbleAttributes)
-        bubbleText.draw(in: NSRect(x: bubble.minX + 12 * factor, y: bubble.midY - size.height / 2, width: bubble.width - 24 * factor, height: size.height), withAttributes: bubbleAttributes)
+        let size = bubbleText.size(withAttributes: Self.bubbleAttributes)
+        bubbleText.draw(in: NSRect(x: bubble.minX + 12, y: bubble.midY - size.height / 2, width: bubble.width - 24, height: size.height), withAttributes: Self.bubbleAttributes)
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

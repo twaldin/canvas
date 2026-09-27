@@ -36,6 +36,7 @@ final class BrowserTile: NSView, TileContent {
     private var observations: [NSKeyValueObservation] = []
     private var refreshScheduled = false
     private var lastRefresh = Date.distantPast
+    private var readyWaiters: [@MainActor () -> Void] = []
 
     /// Navigations this tile started that haven't finished or failed (for load-state waits).
     var pendingNavigations: [WKNavigation] = []
@@ -415,6 +416,7 @@ final class BrowserTile: NSView, TileContent {
         if live {
             attach()
         } else {
+            readyWaiters.removeAll()
             setPageActivity(false)
             guard let webView else { return }
             if drivenTimer != nil {
@@ -423,6 +425,22 @@ final class BrowserTile: NSView, TileContent {
                 webView.removeFromSuperview()
                 scheduleRelease()
             }
+        }
+    }
+
+    func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
+        readyWaiters.append(ready)
+        checkReady()
+    }
+
+    /// Ready once the attached page has loaded and that frame is on screen.
+    private func checkReady() {
+        guard !readyWaiters.isEmpty, isLive, let webView, webView.superview === self, !webView.isLoading else { return }
+        WebStage.afterNextPresentationUpdate(webView) { [weak self] in
+            guard let self else { return }
+            let waiters = self.readyWaiters
+            self.readyWaiters.removeAll()
+            for ready in waiters { ready() }
         }
     }
 
@@ -511,14 +529,17 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         finished(navigation)
         commitURL()
         scheduleSnapshotRefresh()
+        checkReady()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         finished(navigation)
+        checkReady()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         finished(navigation)
+        checkReady()
         if !chrome.isEditing, let url = webView.url?.absoluteString { chrome.setAddress(url) }
     }
 

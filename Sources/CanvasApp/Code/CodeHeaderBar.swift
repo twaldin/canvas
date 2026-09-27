@@ -27,9 +27,9 @@ final class CodeHeaderBar: NSView {
     var onCatchUp: (() -> Void)?
     var onLocation: ((Location) -> Void)?
 
-    /// The AppKit controls, built when the header first enters a window: a tile that only ever
-    /// shows its card (dozens created at once, zoomed out or offscreen) never builds or lays
-    /// them out. What they show is kept below until then.
+    /// The AppKit controls, built when the header first enters a window or is first drawn for a
+    /// card: a tile created as a card (dozens at once, zoomed out or offscreen) never builds them
+    /// on creation. What they show is kept below until then.
     private var controls: Controls?
     private var baseChoices = ["merge-base", "HEAD"]
     private var baseSelected = 0
@@ -228,39 +228,15 @@ final class CodeHeaderBar: NSView {
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
-    /// The header as it would draw, for offscreen renders and cards (no live controls).
-    static func drawStatic(in rect: NSRect, path: String, diffBase: String, status: String, warning: String?, caption: String?, history: [Location], current: Location?, missed: Int) {
-        NSColor.windowBackgroundColor.setFill()
-        rect.fill()
-        let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
-        let line = NSMutableAttributedString(string: "\(diffBase == "merge-base" ? "merge-base" : diffBase.lowercased() == "head" ? "HEAD" : String(diffBase.prefix(12))) ▾   ", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
-        if let warning {
-            line.append(NSAttributedString(string: "⚠︎ \(warning)\(status.isEmpty ? "" : " · ")", attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.systemOrange]))
+    /// Readies the header to be drawn offscreen (`cacheDisplay`) for cards and renders: its own
+    /// controls, built if it never entered a window, laid out, so the image is exactly what the
+    /// live header shows.
+    func prepareForSnapshot() {
+        if controls == nil {
+            controls = Controls(in: self)
+            refreshControls()
         }
-        line.append(NSAttributedString(string: status, attributes: small))
-        if missed > 0 {
-            line.append(NSAttributedString(string: "   \(missed) new ▸", attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.controlAccentColor]))
-        }
-        line.draw(with: NSRect(x: rect.minX + 8, y: rect.minY + 6, width: rect.width - 16, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        var y = rect.minY + CodeMetrics.headerHeight
-        if let caption, !caption.isEmpty {
-            CodeCaption.string(caption).draw(with: NSRect(x: rect.minX + CodeMetrics.captionInset + 2, y: y + 2, width: rect.width - 2 * CodeMetrics.captionInset - 4, height: CodeMetrics.captionHeight - 4),
-                                             options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-            y += CodeMetrics.captionHeight
-        }
-        if !history.isEmpty {
-            let strip = NSMutableAttributedString()
-            for location in history {
-                strip.append(NSAttributedString(string: location.title + "   ", attributes: [
-                    .font: location == current ? NSFont.boldSystemFont(ofSize: 11) : NSFont.systemFont(ofSize: 11),
-                    .foregroundColor: location == current ? NSColor.labelColor : NSColor.linkColor,
-                ]))
-            }
-            strip.draw(with: NSRect(x: rect.minX + 8, y: y + 3, width: rect.width - 16, height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-            y += CodeMetrics.historyHeight
-        }
-        NSColor.separatorColor.setFill()
-        NSRect(x: rect.minX, y: y - 1, width: rect.width, height: 1).fill()
+        layoutSubtreeIfNeeded()
     }
 
     @objc private func baseChanged(_ sender: NSPopUpButton) {

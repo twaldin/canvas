@@ -18,6 +18,9 @@ final class HtmlTile: NSView, TileContent {
     private var lastSnapshot: NSImage?
     private var snapshotCover: NSImageView?
     private var snapshotTask: Task<Void, Never>?
+    /// The live page has settled (the kit's `view.rendered`) and that frame is on screen.
+    private var pageShown = false
+    private var readyWaiters: [@MainActor () -> Void] = []
     /// Page scroll reported by the kit, restored after re-renders and re-attachment.
     private var scrollY: Double = 0
     private var hovered: WebMentions.Element?
@@ -94,6 +97,7 @@ final class HtmlTile: NSView, TileContent {
         web.underPageBackgroundColor = .textBackgroundColor
         addSubview(web, positioned: .below, relativeTo: nil)
         webView = web
+        pageShown = false
         loadFailure?.removeFromSuperview()
         loadFailure = nil
         web.load(URLRequest(url: pageURL))
@@ -102,6 +106,8 @@ final class HtmlTile: NSView, TileContent {
     private func detach() {
         snapshotTask?.cancel()
         snapshotTask = nil
+        pageShown = false
+        readyWaiters.removeAll()
         work.cancelAll()
         guard let web = webView else { return }
         web.stopLoading()
@@ -119,6 +125,7 @@ final class HtmlTile: NSView, TileContent {
         label.autoresizingMask = [.width, .height]
         addSubview(label)
         loadFailure = label
+        showPage()
     }
 
     // MARK: Channel
@@ -138,12 +145,31 @@ final class HtmlTile: NSView, TileContent {
             }
         } else if case .rendered(let y) = message {
             if let y { scrollY = y }
-            scheduleSnapshot()
+            pageSettled()
         }
         return try await work.perform { [object, board] in try await HtmlChannel.handle(message, tile: object.id, board: board) }
     }
 
     // MARK: Snapshots
+
+    /// The live page settled: its first settled frame on screen makes it ready (`whenLiveReady`),
+    /// and the snapshot is refreshed.
+    private func pageSettled() {
+        if !pageShown, let web = webView {
+            WebStage.afterNextPresentationUpdate(web) { [weak self] in
+                guard let self, self.webView === web else { return }
+                self.showPage()
+            }
+        }
+        scheduleSnapshot()
+    }
+
+    private func showPage() {
+        pageShown = true
+        let waiters = readyWaiters
+        readyWaiters.removeAll()
+        for ready in waiters { ready() }
+    }
 
     /// WebKit draws outside AppKit, so `cacheDisplay` can't capture it; keep an image of the
     /// settled page instead. Width is capped so large tiles don't hold huge bitmaps.
@@ -171,6 +197,11 @@ final class HtmlTile: NSView, TileContent {
         guard live != self.live else { return }
         self.live = live
         if live { build() } else { detach() }
+    }
+
+    func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
+        guard live else { return }
+        if pageShown { ready() } else { readyWaiters.append(ready) }
     }
 
     /// Card image: the live page's last capture, else an offscreen render.

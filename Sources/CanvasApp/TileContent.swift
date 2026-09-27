@@ -90,6 +90,10 @@ protocol TileContent: NSView {
     /// Image for the zoomed-out card, delivered on the main actor. Called before the tile goes
     /// not-live; defaults to `render` at card resolution.
     func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void)
+    /// Calls `ready` once the content, just made live, shows its live view as it will stay (a
+    /// web page loaded, laid out, and painted); until then the frame keeps the card over it.
+    /// Defaults to at once: views that draw synchronously are ready when shown.
+    func whenLiveReady(_ ready: @escaping @MainActor () -> Void)
     /// While `view.snapshot` renders the window with `cacheDisplay`, cover content that renders
     /// outside AppKit's drawing (Metal, WebKit) with an image of it; `false` restores the live view.
     func showSnapshot(_ show: Bool)
@@ -120,6 +124,8 @@ extension TileContent {
     func showSnapshot(_ show: Bool) {}
 
     var liveZoom: CGFloat { CanvasView.liveThreshold }
+
+    func whenLiveReady(_ ready: @escaping @MainActor () -> Void) { ready() }
 
     func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,

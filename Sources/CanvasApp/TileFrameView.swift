@@ -148,20 +148,37 @@ final class TileFrameView: NSView {
 
     /// Zoomed-out or offscreen: freeze to a card and let the content release its resources. The
     /// live content stays up until its card has arrived, so a swap never shows a blank or
-    /// title-only tile.
+    /// title-only tile; going live, the card stays until the content is ready (`revealWhenReady`).
     func setLive(_ live: Bool) {
         guard live != isLive else { return }
         isLive = live
         cardRequest += 1
         if live {
-            card.image = nil
-            card.isHidden = true
-            cardTitle.isHidden = true
             showContent(true)
+            revealWhenReady()
         } else {
             requestCard()
         }
         updateTint()
+    }
+
+    /// Longest a card covers content that never reports ready (a page whose script fails).
+    static let revealLimit: TimeInterval = 2
+
+    /// The card stays over the live content, which renders under it, until the content reports
+    /// its live view drawn (a web page attaches, loads, lays out, and paints): the swap never
+    /// shows a blank, half-loaded, or differently laid-out tile.
+    private func revealWhenReady() {
+        guard !card.isHidden || !cardTitle.isHidden else { return }
+        let request = cardRequest
+        let reveal: @MainActor () -> Void = { [weak self] in
+            guard let self, self.isLive, self.cardRequest == request else { return }
+            self.card.image = nil
+            self.card.isHidden = true
+            self.cardTitle.isHidden = true
+        }
+        content.whenLiveReady(reveal)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealLimit) { reveal() }
     }
 
     /// A new tile where it wouldn't be live (zoomed out or offscreen) starts as its card, the
@@ -231,12 +248,14 @@ final class TileFrameView: NSView {
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
                                          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: rep) else { return image }
-        rep.size = size
+        // The context's units are the rep's pixels (its size when the context was made); the rep
+        // gets its point size only afterwards.
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
         context.imageInterpolation = .high
-        image.draw(in: NSRect(origin: .zero, size: size))
+        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
         NSGraphicsContext.restoreGraphicsState()
+        rep.size = size
         let card = NSImage(size: size)
         card.addRepresentation(rep)
         return card

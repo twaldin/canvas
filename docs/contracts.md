@@ -109,8 +109,10 @@ Every tile's content view conforms to `TileContent` (`Sources/CanvasApp/TileCont
 @MainActor
 protocol TileContent: NSView {
     func setLive(_ live: Bool)                                  // false: detach heavy resources, show the card
+    var liveZoom: CGFloat { get }                                // below this zoom the tile is its card (default 0.3; terminals 0.15)
     func render(_ request: TileRenderRequest) async -> TileRender   // offscreen image for view.render
     func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void)  // default: render at card scale
+    func whenLiveReady(_ ready: @escaping @MainActor () -> Void)  // just made live: call once the live view is drawn (default: at once)
     func showSnapshot(_ show: Bool)                              // view.snapshot: cover Metal/WebKit content
     func mentionTarget(at point: NSPoint) -> MentionTarget?      // what a Hyper-click here mentions (element level)
     func outline(for target: MentionTarget) -> NSRect?           // hover highlight, in this view's coordinates
@@ -119,7 +121,9 @@ protocol TileContent: NSView {
 }
 ```
 
-`render` draws the content offscreen for `view.render`, independent of liveness, window, Space, and viewport: from the tile's model, never by capturing live views. `TileRenderRequest` = `size` (the body in points: the frame below the title bar), `scale` (pixels per point), `full` (the whole content, not the frame's window), `appearance` (resolve colors under it). `TileRender` = `image` (points, top-left at the body; `max(size, contentSize)` when full), `contentSize` (the content's extent at that width; overflow = content − size; a code tile's is its range, `CodeDocument.content`, which is what `size: "fit"` sizes), `state` (`rendered`, or `placeholder`/`failed` with a `reason`; never `rendered` with a blank image). The renderer cancels a render at the request's deadline (tiles should return what they have when cancelled) and reports a tile that still hasn't answered a second later as a placeholder. Tile chrome (title bar, border) is drawn around the image by the renderer; app chrome never is.
+`render` draws the content offscreen for `view.render`, independent of liveness, window, Space, and viewport: from the tile's model (or an AppKit view that draws itself anywhere, like a code tile's header, drawn offscreen), never by capturing what is on screen. `TileRenderRequest` = `size` (the body in points: the frame below the title bar), `scale` (pixels per point), `full` (the whole content, not the frame's window), `appearance` (resolve colors under it). `TileRender` = `image` (points, top-left at the body; `max(size, contentSize)` when full), `contentSize` (the content's extent at that width; overflow = content − size; a code tile's is its range, `CodeDocument.content`, which is what `size: "fit"` sizes), `state` (`rendered`, or `placeholder`/`failed` with a `reason`; never `rendered` with a blank image). The renderer cancels a render at the request's deadline (tiles should return what they have when cancelled) and reports a tile that still hasn't answered a second later as a placeholder. Tile chrome (title bar, border) is drawn around the image by the renderer; app chrome never is.
+
+Zooming never redraws the scene: everything in the document (tiles, groups with their titles and borders, drawings, selection rings, attention markers) is drawn in document coordinates and scales with the canvas, so its size relative to everything else never changes. Only window chrome (toolbar, tray, pills, edge chevrons), the dot grid, and shape resize handles stay screen-sized. Cards are what the live tile shows: code cards draw the tile's own header view offscreen (`CodeHeaderBar.prepareForSnapshot`, its real controls) above rows drawn from the model at the tile's scroll; HTML cards are the live page's last capture. Going live, `TileFrameView` keeps the card over the content, which renders beneath it, until `whenLiveReady` fires (HTML: the page's first `view.rendered` after it attaches, once WebKit has presented that frame, `WebStage.afterNextPresentationUpdate`; browser: the page loaded and presented), at most `TileFrameView.revealLimit` (2 s).
 
 Arrows, shapes, and groups have no tile; the canvas draws them.
 
@@ -174,7 +178,7 @@ Mentions: a row is the line on the side it shows; a sign in the gutter is the wh
 | `onSelectionDrag(ids, offset)` | scene → drawing | Live drag offset in document points; `.zero` just before the move commits. |
 | `selection`, `onSelectionChange` | scene → all | Current selection (tiles, drawn objects, groups). |
 
-Groups (`type: group`, props `{members, title?, color?, padding?}`, frame derived by the board, see Object model rules) are drawn by the scene as titled, tinted regions behind their members (`GroupView`), following members live mid-drag with the same `GroupSpec.frame`; only the title band takes the mouse, and zoomed out the title grows upward out of the band. `focus(tile:)` zooms a tile to 100%, centers, selects, and focuses it; `raiseAttention(_:message:)` backs `view.attention`.
+Groups (`type: group`, props `{members, title?, color?, padding?}`, frame derived by the board, see Object model rules) are drawn by the scene as titled, tinted regions behind their members (`GroupView`), following members live mid-drag with the same `GroupSpec.frame`; only the title band takes the mouse. Title and border are in document space like everything else. `focus(tile:)` zooms a tile to 100%, centers, selects, and focuses it; `raiseAttention(_:message:)` backs `view.attention`.
 
 ## Undo
 
@@ -237,7 +241,7 @@ All git in the app runs through `GitRunner.shared` (CanvasCore), which caps conc
 | `code.open` | `path`, `lines?`, `symbol?` | `{tile, created}`: re-aims the topmost non-follow code tile for `path`, else creates one beside the HTML tile |
 | `state.get` | `key?` | `{value}` from `props.state` |
 | `state.set` | `key` (`[A-Za-z0-9_.:-]{1,128}`), `value` (≤ 16 KiB, `null` deletes) | `{}`; `props.state` is capped at 256 KiB |
-| `view.rendered` | `scrollY?` | `{}`; the tile refreshes its snapshot and remembers the scroll |
+| `view.rendered` | `scrollY?` | `{}`; the tile refreshes its snapshot and remembers the scroll; the first after the page attaches lifts the card (`whenLiveReady`) |
 
 - Paths are board-relative; absolute paths, `~`, `..`, and symlinks resolving outside the board root are rejected.
 

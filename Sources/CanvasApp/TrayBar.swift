@@ -76,6 +76,7 @@ final class TrayBar: NSVisualEffectView {
         // A file outside the board root has a short label (`PathLabel`); the tooltip has its path.
         if case .code(_, let path, _, _, _, _, _) = mention.target, PathLabel.short(path) != path { label.toolTip = path }
         if case .note(_, let item) = mention.target { label.toolTip = (item.headings + [item.summary]).joined(separator: " › ") }
+        if case .console(_, _, let entry) = mention.target { label.toolTip = [entry.text, entry.source].compactMap { $0 }.joined(separator: "\n") }
         let remove = NSButton(title: "✕", target: self, action: #selector(removeClicked(_:)))
         remove.isBordered = false
         remove.identifier = NSUserInterfaceItemIdentifier(mention.id)

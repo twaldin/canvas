@@ -10,7 +10,7 @@ enum ApiParams {
         "board.list": ([], []),
         "board.open": (["root", "select"], ["root"]),
         "board.export": (["board", "path"], []),
-        "object.get": (["id", "as"], ["id"]),
+        "object.get": (["id", "as", "since"], ["id"]),
         "object.create": (["board", "type", "props", "frame", "size", "parent", "caller"], ["type", "props"]),
         "object.update": (["id", "rev", "frame", "size", "props", "caller"], ["id"]),
         "object.delete": (["id", "caller"], ["id"]),

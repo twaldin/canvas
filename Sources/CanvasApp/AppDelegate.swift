@@ -72,6 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return try terminal.lastBlock()
         }
+        router.readPageLog = { [weak self] board, tile in
+            guard let browser = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? BrowserTile else { return nil }
+            return await browser.readPageLog()
+        }
         router.snapshotBoard = { [weak self] board, format in self?.controllers[board.id]?.snapshot(format: format) }
         router.renderView = { [weak self] board, request, format in
             guard let canvas = self?.controllers[board.id]?.canvas else { throw ApiRouter.Failure("unavailable", "board \(board.id) has no window") }
@@ -293,6 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func saveAsPNG(_ sender: Any?) { keyController?.saveAsPNG(sender) }
     @objc func saveHTMLTile(_ sender: Any?) { keyController?.saveHTMLTile(sender) }
     @objc func openHTMLTileInBrowser(_ sender: Any?) { keyController?.openHTMLTileInBrowser(sender) }
+    @objc func showWebInspector(_ sender: Any?) { keyController?.showWebInspector(sender) }
 
     /// The tab bar's + button: open another board as a tab.
     @objc func newWindowForTab(_ sender: Any?) { openBoard(sender) }
@@ -429,6 +434,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Zoom to Fit", #selector(zoomToFit(_:)), "9"),
             .separator(),
             item("Clear Attention Markers", #selector(clearAttentionMarkers(_:)), ""),
+            // ⌥⌘I as in Safari's Develop menu: the focused or selected browser tile's page.
+            item("Show Web Inspector", #selector(showWebInspector(_:)), "i", [.option, .command]),
             lasso,
             item("Exit Group", #selector(exitGroup(_:)), ""),
         ])

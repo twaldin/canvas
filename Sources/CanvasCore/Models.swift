@@ -161,8 +161,11 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     case image(object: ObjectID, path: String, x: Int, y: Int)
     /// A block of a note (`NoteItem`) as it read when staged: the drain re-finds it by `text`.
     case note(object: ObjectID, item: NoteItem)
+    /// What a browser tile's page reported (a console message, an uncaught error, a failed
+    /// request), from the tile's problems list; `url` is the page's.
+    case console(object: ObjectID, url: String, entry: PageLogEntry)
 
-    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, diff, url, selector, text, objects, name, x, y, block, headings, part, command }
+    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, diff, url, selector, text, objects, name, x, y, block, headings, part, command, entry }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -180,6 +183,8 @@ public enum MentionTarget: Codable, Equatable, Sendable {
             self = .image(object: try c.decode(String.self, forKey: .object), path: try c.decode(String.self, forKey: .path), x: try c.decode(Int.self, forKey: .x), y: try c.decode(Int.self, forKey: .y))
         case "note":
             self = .note(object: try c.decode(String.self, forKey: .object), item: NoteItem(kind: try c.decode(NoteItem.Kind.self, forKey: .block), headings: try c.decode([String].self, forKey: .headings), lines: try c.decode(LineRange.self, forKey: .lines), text: try c.decode(String.self, forKey: .text)))
+        case "console":
+            self = .console(object: try c.decode(String.self, forKey: .object), url: try c.decode(String.self, forKey: .url), entry: try c.decode(PageLogEntry.self, forKey: .entry))
         case "object":
             self = .object(try c.decode(String.self, forKey: .object))
         case let other:
@@ -231,6 +236,11 @@ public enum MentionTarget: Codable, Equatable, Sendable {
             try c.encode(item.headings, forKey: .headings)
             try c.encode(item.lines, forKey: .lines)
             try c.encode(item.text, forKey: .text)
+        case .console(let object, let url, let entry):
+            try c.encode("console", forKey: .kind)
+            try c.encode(object, forKey: .object)
+            try c.encode(url, forKey: .url)
+            try c.encode(entry, forKey: .entry)
         }
     }
 
@@ -238,7 +248,7 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     public var objectIDs: [ObjectID] {
         switch self {
         case .object(let id): [id]
-        case .code(let object, _, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _, _, _), .image(let object, _, _, _), .note(let object, _): [object]
+        case .code(let object, _, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _, _, _), .image(let object, _, _, _), .note(let object, _), .console(let object, _, _): [object]
         case .group(let objects, _): objects
         }
     }

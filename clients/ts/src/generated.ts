@@ -251,6 +251,59 @@ export type CanvasObject = {
   props: Record<string, unknown>;
 };
 
+export type PageLogEntry = {
+  /** order within the page's document */
+  seq: number;
+  time: string;
+  /** a console message; an uncaught error or unhandled promise rejection; a request that failed (HTTP status 400 or more, a network error, a resource that didn't load) */
+  kind: "console" | "exception" | "request";
+  /** exceptions and failed requests are `error` */
+  level: "log" | "info" | "warn" | "error" | "debug";
+  /** the message as the console prints it (up to 1,000 characters), or `METHOD url → status` */
+  text: string;
+  /** `url:line:column` of the code that logged (warnings and errors) or threw */
+  source?: string;
+  stack?: string;
+  method?: string;
+  /** a failed request's URL */
+  url?: string;
+  /** a failed request's HTTP status; absent when it got none (network error, a resource load WebKit reports without one) */
+  status?: number;
+  /** what made the request: fetch, xhr, document (the page itself), or the element (img, script, link…) */
+  resource?: string;
+};
+
+/** What a browser tile's page reported since it loaded. Main frame only; a new document (load, reload) starts over. */
+export type PageLog = {
+  /** false: the tile has no page now (never shown or rendered, or released while out of view); `view.render` loads it */
+  loaded: boolean;
+  url?: string;
+  /** exceptions, console errors and failed requests since the page loaded */
+  errors?: number;
+  warnings?: number;
+  /** oldest first, the latest 100 (after `since`); the page keeps its last 200 errors and warnings and last 200 other messages */
+  entries?: PageLogEntry[];
+  /** older entries after `since` left out of `entries` */
+  omitted?: number;
+  /** entries the page's buffers no longer hold */
+  dropped?: number;
+  /** `since` named an earlier document: `entries` start at this one's beginning */
+  reloaded?: true;
+  /** pass as `since` to read only what comes after */
+  cursor?: string;
+  /** milliseconds from navigation start (CLS unitless); null when not measured yet or not measured by WebKit (then named in `unsupported`), never a stand-in zero */
+  vitals?: {
+    lcp?: unknown;
+    cls?: unknown;
+    longTasks?: unknown;
+    fcp?: unknown;
+    ttfb?: unknown;
+    domContentLoaded?: unknown;
+    load?: unknown;
+    unsupported?: string[];
+  };
+};
+
 export type MentionTarget = {
   kind: "object";
   object: Id;
@@ -293,6 +346,12 @@ export type MentionTarget = {
   x: number;
   /** from its top edge */
   y: number;
+} | {
+  kind: "console";
+  object: Id;
+  /** the page's URL */
+  url: string;
+  entry: PageLogEntry;
 } | {
   kind: "note";
   object: Id;
@@ -503,10 +562,14 @@ export type BoardExportResult = {
 export type ObjectGetParams = {
   id: Id;
   as?: "raw" | "graph";
+  /** browser tiles: `page.cursor` from an earlier call; `page.entries` then holds only what the page reported after it (everything, with `reloaded: true`, when the page has loaded again since) */
+  since?: string;
 };
 export type ObjectGetResult = {
   object: CanvasObject;
   graph?: Record<string, unknown>;
+  /** browser tiles only */
+  page?: PageLog;
   /** terminals only: the last command the shell finished, as in `agent.list` */
   lastCommand?: TerminalCommand;
   /** changes tiles only */
@@ -997,7 +1060,7 @@ export interface CanvasApi {
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
   object: {
-    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. To look at an object, `view.render` it. */
+    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;

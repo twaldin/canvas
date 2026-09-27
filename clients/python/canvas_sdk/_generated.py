@@ -172,7 +172,33 @@ class CanvasObject(TypedDict):
     updatedAt: Required[str]
     props: Required[dict[str, Any]]
 
-MentionTarget = Union[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
+class PageLogEntry(TypedDict):
+    seq: Required[int]
+    time: Required[str]
+    kind: Required[Literal["console", "exception", "request"]]
+    level: Required[Literal["log", "info", "warn", "error", "debug"]]
+    text: Required[str]
+    source: NotRequired[str]
+    stack: NotRequired[str]
+    method: NotRequired[str]
+    url: NotRequired[str]
+    status: NotRequired[int]
+    resource: NotRequired[str]
+
+class PageLog(TypedDict):
+    """What a browser tile's page reported since it loaded. Main frame only; a new document (load, reload) starts over."""
+    loaded: Required[bool]
+    url: NotRequired[str]
+    errors: NotRequired[int]
+    warnings: NotRequired[int]
+    entries: NotRequired[list["PageLogEntry"]]
+    omitted: NotRequired[int]
+    dropped: NotRequired[int]
+    reloaded: NotRequired[Literal[true]]
+    cursor: NotRequired[str]
+    vitals: NotRequired[dict[str, Any]]
+
+MentionTarget = Union[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]
 
 class Mention(TypedDict):
     id: Required["Id"]
@@ -293,9 +319,9 @@ class ObjectApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def get(self, *, id: "Id", as_: Literal["raw", "graph"] | None = None) -> dict[str, Any]:
-        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. To look at an object, `view.render` it."""
-        params = {"id": id, "as": as_}
+    def get(self, *, id: "Id", as_: Literal["raw", "graph"] | None = None, since: str | None = None) -> dict[str, Any]:
+        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. To look at an object, `view.render` it."""
+        params = {"id": id, "as": as_, "since": since}
         return self._call("object.get", params, [])
 
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame", "SizeFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:

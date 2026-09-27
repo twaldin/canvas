@@ -1238,6 +1238,9 @@ final class CanvasView: NSScrollView {
             menu.addItem(MenuAction.item("Save as HTML…") { [weak self] in self?.saveHTML(id) })
             menu.addItem(MenuAction.item("Open in Browser") { [weak self] in self?.openHTMLInBrowser(id) })
         }
+        if count == 1, let browser = tiles[id]?.content as? BrowserTile {
+            menu.addItem(MenuAction.item("Inspect Element", enabled: browser.canShowInspector) { [weak browser] in browser?.showInspector() })
+        }
         menu.addItem(.separator())
         menu.addItem(MenuAction.item(count > 1 ? "Copy Object IDs" : "Copy Object ID") { [weak self] in self?.copyIDs() })
         return menu

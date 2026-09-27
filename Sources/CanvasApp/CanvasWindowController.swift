@@ -80,6 +80,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             switch target {
             case .allContent: self?.canvas.zoomToFit()
             case .object(let id): self?.canvas.go(to: id)
+            case .file(let path): self?.canvas.openForUser(.code, props: .object(["path": .string(path)]))
             }
         }
         nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
@@ -87,6 +88,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
+        canvas.onPromptTargetTitle = { [weak self] in self?.scheduleTrayTitle() }
         responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] window, _ in
             MainActor.assumeIsolated { self?.firstResponderChanged(window.firstResponder) }
         }
@@ -106,31 +108,52 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             settlePromptTarget()
             refreshTray()
             emptyHint.isHidden = !board.objects.isEmpty
-        case .objectUpdated(let object) where object.id == canvas.promptTarget: refreshTray()
+        case .objectUpdated(let object) where object.type == .terminal:
+            // An agent starting or exiting in a terminal can move the target.
+            settlePromptTarget()
+            if object.id == canvas.promptTarget { refreshTray() }
         default: break
         }
     }
 
     private func refreshTray() {
-        let title = canvas.promptTarget.flatMap { board.objects[$0] }.map(TileFrameView.title(for:))
+        trayTitleWork?.cancel()
+        trayTitleWork = nil
+        let title = canvas.promptTarget.flatMap { board.objects[$0] }.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
         tray.show(board.tray, targetTitle: title, hasTerminal: board.objects.values.contains { $0.type == .terminal })
     }
 
-    /// The terminal that last had keyboard focus; while none has (or it was closed), the board's
-    /// only terminal, so a lone agent never needs a click before mentions go to it.
-    private func settlePromptTarget() {
-        if let target = canvas.promptTarget, board.objects[target] != nil { return }
-        let terminals = board.objects.values.filter { $0.type == .terminal }
-        let sole = terminals.count == 1 ? terminals.first?.id : nil
-        if canvas.promptTarget != sole { canvas.promptTarget = sole }
+    private var trayTitleWork: DispatchWorkItem?
+
+    /// The target's shown title changed. An agent retitles its terminal many times a second (a
+    /// spinner), so the tray catches up at most once a second.
+    private func scheduleTrayTitle() {
+        guard trayTitleWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in self?.refreshTray() }
+        trayTitleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
     }
 
-    /// Keyboard focus inside a terminal tile makes it the prompt target and marks it seen.
+    /// Terminals in the order they last had keyboard focus, most recent last.
+    private var focusOrder: [ObjectID] = []
+
+    /// `PromptTarget`: the last focused terminal running an agent, else the last focused
+    /// terminal, else the board's only one, so a lone agent never needs a click and an editor
+    /// or shell opened beside an agent doesn't take its mentions.
+    private func settlePromptTarget() {
+        focusOrder.removeAll { board.objects[$0] == nil }
+        let target = PromptTarget.choose(focusOrder: focusOrder, objects: board.objects)
+        if canvas.promptTarget != target { canvas.promptTarget = target }
+    }
+
+    /// Keyboard focus inside a terminal tile counts for the prompt target and marks it seen.
     private func firstResponderChanged(_ responder: NSResponder?) {
         var view = responder as? NSView
         while let current = view {
             if let terminal = current as? TerminalTile {
-                if canvas.promptTarget != terminal.objectID { canvas.promptTarget = terminal.objectID }
+                focusOrder.removeAll { $0 == terminal.objectID }
+                focusOrder.append(terminal.objectID)
+                settlePromptTarget()
                 board.markSeen(terminal.objectID)
                 canvas.terminalFocused(terminal.objectID)
                 return
@@ -184,7 +207,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         panel.canChooseDirectories = false
         panel.beginSheetModal(for: window) { [weak self, panel] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            self.board.create(type: .code, props: .object(["path": .string(self.board.relativePath(url.path))]))
+            self.canvas.openForUser(.code, props: .object(["path": .string(self.board.relativePath(url.path))]))
         }
     }
 
@@ -193,19 +216,43 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func zoomOut(_ sender: Any?) {
-        canvas.zoom(to: canvas.magnification / 2)
+        canvas.zoomStep(in: false)
     }
 
     @objc func zoomIn(_ sender: Any?) {
-        canvas.zoom(to: canvas.magnification * 2)
+        canvas.zoomStep(in: true)
     }
 
-    /// Go to… opens (or closes) the navigator over this board.
+    /// Go to… opens (or closes) the navigator over this board. The board root's files are
+    /// re-listed on every open; the list shown meanwhile is the previous one.
     @objc func toggleNavigator(_ sender: Any?) {
         if navigator.isOpen {
             navigator.close()
         } else {
-            navigator.open(rows: canvas.navigatorRows())
+            navigator.open(rows: canvas.navigatorRows(), files: files)
+            listFiles()
+        }
+    }
+
+    private var files = FileIndex(paths: [])
+    private var fileListing: Task<Void, Never>?
+    /// Paths past this are left out of Go to (a monorepo's generated trees).
+    nonisolated static let maxListedFiles = 200_000
+
+    /// The board root's files for Go to: tracked plus untracked files git doesn't ignore.
+    private func listFiles() {
+        fileListing?.cancel()
+        let root = board.root
+        fileListing = Task { [weak self] in
+            guard let data = try? await GitRunner.shared.run(["ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z"],
+                                                                in: root, maxOutput: 64 << 20, timeout: 10),
+                  !Task.isCancelled else { return }
+            let index = await offPool {
+                FileIndex(paths: data.split(separator: 0).prefix(Self.maxListedFiles).map { String(decoding: $0, as: UTF8.self) })
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.files = index
+            self.navigator.update(files: index)
         }
     }
 
@@ -276,19 +323,49 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         default: return nil
         }
     }
-}
 
-/// A board window. Canvas navigation shortcuts reach the canvas before the focused view: the
-/// window gets key equivalents ahead of its views and the main menu (AppKit's order for a real
-/// key press), and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings
-/// (font size, tabs) and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A, typing)
-/// stays with the focused view.
-final class CanvasWindow: NSWindow {
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if let controller = windowController as? CanvasWindowController, let action = CanvasWindowController.navigationAction(for: event) {
-            controller.perform(action, with: self)
+    /// ⌥⌘-arrow, by key code (the characters an arrow reports vary with modifiers). Ghostty's
+    /// ⌥⌘-arrow (go to split) has no splits to go to here, and shells never see ⌘.
+    static func tileHeading(for event: NSEvent) -> Layout.Heading? {
+        guard event.type == .keyDown, event.modifierFlags.intersection([.command, .shift, .option, .control]) == [.command, .option] else { return nil }
+        switch event.keyCode {
+        case 123: return .left
+        case 124: return .right
+        case 125: return .down
+        case 126: return .up
+        default: return nil
+        }
+    }
+
+    /// Board shortcuts taken ahead of the focused view (see `CanvasWindow`). ⌘W closes the
+    /// selection or the focused terminal and, with neither, goes on to the window's own close;
+    /// ⌘F finds in a code tile and otherwise stays with the terminal or page.
+    func handleKeyEquivalent(_ event: NSEvent) -> Bool {
+        if let action = Self.navigationAction(for: event) {
+            perform(action, with: self)
             return true
         }
+        if let heading = Self.tileHeading(for: event) {
+            canvas.moveToNeighbor(heading)
+            return true
+        }
+        guard event.type == .keyDown, event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command, window?.attachedSheet == nil else { return false }
+        switch event.charactersIgnoringModifiers {
+        case "w": return canvas.closeSelectionOrFocused()
+        case "f": return canvas.findInCodeTile()
+        default: return false
+        }
+    }
+}
+
+/// A board window. Canvas shortcuts reach the canvas before the focused view: the window gets
+/// key equivalents ahead of its views and the main menu (AppKit's order for a real key press),
+/// and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings (font size,
+/// tabs), ⌘W as close surface, and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A,
+/// typing) stays with the focused view.
+final class CanvasWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let controller = windowController as? CanvasWindowController, controller.handleKeyEquivalent(event) { return true }
         return super.performKeyEquivalent(with: event)
     }
 }

@@ -554,6 +554,8 @@ export type ObjectCreateResult = {
   reused?: true;
   /** present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway */
   warnings?: string[];
+  /** `size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids */
+  overlaps?: Id[];
 };
 
 export type ObjectUpdateParams = {
@@ -570,6 +572,8 @@ export type ObjectUpdateResult = {
   object: CanvasObject;
   /** present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway */
   warnings?: string[];
+  /** `size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids */
+  overlaps?: Id[];
 };
 
 export type ObjectDeleteParams = {
@@ -693,6 +697,10 @@ export type LayoutCheckResult = {
   }[];
   labelOverlaps: {
     arrow: Id;
+    /** the caption as drawn */
+    label: string;
+    /** where the label chip is drawn (an arrow's own frame leaves it out) */
+    frame: Frame;
     /** objects under the label; an arrow id means that arrow's label */
     overlaps: Id[];
   }[];
@@ -884,8 +892,8 @@ export type ViewRenderParams = {
   scale?: number;
   /** id targets: render the whole content, not just the part inside the frame */
   full?: boolean;
-  /** object types to leave out (e.g. ["terminal"]) */
-  exclude?: ObjectType[];
+  /** object types and/or object ids to leave out (e.g. ["terminal", "obj_…"]); a group id takes its members with it; targets are always drawn */
+  exclude?: unknown[];
   /** canvas points added around the target */
   padding?: number;
   /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/canvas-renders/ (out of the repo) */
@@ -962,7 +970,7 @@ export interface CanvasApi {
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
-    /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w: after changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
+    /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;

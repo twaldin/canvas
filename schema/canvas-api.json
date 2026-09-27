@@ -634,10 +634,10 @@
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "reused": { "const": true, "description": "a changes tile: the caller's existing tile for the same root, base, and paths came back (updated) instead of a new one" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "reused": { "const": true, "description": "a changes tile: the caller's existing tile for the same root, base, and paths came back (updated) instead of a new one" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "`size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids" } } }
     },
     "object.update": {
-      "description": "Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w: after changing an html tile's `html` or a note's `markdown`, pass `size: \"fit\"` in the same update to refit its height to the new content.",
+      "description": "Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: \"fit\"` in the same update to refit its height to the new content.",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -651,7 +651,7 @@
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "`size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids" } } }
     },
     "object.delete": {
       "description": "Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached.",
@@ -814,7 +814,7 @@
           },
           "labelOverlaps": {
             "type": "array",
-            "items": { "type": "object", "required": ["arrow", "overlaps"], "properties": { "arrow": { "$ref": "#/definitions/Id" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "objects under the label; an arrow id means that arrow's label" } }, "additionalProperties": false }
+            "items": { "type": "object", "required": ["arrow", "label", "frame", "overlaps"], "properties": { "arrow": { "$ref": "#/definitions/Id" }, "label": { "type": "string", "description": "the caption as drawn" }, "frame": { "$ref": "#/definitions/Frame", "description": "where the label chip is drawn (an arrow's own frame leaves it out)" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "objects under the label; an arrow id means that arrow's label" } }, "additionalProperties": false }
           },
           "overflow": {
             "type": "array",
@@ -1058,7 +1058,7 @@
           "target": { "oneOf": [{ "$ref": "#/definitions/Id" }, { "type": "array", "items": { "$ref": "#/definitions/Id" } }, { "$ref": "#/definitions/Frame" }] },
           "scale": { "type": "number", "minimum": 0.1, "maximum": 4, "default": 1, "description": "pixels per canvas point; lowered to keep the image under 32 megapixels (the result says what was used)" },
           "full": { "type": "boolean", "default": false, "description": "id targets: render the whole content, not just the part inside the frame" },
-          "exclude": { "type": "array", "items": { "$ref": "#/definitions/ObjectType" }, "description": "object types to leave out (e.g. [\"terminal\"])" },
+          "exclude": { "type": "array", "items": { "anyOf": [{ "$ref": "#/definitions/ObjectType" }, { "$ref": "#/definitions/Id" }] }, "description": "object types and/or object ids to leave out (e.g. [\"terminal\", \"obj_…\"]); a group id takes its members with it; targets are always drawn" },
           "padding": { "type": "number", "default": 0, "description": "canvas points added around the target" },
           "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/canvas-renders/ (out of the repo)" },
           "format": { "enum": ["png", "jpeg"], "default": "png", "description": "format of the temporary file when no `out` is given" },

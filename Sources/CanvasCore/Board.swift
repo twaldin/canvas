@@ -481,13 +481,35 @@ public final class Board {
         freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false, minimum: nil)
     }
 
+    /// Where `id` goes when `size: "fit"` resizes it to `size` without a given origin: grown from
+    /// its top-left corner when that covers nothing it didn't already; else grown from another
+    /// corner (`Layout.refit`: left, up, or both); else moved to the free slot nearest that
+    /// top-left-grown frame (`place(_:)`'s rule, in view first, its own groups aside) among those
+    /// no farther than its longer side; else grown from the top-left anyway (`overlaps(of:)`
+    /// says onto what).
+    public func refitFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
+        let current = try object(id).frame
+        let grown = Frame(x: current.x, y: current.y, w: size.width, h: size.height)
+        let containers = Set(objects.values.filter { $0.type == .group && BoardGeometry.leafMembers(of: $0.id, in: objects).contains(id) }.map(\.id))
+        let neighbours = objects.values.filter { $0.id != id && !containers.contains($0.id) && BoardGeometry.countsForOverlaps($0) }.map(\.frame)
+        if let corner = Layout.refit(current, to: size, clearOf: neighbours) { return corner }
+        return freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: containers.union([id]), within: max(grown.w, grown.h))
+    }
+
+    /// The objects `id` overlaps by accident, by `layout.check`'s `overlaps` rule.
+    public func overlaps(of id: ObjectID) -> [ObjectID] {
+        BoardGeometry(objects: objects, labelSizes: [:]).overlaps(scope: [id]).flatMap { $0 }.filter { $0 != id }
+    }
+
     /// `beside`: the slot goes next to `anchor` (an object), nearest by the gap between them, then
     /// by side in `order`; otherwise it replaces `anchor`, nearest by origin. `minimum`: a slot
     /// partly in view may be cut down to its part in view when that is at least this big.
+    /// `ignoring`: objects that don't block (one being moved, and its groups). `within`: only
+    /// slots whose origin is at most that far from `anchor`'s count; with none, `anchor` itself.
     private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool, minimum: (w: Double, h: Double)?,
-                          order: [Layout.Side] = [.right, .below, .left, .above]) -> Frame {
+                          order: [Layout.Side] = [.right, .below, .left, .above], ignoring: Set<ObjectID> = [], within: Double? = nil) -> Frame {
         let gap = Self.placementGap
-        let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape }
+        let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape && !ignoring.contains($0.id) }
             .map { Frame(x: $0.frame.x - gap, y: $0.frame.y - gap, w: $0.frame.w + 2 * gap, h: $0.frame.h + 2 * gap) }
         let screen = viewport().flatMap { view in
             view.intersects(anchor) && view.w > 2 * gap && view.h > 2 * gap ? Frame(x: view.x + gap, y: view.y + gap, w: view.w - 2 * gap, h: view.h - 2 * gap) : nil
@@ -536,6 +558,7 @@ public final class Board {
         }
         var best: (slot: Frame, cost: Cost)?
         func consider(_ slot: Frame, cut: Bool) {
+            if let within, hypot(slot.x - anchor.x, slot.y - anchor.y) > within { return }
             let slotCost = cost(slot, cut: cut)
             if let best, !(slotCost < best.cost) { return }
             if blocked.contains(where: { $0.intersects(slot) }) { return }
@@ -548,7 +571,7 @@ public final class Board {
                 if let smaller = cut(slot) { consider(smaller, cut: true) }
             }
         }
-        // Unreachable: right of the rightmost blocker is always free.
+        // Unreachable without `within`: right of the rightmost blocker is always free.
         return best?.slot ?? Frame(x: anchor.x.rounded(), y: anchor.y.rounded(), w: w, h: h)
     }
 

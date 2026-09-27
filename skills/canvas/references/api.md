@@ -72,6 +72,8 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   Images: the picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip. Browser tiles are `unsupported`.
 - `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note, text, or an HTML page, or to cap a code tile's or image's width);
   an update re-measures at the object's current position and width (code and images: at `frame.w` or the 960 pt default, never their current width, so a re-fit can widen them).
+  An update without `frame.x`/`y` doesn't grow over what it didn't already cover: it grows up or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its own longer side, else grows in place.
+  A fitted result (create, update, or batch op) has `overlaps`, the ids it now covers, when there are any: move it or them.
   After changing an HTML tile's `html` or a note's `markdown`, refit it in the same call: `canvas.object.update(id=tile, props={"html": page}, size="fit")` (the tile doesn't grow by itself).
   `object.measure` takes `width`, not `frame`.
 - `canvas.layout.place(id=a, near=b, side="right", gap=40, align="start")` (`side`: right, left, above, below; `align`: start, center, end)
@@ -96,10 +98,11 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   ```
 - `canvas.layout.check(ids=[…])`, `canvas.layout.check(rect={"x": 0, "y": 0, "w": 4000, "h": 3000})`, or the whole board with neither → `overlaps` (pairs),
   `arrowCrossings` (`{arrow, crosses}`: routes through tiles, text, or filled shapes other than the arrow's own ends),
-  `labelOverlaps` (`{arrow, overlaps}`: the arrow's label, placed as drawn, lies on these tiles, text, or filled shapes, its own ends included, or on these arrows' labels; widen the gap or shorten the label),
+  `labelOverlaps` (`{arrow, label, frame, overlaps}`: the arrow's label text, placed as drawn at `frame` (an arrow's own frame leaves its label out), lies on these tiles, text, or filled shapes, its own ends included, or on these arrows' labels; widen the gap, shorten the label, or move the tile),
   `overflow` (`{id, x, y}`: points of code/note/text/HTML content beyond the frame; for code, its range's rows and longest line; for HTML, its page laid out at the frame's width),
   `truncated` (`{id, what: "caption", x}`: a code caption the frame cuts off, `x` points short).
   A group and its members, and an unfilled rect around what it contains, are not overlaps. Follow tiles are fixed-size viewers and never overflow or truncate.
+  With `ids` or `rect`, arrows through the checked objects and labels on them count too, whichever arrow it is: check a new tile by its id to find labels it covers.
   It judges what is drawn (whole tile frames, routes and line-bound ends as drawn), so an empty report means a clean picture. Run it after a layout pass instead of screenshots.
 - Groups are regions: `{"members": [...], "title": "…", "color": "blue", "padding": 24}`. The frame is always the members' bounds plus padding and a 32 pt title band, updated as members move;
   it is what `encloses` uses. One group per lane replaces a rect + title text + group.

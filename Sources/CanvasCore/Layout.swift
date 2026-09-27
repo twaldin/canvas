@@ -356,6 +356,23 @@ public enum Layout {
     }
 }
 
+extension Layout {
+    /// Where an object refitted from `current` to `size` goes without covering anything new:
+    /// grown from its top-left corner (the usual refit), else from its top-right, bottom-left, or
+    /// bottom-right corner (growing left, up, or both), the first that overlaps none of
+    /// `neighbours` that `current` didn't already overlap. Nil when every corner does.
+    public static func refit(_ current: Frame, to size: CGSize, clearOf neighbours: [Frame]) -> Frame? {
+        let fresh = neighbours.filter { !$0.intersects(current) }
+        let left = current.x, right = current.maxX - size.width
+        let top = current.y, bottom = current.maxY - size.height
+        for (x, y) in [(left, top), (right, top), (left, bottom), (right, bottom)] {
+            let frame = Frame(x: x, y: y, w: size.width, h: size.height)
+            if !fresh.contains(where: { $0.intersects(frame) }) { return frame }
+        }
+        return nil
+    }
+}
+
 /// ⌥⌘-arrow moves between tiles, reversible: the opposite arrow right after a move goes back to
 /// the tile it came from (up then down returns, even when another tile is the nearer one below),
 /// and a run of moves unwinds the same way. Any other start (a click, Go to, nothing selected)
@@ -563,25 +580,30 @@ extension BoardGeometry {
 
     public struct LabelOverlap: Equatable, Sendable {
         public var arrow: ObjectID
+        /// The caption as drawn (`label`, else `relation`).
+        public var label: String
+        /// Where the label chip is drawn; an arrow's own `frame` doesn't include it.
+        public var frame: Frame
         /// Objects under the label; an arrow id means that arrow's label.
         public var overlaps: [ObjectID]
     }
 
-    /// Overlaps, arrow crossings, and label overlaps involving `scope` (every object when nil).
-    /// Not overlaps: a group and its (nested) members, and anything with an unfilled rect or
-    /// ellipse (an annotation drawn over or around things, like ink). Arrow routes and labels
-    /// are computed as drawn (parallel offsets, `avoid`, line-bound ends with `rows`, labels
-    /// placed by `labelRect`); an arrow never crosses its own ends or what contains them.
-    public func layoutCheck(scope: Set<ObjectID>? = nil, rows: [ObjectID: CodeRows] = [:]) -> LayoutReport {
-        let solid = objects.values.filter { object in
-            switch object.type {
-            case .arrow: return false
-            case .shape:
-                guard let spec = ShapeSpec(object.props) else { return true }
-                return spec.kind != .ink && !((spec.kind == .rect || spec.kind == .ellipse) && spec.fill == .none)
-            default: return true
-            }
-        }.sorted { $0.id < $1.id }
+    /// Whether an object can overlap others by accident: not arrows, ink, or unfilled rects and
+    /// ellipses (annotations drawn over or around things).
+    public static func countsForOverlaps(_ object: CanvasObject) -> Bool {
+        switch object.type {
+        case .arrow: return false
+        case .shape:
+            guard let spec = ShapeSpec(object.props) else { return true }
+            return spec.kind != .ink && !((spec.kind == .rect || spec.kind == .ellipse) && spec.fill == .none)
+        default: return true
+        }
+    }
+
+    /// Pairs (sorted ids) of objects that overlap by accident, involving `scope` (every object
+    /// when nil): `countsForOverlaps` objects, a group and its (nested) members never.
+    public func overlaps(scope: Set<ObjectID>? = nil) -> [[ObjectID]] {
+        let solid = objects.values.filter(Self.countsForOverlaps).sorted { $0.id < $1.id }
         var groupMembers: [ObjectID: Set<ObjectID>] = [:]
         func members(of group: CanvasObject) -> Set<ObjectID> {
             if let cached = groupMembers[group.id] { return cached }
@@ -605,10 +627,25 @@ extension BoardGeometry {
                 overlaps.append([a.id, b.id])
             }
         }
+        return overlaps
+    }
+
+    /// Overlaps, arrow crossings, and label overlaps involving `scope` (every object when nil):
+    /// an arrow crossing or a label lying on a scoped object is reported whether or not the
+    /// arrow is in scope, so checking a new tile finds the labels it covers.
+    /// Not overlaps: a group and its (nested) members, and anything with an unfilled rect or
+    /// ellipse (an annotation drawn over or around things, like ink). Arrow routes and labels
+    /// are computed as drawn (parallel offsets, `avoid`, line-bound ends with `rows`, labels
+    /// placed by `labelRect`); an arrow never crosses its own ends or what contains them.
+    public func layoutCheck(scope: Set<ObjectID>? = nil, rows: [ObjectID: CodeRows] = [:]) -> LayoutReport {
+        func involved(_ arrow: ObjectID, _ others: [ObjectID]) -> Bool {
+            scope == nil || scope!.contains(arrow) || others.contains { scope!.contains($0) }
+        }
+        let overlaps = overlaps(scope: scope)
         let routes = routes(rows: rows)
         let blockers = objects.values.filter(Self.blocksRoutes).sorted { $0.id < $1.id }
         var crossings: [Crossing] = []
-        for (arrowID, path) in routes.sorted(by: { $0.key < $1.key }) where scope == nil || scope!.contains(arrowID) {
+        for (arrowID, path) in routes.sorted(by: { $0.key < $1.key }) {
             guard let spec = objects[arrowID].flatMap({ ArrowSpec($0.props) }) else { continue }
             var endRects: [CGRect] = []
             var endIDs: Set<ObjectID> = []
@@ -626,15 +663,16 @@ extension BoardGeometry {
                 guard !endIDs.contains(blocker.id), !endRects.contains(where: { $0.size == .zero ? rect.contains($0.origin) : rect.contains($0) }) else { return false }
                 return DrawingGeometry.path(path, crosses: rect)
             }.map(\.id)
-            if !crossed.isEmpty { crossings.append(Crossing(arrow: arrowID, crosses: crossed)) }
+            if !crossed.isEmpty, involved(arrowID, crossed) { crossings.append(Crossing(arrow: arrowID, crosses: crossed)) }
         }
         let labels = labelRects(routes: routes)
         var labelOverlaps: [LabelOverlap] = []
-        for (arrowID, label) in labels.sorted(by: { $0.key < $1.key }) where scope == nil || scope!.contains(arrowID) {
+        for (arrowID, label) in labels.sorted(by: { $0.key < $1.key }) {
             let inner = label.insetBy(dx: 0.5, dy: 0.5)
             let under = blockers.filter { $0.frame.rect.intersects(inner) }.map(\.id)
                 + labels.filter { $0.key != arrowID && $0.value.intersects(inner) }.map(\.key).sorted()
-            if !under.isEmpty { labelOverlaps.append(LabelOverlap(arrow: arrowID, overlaps: under)) }
+            guard !under.isEmpty, involved(arrowID, under), let spec = objects[arrowID].flatMap({ ArrowSpec($0.props) }) else { continue }
+            labelOverlaps.append(LabelOverlap(arrow: arrowID, label: spec.label ?? spec.relation ?? "", frame: Frame(label), overlaps: under))
         }
         return LayoutReport(overlaps: overlaps, crossings: crossings, labelOverlaps: labelOverlaps)
     }

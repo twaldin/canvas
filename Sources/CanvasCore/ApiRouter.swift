@@ -160,10 +160,13 @@ public final class ApiRouter {
             case "object.create", "object.update":
                 let params = try await anchored(method, params)
                 if method == "object.create", let reused = try reusableChanges(params) {
-                    let update = try fitted("object.update", reused, size: try await fitSize("object.update", reused))
-                    return Self.ok(id, try dispatch("object.update", update).merging(.object(["reused": .bool(true)])))
+                    let size = try await fitSize("object.update", reused)
+                    let result = try dispatch("object.update", try fitted("object.update", reused, size: size)).merging(.object(["reused": .bool(true)]))
+                    return Self.ok(id, size == nil ? result : withOverlaps(result))
                 }
-                return Self.ok(id, try dispatch(method, try fitted(method, params, size: try await fitSize(method, params))))
+                let size = try await fitSize(method, params)
+                let result = try dispatch(method, try fitted(method, params, size: size))
+                return Self.ok(id, size == nil ? result : withOverlaps(result))
             default: break
             }
             return Self.ok(id, try dispatch(method, params))
@@ -473,10 +476,7 @@ public final class ApiRouter {
         }
         let scale = p["scale"]?.number ?? 1
         guard (0.1...4).contains(scale) else { throw Failure("invalid_params", "scale must be between 0.1 and 4") }
-        let exclude = try Set((p["exclude"]?.array ?? []).map { value in
-            guard let type = value.string.flatMap(ObjectType.init(rawValue:)) else { throw Failure("invalid_params", "exclude takes object types, not \(value)") }
-            return type
-        })
+        let exclude = try RenderExclusion(p["exclude"]?.array ?? [], objects: board.objects)
         let timeout = min(max(p["timeoutMs"]?.int ?? 8000, 0), 60_000)
         let request = RenderRequest(target: target, scale: scale, full: p["full"]?.bool ?? false, exclude: exclude,
                                     padding: max(0, p["padding"]?.number ?? 0), timeout: .milliseconds(timeout))
@@ -935,14 +935,20 @@ public final class ApiRouter {
     }
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
-    /// current, or automatically placed) origin.
+    /// automatically placed) origin; an update that gives no origin re-fits clear of what it
+    /// didn't already cover (`Board.refitFrame`).
     func fitted(_ method: String, _ p: JSONValue, size: CGSize?) throws -> JSONValue {
         guard let size, var params = p.object else { return p }
         params.removeValue(forKey: "size")
         let origin: (x: Double, y: Double)
         if method == "object.update" {
             let id = try string(p, "id")
-            let current = try board(forObject: id).object(id).frame
+            let board = try board(forObject: id)
+            guard p["frame"]?["x"]?.number != nil || p["frame"]?["y"]?.number != nil else {
+                params["frame"] = try JSONValue.encode(try board.refitFrame(id, to: size))
+                return .object(params)
+            }
+            let current = try board.object(id).frame
             origin = (p["frame"]?["x"]?.number ?? current.x, p["frame"]?["y"]?.number ?? current.y)
         } else if let x = p["frame"]?["x"]?.number, let y = p["frame"]?["y"]?.number {
             origin = (x, y)
@@ -953,6 +959,14 @@ public final class ApiRouter {
         }
         params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
         return .object(params)
+    }
+
+    /// A fitted `object.create`/`object.update` result with `overlaps`, the objects the fitted
+    /// object now covers (`Board.overlaps(of:)`), when there are any.
+    func withOverlaps(_ result: JSONValue) -> JSONValue {
+        guard let id = result["object"]?["id"]?.string, let board = try? board(forObject: id) else { return result }
+        let covered = board.overlaps(of: id)
+        return covered.isEmpty ? result : result.merging(.object(["overlaps": .array(covered.map(JSONValue.string))]))
     }
 
     /// A `frame` param: all of x, y, w, h, or, onto `base` (an update's current frame), any of
@@ -1024,6 +1038,8 @@ public final class ApiRouter {
                 }
             }
         }
+        // Fitted objects report what they cover once the whole batch has laid them out.
+        for index in results.indices where sizes[index] != nil { results[index] = withOverlaps(results[index]) }
         return .object(["results": .array(results), "revision": .number(Double(board.revision))])
     }
 
@@ -1086,10 +1102,22 @@ public final class ApiRouter {
             }.map(\.id))
         }
         // Code tiles read from disk: those checked for fit, and those line-bound arrows attach to
-        // (their line count bounds the scroll their anchors assume).
+        // (their line count bounds the scroll their anchors assume): arrows in scope, and arrows
+        // whose route and label may lie on a scoped object (reported too).
+        let scoped = scope.map { ids in ids.compactMap { objects[$0]?.frame.rect } }
         var lineBound = Set<ObjectID>()
-        for object in objects.values where object.type == .arrow && (scope?.contains(object.id) ?? true) {
+        for object in objects.values where object.type == .arrow {
             guard let spec = ArrowSpec(object.props) else { continue }
+            if let scope, !scope.contains(object.id) {
+                let ends = [spec.from, spec.to].compactMap { binding -> CGRect? in
+                    switch binding {
+                    case .object(let id, _, _): objects[id]?.frame.rect
+                    case .point(let point): CGRect(origin: point, size: .zero)
+                    }
+                }
+                guard let reach = ends.dropFirst().reduce(ends.first, { $0?.union($1) })?.insetBy(dx: -300, dy: -300),
+                      scoped?.contains(where: { $0.intersects(reach) }) == true else { continue }
+            }
             for case .object(let id, .some, _) in [spec.from, spec.to] { lineBound.insert(id) }
         }
         let read = objects.values.filter { $0.type == .code && ((scope?.contains($0.id) ?? true) || lineBound.contains($0.id)) }
@@ -1162,7 +1190,13 @@ public final class ApiRouter {
         return .object([
             "overlaps": .array(report.overlaps.map { .array($0.map(JSONValue.string)) }),
             "arrowCrossings": .array(report.crossings.map { .object(["arrow": .string($0.arrow), "crosses": .array($0.crosses.map(JSONValue.string))]) }),
-            "labelOverlaps": .array(report.labelOverlaps.map { .object(["arrow": .string($0.arrow), "overlaps": .array($0.overlaps.map(JSONValue.string))]) }),
+            "labelOverlaps": .array(report.labelOverlaps.map { overlap in
+                let frame = overlap.frame
+                return .object(["arrow": .string(overlap.arrow), "label": .string(overlap.label),
+                                "frame": .object(["x": .number(frame.x.rounded(.down)), "y": .number(frame.y.rounded(.down)),
+                                                  "w": .number(frame.w.rounded(.up)), "h": .number(frame.h.rounded(.up))]),
+                                "overlaps": .array(overlap.overlaps.map(JSONValue.string))])
+            }),
             "overflow": .array(overflow),
             "truncated": .array(truncated),
         ])

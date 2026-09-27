@@ -20,7 +20,8 @@ and `objects` lists every object drawn with its `pixelRect`
   For code it is the range (its rows, wrapped at the tile's width, and longest line under the header), not the whole file: what `size: "fit"` shows.
 
 Terminals are drawn from their session text in the terminal's font and colors.
-App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn; leave out object types with `exclude`.
+App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn.
+`exclude` leaves objects out: types (`["terminal"]`), ids (`["obj_…"]`, e.g. a tile to see what lies under it; a group's id takes its members with it), or both mixed. Targets are always drawn.
 
 **`view.snapshot`** is the window as the user sees it now, toolbar and all.
 Its result includes `viewport {rect, zoom}`, `scale`, and visible `objects` with `pixelRect`s, so you never need pixel math against a known tile.

@@ -94,9 +94,10 @@ public final class ApiRouter {
     /// rows joined when the tile knows its width), read and trimmed off the main actor; nil when
     /// the session doesn't exist.
     public var readTerminal: ((Board, ObjectID, _ lines: Int) async -> TerminalTail.Tail?)?
-    /// A terminal tile's last command block (`agent.read` `block: "last"`): what ran and its
-    /// output, from Ghostty's prompt marks; throws `Failure` when there's none to read.
-    public var readTerminalBlock: ((Board, ObjectID) async throws -> (command: TerminalCommand, output: String))?
+    /// A terminal tile's command block (`agent.read` `block`: -1 the last command the shell
+    /// finished, -2 the one before): what ran and its output, from Ghostty's prompt marks and
+    /// the terminal's command log; throws `Failure` when there's none to read.
+    public var readTerminalBlock: ((Board, ObjectID, _ index: Int) async throws -> (command: TerminalCommand, output: String))?
     /// A terminal tile's live title (OSC 0/2), foreground program (`TerminalName.program`) and
     /// last finished command, as its tile knows them now; nil without the app UI.
     public var terminalStatus: ((Board, ObjectID) -> TerminalStatus)?
@@ -363,21 +364,29 @@ public final class ApiRouter {
     }
 
     /// `agent.read`: the tail of the session text, or with `since: "prompt"` what the terminal
-    /// printed after the last `agent.prompt` to it, with `block: "last"` the output of the last
-    /// command its shell finished, or with `final` its agent's last answer as its integration
-    /// reported it. The read runs off the main actor (it spawns
+    /// printed after the last `agent.prompt` to it, with `block` the output of a command its
+    /// shell finished (`"last"` or -1, -2 the one before), or with `final` its agent's last
+    /// answer as its integration reported it. The read runs off the main actor (it spawns
     /// `zmx history`), and the reply stays in order because each connection is served serially.
     private func read(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"))
         if p["final"]?.bool == true { return try finalAnswer(of: terminal, on: board, p) }
         let since = p["since"]?.string
         guard since == nil || since == "prompt" else { throw Failure("invalid_params", "since must be \"prompt\"") }
-        let block = p["block"]?.string
-        guard block == nil || block == "last" else { throw Failure("invalid_params", "block must be \"last\"") }
-        guard block == nil || since == nil else { throw Failure("invalid_params", "since and block don't combine: block reads the last command's output, since the reply to the last agent.prompt") }
+        var block: Int?
+        if let value = p["block"], value != .null {
+            if value.string == "last" {
+                block = -1
+            } else if let number = value.number, number <= -1, number == number.rounded(), number >= -Double(TerminalCommandLog.capacity) {
+                block = Int(number)
+            } else {
+                throw Failure("invalid_params", "block must be \"last\" or a whole number from -1 (the last command) to -\(TerminalCommandLog.capacity): -2 is the one before the last")
+            }
+        }
+        guard block == nil || since == nil else { throw Failure("invalid_params", "since and block don't combine: block reads a command's output, since the reply to the last agent.prompt") }
         let requested = p["lines"]?.int ?? (since == nil && block == nil ? Self.readLinesDefault : Self.readLinesMax)
         guard requested >= 1 else { throw Failure("invalid_params", "lines must be at least 1") }
-        if block != nil { return try await readBlock(board, terminal, lines: min(requested, Self.readLinesMax)) }
+        if let block { return try await readBlock(board, terminal, block, lines: min(requested, Self.readLinesMax)) }
         guard let readTerminal else { throw Failure("unsupported", "reading terminals needs the app UI") }
         var mark: TerminalTail.Tail?
         if since != nil {
@@ -406,11 +415,11 @@ public final class ApiRouter {
         return .object(result)
     }
 
-    /// `agent.read` `block: "last"`: the last finished command's output (its last `lines` lines)
-    /// with what ran, its exit status and duration.
-    private func readBlock(_ board: Board, _ terminal: CanvasObject, lines limit: Int) async throws -> JSONValue {
+    /// `agent.read` `block`: a finished command's output (its last `lines` lines) with what ran,
+    /// its exit status and duration.
+    private func readBlock(_ board: Board, _ terminal: CanvasObject, _ index: Int, lines limit: Int) async throws -> JSONValue {
         guard let readTerminalBlock else { throw Failure("unsupported", "reading terminals needs the app UI") }
-        let block = try await readTerminalBlock(board, terminal.id)
+        let block = try await readTerminalBlock(board, terminal.id, index)
         let output = TerminalExcerpt.lines(block.output)
         let shown = output.suffix(limit)
         var result: [String: JSONValue] = [

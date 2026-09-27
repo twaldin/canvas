@@ -855,19 +855,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             var modifiers: GhosttyConfig.Modifiers = []
             let mask = item.keyEquivalentModifierMask
             if mask.contains(.command) { modifiers.insert(.command) }
-            if mask.contains(.shift) || item.keyEquivalent != item.keyEquivalent.lowercased() { modifiers.insert(.shift) }
+            if mask.contains(.shift) { modifiers.insert(.shift) }
             if mask.contains(.option) { modifiers.insert(.option) }
             if mask.contains(.control) { modifiers.insert(.control) }
-            // A shifted symbol ("{" for ⇧⌘[) is its key with Shift, as Ghostty names chords.
-            let key = Self.unshiftedSymbols[item.keyEquivalent] ?? item.keyEquivalent.lowercased()
-            if Self.unshiftedSymbols[item.keyEquivalent] != nil { modifiers.insert(.shift) }
-            if chord == .init(modifiers, key) { return item }
+            if chord == GhosttyConfig.KeyChord(menuKey: item.keyEquivalent, modifiers: modifiers) { return item }
         }
         return nil
     }
-
-    /// US-layout shifted symbols menu items use as keys, and the keys that type them.
-    private static let unshiftedSymbols: [String: String] = ["{": "[", "}": "]", "+": "=", "_": "-", "|": "\\", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`"]
 
     /// Board shortcuts taken ahead of the focused view (see `CanvasWindow`). ⌘W closes the
     /// selection or the focused terminal and, with neither, goes on to the window's own close;

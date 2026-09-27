@@ -72,11 +72,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else { return nil }
             return await terminal.tmuxPane()
         }
-        router.readTerminalBlock = { [weak self] board, tile in
+        router.readTerminalBlock = { [weak self] board, tile, index in
             guard let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile else {
                 throw ApiRouter.Failure("unavailable", "terminal \(tile) isn't shown in a window")
             }
-            return try terminal.lastBlock()
+            return try terminal.block(index)
         }
         router.readPageLog = { [weak self] board, tile in
             guard let browser = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? BrowserTile else { return nil }
@@ -100,13 +100,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.open(root: root, select: select) ?? registry.open(root: root)
         }
         router.readTerminal = { [weak self] board, tile, lines in
-            // Rows the terminal soft-wrapped join when its tile knows its width.
-            let columns = (self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile)?.columns
+            // Rows the terminal soft-wrapped join when its tile knows its width; the live
+            // screen's by Ghostty's own wrap flags.
+            let terminal = self?.controllers[board.id]?.canvas.tiles[tile]?.content as? TerminalTile
+            let columns = terminal?.columns, screen = terminal?.screenRows() ?? []
             // A blocking subprocess read: keep it on GCD so it can't park Swift's cooperative
             // threads, which the socket servers' request tasks need.
             return await withCheckedContinuation { continuation in
                 DispatchQueue.global(qos: .userInitiated).async {
-                    continuation.resume(returning: TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines, columns: columns))
+                    continuation.resume(returning: TerminalTile.history(session: TerminalTile.sessionName(tile), lines: lines, columns: columns, screen: screen))
                 }
             }
         }

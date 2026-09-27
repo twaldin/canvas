@@ -167,8 +167,9 @@ final class TerminalTile: NSView, TileContent {
     /// The last `limit` lines of the session's text; nil when zmx is missing or the session
     /// doesn't exist. Streams zmx's output through a bounded tail (never the whole scrollback)
     /// and blocks until zmx exits, so call it off the main actor when it isn't for drawing.
-    /// `columns`: the terminal's width, so rows it soft-wrapped read as one line.
-    nonisolated static func history(session: String, lines limit: Int, columns: Int? = nil) -> TerminalTail.Tail? {
+    /// `columns`: the terminal's width, so rows it soft-wrapped read as one line; `screen`: the
+    /// live screen as Ghostty reads it (`screenRows`), whose rows join by Ghostty's wrap flags.
+    nonisolated static func history(session: String, lines limit: Int, columns: Int? = nil, screen: [TerminalTail.ScreenRow] = []) -> TerminalTail.Tail? {
         guard let zmx = AppPaths.zmx else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: zmx)
@@ -178,7 +179,7 @@ final class TerminalTile: NSView, TileContent {
         process.standardError = FileHandle.nullDevice
         guard (try? process.run()) != nil else { return nil }
         // Drain while zmx writes: it blocks once the pipe buffer fills, so waiting first would deadlock.
-        var tail = TerminalTail(limit: limit, columns: columns)
+        var tail = TerminalTail(limit: limit, columns: columns, screen: screen)
         let reader = output.fileHandleForReading
         while let chunk = try? reader.read(upToCount: 64 * 1024), !chunk.isEmpty {
             tail.append(chunk)
@@ -345,8 +346,11 @@ final class TerminalTile: NSView, TileContent {
 
     /// What the shell is running, from the titles Ghostty's shell integration sets.
     fileprivate var commands = TerminalCommandTracker()
-    /// The last command the shell finished (Ghostty's shell integration: OSC 133 D), and when.
-    private(set) var lastCommand: (command: TerminalCommand, finishedAt: Date)?
+    /// The commands the shell finished since Canvas attached (Ghostty's shell integration: OSC
+    /// 133 D), which name their blocks in the terminal's text (`TerminalCommandLog`).
+    private(set) var log = TerminalCommandLog()
+    /// The last command the shell finished, and when.
+    var lastCommand: (command: TerminalCommand, finishedAt: Date)? { log.last.map { ($0.command, $0.finishedAt) } }
 
     /// A command finished: the header shows its exit status or duration when it failed or ran
     /// long, and one that ran `noticeAfterMs` or more raises a marker (the bell's rules: not
@@ -359,7 +363,7 @@ final class TerminalTile: NSView, TileContent {
         let lifecycle = board.objects[objectID]?.props["lifecycle"]?["state"]?.string
         let reporting = lifecycle != nil && lifecycle != LifecycleState.unknown.rawValue
         guard let command = commands.finished(exit: exit, durationNanos: durationNanos, at: Date(), shellAtPrompt: atPrompt, agentReporting: reporting) else { return }
-        lastCommand = (command, Date())
+        log.append(command, at: Date())
         let detail = ([command.command ?? "The last command"] + [command.exit.map { "exit \($0)" }, command.durationMs.map(TerminalCommand.duration)].compactMap { $0 })
             .joined(separator: " · ")
         onStatus?(command.status, (command.exit ?? 0) != 0, detail)
@@ -378,9 +382,10 @@ final class TerminalTile: NSView, TileContent {
         return .object(objectID)
     }
 
-    /// A Hyper-click: the selection; else, inside a command's output that Ghostty's shell
-    /// integration marked, that command's block; else the screen rows around the click. Outside
-    /// the text (the title bar, the padding): the whole terminal.
+    /// A Hyper-click: the selection; else, inside a finished command's output that Ghostty's
+    /// shell integration marked, that command's block; else the screen rows around the click
+    /// (also in the output of the program still running: an agent TUI's whole session is no
+    /// block to hand over). Outside the text (the title bar, the padding): the whole terminal.
     func resolveMention(at point: NSPoint) async -> MentionTarget? {
         if let text = surface?.readSelection(), !text.isEmpty {
             return .terminal(object: objectID, text: text)
@@ -400,7 +405,7 @@ final class TerminalTile: NSView, TileContent {
     func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
         if let text = surface?.readSelection(), !text.isEmpty { return .terminal(object: objectID, text: text) }
         refreshProgram()
-        guard hasKeyboard, shell != nil, program == nil, let block = try? lastBlock(), !block.output.isEmpty else { return nil }
+        guard hasKeyboard, shell != nil, program == nil, let block = selectedLastBlock(), !block.output.isEmpty else { return nil }
         return .terminal(object: objectID, text: block.output, part: .command, command: block.command)
     }
 
@@ -420,21 +425,43 @@ final class TerminalTile: NSView, TileContent {
         return (row, column)
     }
 
-    /// The command block whose output covers viewport cell (`row`, `column`): its output, and
-    /// what ran (`TerminalBlocks.command`: the shell's last command with exit status and
-    /// duration when this is its block, else the prompt row above the output). Nil without
-    /// Ghostty's prompt marks there.
+    /// The finished command block whose output covers viewport cell (`row`, `column`): its
+    /// output, as Ghostty selects it, and what ran. The terminal's command log names it by the
+    /// clicked line in the terminal's text (`TerminalCommandLog.block(holding:)`: what ran, its
+    /// exit status and duration, also when its prompt row scrolled away or `clear` wiped it),
+    /// when the output below that command's line is the one selected; else, for a block older
+    /// than the log, the shell's last command when the output ends just above the prompt, else
+    /// the prompt row shown above the output. Nil without Ghostty's prompt marks there, and in the
+    /// output of the program still running (it goes on to the cursor).
     private func commandBlock(row: Int, column: Int) -> (output: String, command: TerminalCommand?)? {
         guard let surface, let grid, let output = selectOutput(row: row, column: column) else { return nil }
-        func text(_ row: Int) -> String { (surface.viewportRow(row, columns: grid.columns) ?? "").trimmingCharacters(in: .whitespaces) }
-        let promptRow = output.top > 0 ? text(output.top - 1) : nil
+        refreshProgram()
+        let lines = TerminalExcerpt.lines(output.text)
+        // The program still running: its output goes on to the cursor.
+        if program != nil, let cursor = cursorRow, let last = lines.last,
+           (max(0, cursor - 2)...cursor).contains(where: { row in activeRow(row).map { !$0.isEmpty && last.hasSuffix($0) } ?? false }) { return nil }
+        if let text = textToCursor(), let cursor = cursorRow, let below = read(viewport(0, row), active(grid.columns - 1, cursor)) {
+            let clicked = text.count - below.split(separator: "\n", omittingEmptySubsequences: false).count
+            let positions = log.positions(in: text)
+            if let index = log.block(holding: clicked, in: text), let entry = log[fromEnd: index], let line = positions[index],
+               let first = text[(line + 1)...].firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+               text[first].trimmingCharacters(in: .whitespaces) == lines.first?.trimmingCharacters(in: .whitespaces) {
+                // The prompt's lines above its input line: between this output's end and the next
+                // command's line (the current prompt may show more: a transient prompt's do).
+                if let next = positions[index + 1], (0...TerminalBlocks.promptRows).contains(next - (first + lines.count)) {
+                    promptAbove = next - (first + lines.count)
+                }
+                return (TerminalBlocks.output(output.text, after: entry.command.command), entry.command)
+            }
+        }
+        func shown(_ row: Int) -> String { (surface.viewportRow(row, columns: grid.columns) ?? "").trimmingCharacters(in: .whitespaces) }
+        let promptRow = output.top.flatMap { $0 > 0 ? shown($0 - 1) : nil }
         // Where the output ends on screen: the row just above the prompt showing its last line.
         let last = output.text.split(separator: "\n").last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-        let cursor = cursorRow
+        let cursor = scrolledBack == 0 ? cursorRow : nil
         let end = cursor.flatMap { cursor in
-            stride(from: cursor - 1, through: max(0, cursor - TerminalBlocks.promptRows - 1), by: -1).first { !text($0).isEmpty && last.hasSuffix(text($0)) }
-        } ?? output.top + TerminalBlocks.rows(of: output.text, columns: grid.columns) - 1
-        refreshProgram()
+            stride(from: cursor - 1, through: max(0, cursor - TerminalBlocks.promptRows - 1), by: -1).first { !shown($0).isEmpty && last.hasSuffix(shown($0)) }
+        } ?? output.top.map { $0 + TerminalBlocks.rows(of: output.text, columns: grid.columns) - 1 } ?? grid.rows
         let command = TerminalBlocks.command(promptRow: promptRow, outputEnd: end, cursorRow: cursor,
                                              atPrompt: shell != nil && program == nil, last: lastCommand?.command)
         guard command?.exit != nil || command?.durationMs != nil else {
@@ -446,14 +473,18 @@ final class TerminalTile: NSView, TileContent {
         return (TerminalBlocks.output(output.text, after: command?.command), command)
     }
 
+    /// The lines a prompt shows above its input line, as last measured between a block's output
+    /// and the next command's line; nil until then (reads of older blocks assume none).
+    private var promptAbove: Int?
+
     /// The output of the command whose block covers viewport cell (`row`, `column`), as Ghostty
     /// selects it on a ⌘-triple-click (Ghostty's semantic prompts: the output between the
-    /// command's line and the next prompt), and the viewport row it starts on. Ghostty's C API
-    /// has no call for the block itself, so this is that triple click, with the selection
-    /// cleared after it by a click on the top-left cell (above any prompt, so it never moves
-    /// the cursor). Nil when a program owns the mouse (a TUI), the user has a selection (it
-    /// would be lost), or the cell isn't command output.
-    private func selectOutput(row: Int, column: Int) -> (text: String, top: Int)? {
+    /// command's line and the next prompt), and the viewport row it starts on (nil above the
+    /// viewport). Ghostty's C API has no call for the block itself, so this is that triple
+    /// click, with the selection cleared after it by a click on the top-left cell (above any
+    /// prompt, so it never moves the cursor). Nil when a program owns the mouse (a TUI), the
+    /// user has a selection (it would be lost), or the cell isn't command output.
+    private func selectOutput(row: Int, column: Int) -> (text: String, top: Int?)? {
         guard let handle = surface?.handle, let grid, !ghostty_surface_mouse_captured(handle), !ghostty_surface_has_selection(handle) else { return nil }
         // The current prompt at the top of the screen: that click would land on it.
         if let cursorRow, cursorRow < TerminalBlocks.promptRows { return nil }
@@ -472,7 +503,9 @@ final class TerminalTile: NSView, TileContent {
         ghostty_surface_mouse_pos(handle, -1, -1, none)
         if ghostty_surface_has_selection(handle) { NSLog("Canvas: terminal %@ kept a selection after reading a command block", objectID) }
         guard let output, !output.text.isEmpty, output.text != word?.text else { return nil }
-        // `tl_px_y`: the first row's baseline, in points from the top.
+        // `tl_px_y`: the first row's baseline, in points from the top; negative when that row is
+        // above the viewport.
+        guard output.y >= 0 else { return (output.text, nil) }
         let top = Int(floor((CGFloat(output.y) - padding.height) / grid.cell.height))
         return (output.text, max(0, top))
     }
@@ -485,8 +518,9 @@ final class TerminalTile: NSView, TileContent {
         return (String(decoding: UnsafeRawBufferPointer(start: text, count: Int(out.text_len)), as: UTF8.self), out.tl_px_y)
     }
 
-    /// The viewport row the cursor is on; nil when it's out of view or unknown. Ghostty gives
-    /// the cursor's cell by its bottom, in points from the top.
+    /// The row the cursor is on in the terminal's active screen (its last `rows` rows, whatever
+    /// the view is scrolled to); nil when unknown. Ghostty gives the cursor's cell by its bottom,
+    /// in points from the top.
     private var cursorRow: Int? {
         guard let handle = surface?.handle, let grid else { return nil }
         var x = 0.0, y = 0.0, width = 0.0, height = 0.0
@@ -496,38 +530,105 @@ final class TerminalTile: NSView, TileContent {
         return (0..<grid.rows).contains(row) ? row : nil
     }
 
-    /// `agent.read` `block: "last"`: the output of the last command the shell finished, found
-    /// on the rows just above the prompt.
-    func lastBlock() throws -> (command: TerminalCommand, output: String) {
-        guard let last = lastCommand?.command else {
-            throw ApiRouter.Failure("unavailable", "no command has finished in terminal \(objectID) since Canvas attached to it (its shell needs Ghostty's shell integration; read with lines instead)")
-        }
-        guard surface?.handle != nil, grid != nil else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
-        guard surface?.readSelection()?.isEmpty ?? true else {
-            throw ApiRouter.Failure("unavailable", "the user has text selected in terminal \(objectID); read with lines instead")
-        }
-        guard let cursorRow else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) is scrolled back; read with lines instead") }
+    /// How many rows the view is scrolled back from the active screen (Ghostty's scrollbar).
+    private var scrolledBack: Int {
+        scrollbar.map { max(0, Int($0.total) - Int($0.offset) - Int($0.len)) } ?? 0
+    }
+
+    /// The terminal's lines from the top of its scrollback to the cursor's (the prompt's input
+    /// line at a prompt), soft-wrapped rows joined; nil without a surface.
+    private func textToCursor() -> [String]? {
+        guard let grid, let cursorRow else { return nil }
+        let top = ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0)
+        return read(top, active(grid.columns - 1, cursorRow)).map { $0.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) }
+    }
+
+    /// Row `row` of the active screen, trailing blanks trimmed.
+    private func activeRow(_ row: Int) -> String? {
+        guard let grid else { return nil }
+        return read(active(0, row), active(grid.columns - 1, row)).map { String($0.reversed().drop(while: \.isWhitespace).reversed()) }
+    }
+
+    /// The text from `from` to `to` (inclusive), soft-wrapped rows joined; nil when Ghostty has
+    /// no such cells.
+    private func read(_ from: ghostty_point_s, _ to: ghostty_point_s) -> String? {
+        guard let handle = surface?.handle else { return nil }
+        var out = ghostty_text_s()
+        guard ghostty_surface_read_text(handle, ghostty_selection_s(top_left: from, bottom_right: to, rectangle: false), &out) else { return nil }
+        defer { ghostty_surface_free_text(handle, &out) }
+        guard let text = out.text, out.text_len > 0 else { return "" }
+        return String(decoding: UnsafeRawBufferPointer(start: text, count: Int(out.text_len)), as: UTF8.self)
+    }
+
+    /// The last command's block as Ghostty selects it on the rows just above the prompt (its
+    /// output exactly), while the view shows the active screen; nil when it can't be selected.
+    private func selectedLastBlock() -> (command: TerminalCommand, output: String)? {
+        refreshProgram()
+        guard let last = lastCommand?.command, program == nil, scrolledBack == 0, surface?.readSelection()?.isEmpty ?? true, let cursorRow else { return nil }
         for row in stride(from: cursorRow - 1, through: max(0, cursorRow - TerminalBlocks.promptRows - 1), by: -1) {
             guard let block = commandBlock(row: row, column: 0) else { continue }
-            guard let command = block.command, command.exit == last.exit, command.durationMs == last.durationMs else { break }
-            return (command, block.output)
+            // An older block nearest the prompt: the last command printed nothing.
+            guard block.command == last else { break }
+            return (last, block.output)
         }
         return (last, "")
+    }
+
+    /// `agent.read` `block`: the output of the command `index` from the end (-1 the last the
+    /// shell finished, -2 the one before) and what ran. The last one's output is Ghostty's
+    /// selection of it when it is on screen above the prompt; otherwise (an older block, the
+    /// view scrolled back, a program running) the terminal's lines below its command's line up
+    /// to the next command's (`TerminalCommandLog.output`), less the prompt above that
+    /// (`promptAbove`, measured whenever a Hyper-click selects a logged block).
+    func block(_ index: Int) throws -> (command: TerminalCommand, output: String) {
+        guard !log.entries.isEmpty else {
+            throw ApiRouter.Failure("unavailable", "no command has finished in terminal \(objectID) since Canvas attached to it (its shell needs Ghostty's shell integration; read with lines instead)")
+        }
+        guard let entry = log[fromEnd: index] else {
+            throw ApiRouter.Failure("not_found", "terminal \(objectID) has \(log.entries.count) finished command\(log.entries.count == 1 ? "" : "s") since Canvas attached to it: block goes back to -\(log.entries.count)")
+        }
+        guard surface?.handle != nil, grid != nil else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
+        if index == -1, let selected = selectedLastBlock() { return selected }
+        guard var text = textToCursor() else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
+        // A command still running: its line ends the last finished one's output.
+        if program != nil, let running = commands.running, let line = text.lastIndex(where: { TerminalBlocks.isCommandLine($0, of: running) }) {
+            text = Array(text[...line])
+        }
+        guard let lines = log.output(index, in: text, promptAbove: promptAbove ?? 0) else {
+            throw ApiRouter.Failure("unavailable", "the output of `\(entry.command.command ?? "that command")` is no longer in terminal \(objectID) (cleared, or trimmed from its scrollback); read with lines instead")
+        }
+        return (entry.command, text[lines].joined(separator: "\n"))
     }
 
     /// The terminal's current screen (not where the user scrolled to), soft-wrapped rows joined,
     /// for a mention of the whole terminal.
     func screenText() -> String? {
-        guard let handle = surface?.handle, let grid else { return nil }
-        let selection = ghostty_selection_s(
-            top_left: ghostty_point_s(tag: GHOSTTY_POINT_ACTIVE, coord: GHOSTTY_POINT_COORD_EXACT, x: 0, y: 0),
-            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_ACTIVE, coord: GHOSTTY_POINT_COORD_EXACT, x: UInt32(grid.columns - 1), y: UInt32(grid.rows - 1)),
-            rectangle: false)
-        var out = ghostty_text_s()
-        guard ghostty_surface_read_text(handle, selection, &out) else { return nil }
-        defer { ghostty_surface_free_text(handle, &out) }
-        guard let text = out.text, out.text_len > 0 else { return "" }
-        return String(decoding: UnsafeRawBufferPointer(start: text, count: Int(out.text_len)), as: UTF8.self)
+        guard let grid else { return nil }
+        return read(active(0, 0), active(grid.columns - 1, grid.rows - 1))
+    }
+
+    private func active(_ column: Int, _ row: Int) -> ghostty_point_s {
+        ghostty_point_s(tag: GHOSTTY_POINT_ACTIVE, coord: GHOSTTY_POINT_COORD_EXACT, x: UInt32(column), y: UInt32(row))
+    }
+
+    private func viewport(_ column: Int, _ row: Int) -> ghostty_point_s {
+        ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: UInt32(column), y: UInt32(row))
+    }
+
+    /// The active screen's rows as Ghostty reads them, each with whether Ghostty soft-wrapped it
+    /// into the next (a row that fills the width, read together with the next one without a line
+    /// break between), for `agent.read` `lines` (`TerminalTail.ScreenRow`); empty without a surface.
+    func screenRows() -> [TerminalTail.ScreenRow] {
+        guard let grid else { return [] }
+        let rows = (0..<grid.rows).map { row in
+            String((read(active(0, row), active(grid.columns - 1, row)) ?? "").reversed().drop(while: \.isWhitespace).reversed())
+        }
+        return rows.indices.map { index in
+            let width = rows[index].reduce(0) { $0 + TerminalStyledTail.cellWidth($1) }
+            guard width >= grid.columns - 1, index + 1 < rows.count, !rows[index + 1].isEmpty,
+                  let pair = read(active(0, index), active(grid.columns - 1, index + 1)) else { return .init(text: rows[index], wraps: false) }
+            return .init(text: rows[index], wraps: !pair.contains("\n"))
+        }
     }
 
     /// The screen as VoiceOver's text area, read from Ghostty (`screenText`, as a mention of the
@@ -588,10 +689,11 @@ final class TerminalTile: NSView, TileContent {
     /// first, and where an agent started in it works (`Board.reportedDirectory`).
     fileprivate(set) var reportedCwd: String?
 
-    /// The `path:line` reference drawn at `point` (terminal view coordinates) that names an
-    /// existing file (`TerminalReferences.hit`, which follows it onto neighbouring rows):
-    /// relative to the reported cwd, then `props.cwd`, then the board root, then by name among
-    /// the board root's files (`BoardFiles`), nearest the cwd.
+    /// The `path:line` reference (or source file named alone) drawn at `point` (terminal view
+    /// coordinates) that names an existing file (`TerminalReferences.hit`, which follows it onto
+    /// neighbouring rows): relative to the reported cwd, then `props.cwd`, then the board root,
+    /// then by name among the board root's files (`BoardFiles`), nearest the cwd; a missing
+    /// absolute path by its longest trailing part among them (`TerminalReferences.resolve`).
     private func link(at point: NSPoint) -> TerminalReferences.Hit? {
         guard let surface, let grid, let cell = cell(at: point) else { return nil }
         let cwd = board.objects[objectID]?.props["cwd"]?.string
@@ -653,7 +755,7 @@ final class TerminalTile: NSView, TileContent {
             return
         }
         let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile)
-        NSLog("Canvas: terminal %@ opened %@:%d-%d as %@ (%@)", objectID, hit.file, hit.lines.start, hit.lines.end, opened.id,
+        NSLog("Canvas: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
               opened.created ? (newTile ? "new tile" : "new preview") : opened.existing ? "existing" : "re-aimed preview")
         let source = grid.map { rects(hit.runs, grid: $0).reduce(NSRect.null) { $0.union($1) } } ?? .null
         onOpenedCode?(opened, source.isNull ? .null : underline.convert(source, to: nil))

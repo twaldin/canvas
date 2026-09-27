@@ -4,7 +4,7 @@ import CanvasCore
 
 struct TerminalReferencesTests {
     func refs(_ text: String) -> [String] {
-        TerminalReferences.find(in: text).map { "\($0.path) \($0.lines.start)-\($0.lines.end)" }
+        TerminalReferences.find(in: text).map { reference in reference.lines.map { "\(reference.path) \($0.start)-\($0.end)" } ?? reference.path }
     }
 
     @Test func findsTheFormsAgentsAndToolsWrite() {
@@ -48,7 +48,7 @@ struct TerminalReferencesTests {
         -> rv[spos] = tuple(args)
         """
         #expect(refs(pdb) == ["/opt/homebrew/lib/python3.13/bdb.py 606-606", "/private/tmp/click/src/click/parser.py 106-106"])
-        #expect(refs("print(3) ls(1) f(x.py) tuple(args)").isEmpty, "a call or a man page section isn't a frame")
+        #expect(refs("print(3) ls(1) f(x.py) tuple(args)") == ["x.py"], "a call or a man page section isn't a frame (a source file's name alone is)")
     }
 
     @Test func aWrappedTracebackOrPdbFrameIsOne() {
@@ -63,7 +63,7 @@ struct TerminalReferencesTests {
     func hit(_ rows: [String], columns: Int, row: Int, column: Int, files: Set<String>) -> String? {
         guard let hit = TerminalReferences.hit(row: row, column: column, columns: columns, read: { rows.indices.contains($0) ? rows[$0] : nil },
                                                resolve: { files.contains($0) ? $0 : nil }) else { return nil }
-        return "\(hit.file) \(hit.lines.start)-\(hit.lines.end) " + hit.runs.map { "\($0.row):\($0.column)+\($0.width)" }.joined(separator: " ")
+        return "\(hit.file) \(hit.lines.map { "\($0.start)-\($0.end)" } ?? "(no line)") " + hit.runs.map { "\($0.row):\($0.column)+\($0.width)" }.joined(separator: " ")
     }
 
     @Test func aReferenceWrappedAtTheTerminalsEdgeIsOne() {
@@ -100,7 +100,7 @@ struct TerminalReferencesTests {
     @Test func referenceAtAnOffset() {
         let text = "error in src/foo.ts:42 then lib/b.ts:3"
         #expect(TerminalReferences.reference(in: text, at: 12)?.path == "src/foo.ts")
-        #expect(TerminalReferences.reference(in: text, at: 21)?.lines.start == 42, "the line number is part of it")
+        #expect(TerminalReferences.reference(in: text, at: 21)?.lines?.start == 42, "the line number is part of it")
         #expect(TerminalReferences.reference(in: text, at: 3) == nil)
     }
 
@@ -143,6 +143,35 @@ struct TerminalReferencesTests {
         #expect(resolve("a/util.py") == "/root/pkg/a/util.py", "a longer suffix narrows it")
         #expect(resolve("../core.py") == nil, "never climbs out")
         #expect(TerminalReferences.resolve("core.py", directories: ["/root"], home: "/home/me", isFile: files.contains) == nil, "no listing, no lookup")
+    }
+
+    /// A production stack trace names the deploy's paths: `file:///srv/app/server/routes/claims.ts:395:5`.
+    @Test func deployPathsResolveByTheirLongestTrailingPartAmongTheRootsFiles() {
+        #expect(refs("at async file:///srv/app/server/routes/claims.ts:395:5") == ["/srv/app/server/routes/claims.ts 395-395"], "the file:// URL's path")
+        #expect(refs("(file:///srv/app/server/engine/db.ts:49:34)") == ["/srv/app/server/engine/db.ts 49-49"])
+        let listed = ["server/routes/claims.ts", "server/engine/db.ts", "web/engine/db.ts", "lib/index.ts", "vendor/lib/index.ts"]
+        let files = Set(listed.map { "/root/" + $0 })
+        func resolve(_ path: String) -> String? {
+            TerminalReferences.resolve(path, directories: ["/root"], home: "/home/me", isFile: files.contains,
+                                       listed: ("/root", FileIndex(paths: listed)), near: "/root")
+        }
+        #expect(resolve("/srv/app/server/routes/claims.ts") == "/root/server/routes/claims.ts")
+        #expect(resolve("/srv/app/server/engine/db.ts") == "/root/server/engine/db.ts", "the longest trailing part decides between two db.ts")
+        #expect(resolve("/opt/x/engine/db.ts") == nil, "server/ and web/ tie: no guess")
+        #expect(resolve("/srv/app/index.ts") == nil, "a name alone is too little to take an absolute path for a repo file")
+        #expect(resolve("/rustc/ac68faa2/library/std/src/panicking.rs") == nil, "a toolchain's frame names nothing here, so it isn't a link")
+        #expect(hit(["   at /rustc/ac68faa2/library/std/src/panicking.rs:689:5"], columns: 80, row: 0, column: 10,
+                    files: []) == nil, "no underline for what can't open")
+    }
+
+    /// aider: `Applied edit to url.go`, `Editable: src/url.go`.
+    @Test func aSourceFileNamedAloneIsAReferenceWithoutALine() {
+        #expect(refs("Applied edit to url.go") == ["url.go"])
+        #expect(refs("Editable: src/url.go. Next url.go:12") == ["src/url.go", "url.go 12-12"], "a full stop after it isn't part of it; a line wins")
+        #expect(refs("see example.com, v1.2, archive.tar.gz and notes.txt").isEmpty, "only source files' extensions")
+        let rows = ["Applied edit to url.go"]
+        #expect(hit(rows, columns: 40, row: 0, column: 18, files: ["url.go"]) == "url.go (no line) 0:16+6")
+        #expect(hit(rows, columns: 40, row: 0, column: 18, files: []) == nil, "a name no file has stays text")
     }
 }
 
@@ -467,5 +496,22 @@ struct GhosttyConfigTests {
         #expect(GhosttyConfig.values("keybind", in: rebound.settings(theme: [])) == ["super+t=unbind"])
         let cleared = load(["/c": "keybind = super+t=new_window\nkeybind = clear\nkeybind = ctrl+shift+t=new_tab"], top: ["/c"])
         #expect(cleared.remaps == [GhosttyConfig.KeyChord([.control, .shift], "t"): .newTerminal])
+    }
+
+    /// A key pressed in a terminal matches a menu item only when both name the key alike:
+    /// ⌃⇥ is "tab", and Window › Show Next Tab's key equivalent is "\t".
+    @Test func menuKeyEquivalentsNameKeysAsTerminalKeyPressesDo() {
+        typealias Chord = GhosttyConfig.KeyChord
+        #expect(Chord(menuKey: "\t", modifiers: .control) == Chord(.control, "tab"), "Show Next Tab")
+        #expect(Chord(menuKey: "\t", modifiers: [.control, .shift]) == Chord([.control, .shift], "tab"), "Show Previous Tab")
+        #expect(Chord(menuKey: "\u{19}", modifiers: .control) == Chord([.control, .shift], "tab"), "back-tab is Shift-Tab")
+        #expect(Chord(menuKey: "\u{1b}", modifiers: .command) == Chord(.command, "escape"), "Leave Tile")
+        #expect(Chord(menuKey: "\u{8}", modifiers: .command) == Chord(.command, "backspace"))
+        #expect(Chord(menuKey: "\r", modifiers: .command) == Chord(.command, "enter"))
+        #expect(Chord(menuKey: "\u{F700}", modifiers: [.command, .option]) == Chord([.command, .option], "arrow_up"))
+        #expect(Chord(menuKey: "\u{F704}", modifiers: []) == Chord([], "f1"))
+        #expect(Chord(menuKey: "Z", modifiers: .command) == Chord([.command, .shift], "z"), "an uppercase letter is Shift")
+        #expect(Chord(menuKey: "}", modifiers: .command) == Chord([.command, .shift], "]"), "a shifted symbol is its key with Shift")
+        #expect(Chord(menuKey: "=", modifiers: [.control, .command]) == Chord([.control, .command], "="))
     }
 }

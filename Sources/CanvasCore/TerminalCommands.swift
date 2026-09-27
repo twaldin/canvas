@@ -32,9 +32,10 @@ public struct TerminalCommand: Codable, Equatable, Sendable {
         return parts.joined(separator: " · ")
     }
 
-    /// The attention marker's text: `go test ./... exited 1 · 42 s`, `make finished · 3 min 2 s`.
+    /// The attention marker's text: `go test ./... exited 1 · 42 s`, `make finished · 3 min 2 s`,
+    /// naming the command that ran long (`significant`), not a compound line's setup.
     public var noticeMessage: String {
-        let name = command.map { TerminalExcerpt.clip($0, 60) } ?? "Command"
+        let name = command.map { TerminalExcerpt.clip(Self.significant($0), 60) } ?? "Command"
         let outcome = switch exit {
         case 0?: "finished"
         case let code?: "exited \(code)"
@@ -52,7 +53,7 @@ public struct TerminalCommand: Codable, Equatable, Sendable {
     public static func bellMessage(program: String?, shell: String?, last: (command: TerminalCommand, finishedAt: Date)?, at date: Date) -> String {
         if let program { return "\(TerminalExcerpt.clip(program, 60)) rang the bell" }
         if let last, let command = last.command.command, date.timeIntervalSince(last.finishedAt) <= bellAfterCommand {
-            return "Bell after `\(TerminalExcerpt.clip(command, 60))`"
+            return "Bell after `\(TerminalExcerpt.clip(significant(command), 60))`"
         }
         return "\(shell ?? "The shell") rang the bell"
     }
@@ -64,6 +65,88 @@ public struct TerminalCommand: Codable, Equatable, Sendable {
         if seconds < 60 { return "\(seconds) s" }
         if seconds < 3600 { return seconds % 60 == 0 ? "\(seconds / 60) min" : "\(seconds / 60) min \(seconds % 60) s" }
         return "\(seconds / 3600) h \(seconds % 3600 / 60) min"
+    }
+
+    /// The part of a command line a marker names: from its first segment (split at `;`, `&&`,
+    /// `||` outside quotes) that isn't setup (`cd`, `export`, `clear`, `source`, `.`, `unset`,
+    /// `set`, variable assignments alone), without leading `VAR=value` assignments or an `env`
+    /// that only sets them: `cd crates/x && cargo test` → `cargo test`,
+    /// `clear; RUST_BACKTRACE=1 cargo test` → `cargo test`. The line itself when all of it is setup.
+    public static func significant(_ line: String) -> String {
+        let words = Self.words(line)
+        var start = 0
+        while start < words.count {
+            var index = start
+            if words[index].text == "env" { index += 1 }
+            while index < words.count, words[index].isAssignment { index += 1 }
+            let end = words[index...].firstIndex { $0.isSeparator } ?? words.count
+            guard index < end else {
+                start = end + 1
+                continue
+            }
+            if setupCommands.contains(words[index].text) {
+                start = end + 1
+                continue
+            }
+            return String(line[words[index].range.lowerBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        return line
+    }
+
+    private static let setupCommands: Set<String> = ["cd", "pushd", "popd", "export", "clear", "source", ".", "unset", "set", "alias", "true"]
+
+    /// A word of a command line as the shell splits it (quotes and backslashes keep blanks and
+    /// operators inside), or a list operator (`;`, `&&`, `||`, `&`, a newline).
+    private struct Word {
+        var text: String
+        var range: Range<String.Index>
+        var isSeparator = false
+        /// `NAME=value`: a variable assignment.
+        var isAssignment: Bool {
+            guard !isSeparator, let equals = text.firstIndex(of: "="), equals != text.startIndex else { return false }
+            let name = text[..<equals]
+            return name.first.map { $0 == "_" || ($0.isASCII && $0.isLetter) } == true && name.allSatisfy { $0 == "_" || ($0.isASCII && ($0.isLetter || $0.isNumber)) }
+        }
+    }
+
+    private static func words(_ line: String) -> [Word] {
+        func isOperator(_ index: String.Index) -> Bool {
+            let character = line[index]
+            return character == ";" || character == "\n" || character == "&" || (character == "|" && line[line.index(after: index)...].first == "|")
+        }
+        var words: [Word] = []
+        var index = line.startIndex
+        while index < line.endIndex {
+            let character = line[index]
+            if character == " " || character == "\t" {
+                index = line.index(after: index)
+                continue
+            }
+            if isOperator(index) {
+                var end = line.index(after: index)
+                if character == "&" || character == "|", end < line.endIndex, line[end] == character { end = line.index(after: end) }
+                words.append(Word(text: String(line[index..<end]), range: index..<end, isSeparator: true))
+                index = end
+                continue
+            }
+            let start = index
+            var quote: Character?
+            while index < line.endIndex {
+                let current = line[index]
+                if let open = quote {
+                    if current == open { quote = nil } else if current == "\\", open == "\"" { index = line.index(after: index) }
+                } else if current == "'" || current == "\"" {
+                    quote = current
+                } else if current == "\\" {
+                    index = line.index(after: index)
+                } else if current == " " || current == "\t" || isOperator(index) {
+                    break
+                }
+                if index < line.endIndex { index = line.index(after: index) }
+            }
+            words.append(Word(text: String(line[start..<index]), range: start..<index))
+        }
+        return words
     }
 
     /// As the API reports it (`agent.list`, `object.get` `lastCommand`).
@@ -111,6 +194,9 @@ public struct TerminalCommandTracker: Sendable {
         guard command == nil, title != promptTitle, !promptTitles.contains(title) else { return }
         command = title
     }
+
+    /// The command line running now, as its title named it; nil at the prompt.
+    public var running: String? { command }
 
     /// The program seen running in the foreground (`TerminalName.program`), for a command whose
     /// title never came (the user turned the integration's `title` feature off).
@@ -173,10 +259,11 @@ public enum TerminalExcerpt {
     /// Else what matters, in order: progress-only rows (pytest's `....F... [ 40%]`, unittest's
     /// dots, a progress bar at some percent) go first; of the rest, the first few lines (what
     /// ran) and the last ones (how it ended: a test run's summary) stay, then failure lines
-    /// (`isFailure`: pytest's `E` and `>` lines and section headers, `FAILED`, errors,
-    /// traceback frames) in the order they came, then the rest of the first `head` lines, then
-    /// lines back from the end, `head + tail` in all. Each gap reads `… N lines omitted …`
-    /// (`progress lines` when that is all it left out); a gap of one line shows the line.
+    /// (`isFailure`: pytest's `E` and `>` lines and section headers, `FAILED`, errors, a
+    /// compiler's `-->` location lines, traceback and stack frames) in the order they came, then
+    /// the rest of the first `head` lines, then lines back from the end, `head + tail` in all.
+    /// Each gap reads `… N lines omitted …` (`progress lines` when that is all it left out); a
+    /// gap of one line shows the line.
     public static func trim(_ lines: [String], head: Int, tail: Int) -> [String] {
         guard lines.count > head + tail + 1 else { return lines }
         let progress = Set(lines.indices.filter { isProgress(lines[$0]) })
@@ -216,6 +303,8 @@ public enum TerminalExcerpt {
     /// or a progress bar at a percent (`━━━━━━━━━━ 45%`): nothing an agent reads there that
     /// the summary doesn't say.
     static func isProgress(_ line: String) -> Bool {
+        // rustc's `...` where it leaves out source lines, not three passing tests.
+        if line.trimmingCharacters(in: .whitespaces) == "..." { return false }
         let range = NSRange(location: 0, length: (line as NSString).length)
         if let match = outcomes.firstMatch(in: line, range: range) {
             let marks = (line as NSString).substring(with: match.range(at: 1))
@@ -226,7 +315,9 @@ public enum TerminalExcerpt {
 
     /// A line that says what failed and where: pytest's `E` (the assertion) and `>` (the failing
     /// line) lines and `___ test ___` / `=== FAILURES ===` headers, `FAILED`/`ERROR` lines, an
-    /// error or exception, a compiler's `error:`, a Python traceback, a Rust panic.
+    /// error or exception, a compiler's `error:` and the location lines under it (rustc's
+    /// `--> src/x.rs:9:52` and `::: src/y.rs:2:3`), a Python traceback, a Rust panic, a stack
+    /// frame at a `file:line:col` (`at ./tests/t.rs:14:8`, `at run (/srv/app/x.ts:39:5)`).
     static func isFailure(_ line: String) -> Bool {
         failure.firstMatch(in: line, range: NSRange(location: 0, length: (line as NSString).length)) != nil
     }
@@ -234,7 +325,7 @@ public enum TerminalExcerpt {
     private static let outcomes = try! NSRegularExpression(pattern: #"^\s*(?:\S+\.py\s+)?([.FEsxX]+)\s*(\[\s*\d{1,3}%\])?$"#)
     private static let bar = try! NSRegularExpression(pattern: #"[█▉▊▋▌▍▎▏━■░▒▓#]{4,}.*\b\d{1,3}(?:\.\d+)?%"#)
     private static let failure = try! NSRegularExpression(pattern:
-        #"^E(?:\s|$)|^>\s|^_{3,} .+ _{3,}$|^={3,} .+ ={3,}$|\b(?:FAILED|FAIL|ERROR)\b|(?:Error|Exception)\b|\berror(?:\[\w+\])?:|Traceback \(most recent call last\)|^\s*File ".+", line \d+|panicked at"#)
+        #"^E(?:\s|$)|^>\s|^_{3,} .+ _{3,}$|^={3,} .+ ={3,}$|\b(?:FAILED|FAIL|ERROR)\b|(?:Error|Exception)\b|\berror(?:\[\w+\])?:|Traceback \(most recent call last\)|^\s*File ".+", line \d+|panicked at|^\s*(?:-->|:::)\s+\S+:\d+:\d+|^\s*at\s.*\S:\d+:\d+\)?$"#)
 
     /// The rows around row `index` of `rows` (a terminal's screen): up to `before` rows above and
     /// `after` below, blank rows at either end dropped, the clicked row marked `>` and the others
@@ -308,6 +399,91 @@ public enum TerminalBlocks {
         let head = trimmed[..<space]
         let prompt = head.count <= 3 && head.allSatisfy { !($0.isASCII && ($0.isLetter || $0.isNumber)) && !"./~([!-\"'`".contains($0) }
         return prompt ? trimmed[space...].trimmingCharacters(in: .whitespaces) : trimmed
+    }
+
+    /// Whether `line` (terminal text, soft-wrapped rows joined) is `command`'s line: it ends with
+    /// the command after a prompt (or holds it alone).
+    public static func isCommandLine(_ line: String, of command: String) -> Bool {
+        let command = command.trimmingCharacters(in: .whitespaces)
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !command.isEmpty, trimmed.hasSuffix(command) else { return false }
+        return trimmed.dropLast(command.count).last.map(\.isWhitespace) ?? true
+    }
+}
+
+/// The commands a terminal's shell finished since Canvas attached to it, oldest first. A block
+/// is found by its command's line in the terminal's text (`positions`), so it keeps its command,
+/// exit status and duration after its prompt row scrolled out of view, and one `clear` wiped
+/// (`clear; cargo build`) is the text above the next command's line.
+public struct TerminalCommandLog: Sendable {
+    public struct Entry: Equatable, Sendable {
+        public var command: TerminalCommand
+        public var finishedAt: Date
+
+        public init(command: TerminalCommand, finishedAt: Date) {
+            self.command = command
+            self.finishedAt = finishedAt
+        }
+    }
+
+    public static let capacity = 200
+    public private(set) var entries: [Entry] = []
+
+    public init() {}
+
+    public var last: Entry? { entries.last }
+
+    public mutating func append(_ command: TerminalCommand, at date: Date) {
+        entries.append(Entry(command: command, finishedAt: date))
+        if entries.count > Self.capacity { entries.removeFirst(entries.count - Self.capacity) }
+    }
+
+    /// The entry at `index` from the end (-1 the last).
+    public subscript(fromEnd index: Int) -> Entry? {
+        index < 0 && -index <= entries.count ? entries[entries.count + index] : nil
+    }
+
+    /// The newest command reported as `command` (what ran, its exit status and duration), from
+    /// the end (-1 the last).
+    public func index(of command: TerminalCommand) -> Int? {
+        entries.lastIndex { $0.command == command }.map { $0 - entries.count }
+    }
+
+    /// Where the newest commands' lines are in `text` (the terminal's lines from the top of its
+    /// scrollback, soft-wrapped rows joined, the last one the prompt's input line), by index
+    /// from the end: each the last line above the newer one's that ends with it. The first
+    /// command not found ends the search, older ones being gone too; one that clears the screen
+    /// (`clear`, `reset` among its words) has line -1: its output starts at the top.
+    public func positions(in text: [String]) -> [Int: Int] {
+        var found: [Int: Int] = [:]
+        var bound = text.count - 1
+        for index in stride(from: -1, through: -entries.count, by: -1) {
+            let command = entries[entries.count + index].command.command ?? ""
+            guard let line = (0..<max(0, bound)).reversed().first(where: { TerminalBlocks.isCommandLine(text[$0], of: command) }) else {
+                let words = command.split(whereSeparator: { " ;&|".contains($0) })
+                if words.contains("clear") || words.contains("reset") { found[index] = -1 }
+                break
+            }
+            found[index] = line
+            bound = line
+        }
+        return found
+    }
+
+    /// The lines of `text` the output of the command at `index` from the end may cover: below its
+    /// line, up to the next command's line (the input line for the last one) less the
+    /// `promptAbove` lines a prompt shows above its input line. Nil when its line isn't found.
+    public func output(_ index: Int, in text: [String], promptAbove: Int, positions: [Int: Int]? = nil) -> Range<Int>? {
+        let positions = positions ?? self.positions(in: text)
+        guard let line = positions[index] else { return nil }
+        let next = index == -1 ? text.count - 1 : positions[index + 1] ?? text.count - 1
+        return (line + 1)..<max(line + 1, next - promptAbove)
+    }
+
+    /// Which command's output holds line `line` of `text`, from the end (-1 the last).
+    public func block(holding line: Int, in text: [String]) -> Int? {
+        let positions = positions(in: text)
+        return positions.keys.first { index in output(index, in: text, promptAbove: 0, positions: positions)?.contains(line) == true }
     }
 }
 

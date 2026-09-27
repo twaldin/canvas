@@ -225,9 +225,11 @@ final class CanvasView: NSScrollView {
         board.reportedDirectory = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.reportedCwd }
         // A mention of a shape drawn on a page lists the elements under it.
         board.pageElements = { [weak self] id, rect in await self?.pageElements(id, canvasRect: rect) }
-        // Mentions name a terminal as its header does, and one of a whole terminal carries its screen.
+        // Mentions name a terminal as its header does, one of a whole terminal carries its screen,
+        // and one of a command's block says which `agent.read` block it is.
         board.terminalLabel = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.label }
         board.terminalScreen = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.screenText() }
+        board.terminalBlockIndex = { [weak self] id, command in (self?.tiles[id]?.content as? TerminalTile)?.log.index(of: command) }
         for object in board.snapshot.objects { add(object) }
         // Markers the user hadn't seen when the board was last open.
         for marker in board.attention.values { showMarker(marker.object, message: marker.message) }

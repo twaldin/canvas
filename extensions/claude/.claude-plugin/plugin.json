@@ -1,0 +1,5 @@
+{
+  "name": "canvas",
+  "version": "0.1.0",
+  "description": "Canvas integration: lifecycle, session resume, follow mode, selection-tray mentions, and the canvas skill. Loaded by Canvas's claude wrapper inside Canvas terminal tiles only."
+}

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs hook.ts for one Claude Code or Codex hook event. Never fails the agent's hook: without
+# bun on PATH it does nothing.
+command -v bun >/dev/null 2>&1 || exit 0
+exec bun "$(dirname "$0")/hook.ts" "$@"

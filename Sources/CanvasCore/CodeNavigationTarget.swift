@@ -14,17 +14,21 @@ public struct CodeAim: Equatable, Sendable {
 
     /// The aim of a code tile; nil for anything else.
     public init?(_ object: CanvasObject) {
-        guard object.type == .code, let path = object.props["path"]?.string else { return nil }
-        let start = object.props["range"]?["start"]?.int
-        self.init(path: path, range: start.map { LineRange(start: $0, end: object.props["range"]?["end"]?.int ?? $0) },
-                  symbol: object.props["symbol"]?.string)
+        guard object.type == .code else { return nil }
+        self.init(props: object.props)
+    }
+
+    /// The aim `props` carry (a code tile's, or an entry of a follow tile's history); nil
+    /// without a path.
+    public init?(props: JSONValue) {
+        guard let path = props["path"]?.string else { return nil }
+        let start = props["range"]?["start"]?.int
+        self.init(path: path, range: start.map { LineRange(start: $0, end: props["range"]?["end"]?.int ?? $0) }, symbol: props["symbol"]?.string)
     }
 
     /// The props that aim a tile here (null clears a range or symbol it had).
     var props: JSONValue {
-        .object(["path": .string(path),
-                 "range": range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null,
-                 "symbol": symbol.map(JSONValue.string) ?? .null])
+        .object(["path": .string(path), "range": range?.json ?? .null, "symbol": symbol.map(JSONValue.string) ?? .null])
     }
 
     /// `path:12`, `path:12-20`, or the path alone.
@@ -89,25 +93,15 @@ extension Board {
     public func tileShowing(_ aim: CodeAim, near center: Frame?) -> ObjectID? {
         let view = viewport()
         let center = center ?? view
-        func rank(_ object: CanvasObject, exact: Bool) -> (Int, Int, Double, Double) {
-            var distance = 0.0
-            if let center {
-                let dx = object.frame.x + object.frame.w / 2 - (center.x + center.w / 2)
-                let dy = object.frame.y + object.frame.h / 2 - (center.y + center.h / 2)
-                distance = hypot(dx, dy)
-            }
-            let away = view.map { $0.intersects(object.frame) ? 0 : 1 } ?? 0
-            return (exact ? 0 : 1, away, distance, -object.z)
-        }
         var best: (id: ObjectID, rank: (Int, Int, Double, Double))?
-        for object in objects.values where object.type == .code && object.props["followOf"] == nil {
+        for object in objects.values where object.props["followOf"] == nil {
             guard let shown = CodeAim(object), shown.path == aim.path else { continue }
             let exact = shown.range == aim.range
             if !exact {
                 guard let lines = aim.range, let range = shown.range, range.start <= lines.start, lines.end <= range.end,
                       let caption = object.props["caption"]?.string, !caption.isEmpty else { continue }
             }
-            let key = rank(object, exact: exact)
+            let key = (exact ? 0 : 1, view.map { $0.intersects(object.frame) ? 0 : 1 } ?? 0, center.map(object.frame.centerDistance) ?? 0, -object.z)
             if best == nil || key < best!.rank || (key == best!.rank && object.id < best!.id) { best = (object.id, key) }
         }
         return best?.id
@@ -128,31 +122,28 @@ extension Board {
     /// Without a viewport (no window) every tile counts as in view.
     @discardableResult
     public func openForNavigation(_ aim: CodeAim, from source: ObjectID?, preview: Bool = false, extra: [String: JSONValue] = [:]) -> CodeOpened {
-        let view = viewport()
-        func inView(_ object: CanvasObject) -> Bool { view.map { $0.intersects(object.frame) } ?? true }
-        if let shown = tileShowing(aim, near: source.flatMap { objects[$0]?.frame }) {
+        let near = source.flatMap { objects[$0]?.frame }
+        if let shown = tileShowing(aim, near: near) {
             return CodeOpened(id: shown, created: false, reaim: nil, existing: true)
         }
-        let codes = objects.values.filter { $0.type == .code && inView($0) }
         if preview, let source, let previous = codePreviews[source], let object = objects[previous.tile], object.rev == previous.rev,
            isNavigationSurface(object.id), let reaim = reaimForNavigation(object.id, to: aim) {
             codePreviews[source] = (object.id, objects[object.id]?.rev ?? 0)
             return CodeOpened(id: object.id, created: false, reaim: reaim)
         }
-        let center = source.flatMap { objects[$0]?.frame } ?? view
-        func distance(_ frame: Frame) -> Double {
-            guard let center else { return 0 }
-            return hypot(frame.x + frame.w / 2 - (center.x + center.w / 2), frame.y + frame.h / 2 - (center.y + center.h / 2))
-        }
-        let nearest = codes.filter { $0.props["path"]?.string == aim.path && isNavigationSurface($0.id) }
-            .min { (distance($0.frame), $0.id) < (distance($1.frame), $1.id) }
+        let view = viewport()
+        let center = near ?? view
+        func distance(_ object: CanvasObject) -> Double { center.map(object.frame.centerDistance) ?? 0 }
+        let nearest = objects.values.filter { object in
+            object.type == .code && object.props["path"]?.string == aim.path && (view.map { $0.intersects(object.frame) } ?? true) && isNavigationSurface(object.id)
+        }.min { (distance($0), $0.id) < (distance($1), $1.id) }
         if let nearest, let reaim = reaimForNavigation(nearest.id, to: aim) {
             return CodeOpened(id: nearest.id, created: false, reaim: reaim)
         }
         var props = extra
-        if let aimed = aim.props.object {
-            for (key, value) in aimed where value != .null { props[key] = value }
-        }
+        props["path"] = .string(aim.path)
+        if let range = aim.range { props["range"] = range.json }
+        if let symbol = aim.symbol { props["symbol"] = .string(symbol) }
         let size = Board.defaultSize(.code)
         let frame = source.map { place(width: size.w, height: size.h, near: $0, shrinkingTo: Board.followMinimumSize) }
             ?? place(width: size.w, height: size.h, near: nil)
@@ -192,9 +183,15 @@ extension Board {
         }
         func rank(_ object: CanvasObject) -> (Int, Double, ObjectID) {
             guard let view else { return (0, 0, object.id) }
-            let distance = hypot(object.frame.x + object.frame.w / 2 - (view.x + view.w / 2), object.frame.y + object.frame.h / 2 - (view.y + view.h / 2))
-            return (view.intersects(object.frame) ? 0 : 1, distance, object.id)
+            return (view.intersects(object.frame) ? 0 : 1, object.frame.centerDistance(to: view), object.id)
         }
         return matching.min { rank($0) < rank($1) }?.id
+    }
+}
+
+private extension Frame {
+    /// How far this frame's center is from `other`'s.
+    func centerDistance(to other: Frame) -> Double {
+        hypot(x + w / 2 - (other.x + other.w / 2), y + h / 2 - (other.y + other.h / 2))
     }
 }

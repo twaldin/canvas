@@ -57,7 +57,7 @@ final class CodeTile: NSView, TileContent {
     init(object: CanvasObject, board: Board) {
         self.object = object
         self.board = board
-        let aim = Self.aim(of: object)
+        let aim = Self.aim(object.props) ?? Aim(path: "", range: nil)
         displayed = aim
         propsAim = aim
         lock = FollowLock(showing: aim)
@@ -97,9 +97,16 @@ final class CodeTile: NSView, TileContent {
     }
 
     deinit {
+        loadTask?.cancel()
+        vanishCheck?.cancel()
         if watcherSuspended { watcher?.resume() }
         watcher?.cancel()
         if let heldRepository { Task { await GitDiffEngine.shared.release(heldRepository) } }
+        MainActor.assumeIsolated {
+            reloadWork?.cancel()
+            resumeWork?.cancel()
+            flashTimer?.invalidate()
+        }
     }
 
     /// Posted off the main thread by the git engine when a commit, checkout, or fetch moved a base.
@@ -127,7 +134,7 @@ final class CodeTile: NSView, TileContent {
     private func rewrap() {
         guard let document, showsCurrent, let rows = rowsView.painter?.rows,
               rows.columns != CodeMetrics.textColumns(width: rowsView.bounds.width, lineCount: document.gutterLineCount) else { return }
-        let top = rows.segment(CodePainter.row(atY: rowsView.bounds.minY + CodeMetrics.verticalPadding))
+        let top = rows.segment(rowsView.topRow)
         refreshPainter(keepSelection: true)
         guard let top, let rewrapped = rowsView.painter?.rows else { return }
         let row = min(rewrapped.rows(ofEntry: top.entry).lowerBound + top.part, rewrapped.rows(ofEntry: top.entry).upperBound - 1)
@@ -156,9 +163,9 @@ final class CodeTile: NSView, TileContent {
 
     // MARK: Props
 
-    private static func aim(of object: CanvasObject) -> Aim {
-        let start = object.props["range"]?["start"]?.int
-        return Aim(path: object.props["path"]?.string ?? "", range: start.map { LineRange(start: $0, end: object.props["range"]?["end"]?.int ?? $0) })
+    /// Where `props` (the tile's, or a follow history entry) aim, without a symbol.
+    private static func aim(_ props: JSONValue) -> Aim? {
+        CodeAim(props: props).map { Aim(path: $0.path, range: $0.range) }
     }
 
     var path: String { displayed.path }
@@ -186,7 +193,7 @@ final class CodeTile: NSView, TileContent {
         let old = self.object
         self.object = object
         header.show(caption: object.props["caption"]?.string)
-        let aim = Self.aim(of: object)
+        let aim = Self.aim(object.props) ?? Aim(path: "", range: nil)
         if aim != propsAim {
             propsAim = aim
             if let shown = lock.aim(aim, at: Self.now) {
@@ -273,8 +280,7 @@ final class CodeTile: NSView, TileContent {
     private func userAim(_ aim: Aim) {
         lock.userAimed(aim)
         apply(aim)
-        let range: JSONValue = aim.range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
-        _ = try? board.update(object.id, props: .object(["path": .string(aim.path), "range": range]))
+        _ = try? board.update(object.id, props: .object(["path": .string(aim.path), "range": aim.range?.json ?? .null]))
     }
 
     // MARK: Loading
@@ -384,12 +390,13 @@ final class CodeTile: NSView, TileContent {
         let url = board.absoluteURL(path)
         let candidates = FollowFallback.candidates(object.props["history"]?.array ?? [], vanished: path).map { ($0, board.absoluteURL($0)) }
         vanishCheck = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
+            // Cancellation (tile removed/offscreen) must not continue into filesystem work.
+            guard (try? await Task.sleep(for: .milliseconds(600))) != nil else { return }
             let found = await offPool { () -> (gone: Bool, existing: Set<String>) in
                 let files = FileManager.default
                 return (!files.fileExists(atPath: url.path), Set(candidates.filter { files.fileExists(atPath: $0.1.path) }.map(\.0)))
             }
-            guard let self else { return }
+            guard !Task.isCancelled, let self else { return }
             self.vanishCheck = nil
             guard found.gone, self.document?.path == path, self.document?.diff.state == .missing, self.displayed.path == path else { return }
             if case .steppedBack(let back) = self.board.codeFileVanished(self.object.id, path: path, existing: found.existing) {
@@ -540,7 +547,7 @@ final class CodeTile: NSView, TileContent {
 
     private func makeFindBar() -> CodeFindBar {
         let bar = CodeFindBar(frame: NSRect(origin: .zero, size: CodeFindBar.size))
-        bar.onChange = { [weak self] _ in self?.findChanged() }
+        bar.onChange = { [weak self] in self?.findChanged() }
         bar.onStep = { [weak self] backward in self?.stepFind(backward: backward) }
         bar.onClose = { [weak self] in self?.closeFind() }
         addSubview(bar)
@@ -558,7 +565,7 @@ final class CodeTile: NSView, TileContent {
     private func findChanged() {
         guard let findBar, let painter = rowsView.painter else { return }
         var find = CodeFind(query: findBar.field.stringValue, rows: painter.rows) { painter.text(ofEntry: $0) }
-        let top = painter.rows.segment(CodePainter.row(atY: rowsView.bounds.minY + CodeMetrics.verticalPadding))?.entry ?? 0
+        let top = painter.rows.segment(rowsView.topRow)?.entry ?? 0
         find.current = find.matches.isEmpty ? nil : (find.matches.firstIndex { $0.entry >= top } ?? 0)
         rowsView.painter?.find = find
         findBar.show(status: find.status)
@@ -638,8 +645,10 @@ extension CodeTile {
         flash = (lines, Self.now)
         rowsView.painter?.flash = (lines, 1)
         guard flashTimer == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.flashTick() }
+        let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] timer in
+            // A tile freed mid-flash must not leave the timer waking the main thread forever.
+            guard let self else { timer.invalidate(); return }
+            MainActor.assumeIsolated { self.flashTick() }
         }
         RunLoop.main.add(timer, forMode: .common)
         flashTimer = timer
@@ -691,9 +700,7 @@ extension CodeTile {
     /// The follow history, newest first, each location with whether the agent edited it there.
     private var history: [(aim: Aim, edited: Bool)] {
         (object.props["history"]?.array ?? []).compactMap { entry in
-            guard let path = entry["path"]?.string else { return nil }
-            let start = entry["range"]?["start"]?.int
-            return (Aim(path: path, range: start.map { LineRange(start: $0, end: entry["range"]?["end"]?.int ?? $0) }), Board.isEdit(entry["action"]?.string))
+            Self.aim(entry).map { ($0, Board.isEdit(entry["action"]?.string)) }
         }
     }
 
@@ -714,7 +721,7 @@ extension CodeTile {
     private func jumpToChange(forward: Bool) {
         guard let document, showsCurrent, let rows = rowsView.painter?.rows else { return }
         userInteracted()
-        let anchorRow = CodePainter.row(atY: rowsView.bounds.minY + CodeMetrics.verticalPadding) + 3
+        let anchorRow = rowsView.topRow + 3
         let line: Int
         switch rows.row(min(anchorRow, rows.count - 1)) {
         case .line(let number)?: line = number
@@ -831,6 +838,8 @@ extension CodeTile {
             loadTask?.cancel()
             loadTask = nil
             stopFlash()
+            vanishCheck?.cancel()
+            vanishCheck = nil
             // Nothing with tracking areas, tooltips, or a backing store stays in the window: the
             // card covers the tile, and pans would otherwise update them every frame.
             navigation?.setActive(false)
@@ -955,7 +964,7 @@ extension CodeTile {
     @discardableResult
     func navigate(_ action: KeyboardNavigation) -> Bool {
         guard let navigation, let document, showsCurrent, let painter = rowsView.painter else { return false }
-        let topRow = CodePainter.row(atY: rowsView.bounds.minY + CodeMetrics.verticalPadding)
+        let topRow = rowsView.topRow
         if action == .outline {
             navigation.showOutline(anchor: NSPoint(x: painter.gutterWidth + 8, y: CodePainter.rowTop(topRow)))
             return true

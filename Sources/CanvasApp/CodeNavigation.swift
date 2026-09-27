@@ -184,7 +184,7 @@ final class CodeNavigation: NSObject {
     }
 
     /// Shows hover docs for `position` below `anchor` (in the text view's coordinates).
-    func showHover(_ hover: LSPHover, at position: LSPPosition, anchor: NSPoint) {
+    private func showHover(_ hover: LSPHover, at position: LSPPosition, anchor: NSPoint) {
         guard let codeView else { return }
         let panel = NavigationPanel.hover(hover.markdown)
         panel.onPointerExit = { [weak self, weak panel] in
@@ -228,14 +228,9 @@ final class CodeNavigation: NSObject {
 
     func goToDefinition(at position: (line: Int, character: Int), anchor: NSPoint, newTile: Bool) {
         run(anchor: anchor) { [weak self] file, root in
-            let locations: [LSPLocation]
-            do {
-                locations = try await Self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
-            } catch let error where Self.textFallback(for: error) != nil {
-                try await self?.textDefinition(at: position, file: file, root: root, anchor: anchor, newTile: newTile, reason: Self.textFallback(for: error) ?? "")
-                return
-            }
-            guard let self else { return }
+            guard let locations = try await Self.serverAnswer({
+                try await Self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
+            }, else: { try await self?.textDefinition(at: position, file: file, root: root, anchor: anchor, newTile: newTile, reason: $0) }), let self else { return }
             switch locations.count {
             case 0: await self.showEmpty("No definition found", file: file, root: root, anchor: anchor)
             case 1: self.open(locations[0], newTile: newTile)
@@ -246,29 +241,19 @@ final class CodeNavigation: NSObject {
         }
     }
 
-    func findReferences(atViewPoint point: NSPoint) {
-        guard let host, let position = host.sourcePosition(atViewPoint: point) else { return }
-        findReferences(at: position, anchor: point)
-    }
-
     /// The references as a keyboard list (type to filter, ↑/↓, Return opens one, ⌘↩ Open All,
     /// Esc closes), each line once: servers list a line twice (a re-export's two names).
     func findReferences(at position: (line: Int, character: Int), anchor: NSPoint) {
         showMessage("Finding references…", anchor: anchor)
         run(anchor: anchor) { [weak self] file, root in
+            guard let answer = try await Self.serverAnswer({
+                try await Self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
+            }, else: { try await self?.textReferences(at: position, file: file, root: root, anchor: anchor, reason: $0) }), let self else { return }
             var seen = Set<String>()
-            let answer: [LSPLocation]
-            do {
-                answer = try await Self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
-            } catch let error where Self.textFallback(for: error) != nil {
-                try await self?.textReferences(at: position, file: file, root: root, anchor: anchor, reason: Self.textFallback(for: error) ?? "")
-                return
-            }
             let locations = answer.filter { seen.insert("\($0.url.resolvingSymlinksInPath().path):\($0.range.start.line)").inserted }
-            guard let self else { return }
             guard !locations.isEmpty else { return await self.showEmpty("No references found", file: file, root: root, anchor: anchor) }
             let lines = await Self.languages.lineTexts(locations)
-            let name = await offPool { Self.identifier(in: file, line: position.line, character: position.character) }
+            let name = await self.identifier(at: position, file: file)
             let title = locations.count == 1 ? "1 reference" : "\(locations.count) references"
             self.showLocations(title, locations, lines: lines, anchor: anchor, newTile: false,
                                openAll: ("Open All ⌘↩", { [weak self] in self?.openAll(locations, name: name) }))
@@ -283,26 +268,28 @@ final class CodeNavigation: NSObject {
                 self?.open(location, newTile: newTile)
             }
         }
-        // The user asked for it: the list takes the keyboard until it closes.
-        let panel = NavigationPanel.filterList(title: title, rows: rows, headerAction: openAll, note: note)
-        present(panel, anchor: anchor)
-        panel.focusFilter()
+        present(NavigationPanel.filterList(title: title, rows: rows, headerAction: openAll, note: note), anchor: anchor)
     }
 
     // MARK: Without a language server
 
-    /// The one-line reason a request falls back to text search: the language's server isn't
-    /// installed, has no configuration, failed to start, or exited. Nil for anything else (a
-    /// timeout, the server's own error), which is shown as it is.
-    nonisolated static func textFallback(for error: Error) -> String? {
-        guard let error = error as? LSPError else { return nil }
-        switch error {
-        case .unavailable, .unsupportedLanguage, .startFailed, .serverExited: return error.errorDescription
-        default: return nil
+    /// `request`'s answer; nil after `fallback` ran with the one-line reason when the language's
+    /// server can't answer: it isn't installed, has no configuration, failed to start, or exited.
+    /// Anything else (a timeout, the server's own error) is thrown, to be shown as it is.
+    private static func serverAnswer<T>(_ request: () async throws -> T, else fallback: (String) async throws -> Void) async throws -> T? {
+        do {
+            return try await request()
+        } catch let error as LSPError {
+            switch error {
+            case .unavailable, .unsupportedLanguage, .startFailed, .serverExited:
+                try await fallback(error.errorDescription ?? "")
+                return nil
+            default: throw error
+            }
         }
     }
 
-    /// The name under the cursor, or nil (with `reason` shown) when there is none.
+    /// The name under the cursor (the file read off the main actor), or nil when there is none.
     private func identifier(at position: (line: Int, character: Int), file: URL) async -> String? {
         await offPool { Self.identifier(in: file, line: position.line, character: position.character) }
     }
@@ -357,15 +344,19 @@ final class CodeNavigation: NSObject {
         }
         guard !Task.isCancelled else { return }
         guard !entries.isEmpty else { return showMessage("No symbols found without a language server. \(reason)", anchor: anchor) }
+        showOutline("Outline · from syntax, no language server", entries.map { ($0.name, $0.kind, $0.line, $0.depth) }, anchor: anchor, note: reason)
+    }
+
+    /// An outline as a keyboard list (`name`, `kind · L<line>`, indented by `depth`); choosing a
+    /// symbol reveals its line.
+    private func showOutline(_ title: String, _ entries: [(name: String, kind: String, line: Int, depth: Int)], anchor: NSPoint, note: String? = nil) {
         let rows = entries.map { entry in
             NavigationPanel.Row(title: entry.name, detail: "\(entry.kind) · L\(entry.line)", indent: entry.depth) { [weak self] in
                 NavigationPanel.current?.dismiss()
                 self?.host?.reveal(line: entry.line)
             }
         }
-        let panel = NavigationPanel.filterList(title: "Outline · from syntax, no language server", rows: rows, note: reason)
-        present(panel, anchor: anchor)
-        panel.focusFilter()
+        present(NavigationPanel.filterList(title: title, rows: rows, note: note), anchor: anchor)
     }
 
     /// Lines of context above and below each reference in an Open All layout.
@@ -391,8 +382,7 @@ final class CodeNavigation: NSObject {
                 let last = max(entry.line, lineCounts[entry.url] ?? Int.max)
                 let lines = LineRange(start: max(1, entry.line - Self.referenceContext), end: min(last, entry.line + Self.referenceContext))
                 let caption = "Reference \(index + 1) of \(entries.count)\(subject) · L\(entry.line)"
-                let props: JSONValue = .object(["path": .string(entry.path), "caption": .string(caption),
-                                                "range": .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])])
+                let props: JSONValue = .object(["path": .string(entry.path), "caption": .string(caption), "range": lines.json])
                 let size = (try? await ObjectMeasure.size(type: .code, props: props, width: nil, root: root)) ?? CGSize(width: Board.defaultSize(.code).w, height: 220)
                 excerpts.append(CodeExcerpt(path: entry.path, lines: lines, caption: caption, size: size))
             }
@@ -448,10 +438,9 @@ final class CodeNavigation: NSObject {
         let go = { [weak self] () -> CodeReaim? in
             var opened = CodeOpened(id: tile, created: false, reaim: nil)
             if newTile {
-                let lines = location.range.lines
-                let range = JSONValue.object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
                 let size = Board.defaultSize(.code)
-                opened.id = board.create(type: .code, props: .object(["path": .string(aim.path), "range": range]), frame: board.place(width: size.w, height: size.h, near: tile)).id
+                opened.id = board.create(type: .code, props: .object(["path": .string(aim.path), "range": location.range.lines.json]),
+                                         frame: board.place(width: size.w, height: size.h, near: tile)).id
             } else {
                 opened = board.openForNavigation(aim, from: tile)
             }
@@ -507,43 +496,36 @@ final class CodeNavigation: NSObject {
     /// Top-level symbols and the members of types (not locals), filtered as the user types.
     func showOutline(anchor: NSPoint) {
         run(anchor: anchor) { [weak self] file, root in
-            let answer: [LSPSymbol]
-            do {
-                answer = try await Self.languages.documentSymbols(file: file, boardRoot: root)
-            } catch let error where Self.textFallback(for: error) != nil {
-                await self?.textOutline(file: file, anchor: anchor, reason: Self.textFallback(for: error) ?? "")
-                return
-            }
+            guard let answer = try await Self.serverAnswer({ try await Self.languages.documentSymbols(file: file, boardRoot: root) },
+                                                           else: { await self?.textOutline(file: file, anchor: anchor, reason: $0) }), let self else { return }
             let symbols = LSPSymbol.outline(answer)
-            guard let self else { return }
             guard !symbols.isEmpty else { return self.showMessage("No symbols", anchor: anchor) }
-            let rows = symbols.map { entry in
-                let line = entry.symbol.selectionRange.start.line + 1
-                return NavigationPanel.Row(title: entry.symbol.name, detail: "\(entry.symbol.kindName) · L\(line)", indent: entry.depth) { [weak self] in
-                    NavigationPanel.current?.dismiss()
-                    self?.host?.reveal(line: line)
-                }
+            // LSP has no macro kind: rust-analyzer sends `macro_rules!` as a function, so the
+            // declaring line, read as the text outline reads it, names the kind instead.
+            let lines = await offPool { (try? String(contentsOf: file, encoding: .utf8)).map { $0.split(separator: "\n", omittingEmptySubsequences: false) } ?? [] }
+            func kind(_ symbol: LSPSymbol) -> String {
+                let line = symbol.selectionRange.start.line
+                guard symbol.kindName == "function", lines.indices.contains(line) else { return symbol.kindName }
+                let declared = TextNavigation.declarations(inLine: String(lines[line]), pathExtension: file.pathExtension).first { $0.name == symbol.name }
+                return declared?.kind == "macro" ? "macro" : symbol.kindName
             }
-            let panel = NavigationPanel.filterList(title: "Outline", rows: rows)
-            self.present(panel, anchor: anchor)
-            panel.focusFilter()
+            self.showOutline("Outline", symbols.map { ($0.symbol.name, kind($0.symbol), $0.symbol.selectionRange.start.line + 1, $0.depth) }, anchor: anchor)
         }
     }
 
     // MARK: Context menu
 
-    func contextMenu(for event: NSEvent) {
-        guard let codeView, let menu = menu(for: event) else { return }
-        NSMenu.popUpContextMenu(menu, with: event, for: codeView)
-    }
-
     /// The context menu a right-click `event` over a code view shows (input replay performs its
     /// items: a shown menu's tracking loop ignores posted events).
     static func menu(for event: NSEvent) -> NSMenu? {
+        controller(at: event)?.menu(for: event)
+    }
+
+    /// The controller whose code view is under `event`.
+    private static func controller(at event: NSEvent) -> CodeNavigation? {
         guard let contentView = event.window?.contentView,
-              let hit = contentView.hitTest(contentView.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
-              let controller = controllers.allObjects.first(where: { $0.codeView.map { hit.isDescendant(of: $0) } ?? false }) else { return nil }
-        return controller.menu(for: event)
+              let hit = contentView.hitTest(contentView.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow) else { return nil }
+        return controllers.allObjects.first { $0.codeView.map { hit.isDescendant(of: $0) } ?? false }
     }
 
     private func menu(for event: NSEvent) -> NSMenu? {
@@ -614,11 +596,13 @@ final class CodeNavigation: NSObject {
         present(NavigationPanel.message(text), anchor: anchor)
     }
 
+    /// Shows `panel` below `anchor`. A list takes the keyboard until it closes: the user asked for it.
     private func present(_ panel: NavigationPanel, anchor: NSPoint) {
         guard let codeView else { return }
         panel.show(below: anchor, lineHeight: lineHeight, in: codeView)
         observeTileFrame(codeView)
         self.panel = panel
+        panel.focusFilter()
     }
 
     /// Panels sit in the canvas document, not the tile, so a moved or resized tile would leave
@@ -653,17 +637,13 @@ final class CodeNavigation: NSObject {
             panel.dismiss()
         }
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        guard !flags.contains(.control), let contentView = event.window?.contentView else { return false }
-        let point = contentView.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
-        guard let hit = contentView.hitTest(point),
-              let controller = controllers.allObjects.first(where: { $0.codeView.map { hit.isDescendant(of: $0) } ?? false }),
-              let codeView = controller.codeView else { return false }
+        guard !flags.contains(.control), let controller = controller(at: event), let codeView = controller.codeView else { return false }
         switch (event.type, flags) {
         case (.leftMouseDown, [.command]), (.leftMouseDown, [.command, .option]):
             controller.goToDefinition(atViewPoint: codeView.convert(event.locationInWindow, from: nil), newTile: flags.contains(.option))
             return true
         case (.rightMouseDown, []):
-            controller.contextMenu(for: event)
+            if let menu = controller.menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: codeView) }
             return true
         default:
             return false

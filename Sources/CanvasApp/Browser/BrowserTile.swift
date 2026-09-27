@@ -65,6 +65,12 @@ final class BrowserTile: NSView, TileContent {
     private var hover: (point: CGPoint, element: WebMentions.Element)?
     private var hoverWanted: CGPoint?
     private var hoverInFlight = false
+    /// The page's error count as it last reported it (`PageCapture`), and its own document's
+    /// HTTP error status: the chrome's badge counts both.
+    fileprivate var pageErrors = 0
+    fileprivate var documentFailure: PageLogEntry?
+    /// The badge's list of the page's errors, while open.
+    fileprivate var problemsList: PageProblemsView?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -85,6 +91,7 @@ final class BrowserTile: NSView, TileContent {
             self?.submitAddress(text)
         }
         chrome.onEscape = { [weak self] in self?.leave() }
+        chrome.onProblems = { [weak self] in self?.toggleProblems() }
         chrome.onReload = { [weak self] in
             guard let self else { return }
             self.credit.user()
@@ -142,6 +149,7 @@ final class BrowserTile: NSView, TileContent {
         chrome.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.chromeHeight)
         cover.frame = pageFrame
         webView?.frame = webViewFrame
+        placeProblems()
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -198,8 +206,14 @@ final class BrowserTile: NSView, TileContent {
         let controller = configuration.userContentController
         controller.addUserScript(WKUserScript(source: BrowserScripts.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: BrowserScripts.world))
         controller.add(PageMessages(tile: self), contentWorld: BrowserScripts.world, name: BrowserScripts.messageName)
+        // The page's console, errors and requests from its first line on (`PageLog`).
+        controller.addUserScript(WKUserScript(source: PageCapture.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        controller.add(PageLogMessages(tile: self), contentWorld: .page, name: PageCapture.messageName)
         let view = BrowserWebView(frame: webViewFrame, configuration: configuration)
-        view.onUserInput = { [weak self] in self?.credit.user() }
+        view.onUserInput = { [weak self] in
+            self?.credit.user()
+            self?.closeProblems()
+        }
         view.onEscape = { [weak self] in self?.leave() }
         view.autoresizingMask = [.width, .height]
         view.navigationDelegate = self
@@ -539,6 +553,7 @@ final class BrowserTile: NSView, TileContent {
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
+        if let problem = problemMention(at: point) { return problem }
         guard let page = pagePoint(point) else { return nil }
         if hover?.point != page { requestHover(at: page) }
         guard let hover, hover.element.rect.contains(page) else { return nil }
@@ -563,6 +578,7 @@ final class BrowserTile: NSView, TileContent {
     }
 
     func resolveMention(at point: NSPoint) async -> MentionTarget? {
+        if let problem = problemMention(at: point) { return problem }
         guard let page = pagePoint(point), let webView,
               let element = await WebMentions.element(at: page, in: webView) else { return nil }
         return mention(element)
@@ -583,6 +599,7 @@ final class BrowserTile: NSView, TileContent {
     var headerHeight: CGFloat { Self.chromeHeight }
 
     func outline(for target: MentionTarget) -> NSRect? {
+        if case .console(_, _, let entry) = target { return problemOutline(entry) }
         guard case .dom(_, _, let selector, _) = target, let hover, hover.element.selector == selector else { return nil }
         return viewRect(hover.element.rect)
     }
@@ -719,6 +736,17 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         decisionHandler(.allow)
     }
 
+    /// The page's own document with an HTTP error status is its first problem (`PageLog`).
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
+        if navigationResponse.isForMainFrame {
+            let status = (navigationResponse.response as? HTTPURLResponse)?.statusCode ?? 0
+            documentFailure = status >= 400 ? PageLog.documentFailure(url: navigationResponse.response.url?.absoluteString ?? "", status: status) : nil
+            problemsChanged()
+        }
+        // What WebKit does without this method: show what it can, never download.
+        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .cancel)
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         if !uncommittedNavigations.contains(where: { $0 === navigation }) { uncommittedNavigations.append(navigation) }
         signalChange()
@@ -822,7 +850,21 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     private let forward = BrowserChrome.button("chevron.right", "Forward")
     private let reload = BrowserChrome.button("arrow.clockwise", "Reload")
     private let address = NSTextField()
+    /// "2 errors", only while the page has any; clicking it lists them (`onProblems`).
+    private let problems = NSButton(title: "", target: nil, action: nil)
+    var onProblems: (() -> Void)?
     private(set) var isEditing = false
+
+    var errorCount = 0 {
+        didSet {
+            guard errorCount != oldValue else { return }
+            problems.isHidden = errorCount == 0
+            let title = errorCount == 1 ? "1 error" : "\(errorCount) errors"
+            problems.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.systemRed])
+            problems.setAccessibilityLabel("\(title) on this page")
+            resizeSubviews(withOldSize: bounds.size)
+        }
+    }
 
     var canGoBack = false { didSet { back.isEnabled = canGoBack } }
     var canGoForward = false { didSet { forward.isEnabled = canGoForward } }
@@ -851,7 +893,15 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         address.delegate = self
         address.target = self
         address.action = #selector(addressSubmitted)
-        [back, forward, reload, address].forEach(addSubview)
+        problems.isBordered = false
+        problems.wantsLayer = true
+        problems.layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.12).cgColor
+        problems.layer?.cornerRadius = 9
+        problems.toolTip = "Console errors and failed requests since the page loaded"
+        problems.target = self
+        problems.action = #selector(problemsClicked)
+        problems.isHidden = true
+        [back, forward, reload, address, problems].forEach(addSubview)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -864,8 +914,17 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         back.frame = NSRect(x: 6, y: y, width: side, height: side)
         forward.frame = NSRect(x: 32, y: y, width: side, height: side)
         reload.frame = NSRect(x: 58, y: y, width: side, height: side)
-        address.frame = NSRect(x: 88, y: (bounds.height - 22) / 2, width: max(0, bounds.width - 96), height: 22)
+        var trailing: CGFloat = 8
+        if !problems.isHidden {
+            let width = ceil(problems.attributedTitle.size().width) + 14
+            problems.frame = NSRect(x: bounds.width - 6 - width, y: (bounds.height - 18) / 2, width: width, height: 18)
+            trailing += width + 4
+        }
+        address.frame = NSRect(x: 88, y: (bounds.height - 22) / 2, width: max(0, bounds.width - 88 - trailing), height: 22)
     }
+
+    /// The badge's frame in the chrome, for anchoring its list.
+    var problemsFrame: NSRect { problems.frame }
 
     func setAddress(_ text: String) {
         shownAddress = text == "about:blank" ? "" : text
@@ -886,6 +945,7 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     @objc private func backClicked() { onBack?() }
     @objc private func forwardClicked() { onForward?() }
     @objc private func reloadClicked() { onReload?() }
+    @objc private func problemsClicked() { onProblems?() }
 
     @objc private func addressSubmitted() {
         isEditing = false
@@ -917,5 +977,108 @@ extension BrowserTile {
             self.pageLuminance = luminance
             NotificationCenter.default.post(name: .tileSurfaceChanged, object: self)
         }
+    }
+}
+
+// MARK: Page problems (console errors, failed requests)
+
+extension BrowserTile {
+    /// The page's error count changed (`PageLogMessages`): a new document reports 0 first.
+    func pageReported(errors: Int) {
+        pageErrors = errors
+        problemsChanged()
+    }
+
+    /// The badge shows the count, and an open list refreshes.
+    fileprivate func problemsChanged() {
+        let count = pageErrors + (documentFailure == nil ? 0 : 1)
+        chrome.errorCount = count
+        if count == 0 { return closeProblems() }
+        if problemsList != nil { refreshProblems() }
+    }
+
+    /// What the page reported since it loaded; nil without a page that runs `PageCapture`.
+    func readPageLog() async -> PageLog? {
+        guard let webView else { return nil }
+        let failure = documentFailure
+        guard let text = try? await webView.callAsyncJavaScript(PageCapture.readScript, arguments: [:], in: nil, contentWorld: .page) as? String,
+              let json = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)), var log = PageLog(json: json) else { return nil }
+        if let failure { log.add(documentFailure: failure) }
+        return log
+    }
+
+    fileprivate func toggleProblems() {
+        if problemsList != nil { return closeProblems() }
+        let list = PageProblemsView()
+        list.onClose = { [weak self] in self?.closeProblems() }
+        problemsList = list
+        addSubview(list, positioned: .above, relativeTo: cover)
+        placeProblems()
+        refreshProblems()
+    }
+
+    func closeProblems() {
+        problemsList?.removeFromSuperview()
+        problemsList = nil
+    }
+
+    private func refreshProblems() {
+        Task { @MainActor [weak self] in
+            let log = await self?.readPageLog()
+            guard let self, let list = self.problemsList else { return }
+            list.show(log?.problems ?? self.documentFailure.map { [$0] } ?? [])
+            self.placeProblems()
+        }
+    }
+
+    /// Under the badge, at the page's right edge, as tall as its rows up to most of the page.
+    fileprivate func placeProblems() {
+        guard let list = problemsList else { return }
+        let width = min(PageProblemsView.preferredWidth, bounds.width - 12)
+        let height = min(list.fittingHeight(width: width), max(80, (bounds.height - Self.chromeHeight) * 0.7))
+        list.frame = NSRect(x: bounds.width - width - 6, y: Self.chromeHeight + 2, width: width, height: height)
+    }
+
+    /// A Hyper-click on a row of the list: that entry, as a `console` mention.
+    fileprivate func problemMention(at point: NSPoint) -> MentionTarget? {
+        guard let list = problemsList, let entry = list.entry(at: list.convert(point, from: self)) else { return nil }
+        let url = webView?.url?.absoluteString ?? object.props["url"]?.string ?? ""
+        return .console(object: objectID, url: url, entry: entry)
+    }
+
+    fileprivate func problemOutline(_ entry: PageLogEntry) -> NSRect? {
+        guard let list = problemsList, let rect = list.rowRect(of: entry) else { return nil }
+        return convert(rect, from: list)
+    }
+
+    /// Opens Safari's Web Inspector for the page (the page's own Inspect Element opens it too).
+    /// `_inspector` is WKWebView's own inspector handle (`isInspectable` makes it available);
+    /// false when the page isn't loaded or WebKit has no such handle.
+    @discardableResult
+    func showInspector() -> Bool {
+        guard let webView, webView.url != nil, webView.responds(to: NSSelectorFromString("_inspector")),
+              let inspector = webView.value(forKey: "_inspector") as? NSObject, inspector.responds(to: NSSelectorFromString("show")) else { return false }
+        inspector.perform(NSSelectorFromString("show"))
+        return true
+    }
+
+    var canShowInspector: Bool { webView?.url != nil }
+}
+
+/// The script message handler for the page's error count (`PageCapture`, in the page's world).
+/// WebKit retains handlers strongly, so this holds the tile weakly.
+@MainActor
+private final class PageLogMessages: NSObject, WKScriptMessageHandler {
+    weak var tile: BrowserTile?
+
+    init(tile: BrowserTile) {
+        self.tile = tile
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // The page's world can post anything here: only a plausible count counts.
+        guard message.frameInfo.isMainFrame, let count = (message.body as? NSNumber)?.doubleValue,
+              count.isFinite, count >= 0, count < 1e9 else { return }
+        tile?.pageReported(errors: Int(count))
     }
 }

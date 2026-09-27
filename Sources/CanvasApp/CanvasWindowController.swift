@@ -552,6 +552,17 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     @objc func saveHTMLTile(_ sender: Any?) { selectedHTMLTile.map(canvas.saveHTML) }
     @objc func openHTMLTileInBrowser(_ sender: Any?) { selectedHTMLTile.map(canvas.openHTMLInBrowser) }
 
+    /// View ▸ Show Web Inspector: Safari's Web Inspector for the focused, else the one selected,
+    /// browser tile's page.
+    @objc func showWebInspector(_ sender: Any?) { inspectableBrowser?.showInspector() }
+
+    private var inspectableBrowser: BrowserTile? {
+        let selection = canvas.selection
+        guard let id = canvas.focusedTile ?? (selection.count == 1 ? selection.first : nil),
+              let browser = canvas.tiles[id]?.content as? BrowserTile, browser.canShowInspector else { return nil }
+        return browser
+    }
+
     /// The one selected object, when it is an HTML tile (Save as HTML, Open in Browser).
     private var selectedHTMLTile: ObjectID? {
         let selection = canvas.selection
@@ -605,6 +616,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
         case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selectedHTMLTile != nil
+        case #selector(showWebInspector(_:)): return inspectableBrowser != nil
         case #selector(toggleFollowFiles(_:)):
             guard let terminal = canvas.followTerminal else {
                 item.state = .off

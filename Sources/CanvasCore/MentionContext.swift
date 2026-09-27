@@ -79,6 +79,8 @@ public enum MentionContext {
             guard let object = board.objects[id] else { return id }
             let name = object.type == .code ? PathLabel.short(title(of: object, on: board)) : title(of: object, on: board)
             return name == object.type.rawValue ? name : "\(object.type.rawValue) \(clip(name, 28))"
+        case .console(_, _, let entry):
+            return "\(entry.noun) \"\(clip(entry.text, 32))\"" + (entry.shortSource.map { " · \($0)" } ?? "")
         }
     }
 
@@ -134,6 +136,8 @@ public enum MentionContext {
             lines.append("[\(index)] image \(path) · pixel (\(x), \(y))\(extent), from its top-left · tile \(object)\(edited)")
         case .note(let object, let item):
             lines.append(contentsOf: noteItemLines(item, of: object, index: index, edited: edited, on: board))
+        case .console(let object, let url, let entry):
+            lines.append(contentsOf: consoleLines(entry, of: object, url: url, index: index, edited: edited, on: board))
         case .object(let id):
             if let object = board.objects[id] {
                 lines.append("[\(index)] \(describe(object, on: board, caller: caller))\(edited)")
@@ -383,6 +387,25 @@ public enum MentionContext {
         }
         lines.append(contentsOf: NoteSource.lines(of: current.text).map { "    \($0)" })
         if current.omittedLines > 0 { lines.append("    … \(current.omittedLines) more lines (canvas get \(id))") }
+        return lines
+    }
+
+    /// Stack frames a console mention carries.
+    static let maxStackLines = 8
+
+    /// A page's console message, error or failed request: what it said, where, and when.
+    static func consoleLines(_ entry: PageLogEntry, of id: ObjectID, url: String, index: Int, edited: String, on board: Board) -> [String] {
+        let tile = board.objects[id].map { " \"\(clip(title(of: $0, on: board), 60))\"" } ?? ""
+        let when = entry.clockTime.map { " · at \($0)" } ?? ""
+        var lines = ["[\(index)] page \(entry.noun) · browser tile \(id)\(tile) · page \(url)\(when)\(edited)"]
+        lines.append(contentsOf: entry.text.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
+        if let source = entry.source { lines.append("    source: \(source)") }
+        if let stack = entry.stack {
+            let frames = stack.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.contains(PageCapture.scriptName) }
+            if !frames.isEmpty { lines.append("    stack:") }
+            lines.append(contentsOf: frames.prefix(maxStackLines).map { "      \($0)" })
+            if frames.count > maxStackLines { lines.append("      … \(frames.count - maxStackLines) more frames") }
+        }
         return lines
     }
 

@@ -41,6 +41,14 @@ The terminal a command comes from (its driver) is the one the connection opened 
 
 Error codes: `invalid_params`, `not_found`, `method_not_found`, `unauthorized`, `timeout`, `js_error`, `unavailable`. The plain-text line `auth <password>` answers `OK: …` or `ERROR: …`.
 
+### Page log (console, errors, failed requests)
+
+Every browser tile's main frame runs `PageCapture` (CanvasCore/PageLog.swift) in the page's own world at document start, so it sees the page from its first line on. It records console messages (`log` `info` `warn` `error` `debug`, as the console formats them, up to 1,000 characters; warnings and errors with the `url:line:column` of the code that logged), uncaught errors and unhandled rejections (message, source, stack), and failed requests: `fetch` and `XMLHttpRequest` answered 400 or more or never answered (network error; an aborted request isn't a failure), and elements whose resource failed to load (`img`, `script`, `link`…, from their `error` events; WebKit exposes no status for those). Errors and warnings go in one ring of 200, other messages in another of 200, so a chatty page never pushes out its errors; what falls out is counted (`dropped`). The tile hears nothing but the page's error count, at most once per 100 ms burst and 0 at every new document (message handler `canvasPageLog`, page world); everything else is read on demand (`__canvasPageLog.read()`, a non-enumerable, non-configurable global). The page's own document answered 400 or more is its first entry (`resource: document`, from the navigation response). Web vitals: LCP by `PerformanceObserver` (buffered) where WebKit has the entry type; CLS and long tasks (`layout-shift`, `longtask`, which WebKit lacks) are null and listed in `vitals.unsupported`; FCP, TTFB, DOMContentLoaded and load from the paint and navigation timings, null until they happen. Hooking `console` means the Web Inspector's console attributes messages to `canvas-page-log.js`; their stack traces still lead to the caller.
+
+It also starts omp's cmux capture globals in the shapes omp installs after load, which omp then leaves in place: `__ompConsoleCapture` (`{entries: [{seq, ts, type: console|pageerror, level, text, args, location?, stack?}], nextSeq, dropped}`, 500 entries; `args` serialize when omp reads them) and `__ompCmuxResponses` (`{nextId, records: [{id, ts, method, resourceType: fetch|xhr, url, status, statusText, headers, requestHeaders, body, durationMs}]}`, 200 records, text bodies up to 64 KiB, none for streams or binary types). So omp's `tab.console()`, `errors()`, `requests()` and `waitForResponse()` cover the page's load. XHR is observed through `XMLHttpRequest.prototype` (`open`, `send`, `setRequestHeader`), not by replacing the constructor.
+
+`object.get` on a browser tile adds `page` (schema `PageLog`): the counts since the page loaded, the latest 100 entries (after `since`, a `page.cursor` from an earlier call; one from an earlier document returns all of this one with `reloaded: true`), and the vitals; `loaded: false` when the tile has no page (released or never shown). The badge in the tile's address bar ("2 errors", only while there are any) opens a list of the errors, newest first (message, kind, `file:line`, time); a Hyper-click on a row stages a `console` mention (schema `MentionTarget`: `object`, the page's `url`, and the `entry`).
+
 ## Terminal tile environment
 
 Every terminal tile's process (inside zmx) gets:
@@ -303,6 +311,8 @@ Read more of a terminal: canvas agent.read --target <id> (--block last: its last
 ```
 
 A note block reads `[n] note obj_… "Audit log" · list item, markdown lines 11-13 · in Audit log › Leads` followed by the block's markdown, indented, as the note reads at drain time: `NoteItem.find` re-finds it by its text nearest where it was (lines ignoring indentation), else by its first line with `(changed since it was mentioned; as it reads now:)`, else prints the staged text after `(no longer in the note; as it read when mentioned:)`; a cut block ends `… N more lines (canvas get obj_…)`. A whole note (`object`) carries its markdown up to 80 lines and 4000 characters, then the same `… N more lines` line.
+
+A page's console entry (`MentionTarget.console`) reads `[n] page error · browser tile obj_… "Shop" · page http://localhost:3000/ · at 14:03:05` (the kind: `error`, `console error`, `warning`, `failed request`, `console.log`…) followed by its text, `source: url:line:column`, and up to 8 stack frames (Canvas's own left out), indented.
 
 An image tile's point reads `[n] image out/fig.png · pixel (600, 337) of 1200×675, from its top-left · tile obj_…` (`MentionTarget.image`: the tile's `path` and the point in the image's own pixels).
 

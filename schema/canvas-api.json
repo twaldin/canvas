@@ -291,6 +291,55 @@
       },
       "additionalProperties": false
     },
+    "PageLogEntry": {
+      "type": "object",
+      "required": ["seq", "time", "kind", "level", "text"],
+      "properties": {
+        "seq": { "type": "integer", "description": "order within the page's document" },
+        "time": { "type": "string", "format": "date-time" },
+        "kind": { "enum": ["console", "exception", "request"], "description": "a console message; an uncaught error or unhandled promise rejection; a request that failed (HTTP status 400 or more, a network error, a resource that didn't load)" },
+        "level": { "enum": ["log", "info", "warn", "error", "debug"], "description": "exceptions and failed requests are `error`" },
+        "text": { "type": "string", "description": "the message as the console prints it (up to 1,000 characters), or `METHOD url → status`" },
+        "source": { "type": "string", "description": "`url:line:column` of the code that logged (warnings and errors) or threw" },
+        "stack": { "type": "string" },
+        "method": { "type": "string" },
+        "url": { "type": "string", "description": "a failed request's URL" },
+        "status": { "type": "integer", "description": "a failed request's HTTP status; absent when it got none (network error, a resource load WebKit reports without one)" },
+        "resource": { "type": "string", "description": "what made the request: fetch, xhr, document (the page itself), or the element (img, script, link…)" }
+      },
+      "additionalProperties": false
+    },
+    "PageLog": {
+      "type": "object",
+      "required": ["loaded"],
+      "description": "What a browser tile's page reported since it loaded. Main frame only; a new document (load, reload) starts over.",
+      "properties": {
+        "loaded": { "type": "boolean", "description": "false: the tile has no page now (never shown or rendered, or released while out of view); `view.render` loads it" },
+        "url": { "type": "string" },
+        "errors": { "type": "integer", "description": "exceptions, console errors and failed requests since the page loaded" },
+        "warnings": { "type": "integer" },
+        "entries": { "type": "array", "items": { "$ref": "#/definitions/PageLogEntry" }, "description": "oldest first, the latest 100 (after `since`); the page keeps its last 200 errors and warnings and last 200 other messages" },
+        "omitted": { "type": "integer", "description": "older entries after `since` left out of `entries`" },
+        "dropped": { "type": "integer", "description": "entries the page's buffers no longer hold" },
+        "reloaded": { "const": true, "description": "`since` named an earlier document: `entries` start at this one's beginning" },
+        "cursor": { "type": "string", "description": "pass as `since` to read only what comes after" },
+        "vitals": {
+          "type": "object",
+          "description": "milliseconds from navigation start (CLS unitless); null when not measured yet or not measured by WebKit (then named in `unsupported`), never a stand-in zero",
+          "properties": {
+            "lcp": { "type": ["number", "null"] },
+            "cls": { "type": ["number", "null"] },
+            "longTasks": { "type": ["object", "null"], "properties": { "count": { "type": "integer" }, "totalMs": { "type": "number" } } },
+            "fcp": { "type": ["number", "null"] },
+            "ttfb": { "type": ["number", "null"] },
+            "domContentLoaded": { "type": ["number", "null"] },
+            "load": { "type": ["number", "null"] },
+            "unsupported": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "MentionTarget": {
       "oneOf": [
         { "type": "object", "required": ["kind", "object"], "properties": { "kind": { "const": "object" }, "object": { "$ref": "#/definitions/Id" } }, "additionalProperties": false },
@@ -348,6 +397,18 @@
             "path": { "type": "string", "description": "the image tile's props.path" },
             "x": { "type": "integer", "description": "the point on the image, in the image's own pixels from its left edge" },
             "y": { "type": "integer", "description": "from its top edge" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "object", "url", "entry"],
+          "description": "what a browser tile's page reported (a Hyper-click in the tile's error list): a console message, an uncaught error, or a failed request",
+          "properties": {
+            "kind": { "const": "console" },
+            "object": { "$ref": "#/definitions/Id" },
+            "url": { "type": "string", "description": "the page's URL" },
+            "entry": { "$ref": "#/definitions/PageLogEntry" }
           },
           "additionalProperties": false
         },
@@ -570,11 +631,15 @@
       }
     },
     "object.get": {
-      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. To look at an object, `view.render` it.",
+      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. To look at an object, `view.render` it.",
       "params": {
         "type": "object",
         "required": ["id"],
-        "properties": { "id": { "$ref": "#/definitions/Id" }, "as": { "enum": ["raw", "graph"], "default": "raw" } },
+        "properties": {
+          "id": { "$ref": "#/definitions/Id" },
+          "as": { "enum": ["raw", "graph"], "default": "raw" },
+          "since": { "type": "string", "description": "browser tiles: `page.cursor` from an earlier call; `page.entries` then holds only what the page reported after it (everything, with `reloaded: true`, when the page has loaded again since)" }
+        },
         "additionalProperties": false
       },
       "result": {
@@ -583,6 +648,7 @@
         "properties": {
           "object": { "$ref": "#/definitions/CanvasObject" },
           "graph": { "type": "object" },
+          "page": { "$ref": "#/definitions/PageLog", "description": "browser tiles only" },
           "lastCommand": { "$ref": "#/definitions/TerminalCommand", "description": "terminals only: the last command the shell finished, as in `agent.list`" },
           "changes": {
             "type": "object",

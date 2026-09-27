@@ -54,7 +54,7 @@ public enum PromptTarget {
             default: path = nil
             }
         case .note(let id, _): path = board.objects[id].map { board.linkRoot(of: $0).path }
-        case .dom, .terminal, .group: path = nil
+        case .dom, .terminal, .group, .console: path = nil
         }
         return path.flatMap(GitWorktree.containing)
     }

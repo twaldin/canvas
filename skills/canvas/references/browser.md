@@ -21,3 +21,17 @@ omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens 
 - The user can click links and buttons in a tile directly. `board.history` credits your terminal with the tiles you open and close
   and with URL changes your commands cause within 10 s (pushState and back included; a `_blank` link opens a tile beside the page, never moving the view);
   the user's clicks are `user`, changes the page makes later on its own `system`.
+
+## Errors, requests and the dev server
+
+- Tiles record what the page reports from its first line on: console messages, uncaught errors and unhandled rejections, and failed requests (HTTP 400 or more, network errors, images, scripts and styles that didn't load; the page's own document too).
+  After an edit and reload, read them instead of assuming a clean page: `canvas get <tile>` → `page.errors`, `page.entries` (`level`, `text`, `source` `url:line:column`, `status`).
+  Keep `page.cursor` and pass `canvas get <tile> --since <cursor>` next time to see only what came after (a reload returns all of the new page, `reloaded: true`).
+  omp's `tab.console()`, `tab.errors()`, `tab.requests()` and `waitForResponse()` see page load too on tiles; `tab.clearConsole()` then reload is not needed.
+- The server half is in the terminal running the dev server (`canvas agent.list`: its `program`, e.g. `next dev`, `vite`).
+  After edits, read it too: `canvas agent.read --target <that tile> --lines 40` (or its `lastCommand`); compile errors, SSR exceptions and 500s show there, not in the page.
+  It is the user's terminal: report what you find, don't restart it unasked.
+- `page.vitals`: LCP, FCP, TTFB, DOMContentLoaded and load in ms. Tiles are WebKit (Safari 18 UA): CLS and long tasks are null and listed in `unsupported`; there's no throttling or Lighthouse.
+  For those use omp's own headless Chromium browser, not a tile.
+- The user sees a small red "N errors" badge in the tile's address bar while the page has errors; a Hyper-click on one in its list mentions it to you (`console` mention: the message, source, stack frames and page).
+- Safari's Web Inspector is the user's (page or tile context menu, Inspect Element; ⌥⌘I). Don't open it yourself: its window can land on the user's screen.

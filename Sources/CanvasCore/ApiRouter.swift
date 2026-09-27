@@ -100,6 +100,9 @@ public final class ApiRouter {
     /// A terminal tile's live title (OSC 0/2), foreground program (`TerminalName.program`) and
     /// last finished command, as its tile knows them now; nil without the app UI.
     public var terminalStatus: ((Board, ObjectID) -> TerminalStatus)?
+    /// What a browser tile's page reported since it loaded (`PageLog`); nil when its page isn't
+    /// loaded (never shown or rendered, or released while out of view).
+    public var readPageLog: ((Board, ObjectID) async -> PageLog?)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
@@ -860,10 +863,20 @@ public final class ApiRouter {
 
     /// `object.get`; a changes tile's result adds `changes`: its files and hunks as git has them
     /// now (`ChangeSet.json`), next to the actions the user took in `props.reviewed`; a terminal's
-    /// adds `lastCommand`, the last command its shell finished (not a prop: it changes no `rev`).
+    /// adds `lastCommand`, the last command its shell finished (not a prop: it changes no `rev`);
+    /// a browser tile's adds `page`, what its page reported since it loaded (`PageLog`), after
+    /// the `since` cursor when given.
     private func get(_ p: JSONValue) async throws -> JSONValue {
         let result = try dispatch("object.get", p)
         guard let id = p["id"]?.string, let board = registry.board(containing: id), let object = board.objects[id] else { return result }
+        if object.type == .browser, let readPageLog {
+            let since = try p["since"]?.string.map { text in
+                guard let cursor = PageLog.Cursor(text) else { throw Failure("invalid_params", "since must be a page cursor (`page.cursor` of an earlier object.get)") }
+                return cursor
+            }
+            let page = await readPageLog(board, id)?.json(since: since) ?? .object(["loaded": .bool(false)])
+            return result.merging(.object(["page": page]))
+        }
         if object.type == .terminal, let last = terminalStatus?(board, id).lastCommand {
             return result.merging(.object(["lastCommand": last.command.json(finishedAt: last.finishedAt)]))
         }

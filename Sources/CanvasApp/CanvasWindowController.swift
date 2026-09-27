@@ -329,17 +329,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// The window content as the user sees it, with the viewport it shows. Content drawn outside
     /// AppKit (Ghostty's Metal, WebKit) is missing from `cacheDisplay`, so visible tiles swap in
-    /// images of it while rendering. Code and changes cards in view are redrawn from their
+    /// images of it while rendering, fetched first (`prepareSnapshot`: a terminal's history
+    /// comes from zmx, off the main actor). Code and changes cards in view are redrawn from their
     /// current model first (a file rewritten while zoomed out shows as it is now).
     func snapshot(format: ImageFormat) async -> (output: RenderOutput, viewport: Viewport)? {
+        let visible = canvas.documentVisibleRect
         let stale = canvas.tiles.values.filter { tile in
-            !tile.isLive && tile.frame.intersects(canvas.documentVisibleRect) && [.code, .changes].contains(board.objects[tile.objectID]?.type)
+            !tile.isLive && tile.frame.intersects(visible) && [.code, .changes].contains(board.objects[tile.objectID]?.type)
         }
         let refreshes = stale.map { tile in Task { await tile.refreshCard() } }
-        for refresh in refreshes { await refresh.value }
-        guard let window, let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
-        let visible = canvas.documentVisibleRect
         let live = canvas.tiles.values.filter { $0.isLive && $0.frame.intersects(visible) }.map(\.content)
+        let preparing = live.map { content in Task { await content.prepareSnapshot() } }
+        for task in refreshes + preparing { await task.value }
+        guard let window, let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         canvas.tiles.values.forEach { $0.syncTitle() }
         live.forEach { $0.showSnapshot(true) }
         view.cacheDisplay(in: view.bounds, to: rep)

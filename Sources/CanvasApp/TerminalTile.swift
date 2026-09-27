@@ -873,15 +873,30 @@ final class TerminalTile: NSView, TileContent {
     }
 
     private var snapshotView: NSImageView?
+    /// The session's styled screen text `prepareSnapshot` fetched for the next `showSnapshot`.
+    private var snapshotHistory: (lines: [TerminalLine], cursorRow: Int?)?
 
-    /// Temporarily covers the Metal surface with its text so `cacheDisplay` can capture it
-    /// (synchronous: `view.snapshot` renders in one pass). The surface stays unhidden: hiding it
-    /// would take its keyboard focus, and the program would see a focus-out and focus-in.
+    private var snapshotGrid: TerminalRender.Grid {
+        TerminalRender.grid(for: bounds.size, known: grid, style: TerminalConfig.shared.style(for: effectiveAppearance))
+    }
+
+    /// `zmx history` blocks until zmx exits, so it runs off the main actor before the cover is drawn.
+    func prepareSnapshot() async {
+        let session = sessionName, rows = snapshotGrid.rows
+        snapshotHistory = await offPool(qos: .userInitiated) { Self.styledHistory(session: session, rows: rows) }
+    }
+
+    /// Temporarily covers the Metal surface with its text (`prepareSnapshot`) so `cacheDisplay`
+    /// can capture it (synchronous: `view.snapshot` renders in one pass). The surface stays
+    /// unhidden: hiding it would take its keyboard focus, and the program would see a focus-out
+    /// and focus-in.
     func showSnapshot(_ show: Bool) {
         snapshotView?.removeFromSuperview()
         snapshotView = nil
-        let grid = TerminalRender.grid(for: bounds.size, known: grid, style: TerminalConfig.shared.style(for: effectiveAppearance))
-        guard show, let history = Self.styledHistory(session: sessionName, rows: grid.rows) else { return }
+        let history = snapshotHistory
+        snapshotHistory = nil
+        guard show, let history else { return }
+        let grid = snapshotGrid
         let screen = TerminalRender.screen(history.lines, cursorRow: history.cursorRow, rows: grid.rows)
         let request = TileRenderRequest(size: bounds.size, scale: window?.backingScaleFactor ?? 2, full: false, appearance: effectiveAppearance)
         let view = NSImageView(frame: bounds)

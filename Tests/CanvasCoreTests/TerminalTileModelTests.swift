@@ -111,6 +111,60 @@ struct TerminalBoardTests {
         #expect(board.raiseTerminalNotice(terminal.id, message: "Build: done", bell: false), "a plain shell again")
     }
 
+    @Test func anApprovalStaysBlockedUntilItsOwnCallFinishes() throws {
+        let board = makeBoard()
+        let tile = board.create(type: .terminal, props: .object([:])).id
+        var seq = 0
+        func report(_ state: LifecycleState, _ message: String? = nil, call: String? = nil) throws {
+            seq += 1
+            try board.reportLifecycle(tile: tile, kind: "codex", state: state, message: message, seq: seq, source: "canvas-codex", call: call)
+        }
+        func shown() -> (state: String?, message: String?) {
+            let lifecycle = board.objects[tile]?.props["lifecycle"]
+            return (lifecycle?["state"]?.string, lifecycle?["message"]?.string)
+        }
+        try report(.working)
+        try report(.blocked, "run machine-ok?", call: "a")
+        try report(.blocked, "run pnpm --version?", call: "b")
+        #expect(shown() == ("blocked", "run machine-ok?"), "the approval on screen is the first one asked")
+        try report(.working, call: "subagent-read")
+        try report(.working, call: "sibling")
+        #expect(shown() == ("blocked", "run machine-ok?"), "other calls finishing don't answer it")
+        try report(.working, call: "a")
+        #expect(shown() == ("blocked", "run pnpm --version?"), "the queued approval comes up next")
+        try report(.working, call: "b")
+        #expect(shown().state == "working")
+
+        // A call finishing reported late (async hooks) still ends its own wait.
+        try report(.blocked, "edit a.ts?", call: "c")
+        let late = seq
+        try report(.blocked, "edit b.ts?", call: "d")
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .working, message: nil, seq: late, source: "canvas-codex", call: "c")
+        try report(.working, call: "d")
+        #expect(shown().state == "working", "c's late completion was not lost")
+
+        // Stop, an interrupt, or a new prompt ends every wait.
+        try report(.blocked, "edit c.ts?", call: "e")
+        try report(.idle)
+        try report(.working, call: "f")
+        #expect(shown().state == "working")
+        try report(.blocked, "edit d.ts?", call: "g")
+        try report(.working)
+        try report(.working, call: "h")
+        #expect(shown().state == "working")
+    }
+
+    @Test func anAgentThatExitedIsNotResumed() throws {
+        let board = makeBoard()
+        let tile = board.create(type: .terminal, props: .object([:])).id
+        try board.reportSession(tile: tile, kind: "codex", sessionId: "thread-1", sessionPath: nil)
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .idle, message: nil, seq: 1, source: "canvas-codex")
+        #expect(board.objects[tile]?.props["agent"]?["sessionId"] == .string("thread-1"), "a running agent is resumed after a reboot")
+        try board.releaseAgent(tile: tile)
+        #expect(board.objects[tile]?.props["agent"] == nil, "quit: the tile restores as a plain shell")
+        #expect(board.objects[tile]?.props["lifecycle"] == nil)
+    }
+
     @Test func noticeMessages() {
         #expect(Board.noticeMessage(title: "Claude", body: "Needs permission") == "Claude: Needs permission")
         #expect(Board.noticeMessage(title: "", body: "Build finished") == "Build finished")

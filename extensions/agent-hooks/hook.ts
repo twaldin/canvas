@@ -9,6 +9,7 @@
 //  - follow mode: files the agent reads, edits, and writes re-aim its follow tile
 // A hook never fails or stalls the agent: every Canvas call has a short timeout, errors are
 // swallowed, and the process exits by a hard deadline.
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { CanvasClient } from "../../clients/ts/src/index";
@@ -28,7 +29,8 @@ const tile = process.env.CANVAS_TILE_ID;
 if ((kind === "claude" || kind === "codex") && process.env.CANVAS_ENV === "1" && tile && process.env.CANVAS_SOCKET && process.env.CANVAS_AGENT_HOOKS !== "0") {
   setTimeout(() => process.exit(0), HARD_DEADLINE_MS).unref();
   try {
-    const output = await handle(kind, tile, event, JSON.parse(await Bun.stdin.text()) as Json);
+    const input = JSON.parse(await Bun.stdin.text()) as Json;
+    const output = await handle(kind, tile, event, input);
     if (output) await Bun.write(Bun.stdout, output);
   } catch {
     // Canvas unreachable or unexpected input: the agent carries on as if there were no hook.
@@ -43,11 +45,18 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
   // Hooks are separate processes that can finish out of order (async ones especially); the
   // process start time orders their reports the way the agent fired them.
   const seq = Math.floor(performance.timeOrigin * 1000);
-  const report = (state: "working" | "blocked" | "idle", message?: string) =>
-    quietly(client.api.agent.report({ tile, kind, state, message, seq, source }));
+  const report = (state: "working" | "blocked" | "idle", message?: string, call?: string) =>
+    quietly(client.api.agent.report({ tile, kind, state, message, seq, source, call }));
   const context = (text: string) => JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
+  // Claude and Codex mark events from inside a subagent with its id.
+  const subagent = typeof input.agent_id === "string" && input.agent_id.length > 0;
 
   switch (event) {
+    case "Launch": {
+      // bin/codex, as Codex starts: it fires SessionStart only with the first prompt.
+      await report("idle");
+      return undefined;
+    }
     case "SessionStart": {
       const sessionId = str(input.session_id);
       const started = str(input.source);
@@ -59,6 +68,8 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       return context(canvasGuidance(kind, tile));
     }
     case "UserPromptSubmit": {
+      // A subagent's task arrives as its prompt: the user's turn goes on, and the tray is theirs.
+      if (subagent) return undefined;
       const prompt = str(input.prompt)?.trim() ?? "";
       if (!prompt || /^[/!]/.test(prompt)) return undefined; // slash commands and shell escapes aren't prompts
       await report("working");
@@ -71,9 +82,11 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       return undefined;
     }
     case "PermissionRequest": {
+      // Canvas keeps the tile blocked until this call finishes (its PostToolUse), whatever other
+      // calls (parallel siblings, subagents) finish meanwhile.
       const tool = str(input.tool_name) ?? "tool";
       const description = str(obj(input.tool_input)?.description);
-      await report("blocked", description ?? `approve ${tool}?`);
+      await report("blocked", description ?? `approve ${tool}?`, toolCall(input));
       return undefined;
     }
     case "Notification": {
@@ -84,13 +97,19 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       else if (type === "idle_prompt") await report("idle");
       return undefined;
     }
-    case "PostToolUse": {
-      // Any finished tool means the turn is running again (e.g. after an answered approval).
-      // Claude marks tool calls made inside a subagent; their reads would drag the follow tile around.
-      const subagent = typeof input.agent_id === "string" && input.agent_id.length > 0;
-      const location = subagent ? undefined : kind === "claude" ? claudeLocation(input) : codexLocation(input);
+    case "PostToolUse":
+    case "PostToolUseFailure": {
+      // A finished call: the turn runs on (an approval of it was answered), unless other calls
+      // still wait for approval. Claude reports a failed call separately; an Esc during it ends
+      // the turn, with no Stop.
+      if (input.is_interrupt === true) {
+        await report("idle");
+        return undefined;
+      }
+      // Subagents' reads would drag the follow tile around.
+      const location = subagent || event === "PostToolUseFailure" ? undefined : kind === "claude" ? claudeLocation(input) : codexLocation(input);
       await Promise.all([
-        report("working"),
+        report("working", undefined, toolCall(input)),
         location ? quietly(client.api.follow.report({ tile, path: location.path, range: location.range, action: location.action })) : undefined,
       ]);
       return undefined;
@@ -104,6 +123,23 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       return undefined;
   }
   return undefined;
+}
+
+/**
+ * Names a tool call the same in its PermissionRequest (which carries no call id) and its
+ * PostToolUse: the tool and its input. Codex adds the approval's `description` only to the
+ * request, so that is left out.
+ */
+function toolCall(input: Json): string {
+  const { description: _, ...args } = obj(input.tool_input) ?? {};
+  const identity = JSON.stringify([str(input.tool_name) ?? "", canonical(args)]);
+  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  const record = obj(value);
+  return record ? Object.fromEntries(Object.keys(record).sort().map((key) => [key, canonical(record[key])])) : value;
 }
 
 // MARK: Follow

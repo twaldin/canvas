@@ -15,9 +15,12 @@ struct NavigatorRow {
     let kind: String
     /// A terminal's agent lifecycle color (`TileFrameView.badgeColor`).
     let dot: NSColor?
+    /// Tells rows with the same title apart: the tile's caption, else its group's title.
+    var subtitle: String? = nil
 
     func matches(_ query: String) -> Bool {
         query.isEmpty || title.localizedCaseInsensitiveContains(query) || kind.localizedCaseInsensitiveContains(query)
+            || subtitle?.localizedCaseInsensitiveContains(query) == true
     }
 }
 
@@ -40,8 +43,20 @@ extension CanvasView {
         func readingOrder(_ lhs: (NSRect, NavigatorRow), _ rhs: (NSRect, NavigatorRow)) -> Bool {
             lhs.0.minY != rhs.0.minY ? lhs.0.minY < rhs.0.minY : lhs.0.minX < rhs.0.minX
         }
+        let titleCounts = Dictionary(tiles.map { ($0.1.title, 1) }, uniquingKeysWith: +)
+        for index in tiles.indices where titleCounts[tiles[index].1.title, default: 0] > 1 {
+            if case .object(let id) = tiles[index].1.target { tiles[index].1.subtitle = distinguishing(id) }
+        }
         let all = NavigatorRow(target: .allContent, title: "All content", kind: "Zoom to Fit", dot: nil)
         return [all] + groups.sorted(by: readingOrder).map(\.1) + tiles.sorted(by: readingOrder).map(\.1)
+    }
+
+    /// A tile's caption, else the title of the group that lists it directly.
+    private func distinguishing(_ id: ObjectID) -> String? {
+        func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
+        if let caption = nonEmpty(board.objects[id]?.props["caption"]) { return CodeCaption.text(caption) }
+        let group = board.objects.values.first { $0.type == .group && GroupSpec($0.props)?.members.contains(id) == true }
+        return group.flatMap { nonEmpty($0.props["title"]) }
     }
 
     private static func navigatorRow(for object: CanvasObject, shownTitle: String) -> NavigatorRow {
@@ -278,6 +293,7 @@ private final class NavigatorCell: NSTableCellView {
 
     private let dot = NSView()
     private let title = NSTextField(labelWithString: "")
+    private let detail = NSTextField(labelWithString: "")
     private let kind = NSTextField(labelWithString: "")
 
     init() {
@@ -288,10 +304,13 @@ private final class NavigatorCell: NSTableCellView {
         title.font = .systemFont(ofSize: 13)
         title.lineBreakMode = .byTruncatingMiddle
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detail.font = .systemFont(ofSize: 12)
+        detail.lineBreakMode = .byTruncatingTail
+        detail.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(NSLayoutConstraint.Priority.defaultLow.rawValue - 1), for: .horizontal)
         kind.font = .systemFont(ofSize: 11)
         kind.alignment = .right
         kind.setContentCompressionResistancePriority(.required, for: .horizontal)
-        for view in [dot, title, kind] {
+        for view in [dot, title, detail, kind] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -302,7 +321,9 @@ private final class NavigatorCell: NSTableCellView {
             dot.heightAnchor.constraint(equalToConstant: 8),
             title.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
-            kind.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: 12),
+            detail.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
+            detail.firstBaselineAnchor.constraint(equalTo: title.firstBaselineAnchor),
+            kind.leadingAnchor.constraint(greaterThanOrEqualTo: detail.trailingAnchor, constant: 12),
             kind.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             kind.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
@@ -314,6 +335,7 @@ private final class NavigatorCell: NSTableCellView {
     func show(_ row: NavigatorRow) {
         title.stringValue = row.title
         title.font = row.target == .allContent ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
+        detail.stringValue = row.subtitle ?? ""
         kind.stringValue = row.kind
         dot.layer?.backgroundColor = (row.dot ?? .clear).cgColor
     }
@@ -326,6 +348,7 @@ private final class NavigatorCell: NSTableCellView {
         let selected = backgroundStyle == .emphasized
         title.textColor = selected ? .alternateSelectedControlTextColor : .labelColor
         kind.textColor = selected ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75) : .secondaryLabelColor
+        detail.textColor = kind.textColor
     }
 }
 

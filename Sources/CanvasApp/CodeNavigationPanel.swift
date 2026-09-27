@@ -139,7 +139,9 @@ final class NavigationPanel: NSView {
             buttons.append(button)
         }
         width = min(max(width, 200), maxSize.width)
-        header.frame = NSRect(x: 4, y: 0, width: width, height: 16)
+        // Sized before its subviews go in, so their autoresizing starts from the real width.
+        document.frame = NSRect(x: 0, y: 0, width: width, height: 20 + CGFloat(rows.count) * rowHeight)
+        header.frame = NSRect(x: 4, y: 0, width: width - (action.map { $0.fittingSize.width + 8 } ?? 0), height: 16)
         document.addSubview(header)
         if let action {
             let size = action.fittingSize

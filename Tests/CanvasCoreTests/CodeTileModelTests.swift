@@ -107,6 +107,30 @@ struct CodeBoardTests {
                 "the newest reads fill the rest")
     }
 
+    /// Find References → Open All: the excerpts stack in order in one titled group beside the
+    /// tile, clear of it, and one undo takes the whole layout back.
+    @Test func openExcerptsLaysOutOneGroupBesideTheTileAsOneUndoStep() throws {
+        let board = Board(id: "brd_test", root: root)
+        let source = board.create(type: .code, props: .object(["path": .string("a.py")]), frame: Frame(x: 0, y: 0, w: 640, h: 446))
+        let excerpts = [(10, 180.0), (40, 220.0), (90, 180.0)].enumerated().map { index, entry in
+            CodeExcerpt(path: "a.py", lines: LineRange(start: entry.0 - 3, end: entry.0 + 3), caption: "Reference \(index + 1) of 3", size: CGSize(width: 600, height: entry.1))
+        }
+        let before = Set(board.objects.keys)
+        let opened = try board.openExcerpts(excerpts, title: "3 references to f", beside: source.id)
+        let tiles = opened.tiles.map { board.objects[$0]! }
+        #expect(tiles.map { $0.props["range"]?["start"]?.int } == [7, 37, 87])
+        #expect(tiles.map { $0.props["caption"]?.string } == ["Reference 1 of 3", "Reference 2 of 3", "Reference 3 of 3"])
+        #expect(tiles.map(\.frame.h) == [180, 220, 180], "each at its measured size")
+        for (upper, lower) in zip(tiles, tiles.dropFirst()) {
+            #expect(lower.frame.x == upper.frame.x && lower.frame.y == upper.frame.maxY + Board.placementGap, "one column, in order")
+        }
+        let group = try #require(board.objects[opened.group])
+        #expect(GroupSpec(group.props)?.members == opened.tiles && group.props["title"]?.string == "3 references to f")
+        #expect(!group.frame.intersects(source.frame), "beside the tile, not over it")
+        board.undo()
+        #expect(Set(board.objects.keys) == before, "one undo removes the group and every excerpt")
+    }
+
     @Test func stagedCodeMentionsResolveFromTheirOwnCommitNotTheTile() async throws {
         let repo = try await TempRepo()
         try await repo.write("lib.rs", "fn old()\nfn gone()\n")

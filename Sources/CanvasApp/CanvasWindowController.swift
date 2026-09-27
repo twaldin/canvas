@@ -304,8 +304,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             try? await Task.sleep(for: .seconds(1))
             symbols = try? await CodeNavigation.languages.workspaceSymbols(name, files: files, boardRoot: root)
         }
-        guard let symbols else { return [] }
+        guard var symbols else { return [] }
         if !symbols.isEmpty { symbolsAnswered = Date() }
+        // Servers match fuzzily (`_resolve_pager_command` for `resolve_command`): the name itself
+        // first, then names starting with it, each in the server's order.
+        let lowered = name.lowercased()
+        func rank(_ symbol: LSPWorkspaceSymbol) -> Int { symbol.name == name ? 0 : symbol.name.lowercased() == lowered ? 1 : symbol.name.lowercased().hasPrefix(lowered) ? 2 : 3 }
+        symbols = symbols.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
         let rootPath = root.resolvingSymlinksInPath().path + "/"
         var rows: [NavigatorRow] = []
         for symbol in symbols {

@@ -64,6 +64,9 @@ extension CanvasView {
 
     private static func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
 
+    /// A caption as a row's plain subtitle: without the backticks that set `code` in the tile.
+    private static func plainCaption(_ caption: String) -> String { CodeCaption.text(caption).replacingOccurrences(of: "`", with: "") }
+
     /// What tells two tiles with the same title apart. A terminal: its name, else the command it
     /// was started with, else its directory. Anything else: its caption, else the title of the
     /// group that lists it directly.
@@ -79,7 +82,7 @@ extension CanvasView {
         if object.type == .browser, let url = Self.nonEmpty(object.props["url"]) {
             return url.replacingOccurrences(of: #"^[a-zA-Z][a-zA-Z0-9+.-]*://"#, with: "", options: .regularExpression)
         }
-        if let caption = Self.nonEmpty(object.props["caption"]) { return CodeCaption.text(caption) }
+        if let caption = Self.nonEmpty(object.props["caption"]) { return Self.plainCaption(caption) }
         let group = board.objects.values.first { $0.type == .group && GroupSpec($0.props)?.members.contains(id) == true }
         return group.flatMap { Self.nonEmpty($0.props["title"]) }
     }
@@ -99,7 +102,7 @@ extension CanvasView {
             }
             // Excerpts of one file (a references layout, an agent's call sites) differ by caption.
             return NavigatorRow(target: .object(object.id), title: title, kind: "Code", dot: nil,
-                                subtitle: nonEmpty(props["caption"]).map(CodeCaption.text), toolTip: props["path"]?.string)
+                                subtitle: nonEmpty(props["caption"]).map(plainCaption), toolTip: props["path"]?.string)
         case .note:
             let markdown = props["markdown"]?.string ?? ""
             let line = markdown.split(whereSeparator: \.isNewline).lazy

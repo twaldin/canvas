@@ -300,7 +300,9 @@ final class CodeNavigation: NSObject {
             let title = "\(entries.count == 1 ? "1 reference" : "\(entries.count) references")\(name.map { " to \($0)" } ?? "")"
             guard let self, let opened = try? self.board.openExcerpts(excerpts, title: title, beside: self.tile) else { return }
             let canvas = self.codeView.flatMap { sequence(first: $0, next: \.superview).first { $0 is CanvasView } as? CanvasView }
-            canvas?.reveal(opened.group)
+            // The least pan that shows the first reference (the group's title sits just above it);
+            // a long list runs on below and to the right.
+            canvas?.reveal(opened.tiles[0])
         }
     }
 

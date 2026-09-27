@@ -31,10 +31,21 @@ _canvas_source() {
   'builtin' 'export' ZDOTDIR="$_canvas_zdotdir"
 }
 
-# Before each prompt: the shell's directory (OSC 7, unencoded like Ghostty's own integration), so
-# `path:line` references in the tile resolve against where the user cd'ed.
+# Before each prompt: the shell's directory as a percent-encoded file URL (OSC 7, as macOS
+# Terminal's own zshrc does), so `path:line` references in the tile resolve against where the
+# user cd'ed.
 _canvas_report_cwd() {
-  'builtin' 'printf' '\e]7;kitty-shell-cwd://%s%s\a' "$HOST" "$PWD"
+  'builtin' 'local' _canvas_url='' _canvas_ch _canvas_hex _canvas_i LC_CTYPE=C LC_COLLATE=C LC_ALL= LANG=
+  for ((_canvas_i = 1; _canvas_i <= ${#PWD}; ++_canvas_i)); do
+    _canvas_ch="$PWD[_canvas_i]"
+    if [[ "$_canvas_ch" == [/._~A-Za-z0-9-] ]]; then
+      _canvas_url+="$_canvas_ch"
+    else
+      'builtin' 'printf' -v _canvas_hex '%02X' "'$_canvas_ch"
+      _canvas_url+="%${_canvas_hex:(-2)}"
+    fi
+  done
+  'builtin' 'printf' '\e]7;file://%s%s\a' "$HOST" "$_canvas_url"
 }
 
 # After the last startup file: Canvas's bin first on PATH; interactive shells restore ZDOTDIR and

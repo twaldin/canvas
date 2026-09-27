@@ -3,16 +3,26 @@ import Foundation
 @MainActor
 extension UndoHistory.Step {
     private enum Verb: Int {
-        case create, delete, move, resize, restack, change, review
+        case create, delete, move, resize, restack, change
 
-        var past: String { ["created", "deleted", "moved", "resized", "restacked", "changed", "applied"][rawValue] }
-        var imperative: String { ["Create", "Delete", "Move", "Resize", "Restack", "Change", "Apply"][rawValue] }
+        var past: String { ["created", "deleted", "moved", "resized", "restacked", "changed"][rawValue] }
+        var imperative: String { ["Create", "Delete", "Move", "Resize", "Restack", "Change"][rawValue] }
     }
 
-    /// What the step did, verb by verb in the order it did them, each with the objects it did it
-    /// to by type. Updates of objects the step created or deleted are part of that; a group
-    /// re-fitted or an arrow re-routed because its members moved is left out beside anything else.
-    private var parts: [(verb: Verb, types: [(type: ObjectType?, count: Int)])] {
+    /// What the step did outside the board, by name (`Stage of src/a.rs`), in order.
+    public var effectNames: [String] {
+        changes.compactMap { change in
+            if case .effect(let effect) = change { return effect.name }
+            return nil
+        }
+    }
+
+    /// What the step did to the board, verb by verb in the order it did them, each with the
+    /// objects it did it to by type. Updates of objects the step created or deleted are part of
+    /// that; a group re-fitted or an arrow re-routed because its members moved is left out beside
+    /// anything else; the changes tile's own log of a git action (`props.reviewed`) is the
+    /// action, named in `effectNames`.
+    private var parts: [(verb: Verb, types: [(type: ObjectType, count: Int)])] {
         var born: Set<ObjectID> = []
         var effects = false
         for change in changes {
@@ -22,12 +32,12 @@ extension UndoHistory.Step {
             case .updated: break
             }
         }
-        var entries: [(verb: Verb, type: ObjectType?)] = []
+        var entries: [(verb: Verb, type: ObjectType)] = []
         for change in changes {
             switch change {
             case .created(let object): entries.append((.create, object.type))
             case .deleted(let object): entries.append((.delete, object.type))
-            case .effect: entries.append((.review, nil))
+            case .effect: continue
             case .updated(let before, let after):
                 guard !born.contains(after.id), !(effects && after.type == .changes) else { continue }
                 let old = UndoHistory.content(before), new = UndoHistory.content(after)
@@ -37,9 +47,9 @@ extension UndoHistory.Step {
                 entries.append((verb, after.type))
             }
         }
-        let cascade: ((verb: Verb, type: ObjectType?)) -> Bool = { ($0.type == .group || $0.type == .arrow) && ($0.verb == .move || $0.verb == .resize) }
+        let cascade: ((verb: Verb, type: ObjectType)) -> Bool = { ($0.type == .group || $0.type == .arrow) && ($0.verb == .move || $0.verb == .resize) }
         if entries.contains(where: { !cascade($0) }) { entries.removeAll(where: cascade) }
-        var result: [(verb: Verb, types: [(type: ObjectType?, count: Int)])] = []
+        var result: [(verb: Verb, types: [(type: ObjectType, count: Int)])] = []
         for entry in entries {
             let index = result.firstIndex { $0.verb == entry.verb } ?? {
                 result.append((entry.verb, []))
@@ -54,7 +64,7 @@ extension UndoHistory.Step {
         return result
     }
 
-    private static func noun(_ type: ObjectType?) -> (singular: String, plural: String, title: String) {
+    private static func noun(_ type: ObjectType) -> (singular: String, plural: String, title: String) {
         switch type {
         case .code: ("code tile", "code tiles", "Code Tile")
         case .terminal: ("terminal", "terminals", "Terminal")
@@ -66,30 +76,41 @@ extension UndoHistory.Step {
         case .shape: ("shape", "shapes", "Shape")
         case .arrow: ("arrow", "arrows", "Arrow")
         case .group: ("group", "groups", "Group")
-        case nil: ("review action", "review actions", "Review Action")
         }
     }
 
-    /// What undoing it undoes, for a person: `created 9 code tiles, 6 arrows; moved a note`.
+    /// What undoing it undoes, for a person: `created 9 code tiles, 6 arrows; moved a note`,
+    /// `Stage of src/a.rs`.
     public var summary: String {
-        parts.map { part in
+        (effectNames + parts.map { part in
             part.verb.past + " " + part.types.map { entry in
                 let noun = Self.noun(entry.type)
                 guard entry.count == 1 else { return "\(entry.count) \(noun.plural)" }
                 return (["a", "e", "i", "o", "u", "H"].contains(noun.singular.prefix(1)) ? "an " : "a ") + noun.singular
             }.joined(separator: ", ")
-        }.joined(separator: "; ")
+        }).joined(separator: "; ")
     }
 
-    /// The Edit menu's name for it (`Undo <title>`): `Create 9 Code Tiles, 6 Arrows`, `Move Note`.
+    /// The Edit menu's name for it (`Undo <title>`): `Create 9 Code Tiles, 6 Arrows`, `Move Note`,
+    /// `Stage of src/a.rs`.
     public var title: String {
-        let shown = parts.prefix(2).map { part in
+        let shown = effectNames + parts.map { part in
             part.verb.imperative + " " + part.types.map { entry in
                 let noun = Self.noun(entry.type).title
                 return entry.count == 1 ? noun : "\(entry.count) \(noun)s"
             }.joined(separator: ", ")
         }
-        return shown.joined(separator: "; ") + (parts.count > 2 ? "…" : "")
+        return shown.prefix(2).joined(separator: "; ") + (shown.count > 2 ? "…" : "")
+    }
+
+    /// The notice an undo (`redo` false) or redo of the step shows, nil when it needs none: one
+    /// someone else made (`author`, `Undid omp: created 9 code tiles · ⇧⌘Z redoes`) or one that
+    /// changed the user's files or git index (`Undid Stage of src/a.rs · ⇧⌘Z redoes`), which
+    /// nothing on the board shows happening.
+    public func notice(redo: Bool, author: String?) -> String? {
+        guard author != nil || !effectNames.isEmpty else { return nil }
+        let verb = redo ? "Redid" : "Undid", again = redo ? "⌘Z undoes" : "⇧⌘Z redoes"
+        return "\(verb) \(author.map { "\($0): " } ?? "")\(summary) · \(again)"
     }
 }
 

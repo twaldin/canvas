@@ -24,6 +24,55 @@ public struct ChangesSpec: Equatable, Sendable {
     }
 }
 
+/// A base a changes tile compares with, as its header's picker and Review Changes offer them:
+/// the uncommitted work (`HEAD`), everything the branch changed (the merge-base with the default
+/// branch, the PR view), or another commit or ref typed in.
+public enum ChangesBaseChoice: Equatable, Sendable {
+    case uncommitted
+    case branch
+    case other(String)
+
+    public init(prop: String) {
+        switch prop {
+        case "HEAD", "head": self = .uncommitted
+        case "merge-base": self = .branch
+        default: self = .other(prop)
+        }
+    }
+
+    /// A commit or ref typed into the picker (whitespace trimmed); nil when nothing was typed.
+    public init?(typed text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        self.init(prop: trimmed)
+    }
+
+    /// `props.base` for it.
+    public var prop: String {
+        switch self {
+        case .uncommitted: "HEAD"
+        case .branch: "merge-base"
+        case .other(let revision): revision
+        }
+    }
+
+    /// How the picker and Review Changes name it: `Uncommitted changes`, `Branch vs origin/main`
+    /// (`defaultBranch`: `GitWorktree.defaultBranch`), `vs v1.2`.
+    public func title(defaultBranch: String?) -> String {
+        switch self {
+        case .uncommitted: "Uncommitted changes"
+        case .branch: "Branch vs \(defaultBranch ?? "default branch")"
+        case .other(let revision): "vs \(revision)"
+        }
+    }
+
+    /// The picker's choices with `current` checked: the two standing ones, and the one typed in
+    /// when that is current.
+    public static func choices(current: ChangesBaseChoice) -> [ChangesBaseChoice] {
+        [.uncommitted, .branch] + (current == .uncommitted || current == .branch ? [] : [current])
+    }
+}
+
 /// One row of a unified diff: an unchanged line around or between changes, a removed base line,
 /// or an added working-tree line, with its line numbers (1-based) on the sides it is on.
 public struct ChangeLine: Equatable, Sendable {
@@ -49,6 +98,12 @@ public enum HunkStatus: String, Sendable, Equatable {
 
     /// Staging it would change the index.
     public var stageable: Bool { self == .unstaged || self == .partial }
+    /// The index holds some of it that HEAD doesn't: unstaging would change the index.
+    public var unstageable: Bool { self == .staged || self == .partial }
+    /// Some of it isn't committed yet: Discard has something of the user's own work to put back.
+    /// A committed hunk (a branch's commits, reviewed against its merge-base) never is: a review
+    /// must never rewrite the commits it reads.
+    public var discardable: Bool { self != .committed }
 }
 
 /// One hunk as `git diff -U3` groups it: changes at most 2 × 3 unchanged lines apart, with 3
@@ -208,37 +263,41 @@ public struct ChangeHunk: Equatable, Sendable {
         guard tracked else { return .unstaged }
         let ranges = mappings.map(\.modified)
         if unstaged.contains(where: { change in ranges.contains { touches($0, change.modified) } }) {
-            guard let first = ranges.first, let last = ranges.last else { return .unstaged }
-            // The hunk's span in index lines: working-tree lines past earlier unstaged changes
-            // shift by what those changes added; a boundary inside one widens to its index lines.
-            func indexLine(_ line: Int, upper: Bool) -> Int {
-                var shift = 0
-                for change in unstaged {
-                    let span = change.modified
-                    if span.isEmpty {
-                        // Index lines the working tree dropped: inside the hunk when they sit at its start.
-                        if span.lowerBound < line || (span.lowerBound == line && upper) {
-                            shift += change.original.count
-                            continue
-                        }
-                        if span.lowerBound == line { return change.original.lowerBound }
-                        break
-                    }
-                    if span.upperBound <= line {
-                        shift += change.original.count - span.count
-                        continue
-                    }
-                    if span.lowerBound < line { return upper ? change.original.upperBound : change.original.lowerBound }
-                    break
-                }
-                return line + shift
-            }
-            let start = indexLine(first.lowerBound, upper: false)
-            let span = start..<max(start, indexLine(last.upperBound, upper: true))
-            return staged.contains { touches(span, $0.modified) } ? .partial : .unstaged
+            return staged.contains { touches(indexSpan(of: ranges, unstaged: unstaged), $0.modified) } ? .partial : .unstaged
         }
         guard let head else { return .staged }
         return head.contains(where: { change in ranges.contains { touches($0, change.modified) } }) ? .staged : .committed
+    }
+
+    /// The index lines a span of working-tree lines (`ranges`, in order) covers, given the
+    /// index → working tree changes (`unstaged`): lines past earlier unstaged changes shift by
+    /// what those changes added; a boundary inside one widens to its index lines.
+    public static func indexSpan(of ranges: [Range<Int>], unstaged: [LineRangeMapping]) -> Range<Int> {
+        guard let first = ranges.first, let last = ranges.last else { return 0..<0 }
+        func indexLine(_ line: Int, upper: Bool) -> Int {
+            var shift = 0
+            for change in unstaged {
+                let span = change.modified
+                if span.isEmpty {
+                    // Index lines the working tree dropped: inside the span when they sit at its start.
+                    if span.lowerBound < line || (span.lowerBound == line && upper) {
+                        shift += change.original.count
+                        continue
+                    }
+                    if span.lowerBound == line { return change.original.lowerBound }
+                    break
+                }
+                if span.upperBound <= line {
+                    shift += change.original.count - span.count
+                    continue
+                }
+                if span.lowerBound < line { return upper ? change.original.upperBound : change.original.lowerBound }
+                break
+            }
+            return line + shift
+        }
+        let start = indexLine(first.lowerBound, upper: false)
+        return start..<max(start, indexLine(last.upperBound, upper: true))
     }
 }
 
@@ -296,6 +355,13 @@ public struct ChangedFile: Sendable {
     /// A hunk's changes a patch can carry: all of them for a created or deleted file (one hunk).
     public var mappings: [LineRangeMapping] { hunks.flatMap(\.mappings) }
 
+    /// What the file header's buttons offer (a binary, oversized, or mode-only file has no lines
+    /// to patch): Stage while some of it isn't staged, Unstage once all of that is (Stage's
+    /// place), Discard while some of it isn't committed (`HunkStatus.discardable`).
+    public var stageable: Bool { notice == nil && (hunks.isEmpty || hunks.contains { $0.status.stageable }) }
+    public var unstageable: Bool { notice == nil && !stageable && hunks.contains { $0.status.unstageable } }
+    public var discardable: Bool { notice == nil && (hunks.isEmpty || hunks.contains { $0.status.discardable }) }
+
     /// What `props.viewed` records for the file: its diff as the user saw it (hunk ids,
     /// status, notice), so an entry stops counting once the diff changes.
     public var fingerprint: String {
@@ -333,8 +399,13 @@ public struct ChangeSet: Sendable {
     /// Another worktree of the board's repository (`props.root`), named for the header: its
     /// directory (`PathLabel`) and branch, e.g. `wt-omp (feature)`. Nil for the board's own.
     public var worktree: String?
+    /// Full SHA of the reviewed worktree's HEAD; nil without commits.
+    public var head: String?
+    /// The branch checked out in the reviewed worktree; nil when detached.
+    public var branch: String?
 
-    public init(repository: URL? = nil, base: String? = nil, baseLabel: String = "", files: [ChangedFile] = [], notice: String? = nil, omitted: Int = 0, worktree: String? = nil) {
+    public init(repository: URL? = nil, base: String? = nil, baseLabel: String = "", files: [ChangedFile] = [], notice: String? = nil, omitted: Int = 0, worktree: String? = nil,
+                head: String? = nil, branch: String? = nil) {
         self.repository = repository
         self.base = base
         self.baseLabel = baseLabel
@@ -342,7 +413,14 @@ public struct ChangeSet: Sendable {
         self.notice = notice
         self.omitted = omitted
         self.worktree = worktree
+        self.head = head
+        self.branch = branch
     }
+
+    /// The base is another commit than HEAD (the branch's merge-base, a commit typed in), so the
+    /// hunks include committed work: Discard only puts back what isn't committed
+    /// (`ReviewPatch.discardUncommitted`).
+    public var includesCommits: Bool { base != nil && base != head }
 
     /// Files a tile loads at most; the rest are counted in `omitted`.
     public static let maxFiles = 300
@@ -352,23 +430,43 @@ public struct ChangeSet: Sendable {
     public var added: Int { files.reduce(0) { $0 + $1.added } }
     public var removed: Int { files.reduce(0) { $0 + $1.removed } }
 
-    /// The header's summary: `Uncommitted changes · 3 files · +40 −12` against HEAD, else
-    /// `3 files · +40 −12 · vs merge-base with main 1a2b3c4`; another worktree's name first.
-    public var summary: String {
+    /// The header's lead, which names plainly what is compared with what (a click on it picks
+    /// the base): `Uncommitted changes` against HEAD (another worktree's name first:
+    /// `wt-omp (feature) · Uncommitted changes`), else `pr-1041 vs origin/main` (the branch, or
+    /// `HEAD` when detached, against the base's name); or why nothing is listed.
+    public var lead: String {
         let place = worktree.map { "\($0) · " } ?? ""
         if let notice { return place + notice }
-        let uncommitted = baseLabel == "HEAD" && base != nil
-        let lead = uncommitted ? "Uncommitted changes · " : ""
-        let against = uncommitted ? "" : base.map { " · vs \(baseLabel) \($0.prefix(7))" } ?? ""
-        guard !files.isEmpty else { return place + (uncommitted ? "No uncommitted changes" : "no changes\(against)") }
-        let count = files.count + omitted
-        return "\(place)\(lead)\(count) file\(count == 1 ? "" : "s") · +\(added) −\(removed)\(against)"
+        if base == nil || !includesCommits { return place + (files.isEmpty ? "No uncommitted changes" : "Uncommitted changes") }
+        return "\(branch ?? "HEAD") vs \(baseName)"
     }
+
+    /// The base as the header names it: `origin/main` for the merge-base with it, else the
+    /// commit or ref as written (a full SHA shortened).
+    public var baseName: String {
+        let mergeBase = "merge-base with "
+        if baseLabel.hasPrefix(mergeBase) { return String(baseLabel.dropFirst(mergeBase.count)) }
+        if baseLabel.count == 40, baseLabel.allSatisfy(\.isHexDigit) { return String(baseLabel.prefix(7)) }
+        return baseLabel
+    }
+
+    /// What the header says after the lead: `6 files · +62 −0`, `no changes`, or nothing.
+    public var counts: String {
+        guard notice == nil, base != nil else { return "" }
+        guard !files.isEmpty else { return includesCommits ? "no changes" : "" }
+        let count = files.count + omitted
+        return "\(count) file\(count == 1 ? "" : "s") · +\(added) −\(removed)"
+    }
+
+    /// The header's summary: `Uncommitted changes · 3 files · +40 −12`,
+    /// `pr-1041 vs origin/main · 6 files · +62 −0`.
+    public var summary: String { counts.isEmpty ? lead : "\(lead) · \(counts)" }
 
     /// The summary's tooltip: what the base is exactly.
     public var baseDescription: String? {
         guard let base else { return nil }
-        return baseLabel == "HEAD" ? "Against HEAD \(base.prefix(7)): the work not committed yet, staged or not" : "Against \(baseLabel) \(base.prefix(7))"
+        guard includesCommits else { return "Against HEAD \(base.prefix(7)): the work not committed yet, staged or not" }
+        return "Against \(baseLabel) \(base.prefix(7)): the commits since it and the work not committed yet (Discard only puts back uncommitted work)"
     }
 
     // MARK: Loading
@@ -403,8 +501,10 @@ public struct ChangeSet: Sendable {
         } catch {
             return ChangeSet(repository: toplevel, notice: "\(error)", worktree: worktree)
         }
+        let branch = await Self.branch(in: toplevel, runner: runner)
         let resolved = await GitDiffEngine.resolve(spec.base, in: toplevel, runner: runner)
-        guard let sha = resolved.sha else { return ChangeSet(repository: toplevel, baseLabel: resolved.label, notice: resolved.label, worktree: worktree) }
+        guard let sha = resolved.sha else { return ChangeSet(repository: toplevel, baseLabel: resolved.label, notice: resolved.label, worktree: worktree, branch: branch) }
+        let headSHA = spec.base == .head ? sha : await GitDiffEngine.resolve(.head, in: toplevel, runner: runner).sha
         // Held while loading: the engine resolves the base and the repository once for all files.
         let held = await engine.retain(containing: toplevel.appendingPathComponent(".canvas-changes"))
         defer { if let held { Task { await engine.release(held) } } }
@@ -424,13 +524,12 @@ public struct ChangeSet: Sendable {
         entries.sort { $0.path < $1.path }
         let omitted = max(0, entries.count - maxFiles)
         let selected = Array(entries.prefix(maxFiles))
-        guard !selected.isEmpty else { return ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label, worktree: worktree) }
+        guard !selected.isEmpty else { return ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label, worktree: worktree, head: headSHA, branch: branch) }
 
         // Index → working tree, HEAD → index, and HEAD → working tree for a base older than
         // HEAD: which hunks the index already holds, or part of.
         let paths = selected.map(\.path)
         let unstaged = await workingTreeChanges(against: nil, paths: paths, in: toplevel, runner: runner)
-        let headSHA = await GitDiffEngine.resolve(.head, in: toplevel, runner: runner).sha
         let staged = headSHA == nil ? [:] : await workingTreeChanges(against: nil, cached: true, paths: paths, in: toplevel, runner: runner)
         var head: [String: [LineRangeMapping]]?
         if let headSHA, headSHA != sha { head = await workingTreeChanges(against: headSHA, paths: paths, in: toplevel, runner: runner) }
@@ -448,8 +547,15 @@ public struct ChangeSet: Sendable {
             for await (index, file) in group { if let file { found.append((index, file)) } }
             return found.sorted { $0.0 < $1.0 }.map(\.1)
         }
-        let set = ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label, files: files, omitted: omitted, worktree: worktree)
+        let set = ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label, files: files, omitted: omitted, worktree: worktree, head: headSHA, branch: branch)
         return highlight ? await offPool { set.highlighted() } : set
+    }
+
+    /// The branch checked out in the worktree at `toplevel`; nil when detached.
+    static func branch(in toplevel: URL, runner: GitRunner) async -> String? {
+        guard let output = try? await runner.run(["symbolic-ref", "--short", "-q", "HEAD"], in: toplevel, allowedStatus: [0, 1]) else { return nil }
+        let name = String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
     }
 
     /// Both sides of every file parsed with tree-sitter (highlighting and enclosing symbols).

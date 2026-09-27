@@ -450,25 +450,33 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// ⌘Z undoes the latest board change (the user's or an agent's). A text field or editor with
-    /// its own pending edits undoes those first. Undoing an agent's change is never silent: a
-    /// brief HUD names it and who made it.
+    /// its own pending edits undoes those first; a terminal holding the keyboard keeps ⌘Z and ⇧⌘Z
+    /// for its program (`canvasUndoApplies`). Undoing an agent's change, or one to the user's
+    /// files or git index (a changes tile's Stage or Discard), is never silent: a brief HUD names
+    /// it (`UndoHistory.Step.notice`).
     @objc func undoCanvas(_ sender: Any?) {
         if let text = window?.firstResponder as? NSTextView, text.isEditable, let manager = text.undoManager, manager.canUndo {
             return manager.undo()
         }
+        guard canvasUndoApplies else { return }
         let step = board.nextUndo
-        guard board.undo(), let step, let author = board.authorName(step.author) else { return }
-        undoHUD.show("Undid \(author): \(step.summary) · ⇧⌘Z redoes")
+        guard board.undo(), let step, let notice = step.notice(redo: false, author: board.authorName(step.author)) else { return }
+        undoHUD.show(notice)
     }
 
     @objc func redoCanvas(_ sender: Any?) {
         if let text = window?.firstResponder as? NSTextView, text.isEditable, let manager = text.undoManager, manager.canRedo {
             return manager.redo()
         }
+        guard canvasUndoApplies else { return }
         let step = board.nextRedo
-        guard board.redo(), let step, let author = board.authorName(step.author) else { return }
-        undoHUD.show("Redid \(author): \(step.summary) · ⌘Z undoes")
+        guard board.redo(), let step, let notice = step.notice(redo: true, author: board.authorName(step.author)) else { return }
+        undoHUD.show(notice)
     }
+
+    /// Canvas undo and redo act unless a terminal holds the keyboard: there ⌘Z belongs to the
+    /// terminal (Ghostty's binding, else the program), so undo in nvim never rewinds a Stage.
+    private var canvasUndoApplies: Bool { canvas.focusedTerminal == nil }
 
     /// Edit ▸ Undo/Redo named for the step they'd take (`Undo Create 9 Code Tiles, 6 Arrows
     /// (omp)`), or the text editor's own.
@@ -477,7 +485,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return redo ? manager.redoMenuItemTitle : manager.undoMenuItemTitle
         }
         let verb = redo ? "Redo" : "Undo"
-        guard let step = redo ? board.nextRedo : board.nextUndo else { return verb }
+        guard canvasUndoApplies, let step = redo ? board.nextRedo : board.nextUndo else { return verb }
         let title = step.title
         let author = board.authorName(step.author).map { " (\($0))" } ?? ""
         return title.isEmpty ? verb : "\(verb) \(title)\(author)"
@@ -574,6 +582,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.reviewChanges()
     }
 
+    /// File ▸ Review Branch: everything the board's branch changed against the default branch.
+    @objc func reviewBranch(_ sender: Any?) {
+        canvas.reviewChanges(base: .branch)
+    }
+
     @objc func clearAttentionMarkers(_ sender: Any?) {
         board.clearAllAttention()
     }
@@ -628,10 +641,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         switch item.action {
         case #selector(undoCanvas(_:)):
             item.title = undoTitle(redo: false)
-            return textUndoManager?.canUndo == true || board.history.canUndo
+            return textUndoManager?.canUndo == true || canvasUndoApplies && board.history.canUndo
         case #selector(redoCanvas(_:)):
             item.title = undoTitle(redo: true)
-            return textUndoManager?.canRedo == true || board.history.canRedo
+            return textUndoManager?.canRedo == true || canvasUndoApplies && board.history.canRedo
         case #selector(navigateBack(_:)): return focusedPage?.webView?.canGoBack ?? canvas.canNavigateBack
         case #selector(navigateForward(_:)): return focusedPage?.webView?.canGoForward ?? canvas.canNavigateForward
         case #selector(deleteSelection(_:)), #selector(bringToFront(_:)), #selector(sendToBack(_:)): return !selection.isEmpty
@@ -670,6 +683,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             // With no code tile to act on the command still runs, to say so (`navigateCode`).
             return canvas.keyboardCodeTile?.canNavigate ?? true
         case #selector(leaveTile(_:)): return canvas.focusedTile != nil
+        case #selector(reviewBranch(_:)):
+            let defaultBranch = GitWorktree.containing(board.root.path)?.defaultBranch
+            item.title = "Review " + ChangesBaseChoice.branch.title(defaultBranch: defaultBranch)
+            return defaultBranch != nil
         default: return true
         }
     }
@@ -734,9 +751,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         122: "f1", 120: "f2", 99: "f3", 118: "f4", 96: "f5", 97: "f6", 98: "f7", 100: "f8", 101: "f9", 109: "f10", 103: "f11", 111: "f12",
     ]
 
-    /// Menu items a focused terminal keeps: editing (Copy, Paste, Select All) and ⌘⌫, which
-    /// Ghostty sends as "delete line" and which must never delete the canvas selection.
-    private static let terminalMenuActions: Set<Selector> = [#selector(NSText.copy(_:)), #selector(NSText.paste(_:)), #selector(NSText.selectAll(_:)), #selector(AppDelegate.deleteSelection(_:))]
+    /// Menu items a focused terminal keeps: editing (Copy, Paste, Select All), ⌘⌫, which
+    /// Ghostty sends as "delete line" and which must never delete the canvas selection, and ⌘Z /
+    /// ⇧⌘Z, which are the terminal's (a Stage undone from inside nvim was a silent git change).
+    private static let terminalMenuActions: Set<Selector> = [#selector(NSText.copy(_:)), #selector(NSText.paste(_:)), #selector(NSText.selectAll(_:)), #selector(AppDelegate.deleteSelection(_:)),
+                                                             #selector(AppDelegate.undoCanvas(_:)), #selector(AppDelegate.redoCanvas(_:))]
 
     /// The main-menu item `event` is the key equivalent of.
     static func menuItem(for event: NSEvent, in menu: NSMenu?) -> NSMenuItem? {
@@ -767,9 +786,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// tray's mentions; a focused terminal would otherwise send the chord to its program as an
     /// encoded key (zsh prints it at the prompt). In a focused terminal, the user's Ghostty
     /// bindings of new window, tab or split open a terminal beside it and close surface closes it
-    /// (`TerminalConfig.remaps`), and Canvas's menu shortcuts beat Ghostty's own bindings (its
-    /// defaults bind ⌘T, ⌘N, ⌘Z, ⌘Q, ⌘⇧[ and ⌘⇧] to tab, window and app actions the embedded
-    /// library can't perform, so the key would do nothing).
+    /// (`TerminalConfig.remaps`), and Canvas's menu shortcuts other than `terminalMenuActions`
+    /// beat Ghostty's own bindings (its defaults bind ⌘T, ⌘N, ⌘Q, ⌘⇧[ and ⌘⇧] to tab, window and
+    /// app actions the embedded library can't perform, so the key would do nothing).
     func handleKeyEquivalent(_ event: NSEvent) -> Bool {
         if let action = Self.navigationAction(for: event) {
             perform(action, with: self)

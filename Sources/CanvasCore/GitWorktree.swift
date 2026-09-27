@@ -59,6 +59,24 @@ public struct GitWorktree: Equatable, Sendable {
         return head.hasPrefix(prefix) ? String(head.dropFirst(prefix.count)) : nil
     }
 
+    /// The repository's default branch as reviews name it, read from the filesystem: origin/HEAD's
+    /// target (`origin/main`), else `main`, else `master`, as `GitDiffEngine` picks the branch a
+    /// merge-base is taken with; nil when there is none.
+    public var defaultBranch: String? {
+        let common = URL(fileURLWithPath: commonDir)
+        if let text = try? String(contentsOf: common.appendingPathComponent("refs/remotes/origin/HEAD"), encoding: .utf8) {
+            let ref = text.trimmingCharacters(in: .whitespacesAndNewlines), prefix = "ref: refs/remotes/"
+            if ref.hasPrefix(prefix) { return String(ref.dropFirst(prefix.count)) }
+        }
+        let packed = ((try? String(contentsOf: common.appendingPathComponent("packed-refs"), encoding: .utf8)) ?? "").split(whereSeparator: \.isNewline)
+        for name in ["main", "master"] {
+            if FileManager.default.fileExists(atPath: common.appendingPathComponent("refs/heads/" + name).path) || packed.contains(where: { $0.hasSuffix(" refs/heads/" + name) }) {
+                return name
+            }
+        }
+        return nil
+    }
+
     /// Every worktree of this one's repository, the main checkout first, then linked ones by
     /// directory name: the main checkout is the common directory's parent (a non-bare
     /// repository's `.git`), a linked one is named by `worktrees/<name>/gitdir` (its `.git`

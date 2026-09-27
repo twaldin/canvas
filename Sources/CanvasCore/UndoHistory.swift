@@ -164,12 +164,15 @@ public final class UndoHistory {
 }
 
 /// A step's change outside the board: what undo and redo run for it (on the main actor; slow
-/// work goes to a task of its own).
+/// work goes to a task of its own), and what it is called when undone (`Stage of src/a.rs`),
+/// so undoing a change to the user's files or git index always says what it undid.
 public struct UndoEffect: Sendable {
+    public let name: String
     public let undo: @MainActor @Sendable () -> Void
     public let redo: @MainActor @Sendable () -> Void
 
-    public init(undo: @escaping @MainActor @Sendable () -> Void, redo: @escaping @MainActor @Sendable () -> Void) {
+    public init(name: String, undo: @escaping @MainActor @Sendable () -> Void, redo: @escaping @MainActor @Sendable () -> Void) {
+        self.name = name
         self.undo = undo
         self.redo = redo
     }

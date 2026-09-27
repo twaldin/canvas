@@ -189,6 +189,7 @@ public struct ReviewPatch: Equatable, Sendable {
     /// `lines`: only those rows (indices into the one hunk's `lines`) of the hunk.
     public static func revert(_ hunks: [ChangeHunk], of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) throws -> ReviewPatch {
         try checkPath(file.path)
+        guard hunks.isEmpty || hunks.contains(where: \.status.discardable) else { throw ChangesFailure("committed: Discard only puts back work not committed yet") }
         let mappings = file.status == .added || file.status == .deleted ? file.mappings : hunks.flatMap(\.mappings)
         guard !mappings.isEmpty || file.status == .added || file.status == .deleted else { throw ChangesFailure("nothing to revert in \(file.boardPath)") }
         let pick = try lines.map { try Self.pick($0, of: hunks) }
@@ -220,55 +221,155 @@ public struct ReviewPatch: Equatable, Sendable {
     /// `lines`: only those rows (indices into the one hunk's `lines`): added lines by their
     /// working-tree line, removed ones by the index line with the same text in the change there.
     public static func stage(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil, runner: GitRunner = .shared) async throws -> ReviewPatch {
+        let text = try await towardWorkingTree(hunks, of: file, from: .index, in: repository, lines: lines, reverse: false, runner: runner)
+        guard !text.isEmpty else { throw ChangesFailure("already staged") }
+        return ReviewPatch(repository: repository, text: text, target: .index, reverse: false)
+    }
+
+    /// Discard against a base older than HEAD (`ChangeSet.includesCommits`): only the work not
+    /// committed yet goes, the working tree put back to HEAD where `file` changes over `hunks`
+    /// (nil: the whole file), so a review never rewrites the commits it reads. Built like Stage,
+    /// from HEAD and the working tree as they are now (an untracked file is deleted, a file
+    /// deleted since HEAD comes back), and refused when the working tree is no longer what the
+    /// tile shows or nothing of it is uncommitted. `lines`: only those rows of the one hunk.
+    public static func discardUncommitted(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil, runner: GitRunner = .shared) async throws -> ReviewPatch {
+        if let hunks, !hunks.contains(where: \.status.discardable) { throw ChangesFailure("committed: Discard only puts back work not committed yet") }
+        let text = try await towardWorkingTree(hunks, of: file, from: .head, in: repository, lines: lines, reverse: true, runner: runner, expected: file.status == .deleted ? nil : file.new)
+        guard !text.isEmpty else { throw ChangesFailure("nothing uncommitted to discard in \(file.boardPath)") }
+        return ReviewPatch(repository: repository, text: text, target: .worktree, reverse: true)
+    }
+
+    /// Unstage: the index goes back to HEAD where it holds `file`'s changes over `hunks` (nil:
+    /// the whole file), as `git restore --staged -p` would, leaving the working tree alone: the
+    /// HEAD → index patch of those changes applied reversed to the index (a file new in the index
+    /// leaves it, a deletion staged is taken back). `lines`: only those rows of the one hunk, by
+    /// their text in the staged change. Refused when nothing there is staged.
+    public static func unstage(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil, runner: GitRunner = .shared) async throws -> ReviewPatch {
         try checkPath(file.path)
         let picked = try lines.map { try Self.pick($0, of: hunks ?? []) }
-        // Index lines holding the picked base lines' text among `candidates`.
-        func indexLines(_ candidates: [Int], in index: SideText, for base: [Int]) -> Set<Int> {
-            var found: Set<Int> = []
-            for line in base.sorted() where line >= 1 && line <= file.old.lineCount {
-                let text = file.old.line(line)
-                if let match = candidates.first(where: { !found.contains($0) && $0 >= 1 && $0 <= index.lineCount && index.line($0) == text }) { found.insert(match) }
-            }
-            return found
+        let head = try await blob(file, at: .head, in: repository, runner: runner)
+        let index = try await blob(file, at: .index, in: repository, runner: runner)
+        func texts(_ lines: Set<Int>, of side: SideText) -> [String] {
+            lines.sorted().filter { $0 >= 1 && $0 <= side.lineCount }.map(side.line)
         }
-        let url = repository.appendingPathComponent(file.path)
-        var indexMode: String?
-        if let listing = try? await runner.run(["--literal-pathspecs", "ls-files", "-s", "-z", "--", file.path], in: repository),
-           let record = listing.split(separator: 0).first {
-            indexMode = String(decoding: record, as: UTF8.self).split(separator: " ").first.map(String.init)
-        }
-        let index: SideText?
-        if indexMode != nil {
-            guard let data = try? await runner.run(["cat-file", "blob", ":\(file.path)"], in: repository, maxOutput: GitDiffEngine.maxFileSize) else {
-                throw ChangesFailure("can't read \(file.boardPath) from the index")
-            }
-            index = await offPool { SideText(String(decoding: data, as: UTF8.self)) }
-        } else {
-            index = nil
-        }
-        let worktree = await offPool { (try? Data(contentsOf: url)).map { SideText(String(decoding: $0, as: UTF8.self)) } }
         let text: String
-        switch (index, worktree) {
+        switch (head, index) {
         case (nil, nil):
-            throw ChangesFailure("\(file.boardPath) is neither in the index nor on disk")
+            throw ChangesFailure("not staged")
+        case (nil, let index?):
+            let all = Array(1...max(1, index.text.lineCount))
+            text = Self.text(path: file.path, old: nil, new: index.text, newMode: index.mode,
+                             mappings: index.text.lineCount == 0 ? [] : [LineRangeMapping(original: 1..<1, modified: 1..<(index.text.lineCount + 1))],
+                             pick: picked.map { LinePick(removed: [], added: matching(texts($0.added, of: file.new), among: all, in: index.text)) }, reverse: true)
+        case (let head?, nil):
+            let all = Array(1...max(1, head.text.lineCount))
+            text = Self.text(path: file.path, old: head.text, new: nil, oldMode: head.mode,
+                             mappings: head.text.lineCount == 0 ? [] : [LineRangeMapping(original: 1..<(head.text.lineCount + 1), modified: 1..<1)],
+                             pick: picked.map { LinePick(removed: matching(texts($0.removed, of: file.old), among: all, in: head.text), added: []) }, reverse: true)
+        case (let head?, let index?):
+            let staged = try await changes(of: file, between: .head, and: .index, in: repository, runner: runner)
+            guard await offPool({ UnifiedDiff.reconstructOld(new: index.text, parsed: staged) }) == head.text else {
+                throw ChangesFailure("\(file.boardPath) changed while unstaging; try again")
+            }
+            var selected = staged.mappings
+            if let hunks {
+                let unstaged = try await changes(of: file, between: .index, and: .workingTree, in: repository, runner: runner).mappings
+                let span = ChangeHunk.indexSpan(of: hunks.flatMap { $0.mappings.map(\.modified) }, unstaged: unstaged)
+                selected = selected.filter { ChangeHunk.touches(span, $0.modified) }
+            }
+            guard !selected.isEmpty else { throw ChangesFailure("not staged") }
+            let pick = picked.map { picked in
+                LinePick(removed: matching(texts(picked.removed, of: file.old), among: selected.flatMap { Array($0.original) }, in: head.text),
+                         added: matching(texts(picked.added, of: file.new), among: selected.flatMap { Array($0.modified) }, in: index.text))
+            }
+            text = Self.text(path: file.path, old: head.text, new: index.text, mappings: selected, pick: pick, reverse: true)
+        }
+        guard !text.isEmpty else { throw ChangesFailure(lines == nil ? "not staged" : "none of the selected lines is staged") }
+        return ReviewPatch(repository: repository, text: text, target: .index, reverse: true)
+    }
+
+    /// Where a file's text is read from.
+    enum Side {
+        case head, index, workingTree
+    }
+
+    /// `file`'s text and git mode in HEAD or the index; nil where it has none (or there are no
+    /// commits).
+    private static func blob(_ file: ChangedFile, at side: Side, in repository: URL, runner: GitRunner) async throws -> (text: SideText, mode: String)? {
+        let listing: Data?
+        switch side {
+        case .head: listing = try? await runner.run(["--literal-pathspecs", "ls-tree", "-z", "HEAD", "--", file.path], in: repository)
+        case .index: listing = try? await runner.run(["--literal-pathspecs", "ls-files", "-s", "-z", "--", file.path], in: repository)
+        case .workingTree: return nil
+        }
+        guard let record = listing?.split(separator: 0).first, let mode = String(decoding: record, as: UTF8.self).split(separator: " ").first.map(String.init) else { return nil }
+        guard let data = try? await runner.run(["cat-file", "blob", (side == .head ? "HEAD:" : ":") + file.path], in: repository, maxOutput: GitDiffEngine.maxFileSize) else {
+            throw ChangesFailure("can't read \(file.boardPath) from \(side == .head ? "HEAD" : "the index")")
+        }
+        return (await offPool { SideText(String(decoding: data, as: UTF8.self)) }, mode)
+    }
+
+    /// `git diff -U0` of `file` from one side to another (HEAD → index, index or HEAD → working tree).
+    private static func changes(of file: ChangedFile, between from: Side, and to: Side, in repository: URL, runner: GitRunner) async throws -> UnifiedDiff.Parsed {
+        let sides: [String] = switch (from, to) {
+        case (.head, .index): ["--cached"]
+        case (.head, _): ["HEAD"]
+        default: []
+        }
+        let args = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=histogram",
+                    "-U0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/"] + sides + ["--", file.path]
+        let patch = try await runner.run(args, in: repository, maxOutput: 3 * GitDiffEngine.maxFileSize)
+        return await offPool { UnifiedDiff.parse(patch) }
+    }
+
+    /// Lines of `side` among `candidates` holding `texts`, in order, each line used once: where a
+    /// picked line of the tile's diff sits in another version of the file.
+    static func matching(_ texts: [String], among candidates: [Int], in side: SideText) -> Set<Int> {
+        var found: Set<Int> = []
+        for text in texts {
+            if let match = candidates.first(where: { !found.contains($0) && $0 >= 1 && $0 <= side.lineCount && side.line($0) == text }) { found.insert(match) }
+        }
+        return found
+    }
+
+    /// The patch from `from`'s text of `file` (the index, or HEAD) to the working tree over the
+    /// changes touching `hunks`' working-tree lines (nil: all of them), read now and checked
+    /// against both texts (and against `expected`, the working tree the tile showed, when given),
+    /// with only `lines` of the one hunk when picked (removed lines found by their text in the
+    /// change there). `reverse`: how it will be applied (a discard), which decides what unpicked
+    /// lines become.
+    private static func towardWorkingTree(_ hunks: [ChangeHunk]?, of file: ChangedFile, from side: Side, in repository: URL, lines: Set<Int>?, reverse: Bool,
+                                          runner: GitRunner, expected: SideText? = nil) async throws -> String {
+        try checkPath(file.path)
+        let picked = try lines.map { try Self.pick($0, of: hunks ?? []) }
+        let url = repository.appendingPathComponent(file.path)
+        let old = try await blob(file, at: side, in: repository, runner: runner)
+        let worktree = await offPool { (try? Data(contentsOf: url)).map { SideText(String(decoding: $0, as: UTF8.self)) } }
+        if let expected, worktree != expected { throw ChangesFailure("\(file.boardPath) changed since the tile read it; try again") }
+        if old == nil, side == .head, file.status == .renamed { throw ChangesFailure("\(file.boardPath) was renamed since HEAD; discard it against HEAD (Uncommitted changes)") }
+        func removedTexts(_ picked: LinePick) -> [String] {
+            picked.removed.sorted().filter { $0 >= 1 && $0 <= file.old.lineCount }.map(file.old.line)
+        }
+        switch (old, worktree) {
+        case (nil, nil):
+            throw ChangesFailure("\(file.boardPath) is neither in \(side == .head ? "HEAD" : "the index") nor on disk")
         case (nil, let worktree?):
-            text = Self.text(path: file.path, old: nil, new: worktree, newMode: ChangeSet.mode(of: url), mappings: worktree.lineCount == 0 ? [] : [LineRangeMapping(original: 1..<1, modified: 1..<(worktree.lineCount + 1))],
-                             pick: picked.map { LinePick(removed: [], added: $0.added) })
-        case (let index?, nil):
-            text = Self.text(path: file.path, old: index, new: nil, oldMode: indexMode, mappings: index.lineCount == 0 ? [] : [LineRangeMapping(original: 1..<(index.lineCount + 1), modified: 1..<1)],
-                             pick: picked.map { LinePick(removed: indexLines(Array(1...max(1, index.lineCount)), in: index, for: Array($0.removed)), added: []) })
-        case (let index?, let worktree?):
-            let args = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=histogram",
-                        "-U0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/", "--", file.path]
-            let patch = try await runner.run(args, in: repository, maxOutput: 3 * GitDiffEngine.maxFileSize)
-            let parsed = await offPool { UnifiedDiff.parse(patch) }
+            return Self.text(path: file.path, old: nil, new: worktree, newMode: ChangeSet.mode(of: url),
+                             mappings: worktree.lineCount == 0 ? [] : [LineRangeMapping(original: 1..<1, modified: 1..<(worktree.lineCount + 1))],
+                             pick: picked.map { LinePick(removed: [], added: $0.added) }, reverse: reverse)
+        case (let old?, nil):
+            return Self.text(path: file.path, old: old.text, new: nil, oldMode: old.mode,
+                             mappings: old.text.lineCount == 0 ? [] : [LineRangeMapping(original: 1..<(old.text.lineCount + 1), modified: 1..<1)],
+                             pick: picked.map { LinePick(removed: matching(removedTexts($0), among: Array(1...max(1, old.text.lineCount)), in: old.text), added: []) }, reverse: reverse)
+        case (let old?, let worktree?):
+            let parsed = try await changes(of: file, between: side, and: .workingTree, in: repository, runner: runner)
             // git read the file after we did: a patch that doesn't describe our text is stale.
-            guard await offPool({ UnifiedDiff.reconstructOld(new: worktree, parsed: parsed) }) == index else {
-                throw ChangesFailure("\(file.boardPath) changed while staging; try again")
+            guard await offPool({ UnifiedDiff.reconstructOld(new: worktree, parsed: parsed) }) == old.text else {
+                throw ChangesFailure("\(file.boardPath) changed meanwhile; try again")
             }
             let ranges = hunks?.flatMap { $0.mappings.map(\.modified) }
             let selected = ranges.map { ranges in parsed.mappings.filter { change in ranges.contains { ChangeHunk.touches($0, change.modified) } } } ?? parsed.mappings
-            guard !selected.isEmpty else { throw ChangesFailure("already staged") }
+            guard !selected.isEmpty else { return "" }
             var pick: LinePick?
             if let picked, let hunk = hunks?.first {
                 var removed: Set<Int> = []
@@ -276,14 +377,12 @@ public struct ReviewPatch: Equatable, Sendable {
                     let base = mapping.original.filter(picked.removed.contains)
                     guard !base.isEmpty else { continue }
                     let candidates = selected.filter { ChangeHunk.touches($0.modified, mapping.modified) }.flatMap { Array($0.original) }
-                    removed.formUnion(indexLines(candidates, in: index, for: base))
+                    removed.formUnion(matching(base.filter { $0 <= file.old.lineCount }.map(file.old.line), among: candidates, in: old.text))
                 }
                 pick = LinePick(removed: removed, added: picked.added)
             }
-            text = Self.text(path: file.path, old: index, new: worktree, mappings: selected, pick: pick)
+            return Self.text(path: file.path, old: old.text, new: worktree, mappings: selected, pick: pick, reverse: reverse)
         }
-        guard !text.isEmpty else { throw ChangesFailure("already staged") }
-        return ReviewPatch(repository: repository, text: text, target: .index, reverse: false)
     }
 
     /// Patch lines a `props.reviewed` entry carries at most; `truncated` says there were more.
@@ -313,6 +412,30 @@ public struct ReviewPatch: Equatable, Sendable {
         if body.count > maxEntryLines { entry["truncated"] = .bool(true) }
         if patch.reverse { entry["applied"] = .string("reversed") }
         return .object(entry)
+    }
+
+    /// How undo names a `props.reviewed` entry: `Stage of src/a.rs` (the file), `Discard of
+    /// src/a.rs, lines 15–46` (a hunk), `Unstage of 2 lines of src/a.rs` (picked lines).
+    public static func name(of entry: JSONValue) -> String {
+        let action: String
+        switch entry["action"]?.string {
+        case "stage": action = "Stage"
+        case "unstage": action = "Unstage"
+        case "revert": action = "Discard"
+        case let other?: action = other.capitalized
+        case nil: action = "Change"
+        }
+        let path = entry["path"]?.string ?? "a file"
+        switch entry["scope"]?.string {
+        case "hunk":
+            guard let label = entry["label"]?.string else { return "\(action) of \(path)" }
+            return "\(action) of \(path), \(label.prefix(1).lowercased() + label.dropFirst())"
+        case "lines":
+            let count = Int((entry["added"]?.number ?? 0) + (entry["removed"]?.number ?? 0))
+            return "\(action) of \(count) line\(count == 1 ? "" : "s") of \(path)"
+        default:
+            return "\(action) of \(path)"
+        }
     }
 
     /// Patches only ever name files inside their repository.
@@ -417,7 +540,7 @@ extension Board {
         let what = [entry["action"]?.string, entry["path"]?.string, entry["header"]?.string].compactMap { $0 }.joined(separator: " ")
         transaction {
             _ = try? update(tile, props: .object(["reviewed": .array(reviewed)]))
-            history.record(.effect(UndoEffect(undo: { Self.replay(patch.inverse, "undo", what, tile: tile, git: git) },
+            history.record(.effect(UndoEffect(name: ReviewPatch.name(of: entry), undo: { Self.replay(patch.inverse, "undo", what, tile: tile, git: git) },
                                               redo: { Self.replay(patch, "redo", what, tile: tile, git: git) })))
         }
     }

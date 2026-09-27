@@ -31,16 +31,19 @@ public enum ChangesMetrics {
     /// Tallest frame `size: "fit"` gives, title bar included; more scrolls.
     public static let maxFitHeight: CGFloat = 4000
     /// The header's hints, longest first; the tile shows the longest that fits (`hint`). With
-    /// the keyboard: which keys work. Without it: how to select lines and how to take it.
-    public static let keysHints = ["j/k hunks · J/K or ]/[ files · ↩ open · s stage · r discard · esc done", "j/k hunks · s stage · r discard · esc done", "j/k · s · r · esc"]
+    /// the keyboard: which keys work (`r r`: Discard asks for a second r). Without it: how to
+    /// select lines and how to take it.
+    public static let keysHints = ["j/k hunks · J/K or ]/[ files · ↩ open · s stage · u unstage · r r discard · m mention · esc done",
+                                   "j/k hunks · s stage · u unstage · r r discard · m mention · esc", "j/k · s · u · rr · m · esc"]
     public static let idleHints = ["⇧-click or drag lines to stage just those · ↩ or click for keys", "↩ or click to use keys", "↩ for keys"]
-    /// Room the header's summary keeps beside a hint.
-    public static let summaryReserve: CGFloat = 220
+    /// Space between the header's summary and its hint.
+    public static let hintGap: CGFloat = 14
 
-    /// The longest of `variants` that leaves the summary `summaryReserve` points of the
-    /// `available` width, measured by `width`; nil when even the shortest doesn't.
-    public static func hint(_ variants: [String], available: CGFloat, width: (String) -> CGFloat) -> String? {
-        variants.first { width($0) + summaryReserve <= available }
+    /// The longest of `variants` that fits in `available` points beside a summary `summary`
+    /// points wide, measured by `width`; nil when even the shortest doesn't: a narrow header
+    /// drops the hint before it cuts the summary (what is compared, how many files).
+    public static func hint(_ variants: [String], available: CGFloat, summary: CGFloat, width: (String) -> CGFloat) -> String? {
+        variants.first { summary + hintGap + width($0) <= available }
     }
 
     /// Digits of each line-number column: at least 4, like code tiles.
@@ -85,6 +88,27 @@ public enum ChangesMetrics {
         let rows = ChangeRows(set, collapsed: folded, columns: textColumns(width: width, digits: digits))
         let height = CodeMetrics.titleHeight + headerHeight + rows.height + bottomPadding
         return CGSize(width: width, height: min(height.rounded(.up), maxFitHeight))
+    }
+
+    /// What a tile `size` big (title bar included, unscaled) fitted to its last listing (`old`;
+    /// nil: none yet) grows to for `new`, nil when it keeps its size. Only a tile fitted to that
+    /// listing grows (one the user or an agent sized otherwise keeps its size), never shrinks, and
+    /// keeps its width, except a compact "No changes" tile (an empty listing's fit, what Review
+    /// Changes makes of a clean checkout), which grows to what the review needs up to `cap` (the
+    /// user's tiles: the default size), wider too.
+    public static func grown(_ size: CGSize, from old: ChangeSet?, to new: ChangeSet, viewed: JSONValue? = nil, cap: CGSize? = nil) -> CGSize? {
+        guard new.notice == nil else { return nil }
+        let before = fit(old ?? ChangeSet(), maxWidth: size.width, viewed: viewed).height
+        guard abs(size.height - before) <= 1 else { return nil }
+        if old?.files.isEmpty ?? true {
+            // Nothing listed before (no changes, or a base that didn't resolve): one message row.
+            guard !new.files.isEmpty else { return nil }
+            let fitted = fit(new, maxWidth: max(size.width, cap?.width ?? size.width), viewed: viewed)
+            let grown = CGSize(width: max(size.width, fitted.width), height: max(size.height, min(fitted.height, cap?.height ?? fitted.height)))
+            return grown == size ? nil : grown
+        }
+        let after = fit(new, maxWidth: size.width, viewed: viewed).height
+        return after > size.height + 0.5 ? CGSize(width: size.width, height: after) : nil
     }
 }
 
@@ -267,14 +291,21 @@ public struct ChangeRows: Equatable, Sendable {
     }
 
     /// The file whose section is under the top of a viewport scrolled by `scroll` while its
-    /// header is scrolled away (what the tile pins to the top), and how far the next file's
-    /// header pushes it up (≤ 0).
-    public func stickyFile(scroll: CGFloat) -> (file: Int, offset: CGFloat)? {
+    /// header is scrolled away (what the tile pins to the top), how far the next file's header
+    /// pushes it up (≤ 0), and how tall the pinned header is drawn: taller than a file row when
+    /// all that shows of the file's section under it is part of its last row, which it covers
+    /// rather than show a sliver of a line above the next file.
+    public func stickyFile(scroll: CGFloat) -> (file: Int, offset: CGFloat, height: CGFloat)? {
         guard scroll > 0, let top = index(atY: scroll), let file = rows[top].file, let header = index(ofFile: file), tops[header] < scroll else { return nil }
         if case .listed = rows[top] { return nil }
         let next = rows[(top + 1)...].firstIndex { if case .file = $0 { return true } else { return false } }
         let offset = next.map { min(0, tops[$0] - scroll - ChangesMetrics.fileHeight) } ?? 0
-        return (file, offset)
+        var height = ChangesMetrics.fileHeight
+        if let next, next > 0 {
+            let below = tops[next] - scroll - ChangesMetrics.fileHeight
+            if below > 0, below < self.height(ofRow: next - 1) { height += below }
+        }
+        return (file, offset, height)
     }
 }
 

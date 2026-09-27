@@ -126,13 +126,14 @@ enum DevInput {
         case "menu":
             // A shown context menu runs a tracking loop posted events can't drive: build the menu
             // a right-click at x,y would show (the hit view, then its superviews) and perform the
-            // item at `path`, titles separated by "/" (e.g. "Scale/150%").
+            // item at `path`, titles separated by "/" (e.g. "Scale/150%"; "//" is a slash in a
+            // title: "Review Changes/Branch vs origin//main").
             let at = point("x", "y")
             guard let frame = content.superview, let hit = content.hitTest(frame.convert(at, from: nil)),
                   let event = NSEvent.mouseEvent(with: .rightMouseDown, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
             var menu = CodeNavigation.menu(for: event) ?? sequence(first: hit, next: \.superview).lazy.compactMap { $0.menu(for: event) }.first
-            var titles = (fields["path"] ?? "").split(separator: "/").map(String.init)
+            var titles = (fields["path"] ?? "").replacingOccurrences(of: "//", with: "\u{0}").split(separator: "/").map { $0.replacingOccurrences(of: "\u{0}", with: "/") }
             while let current = menu, !titles.isEmpty {
                 let title = titles.removeFirst()
                 guard let index = current.items.firstIndex(where: { $0.title == title }) else {

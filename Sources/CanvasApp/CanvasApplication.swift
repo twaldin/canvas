@@ -12,4 +12,35 @@ final class CanvasApplication: NSApplication {
     override func activate() {
         if !Self.neverActivate { super.activate() }
     }
+
+    // MARK: Input replay
+
+    // Replayed key presses (`DevInput`) go to a window that can't become key (the app never
+    // activates). AppKit would offer them to the main menu only and resolve untargeted menu
+    // actions (Select All, Copy, Paste) past the focused view to the app delegate. Both are
+    // dispatched as for the key window a real key press has.
+
+    /// A key press for a board window while no window is key: key equivalents to the window
+    /// (`CanvasWindow`'s navigation shortcuts, then its views), then the main menu, then keyDown
+    /// to the first responder.
+    override func sendEvent(_ event: NSEvent) {
+        if DevInput.enabled, keyWindow == nil, event.type == .keyDown || event.type == .keyUp,
+           let window = event.window, window.windowController is CanvasWindowController {
+            if event.type == .keyDown, window.performKeyEquivalent(with: event) || mainMenu?.performKeyEquivalent(with: event) == true { return }
+            return window.sendEvent(event)
+        }
+        super.sendEvent(event)
+    }
+
+    /// An untargeted action while no window is key: the replayed window's responder chain first.
+    override func target(forAction action: Selector, to target: Any?, from sender: Any?) -> Any? {
+        if target == nil, keyWindow == nil, DevInput.enabled, let window = DevInput.frontWindow() {
+            var responder = window.firstResponder
+            while let current = responder {
+                if current.responds(to: action) { return current }
+                responder = current.nextResponder
+            }
+        }
+        return super.target(forAction: action, to: target, from: sender)
+    }
 }

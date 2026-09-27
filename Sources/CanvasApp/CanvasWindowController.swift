@@ -17,7 +17,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         self.board = board
         self.registry = registry
         canvas = CanvasView(board: board)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+        let window = CanvasWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = board.root.lastPathComponent
         window.subtitle = board.root.path
         window.acceptsMouseMovedEvents = true
@@ -46,6 +46,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         ])
         window.contentView = container
         drawing = ShapeLayer.install(on: canvas, toolbarIn: container)
+        canvas.chromeInsets = { [weak container, weak tray, weak drawing] in
+            guard let container else { return NSEdgeInsets() }
+            container.layoutSubtreeIfNeeded()
+            let top = drawing?.toolbar.map { $0.isHidden ? 0 : container.bounds.maxY - $0.frame.minY } ?? 0
+            let bottom = tray.map { $0.isHidden ? 0 : $0.frame.maxY } ?? 0
+            return NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
+        }
         // Above the toolbar and tray, so the navigator is never covered.
         for view in [nothingHere, navigator] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -159,7 +166,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc func zoomToActual(_ sender: Any?) {
-        canvas.zoom(to: 1)
+        canvas.zoomToActualSize()
     }
 
     @objc func zoomOut(_ sender: Any?) {
@@ -230,5 +237,35 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func sendToBack(_ sender: Any?) {
         canvas.sendToBack()
+    }
+
+    /// The View menu's navigation shortcuts, matched on the key's characters: ⌘P, ⌘9, ⌘0, ⌘= (and
+    /// ⌘+), ⌘-. Nil for anything else, which stays with the focused view.
+    static func navigationAction(for event: NSEvent) -> Selector? {
+        guard event.type == .keyDown else { return nil }
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        switch (event.charactersIgnoringModifiers, modifiers) {
+        case ("p", .command): return #selector(toggleNavigator(_:))
+        case ("9", .command): return #selector(zoomToFit(_:))
+        case ("0", .command): return #selector(zoomToActual(_:))
+        case ("=", .command), ("+", .command), ("+", [.command, .shift]): return #selector(zoomIn(_:))
+        case ("-", .command): return #selector(zoomOut(_:))
+        default: return nil
+        }
+    }
+}
+
+/// A board window. Canvas navigation shortcuts reach the canvas before the focused view: the
+/// window gets key equivalents ahead of its views and the main menu (AppKit's order for a real
+/// key press), and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings
+/// (font size, tabs) and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A, typing)
+/// stays with the focused view.
+final class CanvasWindow: NSWindow {
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let controller = windowController as? CanvasWindowController, let action = CanvasWindowController.navigationAction(for: event) {
+            controller.perform(action, with: self)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 }

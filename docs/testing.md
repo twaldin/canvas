@@ -17,14 +17,14 @@ Tim's Mac runs many agents at once and he is using it while you test. The app mu
 `scripts/dev.sh` runs one isolated development instance per checkout:
 
 ```sh
-scripts/dev.sh start [root]      # build, bundle, launch on the testing Space without activating
+scripts/dev.sh start [root]      # build, bundle, launch on the testing Space without activating (no root: the home's previous tabs)
 scripts/dev.sh cli board.get     # the canvas CLI against this instance (sets CANVAS_SOCKET)
 scripts/dev.sh shot out.png      # real pixels: what the screen shows (verification)
 scripts/dev.sh snapshot out.png  # view.snapshot: what agents see (not verification)
 scripts/dev.sh move 8            # put the window on Space 8 for Tim to watch; `move` alone returns it
 CANVAS_DEV_SPACE=8 scripts/dev.sh restart   # relaunch straight onto Space 8 while Tim watches
 scripts/dev.sh input click 400 300 --mods hyper
-scripts/dev.sh restart           # rebuild + relaunch; terminal sessions keep running
+scripts/dev.sh restart           # rebuild + relaunch with the same tabs; terminal sessions keep running
 scripts/dev.sh stop              # quit and kill this instance's terminal sessions
 ```
 
@@ -33,7 +33,7 @@ What it sets up:
 - `CANVAS_HOME=<checkout>/.canvas-home` holds this instance's socket, boards, pid, and `app.log`, so it never touches the installed app's boards or another agent's instance.
 - `CANVAS_NO_ACTIVATE=1`: the app refuses to activate (`CanvasApplication`), so it can't steal focus or switch Spaces.
 - A one-shot yabai rule parks the launch's first `Canvas` window on Space 7 (floating, maximized) and is removed once `dev.sh` has moved the window to the testing Space. That Space is the first Space of the `CanvasTest` virtual screen (a BetterDisplay headless monitor placed diagonally below-right of the built-in display, touching it only at the corner), or `CANVAS_DEV_SPACE`. A standing rule on `app=Canvas` would also grab every later window (tabs, other instances, Tim's own boards) and hide them on Space 7. Agents working in parallel each create their own screen (`Agent-<name>`, per the global AGENTS.md) and select it with `CANVAS_DEV_DISPLAY=Agent-<name>`. A yabai rule can't place a window on another display's Space: the window lands on whatever Space Tim is viewing, so never point the rule at the virtual screen. Recreate the screen if it's gone: `betterdisplaycli create --type=VirtualScreen --virtualScreenName=CanvasTest --useResolutionList=on --resolutionList=1512x982 --virtualScreenHiDPI=on`, then `betterdisplaycli set --name=CanvasTest --connected=on --placement=1512x982`.
-- Boards open as tabs of one window, and `open-boards.json` in the home reopens them at launch. The initial root (`dev.sh start <root>`) is the selected tab. yabai moves windows behind AppKit's back, so a tab selected through the API while the app is inactive (`board.open --select true`) can reappear on Space 7; `scripts/dev.sh move` puts it back.
+- Boards open as tabs of one window, and `open-boards.json` in the home reopens them at launch. The initial root (`dev.sh start <root>`) is the selected tab; without a root, `start` and `restart` reopen the tabs the home had open (the first one selected), or the checkout's board in a fresh home. yabai moves windows behind AppKit's back, so a tab selected through the API while the app is inactive (`board.open --select true`) can reappear on Space 7; `scripts/dev.sh move` puts it back.
 - `CANVAS_DEV_INPUT=1` enables input replay (below).
 - More instances of one checkout (parallel agents, user studies): `CANVAS_DEV_HOME=/tmp/study-a/home` gives an instance its own home (socket, boards, log, pid, and zmx session label, so `stop` kills only its sessions), and `CANVAS_DEV_APP=<bundle>` launches a prebuilt bundle without rebuilding: copy `.build/Canvas.app` once and every instance runs that frozen build while the checkout changes. Combine with `CANVAS_DEV_DISPLAY=Agent-<name>`.
 
@@ -43,7 +43,7 @@ Verify what the screen shows with `scripts/dev.sh shot`: a WindowServer capture 
 
 `view.snapshot` (`scripts/dev.sh snapshot`) is the agents' view, not verification: it redraws the window in-process and substitutes stand-ins for content drawn outside AppKit (code tiles render their text themselves, terminals are drawn from zmx session text, web views show cached images). It hides compositor and layer bugs by construction: during the astra-skyblock run, code tiles that were blank or smeared on screen looked perfect in `view.snapshot`.
 
-Shots are at the display's backing scale (2× on both displays): divide pixel coordinates by 2 for window-content points (subtract the 28 pt title bar; `shot` includes the window frame, `snapshot` doesn't).
+Shots are at the display's backing scale (2× on both displays): divide pixel coordinates by 2 for window-content points (subtract the 28 pt title bar, or 64 pt once a second board adds a tab bar; `shot` includes the window frame, `snapshot` doesn't).
 
 ### Input replay
 
@@ -58,14 +58,17 @@ scripts/dev.sh input flags <x> <y> --mods hyper     # hold Hyper over x,y (hover
 scripts/dev.sh input move <x> <y>                   # pointer move over tracking areas (code navigation hover)
 scripts/dev.sh input text "hello"                   # insert into the first responder
 scripts/dev.sh input command insertNewline:
-scripts/dev.sh input shortcut z --mods cmd
+scripts/dev.sh input shortcut z --mods cmd           # a key press by character: p, 9, =, +, $'\r'
+scripts/dev.sh input key return                      # by name: return escape tab space delete forwarddelete up down left right home end pageup pagedown
 scripts/dev.sh input scroll <x> <y> <dx> <dy>
 scripts/dev.sh input magnify <x> <y> <amount>      # one pinch step: zoom × (1 + amount); 0.05 in, -0.05 out
 ```
 
-Coordinates are window-content points from the top-left: `shot` pixels / 2 (a Retina capture), minus the 28-point title bar. Prefer Hyper clicks and API calls: a plain click on a window of an inactive app is how macOS decides to activate it, and `CANVAS_NO_ACTIVATE` is the only thing standing between that and Tim's screen.
+Coordinates are window-content points from the top-left: `shot` pixels / 2 (a Retina capture), minus the 28-point title bar (64 points while the window shows a tab bar, i.e. two or more boards are open). Prefer Hyper clicks and API calls: a plain click on a window of an inactive app is how macOS decides to activate it, and `CANVAS_NO_ACTIVATE` is the only thing standing between that and Tim's screen.
 
-`text`, `command`, and `shortcut` go to an open sheet (e.g. the ⌘G group-name prompt) when the window has one, so `input text "Auth"` then `input shortcut $'\r'` confirms it. Esc/Delete on the canvas: `input command cancelOperation:` / `input command deleteBackward:` (the canvas has keyboard focus unless a terminal does).
+`shortcut` and `key` are real key presses (key down and up, with the US-layout virtual key code and characters a keyboard produces) posted into the app's event queue, so they go where a physical key goes: the window's key equivalents first (canvas navigation shortcuts, `CanvasWindow`), then the focused view's (Ghostty's bindings), the main menu, and finally `keyDown` to the first responder. `input key return` submits a shell command or an omp prompt in a terminal tile; `input text` alone only types. Since the app never activates, no window is key; `CanvasApplication` dispatches a replayed key press as for the key window and resolves untargeted menu actions (Select All, Copy) through that window's responder chain, as a real key press would. `command` calls `doCommand(by:)` on the first responder directly: the text system handles it, a terminal ignores it.
+
+`text`, `command`, `shortcut`, and `key` go to an open sheet (e.g. the ⌘G group-name prompt) when the window has one, so `input text "Auth"` then `input key return` confirms it. Esc/Delete on the canvas: `input key escape` / `input key delete` (the canvas has keyboard focus unless a terminal does).
 
 Any kind takes `--repeat N [--interval ms]` (default 8 ms apart) for a trackpad-rate burst, e.g. `input scroll 950 220 -40 -15 --repeat 120`; a `magnify` burst is one gesture (began, changed…, ended). A `scroll` burst sends continuous (trackpad-precise) steps without a gesture phase: on macOS 26 NSScrollView tracks a real phased scroll itself, and a replayed phased gesture only moved the view by its first step. A horizontal-dominant step (`|dx| > |dy|`) pans even over a code tile. When the burst ends, `app.log` records `longest gap … before step …, mean lateness …`. The longest gap between two steps is the longest stall a person sees, and it is the number to compare before and after a performance change. `scripts/perf-replica.sh start <board-id|file> [app]` copies a real board (terminals dropped) into a scratch home to measure against; `[app]` runs a given bundle, so two frozen builds can be measured in turns.
 

@@ -48,8 +48,9 @@ flowchart TB
 | Hold Hyper | Outline what would be mentioned under the cursor |
 | ⌘G / double-click group | Named group; double-click enters it (zoom + dim the rest) |
 | ⌘P | Go to… navigator (see Navigation) |
-| ⌘= / ⌘- / ⌘0 / ⌘9 | Zoom in / zoom out / actual size (100%) / zoom to fit |
+| ⌘= (⌘+) / ⌘- / ⌘0 / ⌘9 | Zoom in / zoom out / actual size (100%; with a selection, the selection at 100%) / zoom to fit |
 
+- Canvas navigation shortcuts (⌘P, ⌘9, ⌘0, ⌘= / ⌘+, ⌘-) work wherever keyboard focus is, including a terminal or web page: the window takes them before the focused view (Ghostty binds ⌘0/⌘=/⌘-/⌘9 to font size and tabs, a web view ⌘=/⌘- to page zoom). Editing keys (⌘C, ⌘V, ⌘A, typing) stay with the focused view.
 - Hyper is caught by an app-level event monitor before any tile, so native ⌘-click keeps working everywhere (terminal links, browser new-tab, go-to-definition).
 - Mentions work at element level inside tiles: DOM element, code line or symbol, terminal line/selection, any canvas object.
 - **Selection tray**: a fixed window-space bar showing staged mentions as chips and which terminal will receive them. Staging is explicit and never undone automatically: edits keep the chip (with an "edited" badge), deleting the object or closing its tab removes it, the chip's X removes it.
@@ -72,6 +73,9 @@ flowchart TB
 Getting lost on a big board must always have a one-step way back.
 
 - **Go to… (⌘P)**: a floating panel inside the board window (an overlay like the drawing toolbar, not a separate window and never modal) with a search field and a list: "All content" first (Zoom to Fit), then groups by title, then tiles, each in reading order (top to bottom, then left to right). A tile row shows its title (code: path and line range; notes: their first line), a small type label, and the agent lifecycle dot for terminals. Typing filters by case-insensitive substring; ↑/↓ move, Return or a click goes, Esc, ⌘P, or a click outside closes. Going fits the object (zoom capped at 100%) and selects it; a terminal also takes keyboard focus. The move is a jump, not an animation: every intermediate frame would run the scene pass (live/card flips, grid and chrome rescales) across whatever the path crosses. ⌘P rather than ⌘K because Ghostty binds ⌘K (clear screen) by default and a focused terminal tile claims it before the menu.
+- **Jumps land clear of the chrome**: Go to, Zoom to Fit, ⌘0 with a selection, an attention edge pill, a title-bar double-click, entering a group, and opening a board aim at the area between the floating toolbar and the tray (with a 12 pt margin), so title bars and URL bars never sit under the toolbar. An object too tall to read when fitted whole (below 50%, e.g. an 820×3100 HTML page) fits its width instead and shows its top.
+- **Attention edge pills**: clicking one jumps to its object like Go to (without selecting it or moving keyboard focus) and acknowledges the marker: the user went there.
+- **Opened from a page**: a code tile opened by clicking a `<canvas-link>` or `<canvas-code>` in an HTML tile is user navigation, so when it lands outside the view the canvas pans the least that shows it; one already in view doesn't move.
 - **Nothing here**: while the board has objects but none intersects the viewport, a pill at the bottom center says "Nothing here · Back to content"; its button runs Zoom to Fit. The scene pass decides it, stopping at the first object in view.
 - **Zoom to Fit (⌘9)** fits everything when all of it fits at minimum zoom (10%). Otherwise it fits the largest cluster: objects whose frames lie within 1500 pt of each other, transitively (`Layout.clusters`); largest means most objects, then most area (`Layout.fitTarget`). Two stray terminals 40,000 pt from the other 130 objects used to clamp the fit at 10% centered on the empty space between them; now they're left out of it.
 

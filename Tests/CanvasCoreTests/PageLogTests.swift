@@ -172,6 +172,69 @@ struct PageLogTests {
         #expect(PageLog.Cursor("171:-1") == nil)
     }
 
+    @Test func aReleasedPageKeepsItsLogAndACursorFromBeforeTheReleaseCarriesOn() throws {
+        run("console.error('brick.center is undefined')")
+        let old = try log()
+        let seen = try #require(PageLog.Cursor(old.cursor))
+        run("console.warn('late')")
+        let released = PageReport.Released(log: try log(), at: Date(timeIntervalSince1970: 1_790_000_000))
+
+        // Released: nothing loaded, the old log under `previous`, and a cursor to carry on with.
+        let gone = PageReport(visibility: .released, log: nil, previous: released).json()
+        #expect(gone["loaded"]?.bool == false)
+        #expect(gone["visibility"]?.string == "released")
+        #expect(gone["previous"]?["errors"]?.int == 1)
+        #expect(gone["previous"]?["entries"]?.array?.map { $0["text"]?.string } == ["brick.center is undefined", "late"])
+        #expect(gone["previous"]?["releasedAt"]?.string == "2026-09-21T14:13:20.000Z")
+        #expect(gone["cursor"]?.string == released.log.cursor)
+        let sinceSeen = PageReport(visibility: .released, log: nil, previous: released).json(since: seen)
+        #expect(sinceSeen["previous"]?["entries"]?.array?.map { $0["text"]?.string } == ["late"], "a cursor from before the release reads what came after it")
+
+        // Loaded again: the new document's log, and the old one until the caller reads past it.
+        let fresh = PageLog(document: "rebuilt", url: old.url, entries: [], errors: 0, warnings: 0)
+        let back = PageReport(visibility: .visible, log: fresh, previous: released)
+        let afterRelease = back.json(since: PageLog.Cursor(released.log.cursor))
+        #expect(afterRelease["loaded"]?.bool == true)
+        #expect(afterRelease["reloaded"]?.bool == true)
+        #expect(afterRelease["previous"]?["entries"]?.array?.isEmpty == true, "the released page's entries were all read")
+        #expect(afterRelease["cursor"]?.string == fresh.cursor)
+        #expect(back.json()["previous"]?["errors"]?.int == 1)
+        #expect(back.json(since: PageLog.Cursor(fresh.cursor))["previous"] == nil, "read past the reload: the released page is old news")
+        #expect(PageReport(visibility: .hidden, log: fresh).json()["previous"] == nil)
+    }
+
+    @Test func aPageSourceOpensTheRepoFileItWasServedFrom() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-tests-\(UUID().uuidString)").path
+        for file in ["game.js", "index.html", "public/static/app.js", "src/main.ts", "a/util.js", "b/util.js"] {
+            let path = (root as NSString).appendingPathComponent(file)
+            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try "x".write(toFile: path, atomically: true, encoding: .utf8)
+        }
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let listed = FileIndex(paths: ["game.js", "index.html", "public/static/app.js", "src/main.ts", "a/util.js", "b/util.js"])
+        func file(_ text: String) -> String? {
+            PageSource.location(text).flatMap { PageSource.file(for: $0.url, root: root, listed: listed) }.map { String($0.dropFirst(root.count + 1)) }
+        }
+
+        #expect(PageSource.location("update@http://localhost:8000/game.js:238:19") == .init(url: URL(string: "http://localhost:8000/game.js")!, line: 238, column: 19))
+        #expect(PageSource.location("global code@http://localhost:8000/game.js:4")?.line == 4)
+        #expect(PageSource.location("    at step (http://localhost:5173/src/main.ts?t=17:12:3)")?.url.absoluteString == "http://localhost:5173/src/main.ts?t=17")
+        #expect(PageSource.location("[native code]") == nil)
+        #expect(PageSource.location("game.js:238") == nil, "a URL, not a bare path")
+
+        #expect(file("http://localhost:8000/game.js:238:19") == "game.js")
+        #expect(file("http://localhost:5173/src/main.ts?t=1719:12:3") == "src/main.ts", "the query is the server's")
+        #expect(file("http://localhost:8000/:12:5") == "index.html", "an inline script's line is the page's own file")
+        #expect(file("http://localhost:3000/static/app.js:40") == "public/static/app.js", "a served path is found by its trailing part")
+        #expect(file("http://localhost:3000/util.js:1") == nil, "two files end that way: none is guessed")
+        #expect(file("http://localhost:3000/missing.js:1") == nil)
+        #expect(file("http://localhost:3000/../../etc/hosts:1") == nil)
+        #expect(file("http://localhost:5173/@fs\(root)/src/main.ts:3") == "src/main.ts")
+        #expect(file("file://\(root)/game.js:7") == "game.js")
+        #expect(file("file:///etc/hosts:1") == nil, "only files under the board root")
+        #expect(file("https://cdn.example.com/lib/react.js:1") == nil)
+    }
+
     @Test func vitalsWebKitDoesNotMeasureAreNullNeverZero() throws {
         let raw = JSONValue.object([
             "lcp": .number(86.24), "cls": .null, "longTasks": .null, "fcp": .number(40.06), "ttfb": .number(3), "domContentLoaded": .null,

@@ -53,10 +53,11 @@ public enum MentionContext {
             let file = PathLabel.short(path)
             let location = side == DiffSide.old.rawValue ? "\(file):\(range) (old)" : "\(file):\(range)"
             return symbol.map { "\(location) \($0)" } ?? location
-        case .dom(let object, _, let selector, let text):
+        case .dom(let object, _, let selector, let text, let point):
             // What a person recognizes first; the CSS path last, where the chip truncates.
             var parts = text.map { ["\"\(clip($0, 24))\""] } ?? []
             if let tag = tag(ofSelector: selector) { parts.append(tag) }
+            if let point { parts.append("pixel \(point.x),\(point.y)") }
             if let tile = board.objects[object] { parts.append(clip(title(of: tile, on: board), 24)) }
             parts.append(selector)
             return parts.joined(separator: " · ")
@@ -106,9 +107,10 @@ public enum MentionContext {
             } else {
                 lines.append("    (file unreadable: \(url.path))")
             }
-        case .dom(let object, let url, let selector, let text):
+        case .dom(let object, let url, let selector, let text, let point):
             let textPart = text.map { " \"\(clip($0, 80))\"" } ?? ""
-            lines.append("[\(index)] dom \(url) · \(selector)\(textPart) · \(board.objects[object]?.type.rawValue ?? "browser") tile \(object)\(edited)")
+            let pointPart = point.map { " · pixel (\($0.x), \($0.y)) of \($0.w)×\($0.h), from its top-left" } ?? ""
+            lines.append("[\(index)] dom \(url) · \(selector)\(textPart)\(pointPart) · \(board.objects[object]?.type.rawValue ?? "browser") tile \(object)\(edited)")
         case .terminal(let object, let text, let part, let command):
             let name = terminalName(object, on: board, caller: caller)
             switch part {

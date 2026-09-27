@@ -80,7 +80,7 @@ public enum CanvasBasics {
         Section(title: "Keyboard", items: [
             Item(term: "⌘P", text: "go to a tile, file or symbol, or a heading in a note."),
             Item(term: "⌘T", text: "new terminal; then run omp, claude, codex, gemini or opencode."),
-            Item(term: "Return · Esc", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas. In a terminal Esc goes to the program: ⌘Esc leaves any tile."),
+            Item(term: "Return · Esc", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas. In a terminal or a web page Esc goes to the program or page (a game's pause, a dialog): ⌘Esc leaves any tile."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
             Item(term: "⌥⌘/", text: "open or close this legend (Help › Canvas Basics)."),
         ]),

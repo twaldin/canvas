@@ -436,8 +436,10 @@ final class HtmlTile: NSView, TileContent {
     }
 
     func resolveMention(at point: NSPoint) async -> MentionTarget? {
-        guard let web = webView, let element = await WebMentions.element(at: point, in: web) else { return nil }
-        hovered = element
+        guard let web = webView, let element = await WebMentions.element(at: point, in: web, pixel: true) else { return nil }
+        var shown = element
+        shown.point = nil
+        hovered = shown
         return domTarget(element)
     }
 
@@ -455,14 +457,14 @@ final class HtmlTile: NSView, TileContent {
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
-        guard case .dom(_, _, let selector, _) = target, let hovered, hovered.selector == selector else { return bounds }
+        guard case .dom(_, _, let selector, _, _) = target, let hovered, hovered.selector == selector else { return bounds }
         return hovered.rect.intersection(bounds)
     }
 
     var takesKeyboardFocus: Bool { false }
 
     private func domTarget(_ element: WebMentions.Element) -> MentionTarget {
-        .dom(object: object.id, url: pageURL.absoluteString, selector: element.selector, text: element.text.isEmpty ? nil : element.text)
+        .dom(object: object.id, url: pageURL.absoluteString, selector: element.selector, text: element.text.isEmpty ? nil : element.text, point: element.point)
     }
 
     /// One element lookup in flight at a time; the latest pointer position wins.

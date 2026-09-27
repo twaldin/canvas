@@ -295,6 +295,22 @@ export type PageLogEntry = {
 export type PageLog = {
   /** false: the tile has no page now (never shown or rendered, or released while out of view); `view.render` loads it */
   loaded: boolean;
+  /** how WebKit runs the page now: visible (on screen, rAF at the display's rate), hidden (nobody sees it: no rAF, timers throttled more the longer it stays hidden), driven (kept running for an agent though nobody sees it: rAF irregular and slower), released (no page) */
+  visibility?: "visible" | "hidden" | "driven" | "released";
+  /** the log of the page Canvas last released (after `since` when it names that page), as it was then; returned until the page loads another document after the reload, and until `since` names the current document */
+  previous?: {
+    /** ISO 8601 */
+    releasedAt?: string;
+    url?: string;
+    errors?: number;
+    warnings?: number;
+    entries?: PageLogEntry[];
+    omitted?: number;
+    dropped?: number;
+    reloaded?: true;
+    cursor?: string;
+    vitals?: Record<string, unknown>;
+  };
   url?: string;
   /** exceptions, console errors and failed requests since the page loaded */
   errors?: number;
@@ -307,7 +323,7 @@ export type PageLog = {
   dropped?: number;
   /** `since` named an earlier document: `entries` start at this one's beginning */
   reloaded?: true;
-  /** pass as `since` to read only what comes after */
+  /** pass as `since` to read only what comes after; while released, the released page's (`previous.cursor`) */
   cursor?: string;
   /** milliseconds from navigation start (CLS unitless); null when not measured yet or not measured by WebKit (then named in `unsupported`), never a stand-in zero */
   vitals?: {
@@ -343,6 +359,13 @@ export type MentionTarget = {
   url: string;
   selector: string;
   text?: string;
+  /** a Hyper-click on a <canvas>, <video> or <img>: where in the element's own pixels (drawing buffer, video frame, natural image size), from its top-left, and its size in them */
+  point?: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  };
 } | {
   kind: "terminal";
   object: Id;

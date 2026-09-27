@@ -1,4 +1,5 @@
 import AppKit
+import CanvasCore
 import WebKit
 
 /// Element-level mentions for web content (browser and HTML tiles): which DOM element is under a
@@ -13,6 +14,8 @@ enum WebMentions {
         var text: String
         /// In the web view's coordinates (CSS pixels at page zoom 1, top-left origin).
         var rect: CGRect
+        /// Where the point asked about fell in a picture element's own pixels (`element(at:in:point:)`).
+        var point: ElementPoint?
     }
 
     /// Installs the helper into every frame load of a configuration.
@@ -21,9 +24,11 @@ enum WebMentions {
         configuration.userContentController.addUserScript(script)
     }
 
-    /// The element at `point` (web view coordinates, top-left origin).
-    static func element(at point: CGPoint, in webView: WKWebView) async -> Element? {
-        let result = try? await webView.callAsyncJavaScript("return window.__canvasMentions?.at(x, y) ?? null", arguments: ["x": point.x, "y": point.y], contentWorld: world)
+    /// The element at `point` (web view coordinates, top-left origin); with `pixel`, on a
+    /// `<canvas>`, `<video>` or `<img>`, where the point falls in its own pixels (a Hyper-click's
+    /// mention; hovering doesn't need it).
+    static func element(at point: CGPoint, in webView: WKWebView, pixel: Bool = false) async -> Element? {
+        let result = try? await webView.callAsyncJavaScript("return window.__canvasMentions?.at(x, y, pixel) ?? null", arguments: ["x": point.x, "y": point.y, "pixel": pixel], contentWorld: world)
         return decode(result)
     }
 
@@ -55,7 +60,12 @@ enum WebMentions {
         guard let object = value as? [String: Any], let selector = object["selector"] as? String,
               let x = object["x"] as? Double, let y = object["y"] as? Double,
               let w = object["w"] as? Double, let h = object["h"] as? Double else { return nil }
-        return Element(selector: selector, text: object["text"] as? String ?? "", rect: CGRect(x: x, y: y, width: w, height: h))
+        var element = Element(selector: selector, text: object["text"] as? String ?? "", rect: CGRect(x: x, y: y, width: w, height: h))
+        if let point = object["point"] as? [String: Any], let x = (point["x"] as? NSNumber)?.intValue, let y = (point["y"] as? NSNumber)?.intValue,
+           let w = (point["w"] as? NSNumber)?.intValue, let h = (point["h"] as? NSNumber)?.intValue {
+            element.point = ElementPoint(x: x, y: y, w: w, h: h)
+        }
+        return element
     }
 
     /// Selector preference: unique id, test ids / aria labels, then a tag:nth-of-type path up to
@@ -150,8 +160,39 @@ enum WebMentions {
         found.text = text.slice(0, 500);
         return found;
       }
+      // Where (x, y) falls in a picture element's own pixels: a canvas's drawing buffer, a
+      // video's frame, an image's natural size, through its border, padding, object-fit and
+      // object-position (a video letterboxes as if contained). Null off the picture itself.
+      function pixel(el, x, y) {
+        const size = el.tagName === 'CANVAS' ? [el.width, el.height] : el.tagName === 'VIDEO' ? [el.videoWidth, el.videoHeight]
+          : el.tagName === 'IMG' ? [el.naturalWidth, el.naturalHeight] : null;
+        if (!size || !(size[0] > 0 && size[1] > 0)) return null;
+        const [w, h] = size;
+        const r = el.getBoundingClientRect(), s = getComputedStyle(el), n = (v) => parseFloat(v) || 0;
+        const left = r.left + n(s.borderLeftWidth) + n(s.paddingLeft), top = r.top + n(s.borderTopWidth) + n(s.paddingTop);
+        const cw = r.width - n(s.borderLeftWidth) - n(s.borderRightWidth) - n(s.paddingLeft) - n(s.paddingRight);
+        const ch = r.height - n(s.borderTopWidth) - n(s.borderBottomWidth) - n(s.paddingTop) - n(s.paddingBottom);
+        if (!(cw > 0 && ch > 0)) return null;
+        let fit = s.objectFit || 'fill';
+        if (el.tagName === 'VIDEO' && fit === 'fill') fit = 'contain';
+        const contain = Math.min(cw / w, ch / h), cover = Math.max(cw / w, ch / h);
+        const k = fit === 'contain' ? contain : fit === 'cover' ? cover : fit === 'none' ? 1 : fit === 'scale-down' ? Math.min(1, contain) : null;
+        const dw = k === null ? cw : w * k, dh = k === null ? ch : h * k;
+        const [px, py] = (s.objectPosition || '50% 50%').split(/\s+/);
+        const offset = (token, free) => token && token.endsWith('%') ? free * parseFloat(token) / 100 : token && token.endsWith('px') ? parseFloat(token) : free / 2;
+        const ex = (x - left - offset(px, cw - dw)) * w / dw, ey = (y - top - offset(py, ch - dh)) * h / dh;
+        if (ex < 0 || ey < 0 || ex >= w || ey >= h) return null;
+        return { x: Math.floor(ex), y: Math.floor(ey), w, h };
+      }
       window.__canvasMentions = {
-        at(x, y) { const el = hit(x, y); return el ? describe(el) : null; },
+        at(x, y, withPixel) {
+          const el = hit(x, y);
+          if (!el) return null;
+          const found = describe(el);
+          const point = withPixel ? pixel(el, x, y) : null;
+          if (point) found.point = point;
+          return found;
+        },
         find(sel) { try { const el = document.querySelector(sel); return el ? describe(el) : null; } catch { return null; } },
         within,
         selection,

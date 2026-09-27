@@ -199,6 +199,8 @@ class PageLogEntry(TypedDict):
 class PageLog(TypedDict):
     """What a browser tile's page reported since it loaded. Main frame only; a new document (load, reload) starts over."""
     loaded: Required[bool]
+    visibility: NotRequired[Literal["visible", "hidden", "driven", "released"]]
+    previous: NotRequired[dict[str, Any]]
     url: NotRequired[str]
     errors: NotRequired[int]
     warnings: NotRequired[int]

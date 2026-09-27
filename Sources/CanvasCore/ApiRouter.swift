@@ -104,9 +104,9 @@ public final class ApiRouter {
     /// (`TerminalName.program`; its shell at that pane's prompt); nil when the tile's foreground
     /// program isn't tmux or tmux doesn't say.
     public var tmuxPane: ((Board, ObjectID) async -> String?)?
-    /// What a browser tile's page reported since it loaded (`PageLog`); nil when its page isn't
-    /// loaded (never shown or rendered, or released while out of view).
-    public var readPageLog: ((Board, ObjectID) async -> PageLog?)?
+    /// A browser tile's page as `object.get` reports it (`PageReport`): its visibility, what it
+    /// reported since it loaded, and the log of the page Canvas last released; nil without the tile.
+    public var pageReport: ((Board, ObjectID) async -> PageReport?)?
     /// A note tile's anchored fences resolved against disk now, with the text it captured, by
     /// fence key (the tile shows them too); nil without the tile, and `object.get` resolves them
     /// itself.
@@ -913,12 +913,12 @@ public final class ApiRouter {
     private func get(_ p: JSONValue) async throws -> JSONValue {
         let result = try dispatch("object.get", p)
         guard let id = p["id"]?.string, let board = registry.board(containing: id), let object = board.objects[id] else { return result }
-        if object.type == .browser, let readPageLog {
+        if object.type == .browser, let pageReport {
             let since = try p["since"]?.string.map { text in
                 guard let cursor = PageLog.Cursor(text) else { throw Failure("invalid_params", "since must be a page cursor (`page.cursor` of an earlier object.get)") }
                 return cursor
             }
-            let page = await readPageLog(board, id)?.json(since: since) ?? .object(["loaded": .bool(false)])
+            let page = await pageReport(board, id)?.json(since: since) ?? .object(["loaded": .bool(false), "visibility": .string(PageReport.Visibility.released.rawValue)])
             return result.merging(.object(["page": page]))
         }
         if object.type == .terminal, let last = terminalStatus?(board, id).lastCommand {

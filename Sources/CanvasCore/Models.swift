@@ -150,6 +150,23 @@ public struct LineRange: Codable, Equatable, Sendable {
     }
 }
 
+/// Where a Hyper-click fell on a picture element (`<canvas>`, `<video>`, `<img>`), in the
+/// element's own pixels from its top-left (a canvas's drawing buffer, a video's frame, an image's
+/// natural size, through CSS scaling and `object-fit`), and the element's size in them.
+public struct ElementPoint: Codable, Equatable, Sendable {
+    public var x: Int
+    public var y: Int
+    public var w: Int
+    public var h: Int
+
+    public init(x: Int, y: Int, w: Int, h: Int) {
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+    }
+}
+
 public enum MentionTarget: Codable, Equatable, Sendable {
     case object(ObjectID)
     /// `commit`: with `side` old or absent, the commit whose version of `path` holds `lines`
@@ -157,7 +174,9 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     /// were diffed against. Absent: the lines are in the working tree. `diff`: a changes tile's
     /// word on the lines, e.g. `added line · unstaged hunk` (`ChangeSet.mentionDetail`).
     case code(object: ObjectID, path: String, lines: LineRange, side: String? = nil, symbol: String? = nil, commit: String? = nil, diff: String? = nil)
-    case dom(object: ObjectID, url: String, selector: String, text: String?)
+    /// An element of a page; `point`, for a Hyper-click on a picture (`<canvas>`, `<video>`,
+    /// `<img>`), is where in its own pixels.
+    case dom(object: ObjectID, url: String, selector: String, text: String?, point: ElementPoint? = nil)
     /// Terminal text: the user's selection, the screen rows around a click, or one command's
     /// block (its output; `command` says what ran, with exit status and duration when known).
     case terminal(object: ObjectID, text: String, part: TerminalPart = .selection, command: TerminalCommand? = nil)
@@ -170,7 +189,7 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     /// request), from the tile's problems list; `url` is the page's.
     case console(object: ObjectID, url: String, entry: PageLogEntry)
 
-    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, diff, url, selector, text, objects, name, x, y, block, headings, part, command, entry }
+    private enum CodingKeys: String, CodingKey { case kind, object, path, lines, side, symbol, commit, diff, url, selector, text, objects, name, x, y, block, headings, part, command, entry, point }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -178,7 +197,8 @@ public enum MentionTarget: Codable, Equatable, Sendable {
         case "code":
             self = .code(object: try c.decode(String.self, forKey: .object), path: try c.decode(String.self, forKey: .path), lines: try c.decode(LineRange.self, forKey: .lines), side: try c.decodeIfPresent(String.self, forKey: .side), symbol: try c.decodeIfPresent(String.self, forKey: .symbol), commit: try c.decodeIfPresent(String.self, forKey: .commit), diff: try c.decodeIfPresent(String.self, forKey: .diff))
         case "dom":
-            self = .dom(object: try c.decode(String.self, forKey: .object), url: try c.decode(String.self, forKey: .url), selector: try c.decode(String.self, forKey: .selector), text: try c.decodeIfPresent(String.self, forKey: .text))
+            self = .dom(object: try c.decode(String.self, forKey: .object), url: try c.decode(String.self, forKey: .url), selector: try c.decode(String.self, forKey: .selector), text: try c.decodeIfPresent(String.self, forKey: .text),
+                        point: try c.decodeIfPresent(ElementPoint.self, forKey: .point))
         case "terminal":
             self = .terminal(object: try c.decode(String.self, forKey: .object), text: try c.decode(String.self, forKey: .text),
                              part: try c.decodeIfPresent(TerminalPart.self, forKey: .part) ?? .selection, command: try c.decodeIfPresent(TerminalCommand.self, forKey: .command))
@@ -212,12 +232,13 @@ public enum MentionTarget: Codable, Equatable, Sendable {
             try c.encodeIfPresent(symbol, forKey: .symbol)
             try c.encodeIfPresent(commit, forKey: .commit)
             try c.encodeIfPresent(diff, forKey: .diff)
-        case .dom(let object, let url, let selector, let text):
+        case .dom(let object, let url, let selector, let text, let point):
             try c.encode("dom", forKey: .kind)
             try c.encode(object, forKey: .object)
             try c.encode(url, forKey: .url)
             try c.encode(selector, forKey: .selector)
             try c.encodeIfPresent(text, forKey: .text)
+            try c.encodeIfPresent(point, forKey: .point)
         case .terminal(let object, let text, let part, let command):
             try c.encode("terminal", forKey: .kind)
             try c.encode(object, forKey: .object)
@@ -253,7 +274,7 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     public var objectIDs: [ObjectID] {
         switch self {
         case .object(let id): [id]
-        case .code(let object, _, _, _, _, _, _), .dom(let object, _, _, _), .terminal(let object, _, _, _), .image(let object, _, _, _), .note(let object, _), .console(let object, _, _): [object]
+        case .code(let object, _, _, _, _, _, _), .dom(let object, _, _, _, _), .terminal(let object, _, _, _), .image(let object, _, _, _), .note(let object, _), .console(let object, _, _): [object]
         case .group(let objects, _): objects
         }
     }

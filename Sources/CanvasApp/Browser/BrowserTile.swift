@@ -79,6 +79,15 @@ final class BrowserTile: NSView, TileContent {
     fileprivate var documentFailure: PageLogEntry?
     /// The badge's list of the page's errors, while open.
     fileprivate var problemsList: PageProblemsView?
+    /// The log of the page Canvas last released (`PageReport.previous`), read from it as it went
+    /// (`previousRead` while that read runs), and the documents committed since the release: the
+    /// page loaded again is the first; the one after it drops the old log.
+    fileprivate var previousLoad: PageReport.Released?
+    fileprivate var previousRead: Task<Void, Never>?
+    fileprivate var commitsSinceRelease = 0
+    /// A `file:line` in the error list opened code (`board.openForNavigation`); `existing` when
+    /// a tile already showed it.
+    var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
     /// The page that didn't load, shown in place of a blank page (`BrowserLoadFailure`), the
     /// failed loads of that address in a row, and the pending automatic retry or watch.
     private(set) var loadFailure: BrowserLoadFailure?
@@ -240,7 +249,6 @@ final class BrowserTile: NSView, TileContent {
             self?.credit.user()
             self?.closeProblems()
         }
-        view.onEscape = { [weak self] in self?.leave() }
         view.autoresizingMask = [.width, .height]
         view.navigationDelegate = self
         view.uiDelegate = self
@@ -276,6 +284,8 @@ final class BrowserTile: NSView, TileContent {
             },
         ]
         if !isLive { scheduleRelease() }
+        // A page back after a release: the chrome says it reloaded.
+        if previousLoad != nil { problemsChanged() }
         return view
     }
 
@@ -351,7 +361,9 @@ final class BrowserTile: NSView, TileContent {
         Task { _ = try? await webView.callAsyncJavaScript(BrowserScripts.ensure + "return window.__canvasCmux.setActivity(on)", arguments: ["on": on], in: nil, contentWorld: BrowserScripts.world) }
     }
 
-    /// Drops the web view (its page, history, and web content process share) but keeps the image.
+    /// Drops the web view (its page, history, and web content process share) but keeps the image
+    /// and the page's log (`previousLoad`, read from the page as it goes), so what it logged
+    /// stays readable through `object.get` and the error list after the page is gone.
     private func release() {
         releaseTimer?.invalidate()
         releaseTimer = nil
@@ -361,6 +373,19 @@ final class BrowserTile: NSView, TileContent {
         retryTask?.cancel()
         retryTask = nil
         guard let webView else { return }
+        let failure = documentFailure
+        let releasedAt = Date()
+        commitsSinceRelease = 0
+        previousRead = Task { [weak self] in
+            let log = await Self.pageLog(of: webView, failure: failure)
+            guard let self else { return }
+            self.previousRead = nil
+            // A page that logged nothing readable (a failed load) leaves the log before it.
+            if let log, self.commitsSinceRelease <= 1 { self.previousLoad = PageReport.Released(log: log, at: releasedAt) }
+            self.problemsChanged()
+        }
+        pageErrors = 0
+        documentFailure = nil
         pageActivity = false
         observations = []
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
@@ -585,7 +610,8 @@ final class BrowserTile: NSView, TileContent {
     }
 
     /// Return on the selected tile: the page takes the keyboard (the address field while there
-    /// is no page); ⌘L goes to the address field, Esc back to the canvas.
+    /// is no page); ⌘L goes to the address field, ⌘Esc (Leave Tile) back to the canvas. Esc is
+    /// the page's (games, dialogs and menus close or pause on it), as it is a terminal program's.
     func enterKeyboard() -> Bool {
         guard let webView, webView.url != nil, webView.url?.absoluteString != "about:blank" else {
             focusAddress()
@@ -598,16 +624,14 @@ final class BrowserTile: NSView, TileContent {
         (enclosingScrollView as? CanvasView)?.leaveTile(objectID)
     }
 
-    /// A key the page didn't handle comes back up the responder chain: Esc already handed the
-    /// keyboard to the canvas (`BrowserWebView`), and must not also clear the selection there.
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { return }
-        super.keyDown(with: event)
-    }
+    /// A key the page didn't handle comes back up the responder chain, whose next stops past the
+    /// tile are the canvas's: it stays here, so while the page has the keyboard no key (Esc,
+    /// Delete, Return, a tool's letter) acts on the canvas. ⌘Esc leaves (`leaveTile`), taken by
+    /// the window before the page sees it.
+    override func keyDown(with event: NSEvent) {}
 
-    /// The page's unhandled Esc also comes back as `cancelOperation` up the responder chain,
-    /// whose next stop past the tile is the canvas's document: it would clear the selection the
-    /// Esc just kept (`leaveTile`). The Esc has done its job by then.
+    /// The page's unhandled Esc also comes back as `cancelOperation`: it stays here too, not
+    /// clearing the canvas's selection.
     override func cancelOperation(_ sender: Any?) {}
 
     // MARK: Change signals (automation waits, snapshot freshness)
@@ -688,7 +712,7 @@ final class BrowserTile: NSView, TileContent {
 
     private func mention(_ element: WebMentions.Element) -> MentionTarget {
         let url = webView?.url?.absoluteString ?? object.props["url"]?.string ?? ""
-        return .dom(object: objectID, url: url, selector: element.selector, text: element.text.isEmpty ? nil : element.text)
+        return .dom(object: objectID, url: url, selector: element.selector, text: element.text.isEmpty ? nil : element.text, point: element.point)
     }
 
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
@@ -719,7 +743,7 @@ final class BrowserTile: NSView, TileContent {
     func resolveMention(at point: NSPoint) async -> MentionTarget? {
         if let problem = problemMention(at: point) { return problem }
         guard let page = pagePoint(point), let webView,
-              let element = await WebMentions.element(at: page, in: webView) else { return nil }
+              let element = await WebMentions.element(at: page, in: webView, pixel: true) else { return nil }
         return mention(element)
     }
 
@@ -746,7 +770,7 @@ final class BrowserTile: NSView, TileContent {
 
     func outline(for target: MentionTarget) -> NSRect? {
         if case .console(_, _, let entry) = target { return problemOutline(entry) }
-        guard case .dom(_, _, let selector, _) = target, let hover, hover.element.selector == selector else { return nil }
+        guard case .dom(_, _, let selector, _, _) = target, let hover, hover.element.selector == selector else { return nil }
         return viewRect(hover.element.rect)
     }
 
@@ -924,6 +948,13 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         uncommittedNavigations.removeAll { $0 === navigation }
         clearLoadFailure()
         commitURL()
+        // The page loaded again after a release is the first document since; the next one
+        // (a navigation, a reload) leaves the released page's log behind.
+        commitsSinceRelease += 1
+        if commitsSinceRelease > 1, previousLoad != nil {
+            previousLoad = nil
+            problemsChanged()
+        }
         signalChange()
     }
 
@@ -979,13 +1010,9 @@ final class BrowserWebView: WKWebView {
         super.mouseDown(with: event)
     }
 
-    /// Esc: the page sees it (closing its own dialog), then the canvas takes the keyboard back.
-    var onEscape: (() -> Void)?
-
     override func keyDown(with event: NSEvent) {
         onUserInput?()
         super.keyDown(with: event)
-        if event.keyCode == 53, event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty { onEscape?() }
     }
 }
 
@@ -1022,6 +1049,9 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     private let address = NSTextField()
     /// "2 errors", only while the page has any; clicking it lists them (`onProblems`).
     private let problems = NSButton(title: "", target: nil, action: nil)
+    /// "Reloaded", quietly, while the tile keeps the log of the page Canvas released (the page
+    /// loaded again, or "Released" while it hasn't); clicking it lists that page's errors too.
+    private let releaseNote = NSButton(title: "", target: nil, action: nil)
     var onProblems: (() -> Void)?
     private(set) var isEditing = false
 
@@ -1032,6 +1062,31 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
             let title = errorCount == 1 ? "1 error" : "\(errorCount) errors"
             problems.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.systemRed])
             problems.setAccessibilityLabel("\(title) on this page")
+            resizeSubviews(withOldSize: bounds.size)
+        }
+    }
+
+    /// The page Canvas released, while the tile keeps its log: whether the page loaded again
+    /// since, the errors it had logged, and when it went.
+    struct Released: Equatable {
+        var reloaded: Bool
+        var errors: Int
+        var at: Date
+    }
+
+    var released: Released? {
+        didSet {
+            guard released != oldValue else { return }
+            releaseNote.isHidden = released == nil
+            if let released {
+                let word = released.reloaded ? "Reloaded" : "Released"
+                let before = released.errors == 0 ? "" : released.errors == 1 ? " · 1 error before" : " · \(released.errors) errors before"
+                releaseNote.attributedTitle = NSAttributedString(string: word + before, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+                let time = DateFormatter.localizedString(from: released.at, dateStyle: .none, timeStyle: .short)
+                let again = released.reloaded ? ", and loaded it again when it came back" : "; it loads again when the tile comes back into view"
+                releaseNote.toolTip = "Canvas released this page at \(time), \(Int(BrowserTile.releaseDelay / 60)) minutes after it left the view, to save energy\(again). Click for what it logged before."
+                releaseNote.setAccessibilityLabel("Page \(word.lowercased()) after being released\(before)")
+            }
             resizeSubviews(withOldSize: bounds.size)
         }
     }
@@ -1071,7 +1126,14 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         problems.target = self
         problems.action = #selector(problemsClicked)
         problems.isHidden = true
-        [back, forward, reload, address, problems].forEach(addSubview)
+        releaseNote.isBordered = false
+        releaseNote.wantsLayer = true
+        releaseNote.layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.1).cgColor
+        releaseNote.layer?.cornerRadius = 9
+        releaseNote.target = self
+        releaseNote.action = #selector(problemsClicked)
+        releaseNote.isHidden = true
+        [back, forward, reload, address, releaseNote, problems].forEach(addSubview)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -1085,9 +1147,9 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         forward.frame = NSRect(x: 32, y: y, width: side, height: side)
         reload.frame = NSRect(x: 58, y: y, width: side, height: side)
         var trailing: CGFloat = 8
-        if !problems.isHidden {
-            let width = ceil(problems.attributedTitle.size().width) + 14
-            problems.frame = NSRect(x: bounds.width - 6 - width, y: (bounds.height - 18) / 2, width: width, height: 18)
+        for pill in [problems, releaseNote] where !pill.isHidden {
+            let width = ceil(pill.attributedTitle.size().width) + 14
+            pill.frame = NSRect(x: bounds.width - trailing + 2 - width, y: (bounds.height - 18) / 2, width: width, height: 18)
             trailing += width + 4
         }
         address.frame = NSRect(x: 88, y: (bounds.height - 22) / 2, width: max(0, bounds.width - 88 - trailing), height: 22)
@@ -1159,32 +1221,61 @@ extension BrowserTile {
         problemsChanged()
     }
 
-    /// The badge shows the count, and an open list refreshes.
+    /// The badge shows the count, the quiet "Reloaded" pill the released page's log, and an
+    /// open list refreshes.
     fileprivate func problemsChanged() {
         let count = pageErrors + (documentFailure == nil ? 0 : 1)
         chrome.errorCount = count
-        if count == 0 { return closeProblems() }
+        chrome.released = previousLoad.map { .init(reloaded: webView != nil, errors: $0.log.errors, at: $0.at) }
+        if count == 0, previousLoad == nil { return closeProblems() }
         if problemsList != nil { refreshProblems() }
     }
 
     /// What the page reported since it loaded; nil without a page that runs `PageCapture`.
     func readPageLog() async -> PageLog? {
         guard let webView else { return nil }
-        let failure = documentFailure
+        return await Self.pageLog(of: webView, failure: documentFailure)
+    }
+
+    /// `webView`'s page log, its own document's HTTP error (`failure`) first.
+    fileprivate static func pageLog(of webView: WKWebView, failure: PageLogEntry?) async -> PageLog? {
         guard let text = try? await webView.callAsyncJavaScript(PageCapture.readScript, arguments: [:], in: nil, contentWorld: .page) as? String,
               let json = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)), var log = PageLog(json: json) else { return nil }
         if let failure { log.add(documentFailure: failure) }
         return log
     }
 
+    /// `object.get`'s `page`: how WebKit runs the page now, its log, and the released page's.
+    func pageReport() async -> PageReport {
+        await previousRead?.value
+        let log = await readPageLog()
+        return PageReport(visibility: visibility, log: log, previous: previousLoad)
+    }
+
+    /// On screen; kept visible to WebKit for an agent though nobody sees it (the stage, a
+    /// minimized or covered window); hidden in its tile; or no page at all.
+    var visibility: PageReport.Visibility {
+        guard webView != nil else { return .released }
+        if pageOnScreen { return .visible }
+        return drivenTimer != nil ? .driven : .hidden
+    }
+
     fileprivate func toggleProblems() {
         if problemsList != nil { return closeProblems() }
         let list = PageProblemsView()
         list.onClose = { [weak self] in self?.closeProblems() }
+        list.onResize = { [weak self] in self?.placeProblems() }
+        list.resolve = { [weak self] text in self?.sourceFile(text) }
+        list.onOpenSource = { [weak self] file, line in self?.openSource(file, line: line) }
         problemsList = list
         addSubview(list, positioned: .above, relativeTo: cover)
         placeProblems()
         refreshProblems()
+        // Sources name files by their served path: a file listed since the board opened (a
+        // new module) links once the root's list is fresh.
+        BoardFiles.of(board.root).refresh { [weak self] _ in
+            if self?.problemsList === list { self?.refreshProblems() }
+        }
     }
 
     func closeProblems() {
@@ -1194,11 +1285,29 @@ extension BrowserTile {
 
     private func refreshProblems() {
         Task { @MainActor [weak self] in
+            await self?.previousRead?.value
             let log = await self?.readPageLog()
             guard let self, let list = self.problemsList else { return }
-            list.show(log?.problems ?? self.documentFailure.map { [$0] } ?? [])
+            let previous = self.previousLoad.map { PageProblemsView.Previous(problems: $0.log.problems, releasedAt: $0.at, reloaded: self.webView != nil) }
+            list.show(log?.problems ?? self.documentFailure.map { [$0] } ?? [], previous: previous)
             self.placeProblems()
         }
+    }
+
+    /// The repo file and line a page `source` or stack frame names (`PageSource`), found like a
+    /// terminal's ⌘-click reference: served path against the board root, then by trailing path
+    /// among the root's files.
+    fileprivate func sourceFile(_ text: String) -> (file: String, line: Int)? {
+        guard let location = PageSource.location(text),
+              let file = PageSource.file(for: location.url, root: board.root.path, listed: BoardFiles.of(board.root).current()) else { return nil }
+        return (file, location.line)
+    }
+
+    /// A `file:line` in the error list: the code at that line, as a note's code link opens it.
+    fileprivate func openSource(_ file: String, line: Int) {
+        let opened = board.openForNavigation(CodeAim(path: board.boardPath(file, linkRoot: board.root), range: LineRange(start: line, end: line)), from: objectID)
+        NSLog("Canvas: browser %@ opened %@:%d as %@", objectID, file, line, opened.id)
+        onOpenedCode?(opened.id, opened.existing)
     }
 
     /// Under the badge, at the page's right edge, as tall as its rows up to most of the page.
@@ -1246,6 +1355,13 @@ extension BrowserTile {
 
     /// The address the page shows (a released page's `props.url`).
     var pageURL: String? { webView?.url?.absoluteString ?? object.props["url"]?.string }
+
+    /// The page's address as another browser opens it (Open in Browser): a web or file URL; nil
+    /// for an empty tile.
+    var webAddress: URL? {
+        guard let text = pageURL, let url = URL(string: text), ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        return url
+    }
 }
 
 /// The script message handler for the page's error count (`PageCapture`, in the page's world).

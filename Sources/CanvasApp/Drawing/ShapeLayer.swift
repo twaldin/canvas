@@ -114,14 +114,6 @@ final class ShapeLayer: NSView {
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(toolbar)
         layer.toolbar = toolbar
-        NotificationCenter.default.addObserver(forName: .tileSurfaceChanged, object: nil, queue: .main) { [weak layer] note in
-            // The content view itself isn't Sendable; its identity is.
-            guard let sender = note.object.map({ ObjectIdentifier($0 as AnyObject) }) else { return }
-            MainActor.assumeIsolated {
-                guard let layer, let tile = layer.canvas.tiles.values.first(where: { ObjectIdentifier($0.content) == sender }) else { return }
-                layer.surfaceChanged(tile.frame)
-            }
-        }
         NSLayoutConstraint.activate([
             toolbar.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
             toolbar.centerXAnchor.constraint(equalTo: container.centerXAnchor),
@@ -141,6 +133,7 @@ final class ShapeLayer: NSView {
         NotificationCenter.default.addObserver(self, selector: #selector(viewFrameChanged(_:)), name: NSView.frameDidChangeNotification, object: nil)
         // A code tile's rows scroll under arrows bound to its lines.
         NotificationCenter.default.addObserver(self, selector: #selector(codeRowsMoved(_:)), name: CodeTile.rowsMoved, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(tileSurfaceChanged(_:)), name: .tileSurfaceChanged, object: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -159,6 +152,11 @@ final class ShapeLayer: NSView {
             let boundLines = [spec.from, spec.to].contains { if case .object(tile.objectID, .some, _) = $0 { return true } else { return false } }
             if boundLines { reroute(arrow: id) }
         }
+    }
+
+    @objc private func tileSurfaceChanged(_ note: Notification) {
+        guard let content = note.object as? NSView, let tile = canvas.tiles.values.first(where: { $0.content === content }) else { return }
+        surfaceChanged(tile.frame)
     }
 
     nonisolated override var isFlipped: Bool { true }

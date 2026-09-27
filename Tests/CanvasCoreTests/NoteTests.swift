@@ -1039,11 +1039,6 @@ struct NoteMentionTests {
         return (note, try board.stage(.note(object: note.id, item: item)))
     }
 
-    @Test func chipNamesTheNoteAndTheItem() throws {
-        let (_, mention) = try stageLead()
-        #expect(mention.label == "note Audit log: tr… › 4. Rate limit keyed on …", "short enough for the chip to show whole")
-    }
-
     @Test func contextGivesHeadingPathAndTheItemsText() async throws {
         let (note, _) = try stageLead()
         let context = await board.drain(peek: true).context

@@ -30,19 +30,12 @@ public struct NoteItem: Equatable, Sendable {
     /// Its markdown lines, 1-based.
     public var lines: LineRange
     /// Its markdown: whole lines, the common indentation removed, cut to `maxLines` lines and
-    /// `maxCharacters` characters (`truncated`).
+    /// `maxCharacters` characters (`omittedLines`).
     public var text: String
 
     /// A mention carries a block, not a chapter.
     public static let maxLines = 40
     public static let maxCharacters = 2000
-
-    public init(kind: Kind, headings: [String], lines: LineRange, text: String) {
-        self.kind = kind
-        self.headings = headings
-        self.lines = lines
-        self.text = text
-    }
 
     /// Lines of the block `text` leaves out.
     public var omittedLines: Int {
@@ -100,9 +93,9 @@ public struct NoteItem: Equatable, Sendable {
     /// where its lines are again (ignoring indentation), nearest `near`; else the block starting
     /// at its first line, when that is still somewhere. `unchanged`: the block reads as mentioned.
     public static func find(_ text: String, near: Int, in markdown: String) -> (item: NoteItem, unchanged: Bool)? {
-        let wanted = NoteSource.lines(of: text).map(normalized)
+        let wanted = NoteSource.lines(of: text).map(NoteAnchor.normalized)
         guard let first = wanted.first, !first.isEmpty else { return nil }
-        let source = NoteSource.lines(of: markdown).map(normalized)
+        let source = NoteSource.lines(of: markdown).map(NoteAnchor.normalized)
         let starts = source.indices.filter { source[$0] == first }
         let whole = starts.filter { start in
             start + wanted.count <= source.count && Array(source[start..<(start + wanted.count)]) == wanted
@@ -179,9 +172,5 @@ public struct NoteItem: Equatable, Sendable {
             count += text.count + 1
         }
         return kept.joined(separator: "\n")
-    }
-
-    private static func normalized(_ line: String) -> String {
-        line.trimmingCharacters(in: .whitespaces)
     }
 }

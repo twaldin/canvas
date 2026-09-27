@@ -134,6 +134,17 @@ public enum NoteSource {
         return NoteExcerpt(path: path, range: range, lines: shown, status: resolution.status, diff: diff, fileLineCount: source.count)
     }
 
+    /// A note's anchored fences resolved in turn (`excerpt`), by key, each with the text it
+    /// `captured` (by key); fewer when the task is cancelled on the way.
+    public static func excerpts(for fences: [NoteMarkdown.AnchoredFence], root: URL, captured: [String: [String]] = [:]) async -> [String: NoteExcerpt] {
+        var results: [String: NoteExcerpt] = [:]
+        for fence in fences {
+            results[fence.key] = await excerpt(for: fence.fence, root: root, captured: captured[fence.key], body: fence.body)
+            if Task.isCancelled { break }
+        }
+        return results
+    }
+
     /// File text; a pinned commit reads through `git show` (see `showCommand`). A failed show
     /// tells a commit that lacks the file from one that doesn't exist.
     static func read(_ path: String, commit: String?, root: URL) async throws -> String {

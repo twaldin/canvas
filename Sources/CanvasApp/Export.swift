@@ -37,7 +37,7 @@ extension CanvasView {
         var title = namesake.flatMap { board.objects[$0] }.map { $0.type == .group ? $0.props["title"]?.string ?? "" : TileFrameView.title(for: $0) }
         // An image tile's title is its file name: `chart.png` saves as `chart.png`, not
         // `chart.png.png`; so is a page or a note titled `report.html` or `notes.md`.
-        if let name = title, LocalImage.extensions.contains((name as NSString).pathExtension.lowercased()) || ["html", "md"].contains((name as NSString).pathExtension.lowercased()) {
+        if let name = title, case let known = (name as NSString).pathExtension.lowercased(), LocalImage.extensions.contains(known) || ["html", "md"].contains(known) {
             title = ((name as NSString).lastPathComponent as NSString).deletingPathExtension
         }
         return ExportFile.name(title, ext: ext)
@@ -45,9 +45,12 @@ extension CanvasView {
 
     private static let exportDirectoryKey = "canvas.exportDirectory"
 
-    /// A save sheet for an export: named for the selection, opening in the folder the user last
-    /// saved one into, else Downloads, never the board's directory (`ExportFile.directory`).
-    private func exportPanel(_ type: UTType, ext: String) -> NSSavePanel {
+    /// An export through a save sheet: named for the selection, opening in the folder the user
+    /// last saved one into, else Downloads, never the board's directory (`ExportFile.directory`);
+    /// then `contents`, made once the user chose where (nil: nothing left to save), written there.
+    /// `action` names the export in a failure's sheet, `what` the saved thing in the log.
+    private func saveExport(_ action: String, _ type: UTType, ext: String, logging what: String, _ contents: @escaping @MainActor () async throws -> Data?) {
+        guard let window else { return }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [type]
         panel.nameFieldStringValue = exportName(ext)
@@ -57,12 +60,19 @@ extension CanvasView {
             var directory: ObjCBool = false
             return FileManager.default.fileExists(atPath: url.path, isDirectory: &directory) && directory.boolValue
         }
-        return panel
-    }
-
-    /// Remembers where the user saved an export, for the next save sheet.
-    private static func rememberExportDirectory(of url: URL) {
-        UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: exportDirectoryKey)
+        panel.beginSheetModal(for: window) { [weak self, panel] response in
+            guard let self, response == .OK, let url = panel.url else { return }
+            UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: Self.exportDirectoryKey)
+            Task { @MainActor in
+                do {
+                    guard let data = try await contents() else { return }
+                    try await Self.write(data, to: url)
+                    NSLog("Canvas: saved %@ as %@", what, url.path)
+                } catch {
+                    self.exportFailed(action, error)
+                }
+            }
+        }
     }
 
     /// Copy as Image: PNG (and TIFF, for apps that only read that) on the general pasteboard.
@@ -85,38 +95,13 @@ extension CanvasView {
 
     /// Save as PNG…: a save sheet on the window, then the same picture as Copy as Image.
     func saveSelectionAsPNG() {
-        guard let window else { return }
-        let panel = exportPanel(.png, ext: "png")
-        panel.beginSheetModal(for: window) { [weak self, panel] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            Self.rememberExportDirectory(of: url)
-            Task { @MainActor in
-                do {
-                    try await Self.write(try await self.selectionPNG(), to: url)
-                    NSLog("Canvas: saved the selection as %@", url.path)
-                } catch {
-                    self.exportFailed("Save as PNG", error)
-                }
-            }
-        }
+        saveExport("Save as PNG", .png, ext: "png", logging: "the selection") { [weak self] in try await self?.selectionPNG() }
     }
 
     /// Save as HTML…: the HTML tile's page as it renders, in one file (`HtmlTile.exportDocument`).
     func saveHTML(_ id: ObjectID) {
-        guard let window, let tile = tiles[id]?.content as? HtmlTile else { return }
-        let panel = exportPanel(.html, ext: "html")
-        panel.beginSheetModal(for: window) { [weak self, panel] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            Self.rememberExportDirectory(of: url)
-            Task { @MainActor in
-                do {
-                    try await Self.write(Data(try await tile.exportDocument().utf8), to: url)
-                    NSLog("Canvas: saved HTML tile %@ as %@", id, url.path)
-                } catch {
-                    self.exportFailed("Save as HTML", error)
-                }
-            }
-        }
+        guard let tile = tiles[id]?.content as? HtmlTile else { return }
+        saveExport("Save as HTML", .html, ext: "html", logging: "HTML tile \(id)") { Data(try await tile.exportDocument().utf8) }
     }
 
     /// Open in Browser: the exported page in the temp directory, opened by the default browser.
@@ -179,20 +164,8 @@ extension CanvasView {
     /// Save as Markdown… (a note's menu, File › Save Note as Markdown…): the same text in a
     /// `.md` file named after the note, through the export save sheet.
     func saveNoteMarkdown(_ id: ObjectID) {
-        guard let window, noteMarkdown(id) != nil else { return }
-        let panel = exportPanel(Self.markdownType, ext: "md")
-        panel.beginSheetModal(for: window) { [weak self, panel] response in
-            guard let self, response == .OK, let url = panel.url, let markdown = self.noteMarkdown(id) else { return }
-            Self.rememberExportDirectory(of: url)
-            Task { @MainActor in
-                do {
-                    try await Self.write(Data(markdown.utf8), to: url)
-                    NSLog("Canvas: saved note %@ as %@", id, url.path)
-                } catch {
-                    self.exportFailed("Save as Markdown", error)
-                }
-            }
-        }
+        guard noteMarkdown(id) != nil else { return }
+        saveExport("Save as Markdown", Self.markdownType, ext: "md", logging: "note \(id)") { [weak self] in self?.noteMarkdown(id).map { Data($0.utf8) } }
     }
 
     /// Snapshot to Image (a browser tile's menu, File › Snapshot Page to Image): the page as it

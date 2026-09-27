@@ -195,11 +195,7 @@ public final class ApiRouter {
                 let covered = method == "object.update" && size == nil && params["frame"] != nil
                     ? params["id"]?.string.flatMap { id in (try? board(forObject: id)).map { Set($0.overlaps(of: id)) } } : nil
                 let result = try dispatch(method, try fitted(method, params, size: size))
-                if size != nil { return Self.ok(id, withOverlaps(result)) }
-                guard let covered else { return Self.ok(id, result) }
-                let reported = withOverlaps(result)
-                let now = Set(reported["overlaps"]?.array?.compactMap(\.string) ?? [])
-                return Self.ok(id, now.isSubset(of: covered) ? result : reported)
+                return Self.ok(id, size != nil || covered != nil ? withOverlaps(result, beyond: covered ?? []) : result)
             default: break
             }
             return Self.ok(id, try dispatch(method, params))
@@ -961,12 +957,10 @@ public final class ApiRouter {
         }
         if object.type == .note {
             let fences = NoteMarkdown.anchoredFences(in: NoteMarkdown.parse(object.props["markdown"]?.string ?? ""))
-            var excerpts = await noteExcerpts?(board, id) ?? [:]
-            let root = board.linkRoot(of: object)
-            for fence in fences where excerpts[fence.key] == nil {
-                excerpts[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: nil, body: fence.body)
-            }
-            return result.merging(.object(["fences": NoteMarkdown.status(of: fences, excerpts: excerpts)]))
+            let excerpts = await noteExcerpts?(board, id) ?? [:]
+            let unresolved = fences.filter { excerpts[$0.key] == nil }
+            let resolved = excerpts.merging(await NoteSource.excerpts(for: unresolved, root: board.linkRoot(of: object))) { tile, _ in tile }
+            return result.merging(.object(["fences": NoteMarkdown.status(of: fences, excerpts: resolved)]))
         }
         if object.type == .code, let fence = CodeAnchor.fence(object.props) {
             var excerpt = await codeRangeStatus?(board, id)
@@ -1080,8 +1074,16 @@ public final class ApiRouter {
     /// `props.scale` with a size-only frame (the tile made bigger to be read from further out)
     /// makes room the same way (`Board.scaledFrame`).
     func fitted(_ method: String, _ p: JSONValue, size: CGSize?) throws -> JSONValue {
-        guard let size else { return try scaled(method, p) }
         guard var params = p.object else { return p }
+        guard let size else {
+            guard Self.rescales(method, p) else { return p }
+            let id = try string(p, "id")
+            let board = try board(forObject: id)
+            let current = try board.object(id).frame
+            let given = CGSize(width: p["frame"]?["w"]?.number ?? current.w, height: p["frame"]?["h"]?.number ?? current.h)
+            params["frame"] = try JSONValue.encode(try board.scaledFrame(id, to: given))
+            return .object(params)
+        }
         params.removeValue(forKey: "size")
         let origin: (x: Double, y: Double)
         if method == "object.update" {
@@ -1110,24 +1112,13 @@ public final class ApiRouter {
         method == "object.update" && p["props"]?["scale"] != nil && p["frame"] != nil && p["frame"]?["x"]?.number == nil && p["frame"]?["y"]?.number == nil
     }
 
-    /// A scale update with a size-only frame (`rescales`), its frame placed by
-    /// `Board.scaledFrame` at the size it gives.
-    func scaled(_ method: String, _ p: JSONValue) throws -> JSONValue {
-        guard Self.rescales(method, p), var params = p.object else { return p }
-        let id = try string(p, "id")
-        let board = try board(forObject: id)
-        let current = try board.object(id).frame
-        let size = CGSize(width: p["frame"]?["w"]?.number ?? current.w, height: p["frame"]?["h"]?.number ?? current.h)
-        params["frame"] = try JSONValue.encode(try board.scaledFrame(id, to: size))
-        return .object(params)
-    }
-
     /// A fitted `object.create`/`object.update` result with `overlaps`, the objects the fitted
-    /// object now covers (`Board.overlaps(of:)`), when there are any.
-    func withOverlaps(_ result: JSONValue) -> JSONValue {
+    /// object now covers (`Board.overlaps(of:)`), when it covers any beyond those in `before`
+    /// (what a frame given outright already covered).
+    func withOverlaps(_ result: JSONValue, beyond before: Set<ObjectID> = []) -> JSONValue {
         guard let id = result["object"]?["id"]?.string, let board = try? board(forObject: id) else { return result }
         let covered = board.overlaps(of: id)
-        return covered.isEmpty ? result : result.merging(.object(["overlaps": .array(covered.map(JSONValue.string))]))
+        return Set(covered).isSubset(of: before) ? result : result.merging(.object(["overlaps": .array(covered.map(JSONValue.string))]))
     }
 
     /// A `frame` param: all of x, y, w, h, or, onto `base` (an update's current frame), any of

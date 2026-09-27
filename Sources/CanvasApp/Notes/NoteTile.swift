@@ -212,11 +212,8 @@ final class NoteTile: NSView, TileContent {
         let captured = captured
         let root = linkRoot
         resolveTask = Task { [weak self] in
-            var results: [String: NoteExcerpt] = [:]
-            for job in jobs {
-                results[job.key] = await NoteSource.excerpt(for: job.fence, root: root, captured: captured[job.key], body: job.body)
-                if Task.isCancelled { return }
-            }
+            let results = await NoteSource.excerpts(for: jobs, root: root, captured: captured)
+            if Task.isCancelled { return }
             let images = await NoteImages.load(sources, root: root)
             if Task.isCancelled { return }
             guard let self, self.resolveGeneration == generation else { return }
@@ -253,14 +250,9 @@ final class NoteTile: NSView, TileContent {
     /// what it resolved last (a source restored since would still show its stale badge).
     func resolvedExcerpts() async -> [String: NoteExcerpt] {
         let jobs = fences
-        let captured = captured
-        let root = linkRoot
-        var results: [String: NoteExcerpt] = [:]
-        for job in jobs {
-            results[job.key] = await NoteSource.excerpt(for: job.fence, root: root, captured: captured[job.key], body: job.body)
-        }
+        let results = await NoteSource.excerpts(for: jobs, root: linkRoot, captured: captured)
         // The markdown changed meanwhile: its own resolution is on its way.
-        guard jobs == fences else { return results }
+        guard jobs == fences, !Task.isCancelled else { return results }
         capture(results)
         if results != excerpts {
             excerpts = results
@@ -530,7 +522,6 @@ final class NoteTile: NSView, TileContent {
     /// Keyboard focus goes back to the canvas with the note selected after an edit started with
     /// Return, else to where prompts go.
     private func returnFocus() {
-        let canvas = canvas
         if enteredByKeyboard, let canvas {
             canvas.leaveTile(object.id)
         } else if let canvas, let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile {
@@ -716,44 +707,43 @@ final class NoteTile: NSView, TileContent {
     /// would be inserted before, so the same target can come from two rows.
     private var hoveredRow: (target: MentionTarget, rect: NSRect)?
 
-    private func rect(of fragment: NSTextLayoutFragment) -> NSRect {
+    /// A fragment's row across the display, in the display's coordinates.
+    private func textRow(of fragment: NSTextLayoutFragment) -> NSRect {
         let frame = fragment.layoutFragmentFrame
-        let inText = NSRect(x: 0, y: frame.minY + display.textContainerOrigin.y, width: display.bounds.width, height: frame.height)
-        return convert(inText, from: display).intersection(bounds)
+        return NSRect(x: 0, y: frame.minY + display.textContainerOrigin.y, width: display.bounds.width, height: frame.height)
+    }
+
+    private func rect(of fragment: NSTextLayoutFragment) -> NSRect {
+        convert(textRow(of: fragment), from: display).intersection(bounds)
+    }
+
+    /// The layout fragment of the first text rendered with `key` set to `value`.
+    private func fragment<Value: Equatable>(where key: NSAttributedString.Key, is value: Value) -> NSTextLayoutFragment? {
+        guard let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }
+        var found: NSTextLayoutFragment?
+        storage.enumerateAttribute(key, in: NSRange(location: 0, length: storage.length)) { current, range, stop in
+            guard current as? Value == value, let location = content.location(content.documentRange.location, offsetBy: range.location),
+                  let fragment = layout.textLayoutFragment(for: location) else { return }
+            found = fragment
+            stop.pointee = true
+        }
+        return found
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
         if case .note(_, let item) = target { return rect(ofLines: item.lines) ?? bounds }
         guard case .code(_, let path, let lines, _, let symbol, let commit, _) = target else { return bounds }
         if let hoveredRow, hoveredRow.target == target { return hoveredRow.rect }
-        let wanted = NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)
-        guard let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }
-        var rect: NSRect?
-        storage.enumerateAttribute(.noteCodeRow, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
-            guard let row = value as? NoteCodeRow, row == wanted,
-                  let location = content.location(content.documentRange.location, offsetBy: range.location),
-                  let fragment = layout.textLayoutFragment(for: location) else { return }
-            rect = self.rect(of: fragment)
-            stop.pointee = true
-        }
-        return rect
+        return fragment(where: .noteCodeRow, is: NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)).map(rect(of:))
     }
 
     /// Go to's heading row: where the heading rendered from markdown `line` is, in this view's
     /// coordinates, the rendered note scrolled to it first when its text overflows the tile.
     /// Nil while editing, while it holds no text (not live), or with no such heading.
     func reveal(heading line: Int) -> NSRect? {
-        guard !isEditing, let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }
-        var found: NSTextLayoutFragment?
-        storage.enumerateAttribute(.noteMarkdownLine, in: NSRange(location: 0, length: storage.length)) { value, range, stop in
-            guard value as? Int == line, let start = content.location(content.documentRange.location, offsetBy: range.location) else { return }
-            found = layout.textLayoutFragment(for: start)
-            stop.pointee = true
-        }
-        guard let frame = found?.layoutFragmentFrame else { return nil }
-        let inText = NSRect(x: 0, y: frame.minY + display.textContainerOrigin.y, width: display.bounds.width, height: frame.height)
-        if display.frame.height > displayScroll.contentSize.height + 1 { display.scroll(inText.origin) }
-        let rect = convert(inText, from: display).intersection(bounds)
+        guard !isEditing, let found = fragment(where: .noteMarkdownLine, is: line) else { return nil }
+        if display.frame.height > displayScroll.contentSize.height + 1 { display.scroll(textRow(of: found).origin) }
+        let rect = rect(of: found)
         return rect.isEmpty ? nil : rect
     }
 

@@ -453,6 +453,11 @@ final class BrowserTile: NSView, TileContent {
         super.keyDown(with: event)
     }
 
+    /// The page's unhandled Esc also comes back as `cancelOperation` up the responder chain,
+    /// whose next stop past the tile is the canvas's document: it would clear the selection the
+    /// Esc just kept (`leaveTile`). The Esc has done its job by then.
+    override func cancelOperation(_ sender: Any?) {}
+
     // MARK: Change signals (automation waits, snapshot freshness)
 
     /// Resumes every parked wait; each re-checks its own condition.

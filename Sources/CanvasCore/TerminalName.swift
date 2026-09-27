@@ -17,8 +17,8 @@ public enum TerminalName {
         guard let first = argv.first.map(lastComponent), !first.isEmpty else { return nil }
         var words = Array(argv.dropFirst())
         var name = first
-        // `python3.12`, `node18` run scripts too.
-        if interpreters.contains(first.trimmingCharacters(in: CharacterSet(charactersIn: "0123456789."))) {
+        // `python3.12`, `node18` run scripts too, and so does macOS's framework `Python`.
+        if interpreters.contains(first.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "0123456789."))) {
             words = Array(words.drop { $0.hasPrefix("-") })
             if let script = words.first, script.contains("/") || script.contains(".") {
                 name = lastComponent(script)

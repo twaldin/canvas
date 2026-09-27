@@ -121,9 +121,6 @@ struct ChangesPainter {
     var gutterWidth: CGFloat { ChangesMetrics.gutterWidth(digits: digits) }
     var contentHeight: CGFloat { ChangesMetrics.headerHeight + rows.height + ChangesMetrics.bottomPadding }
 
-    static let keysHint = "j/k hunks · J/K or ]/[ files · ↩ open · s stage · r discard · esc done"
-    static let idleHint = "↩ or click to use keys"
-
     // MARK: Geometry
 
     /// A row's rect in body coordinates at `scroll`.
@@ -270,11 +267,11 @@ struct ChangesPainter {
                      attributes: [.font: small, .foregroundColor: filter.isEmpty ? NSColor.placeholderTextColor : NSColor.labelColor])
         }
         let right = filterBox.minX - 10
-        let hint = focused ? Self.keysHint : Self.idleHint
         let hintAttributes: [NSAttributedString.Key: Any] = [.font: small, .foregroundColor: focused ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor]
-        let hintSize = (hint as NSString).size(withAttributes: hintAttributes)
-        let showsHint = right > hintSize.width + 260
-        if showsHint {
+        let hint = ChangesMetrics.hint(focused ? ChangesMetrics.keysHints : ChangesMetrics.idleHints, available: right) { ($0 as NSString).size(withAttributes: hintAttributes).width }
+        let hintSize = hint.map { ($0 as NSString).size(withAttributes: hintAttributes) } ?? .zero
+        let showsHint = hint != nil
+        if let hint {
             (hint as NSString).draw(at: CGPoint(x: right - hintSize.width, y: (strip.height - hintSize.height) / 2), withAttributes: hintAttributes)
         }
         let text: String

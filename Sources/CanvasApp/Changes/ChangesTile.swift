@@ -96,6 +96,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func becomeFirstResponder() -> Bool {
+        pickHunk(revealing: false)
         needsDisplay = true
         return true
     }
@@ -617,7 +618,21 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
 
     func enterKeyboard() -> Bool {
-        window?.makeFirstResponder(self) == true
+        guard window?.makeFirstResponder(self) == true else { return false }
+        pickHunk(revealing: true)
+        return true
+    }
+
+    /// Taking the keyboard with no hunk picked picks the first one in view
+    /// (`ChangeRows.firstHunk`), so `s` stages what the user is looking at instead of asking
+    /// for a pick. With none in view, only Return (`revealing`) picks the first hunk and scrolls
+    /// to it; a click on a file header or the list leaves the content where it is.
+    private func pickHunk(revealing: Bool) {
+        guard current == nil, let painter, let first = painter.rows.firstHunk(inView: scroll, scroll + viewportHeight),
+              first.inView || revealing else { return }
+        current = (first.file, first.hunk)
+        refreshPainter()
+        if !first.inView { reveal(file: first.file, hunk: first.hunk) }
     }
 
     /// s and r only with the keyboard in the tile, so typing elsewhere can never stage or discard.
@@ -762,6 +777,12 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                 try await ReviewGit.shared.apply(patch)
                 try board.recordReview(tile: tile, entry: ReviewPatch.entry(action.entryName, file: changed, hunk: target, lines: lines, patch: patch), patch: patch)
                 self?.revealAfterLoad = true
+                // The lines were picked for this action: done with them (Esc leaves right away).
+                if lines != nil, let self {
+                    self.selection = nil
+                    self.anchor = nil
+                    self.refreshPainter()
+                }
             } catch let failure as ChangesFailure {
                 self?.show(message: "\(action.rawValue) refused: \(failure.message)")
             } catch {

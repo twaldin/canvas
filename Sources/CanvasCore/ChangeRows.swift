@@ -30,6 +30,18 @@ public enum ChangesMetrics {
     public static let defaultFitWidth: CGFloat = 960
     /// Tallest frame `size: "fit"` gives, title bar included; more scrolls.
     public static let maxFitHeight: CGFloat = 4000
+    /// The header's hints, longest first; the tile shows the longest that fits (`hint`). With
+    /// the keyboard: which keys work. Without it: how to select lines and how to take it.
+    public static let keysHints = ["j/k hunks · J/K or ]/[ files · ↩ open · s stage · r discard · esc done", "j/k hunks · s stage · r discard · esc done", "j/k · s · r · esc"]
+    public static let idleHints = ["⇧-click or drag lines to stage just those · ↩ or click for keys", "↩ or click to use keys", "↩ for keys"]
+    /// Room the header's summary keeps beside a hint.
+    public static let summaryReserve: CGFloat = 220
+
+    /// The longest of `variants` that leaves the summary `summaryReserve` points of the
+    /// `available` width, measured by `width`; nil when even the shortest doesn't.
+    public static func hint(_ variants: [String], available: CGFloat, width: (String) -> CGFloat) -> String? {
+        variants.first { width($0) + summaryReserve <= available }
+    }
 
     /// Digits of each line-number column: at least 4, like code tiles.
     public static func digits(_ set: ChangeSet) -> Int {
@@ -236,6 +248,15 @@ public struct ChangeRows: Equatable, Sendable {
         case .hunk(let file, let hunk), .line(let file, let hunk, _): return (file, hunk)
         default: return nil
         }
+    }
+
+    /// The hunk a tile taking the keyboard starts on, so `s` and `r` have one to act on: the
+    /// first with a row crossing the span in view (row coordinates), else the first listed one
+    /// (`inView` false: scroll it into view before anything acts on it). Nil when no hunk is
+    /// listed (every file folded or filtered away).
+    public func firstHunk(inView minY: CGFloat, _ maxY: CGFloat) -> (file: Int, hunk: Int, inView: Bool)? {
+        if let seen = visible(from: minY, to: maxY).lazy.compactMap({ hunk(ofRow: $0) }).first { return (seen.file, seen.hunk, true) }
+        return rows.indices.lazy.compactMap { hunk(ofRow: $0) }.first.map { ($0.file, $0.hunk, false) }
     }
 
     /// Where a hunk's rows end (row coordinates): its last line's bottom.

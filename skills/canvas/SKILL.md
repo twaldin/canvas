@@ -267,7 +267,7 @@ Images, PDFs and other binaries, files under the temp dir, and files that no lon
 While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed ("N new ▸") before following again.
 If the user closes it, your terminal stops following until they turn "Follow Files" back on in your terminal's menu:
 don't re-create it or turn following back on yourself. Closing your terminal closes its follow tile.
-It happens automatically; don't create code tiles just to show what you are reading.
+It happens automatically; don't create code tiles just to show what you are reading. It may be narrower than 640 pt so it fits in the user's view: don't resize it or lay out around its size.
 Create code tiles for code you want the user to keep looking at.
 
 ## Getting the user's attention
@@ -312,7 +312,7 @@ Then `agent.read --since prompt` returns just the reply (`--lines N` gives the p
 Kind `omp`, `claude` or `codex` reports a lifecycle (a fresh Codex from its first prompt). Kind `unknown` (a shell, aider, another CLI) has none:
 `agent.prompt` works, `agent.wait` fails once 15 s pass without a first report (enough for an agent you just started), so poll `agent.read --since prompt`.
 Claude Code runs no hook when its user presses Esc or denies an approval, so its tile keeps its last state until the next prompt.
-Don't prompt an agent that is `blocked`; it is waiting for its user (omp reports every approval prompt as blocked, nested ones included, and the user sees it on the tab and an edge pill).
+Don't prompt an agent that is `blocked`; it is waiting for its user (omp reports every approval prompt as blocked, nested ones included, and the user sees it as a ring and bubble on its terminal, on the tab, and as an edge pill when off screen).
 
 ## Compositions
 

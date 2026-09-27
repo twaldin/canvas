@@ -61,6 +61,13 @@ public struct LineRangeMapping: Equatable, Sendable {
         self.original = original
         self.modified = modified
     }
+
+    /// Every line of `text` added (a file created), or removed (`removed`: a file deleted).
+    public static func whole(_ text: SideText, removed: Bool = false) -> [LineRangeMapping] {
+        guard text.lineCount > 0 else { return [] }
+        let lines = 1..<text.lineCount + 1
+        return [removed ? LineRangeMapping(original: lines, modified: 1..<1) : LineRangeMapping(original: 1..<1, modified: lines)]
+    }
 }
 
 /// Changes close enough that `git diff -U3` would print them as one hunk.

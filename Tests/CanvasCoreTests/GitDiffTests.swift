@@ -10,12 +10,13 @@ struct TempRepo: Sendable {
     init(branch: String = "main") async throws {
         root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-git-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try await git("init", "-q", "-b", branch)
+        // No template: copying git's sample hooks made `init` the slowest step of these suites.
+        try await git("init", "-q", "--template=", "-b", branch)
     }
 
     init(cloning origin: TempRepo) async throws {
         root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-git-\(UUID().uuidString)")
-        try await TempRepo.run(["clone", "-q", origin.root.path, root.path], in: origin.root)
+        try await TempRepo.run(["clone", "-q", "--template=", origin.root.path, root.path], in: origin.root)
     }
 
     @discardableResult
@@ -29,7 +30,8 @@ struct TempRepo: Sendable {
             Result {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-                process.arguments = ["-c", "user.name=Canvas Tests", "-c", "user.email=tests@canvas.invalid", "-c", "commit.gpgsign=false"] + args
+                // No auto-maintenance: every commit would start another git in the background.
+                process.arguments = ["-c", "user.name=Canvas Tests", "-c", "user.email=tests@canvas.invalid", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"] + args
                 process.currentDirectoryURL = directory
                 let out = Pipe()
                 process.standardOutput = out
@@ -82,6 +84,7 @@ struct GitBaseTests {
         try await repo.commit("feature work")
         let resolved = await GitDiffEngine(watchesRepositories: false).resolvedBase(for: repo.url("a.txt"), base: .mergeBase)
         #expect(resolved == .init(sha: fork, label: "merge-base with main"))
+        #expect(GitWorktree.containing(repo.root.path)?.defaultBranch == "main", "the picker names the branch merge-base picks")
     }
 
     @Test func mergeBaseFallsBackToMaster() async throws {
@@ -95,8 +98,20 @@ struct GitBaseTests {
         try await repo.write("a.txt", numbered(1...5))
         try await repo.commit("master moved on")
         try await repo.git("checkout", "-q", "topic")
+        try await repo.git("pack-refs", "--all")
         let resolved = await GitDiffEngine(watchesRepositories: false).resolvedBase(for: repo.url("b.txt"), base: .mergeBase)
         #expect(resolved == .init(sha: fork, label: "merge-base with master"))
+        #expect(GitWorktree.containing(repo.root.path)?.defaultBranch == "master", "a packed branch counts")
+    }
+
+    @Test func withoutMainMasterOrOriginThereIsNoDefaultBranch() async throws {
+        let repo = try await TempRepo(branch: "dev")
+        try await repo.write("a.txt", "a\n")
+        let engine = GitDiffEngine(watchesRepositories: false)
+        #expect(await engine.resolvedBase(for: repo.url("a.txt"), base: .mergeBase) == .init(sha: nil, label: "no commits yet"), "no commits comes first")
+        try await repo.commit("one")
+        #expect(await engine.resolvedBase(for: repo.url("a.txt"), base: .mergeBase) == .init(sha: nil, label: "no default branch"))
+        #expect(GitWorktree.containing(repo.root.path)?.defaultBranch == nil)
     }
 
     @Test func originHeadWinsOverLocalBranches() async throws {
@@ -113,6 +128,7 @@ struct GitBaseTests {
         try await clone.commit("feature")
         let resolved = await GitDiffEngine(watchesRepositories: false).resolvedBase(for: clone.url("b.txt"), base: .mergeBase)
         #expect(resolved == .init(sha: shared, label: "merge-base with origin/trunk"))
+        #expect(GitWorktree.containing(clone.root.path)?.defaultBranch == "origin/trunk", "origin/HEAD wins over a local main")
     }
 
     @Test func committingOnTheBaseBranchReResolvesTheBase() async throws {

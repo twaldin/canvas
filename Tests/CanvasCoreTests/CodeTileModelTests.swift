@@ -38,22 +38,25 @@ struct SyntaxTests {
         }
         func free() {}
         """
+        func symbol(_ analysis: SyntaxAnalysis, _ start: Int, _ end: Int? = nil) -> String? {
+            analysis.symbols.innermost(around: LineRange(start: start, end: end ?? start))
+        }
         let analysis = Syntax.analyze(swift, language: .swift)
-        #expect(analysis.enclosingSymbol(lines: LineRange(start: 3, end: 3)) == "Board.follow")
-        #expect(analysis.enclosingSymbol(lines: LineRange(start: 1, end: 1)) == "Board")
-        #expect(analysis.enclosingSymbol(lines: LineRange(start: 6, end: 6)) == "free")
-        #expect(analysis.enclosingSymbol(lines: LineRange(start: 2, end: 4)) == "Board.follow", "a range inside one declaration names it")
-        #expect(analysis.enclosingSymbol(lines: LineRange(start: 3, end: 5)) == "Board", "past the method's end: the type holding both")
-        #expect(analysis.enclosingSymbol(lines: LineRange(start: 1, end: 6)) == nil, "a range over several declarations names none")
+        #expect(symbol(analysis, 3) == "Board.follow")
+        #expect(symbol(analysis, 1) == "Board")
+        #expect(symbol(analysis, 6) == "free")
+        #expect(symbol(analysis, 2, 4) == "Board.follow", "a range inside one declaration names it")
+        #expect(symbol(analysis, 3, 5) == "Board", "past the method's end: the type holding both")
+        #expect(symbol(analysis, 1, 6) == nil, "a range over several declarations names none")
 
         let ts = "export class Store {\n  load(id: string) {\n    return id\n  }\n}\nconst run = () => {\n  go()\n}\n"
         let script = Syntax.analyze(ts, language: .typescript)
-        #expect(script.enclosingSymbol(lines: LineRange(start: 3, end: 3)) == "Store.load")
-        #expect(script.enclosingSymbol(lines: LineRange(start: 7, end: 7)) == "run")
+        #expect(symbol(script, 3) == "Store.load")
+        #expect(symbol(script, 7) == "run")
 
         let python = Syntax.analyze("class A:\n    def b(self):\n        pass\n\nx = 1\n", language: .python)
-        #expect(python.enclosingSymbol(lines: LineRange(start: 3, end: 3)) == "A.b")
-        #expect(python.enclosingSymbol(lines: LineRange(start: 5, end: 5)) == nil)
+        #expect(symbol(python, 3) == "A.b")
+        #expect(symbol(python, 5) == nil)
     }
 
     @Test func languageFollowsTheFileName() {

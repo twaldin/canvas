@@ -50,11 +50,8 @@ public struct LanguageServerConfig: Sendable, Equatable {
     /// Why the server can't run, for navigation panels: where Canvas looked, how to install it,
     /// and how to point Canvas at a binary elsewhere.
     public var notFound: String {
-        var places = ["on the login shell's PATH"]
-        let searched = Self.toolDirectories + directories
-        places.append("in " + searched.joined(separator: ", "))
-        places += locators.map { "with `\($0)`" }
-        let looked = places.dropLast().joined(separator: ", ") + (places.count > 1 ? " and " : "") + places.last!
+        let places = ["on the login shell's PATH", "in " + (Self.toolDirectories + directories).joined(separator: ", ")] + locators.map { "with `\($0)`" }
+        let looked = places.dropLast().joined(separator: ", ") + " and " + places.last!
         return "\(command) not found (Canvas looked \(looked)). " + (installHint.map { "\($0). " } ?? "") + "Or set \(overrideVariable) to its path in your shell profile."
     }
 
@@ -128,7 +125,7 @@ public final class LoginShell: @unchecked Sendable {
     public func resolve(_ command: String) -> URL? {
         if command.hasPrefix("/") { return Self.executable(command) }
         return cached("command:\(command)") {
-            run("command -v \(Self.quote(command))").split(whereSeparator: \.isNewline).last.flatMap { Self.executable(String($0)) }
+            probe(["$(command -v \(Self.quote(command)))"]).first.flatMap(Self.executable)
         }
     }
 
@@ -139,11 +136,8 @@ public final class LoginShell: @unchecked Sendable {
     public func locate(_ config: LanguageServerConfig) -> URL? {
         if config.command.hasPrefix("/") { return Self.executable(config.command) }
         return cached("server:\(config.language):\(config.command)") {
-            let marker = "__CANVAS_FOUND__"
             let probes = ["${\(config.overrideVariable)-}", "$(command -v \(Self.quote(config.command)))"] + config.locators.map { "$(\($0) 2>/dev/null)" }
-            let script = probes.map { "printf '\\n\(marker)%s' \"\($0)\"" }.joined(separator: "; ")
-            // Anything rc files print comes before the first marker.
-            let answers = run(script).components(separatedBy: "\n" + marker).dropFirst().map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let answers = probe(probes)
             let directories = (LanguageServerConfig.toolDirectories + config.directories).map { directory in
                 (directory.hasPrefix("~/") ? home + directory.dropFirst() : directory) + "/" + config.command
             }
@@ -166,9 +160,7 @@ public final class LoginShell: @unchecked Sendable {
     public var environment: [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let path = lock.withLock { cachedPath } ?? {
-            // A marker separates the value from anything rc files print.
-            let output = run("printf '\\n__CANVAS_PATH__%s' \"$PATH\"")
-            let value = output.contains("__CANVAS_PATH__") ? output.components(separatedBy: "__CANVAS_PATH__").last ?? "" : ""
+            let value = probe(["$PATH"]).first ?? ""
             let path = value.isEmpty ? (environment["PATH"] ?? "/usr/bin:/bin") : value
             lock.withLock { cachedPath = path }
             return path
@@ -184,8 +176,7 @@ public final class LoginShell: @unchecked Sendable {
     /// off the main thread and out of Swift tasks.
     public var editor: String? {
         if let cached = lock.withLock({ cachedEditor }) { return cached }
-        let output = run("printf '\\n__CANVAS_EDITOR__%s' \"${VISUAL:-$EDITOR}\"", interactive: true, freshEnvironment: true)
-        let value = output.components(separatedBy: "__CANVAS_EDITOR__").dropFirst().last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let value = probe(["${VISUAL:-$EDITOR}"], interactive: true).first ?? ""
         let editor = value.isEmpty ? nil : value
         lock.withLock { cachedEditor = .some(editor) }
         return editor
@@ -195,11 +186,19 @@ public final class LoginShell: @unchecked Sendable {
         "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Runs `$SHELL -lc script` (`-lic` when `interactive`) in its own process group and reads
-    /// its output until EOF or the deadline. At the deadline the whole group is killed and the read
-    /// abandoned: rc files can start children that outlive the shell and keep the output pipe open.
-    /// `freshEnvironment`: only the session variables and a system PATH, not the app's environment.
-    private func run(_ script: String, interactive: Bool = false, freshEnvironment: Bool = false) -> String {
+    /// What the login shell expands each of `values` (shell words) to, trimmed; a marker before
+    /// each keeps anything rc files print out of the answers. Empty when the shell failed.
+    private func probe(_ values: [String], interactive: Bool = false) -> [String] {
+        let marker = "__CANVAS_VALUE__"
+        let script = values.map { "printf '\\n\(marker)%s' \"\($0)\"" }.joined(separator: "; ")
+        return run(script, interactive: interactive).components(separatedBy: "\n" + marker).dropFirst().map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+
+    /// Runs `$SHELL -lc script` in its own process group and reads its output until EOF or the
+    /// deadline. At the deadline the whole group is killed and the read abandoned: rc files can
+    /// start children that outlive the shell and keep the output pipe open. `interactive`:
+    /// `-lic`, with only the session variables and a system PATH, not the app's environment.
+    private func run(_ script: String, interactive: Bool) -> String {
         var fds: [Int32] = [-1, -1]
         guard pipe(&fds) == 0 else { return "" }
         let (readEnd, writeEnd) = (fds[0], fds[1])
@@ -222,10 +221,10 @@ public final class LoginShell: @unchecked Sendable {
         defer { argv.forEach { free($0) } }
         var pid: pid_t = 0
         let inherited = ProcessInfo.processInfo.environment
-        let variables = LoginSession.variables.sorted().compactMap { name in inherited[name].map { "\(name)=\($0)" } } + ["PATH=/usr/bin:/bin:/usr/sbin:/sbin"]
+        let variables = !interactive ? [] : LoginSession.variables.sorted().compactMap { name in inherited[name].map { "\(name)=\($0)" } } + ["PATH=/usr/bin:/bin:/usr/sbin:/sbin"]
         let fresh: [UnsafeMutablePointer<CChar>?] = variables.map { strdup($0) } + [nil]
         defer { fresh.forEach { free($0) } }
-        let spawned = freshEnvironment ? posix_spawn(&pid, shell, &actions, &attributes, argv, fresh) : posix_spawn(&pid, shell, &actions, &attributes, argv, environ)
+        let spawned = interactive ? posix_spawn(&pid, shell, &actions, &attributes, argv, fresh) : posix_spawn(&pid, shell, &actions, &attributes, argv, environ)
         close(writeEnd)
         guard spawned == 0 else { return "" }
 

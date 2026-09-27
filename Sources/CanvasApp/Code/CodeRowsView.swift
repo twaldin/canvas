@@ -55,6 +55,9 @@ final class CodeRowsView: NSView {
         onScroll?()
     }
 
+    /// The row at the top of the view, past its padding.
+    var topRow: Int { CodePainter.row(atY: bounds.minY + CodeMetrics.verticalPadding) }
+
     /// The range tint depends on which rows the whole viewport shows, so a resize redraws all of
     /// it, not just the newly exposed strip.
     override func setFrameSize(_ newSize: NSSize) {

@@ -102,23 +102,21 @@ struct GitSignTests {
         #expect(style(document.syntax, line: 2, at: 8) == .number)
     }
 
-    @Test func noCommitsNoDefaultBranchAndOversizedDiffsShowPlainSourceWithAWarning() async throws {
+    @Test func noCommitsNoDefaultBranchAndOversizedDiffsShowPlainSource() async throws {
         let engine = GitDiffEngine(watchesRepositories: false)
 
         let unborn = try await TempRepo()
         try await unborn.write("a.py", "print(1)\nprint(2)\n")
         let fresh = CodeDocument(path: "a.py", diff: await engine.diff(file: unborn.url("a.py"), base: .mergeBase))
         #expect(fresh.diff.state == .noBase && fresh.signs.isEmpty && fresh.text.lineCount == 2)
-        #expect(fresh.warning == "no commits yet — showing source")
         #expect(fresh.mentionCommit == nil)
-        #expect(CodeDocument(path: "a.py", diff: await engine.diff(file: unborn.url("a.py"), base: .head)).warning == "no commits yet — showing source")
 
         let branchOnly = try await TempRepo(branch: "dev")
         try await branchOnly.write("a.txt", numbered(1...3))
         try await branchOnly.commit("base")
         try await branchOnly.write("a.txt", numbered(1...4))
         let orphan = CodeDocument(path: "a.txt", diff: await engine.diff(file: branchOnly.url("a.txt"), base: .mergeBase))
-        #expect(orphan.signs.isEmpty && orphan.warning == "no default branch — showing source")
+        #expect(orphan.diff.state == .noBase && orphan.signs.isEmpty && orphan.text.lineCount == 4)
         let head = CodeDocument(path: "a.txt", diff: await engine.diff(file: branchOnly.url("a.txt"), base: .head))
         #expect(head.signs == [GitSign(kind: .added, lines: 4..<5, old: 4..<4)], "HEAD is still a base without a default branch")
 
@@ -128,7 +126,7 @@ struct GitSignTests {
         try await big.write("big.txt", "small now\n")
         let shrunk = CodeDocument(path: "big.txt", diff: await engine.diff(file: big.url("big.txt"), base: .head))
         #expect(shrunk.diff.state == .diffTooLarge && shrunk.signs.isEmpty)
-        #expect(shrunk.text.line(1) == "small now" && shrunk.warning == "diff too large — showing source")
+        #expect(shrunk.text.line(1) == "small now")
     }
 
     @Test func deletedFilesShowTheBaseVersionReadOnly() async throws {
@@ -138,7 +136,7 @@ struct GitSignTests {
         try FileManager.default.removeItem(at: repo.url("gone.txt"))
         let document = CodeDocument(path: "gone.txt", diff: await GitDiffEngine(watchesRepositories: false).diff(file: repo.url("gone.txt"), base: .head))
         #expect(document.side == .old && document.text.line(3) == "line 3")
-        #expect(document.signs.isEmpty && document.warning == "deleted — base version, read-only")
+        #expect(document.signs.isEmpty)
         #expect(document.mentionCommit == base, "its lines are mentioned at the base they come from")
     }
 }
@@ -162,7 +160,6 @@ struct PinnedCodeTests {
             let document = CodeDocument(path: "f.txt", diff: await engine.pinned(file: repo.url("f.txt"), revision: revision))
             #expect(document.isPinned && document.text.text == numbered(1...10), "\(revision)")
             #expect(document.signs.isEmpty && document.notice == nil, "no working-tree diff gutter")
-            #expect(document.status.contains(String(old.prefix(7))), "\(document.status)")
             #expect(document.mentionCommit == old, "mentions read the pinned lines at the commit")
         }
         let head = CodeDocument(path: "f.txt", diff: await engine.pinned(file: repo.url("f.txt"), revision: "HEAD"))

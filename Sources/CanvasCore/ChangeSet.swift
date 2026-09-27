@@ -479,7 +479,7 @@ public struct ChangeSet: Sendable {
     /// `root` (the board root), or of `spec.root` when that is another worktree of it (anything
     /// else is refused), limited to `spec.paths` (else that directory). `highlight` also parses
     /// both sides with tree-sitter (tiles; measuring and `object.get` don't need it).
-    public static func load(root: URL, spec: ChangesSpec, highlight: Bool = true, engine: GitDiffEngine = .shared, runner: GitRunner = .shared) async -> ChangeSet {
+    public static func load(root: URL, spec: ChangesSpec, highlight: Bool = true, engine: GitDiffEngine = .shared) async -> ChangeSet {
         let reviewed = spec.directory(boardRoot: root)
         var worktree: String?
         if let prop = spec.root {
@@ -491,34 +491,31 @@ public struct ChangeSet: Sendable {
                 if let branch = other.branch { worktree! += " (\(branch))" }
             }
         }
-        let directory = GitDiffEngine.existingAncestor(of: reviewed)
-        guard let output = try? await runner.run(["rev-parse", "--path-format=absolute", "--show-toplevel"], in: directory),
-              let top = String(decoding: output, as: UTF8.self).split(separator: "\n").first else {
+        // Held while loading: the engine finds the repository and resolves the base once for
+        // this listing and all its files.
+        let probe = GitDiffEngine.existingAncestor(of: reviewed).appendingPathComponent(".canvas-changes")
+        guard let held = await engine.retain(containing: probe) else {
             return ChangeSet(notice: "not in a git repository", worktree: worktree)
         }
-        let toplevel = URL(fileURLWithPath: String(top))
+        defer { Task { await engine.release(held) } }
+        let toplevel = URL(fileURLWithPath: held)
         let specs: [String]
         do {
             specs = try pathspecs(spec.paths, root: reviewed, toplevel: toplevel)
-        } catch let failure as ChangesFailure {
-            return ChangeSet(repository: toplevel, notice: failure.message, worktree: worktree)
         } catch {
-            return ChangeSet(repository: toplevel, notice: "\(error)", worktree: worktree)
+            return ChangeSet(repository: toplevel, notice: error.message, worktree: worktree)
         }
-        let branch = await Self.branch(in: toplevel, runner: runner)
-        let resolved = await GitDiffEngine.resolve(spec.base, in: toplevel, runner: runner)
+        let branch = GitWorktree.containing(toplevel.path)?.branch
+        let resolved = await engine.resolvedBase(for: probe, base: spec.base) ?? GitDiffEngine.ResolvedBase(sha: nil, label: "not in a git repository")
         guard let sha = resolved.sha else { return ChangeSet(repository: toplevel, baseLabel: resolved.label, notice: resolved.label, worktree: worktree, branch: branch) }
-        let headSHA = spec.base == .head ? sha : await GitDiffEngine.resolve(.head, in: toplevel, runner: runner).sha
-        // Held while loading: the engine resolves the base and the repository once for all files.
-        let held = await engine.retain(containing: toplevel.appendingPathComponent(".canvas-changes"))
-        defer { if let held { Task { await engine.release(held) } } }
+        let headSHA = spec.base == .head ? sha : await engine.resolvedBase(for: probe, base: .head)?.sha
 
         var entries: [Entry] = []
-        if let raw = try? await runner.run(["--literal-pathspecs", "diff", "--raw", "-z", "-M", "--no-color", "--no-ext-diff", "--no-textconv", sha, "--"] + specs, in: toplevel) {
+        if let raw = try? await GitRunner.shared.run(["--literal-pathspecs", "diff", "--raw", "-z", "-M", "--no-color", "--no-ext-diff", "--no-textconv", sha, "--"] + specs, in: toplevel) {
             entries = parseRaw(raw)
         }
         let listed = Set(entries.map(\.path))
-        if let others = try? await runner.run(["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", "--"] + specs, in: toplevel) {
+        if let others = try? await GitRunner.shared.run(["--literal-pathspecs", "ls-files", "-z", "--others", "--exclude-standard", "--"] + specs, in: toplevel) {
             for record in others.split(separator: 0) {
                 let path = String(decoding: record, as: UTF8.self)
                 guard !listed.contains(path) else { continue }
@@ -533,16 +530,16 @@ public struct ChangeSet: Sendable {
         // Index → working tree, HEAD → index, and HEAD → working tree for a base older than
         // HEAD: which hunks the index already holds, or part of.
         let paths = selected.map(\.path)
-        let unstaged = await workingTreeChanges(against: nil, paths: paths, in: toplevel, runner: runner)
-        let staged = headSHA == nil ? [:] : await workingTreeChanges(against: nil, cached: true, paths: paths, in: toplevel, runner: runner)
+        let unstaged = await workingTreeChanges(against: nil, paths: paths, in: toplevel)
+        let staged = headSHA == nil ? [:] : await workingTreeChanges(against: nil, cached: true, paths: paths, in: toplevel)
         var head: [String: [LineRangeMapping]]?
-        if let headSHA, headSHA != sha { head = await workingTreeChanges(against: headSHA, paths: paths, in: toplevel, runner: runner) }
+        if let headSHA, headSHA != sha { head = await workingTreeChanges(against: headSHA, paths: paths, in: toplevel) }
         let headChanges = head
 
         let files = await withTaskGroup(of: (Int, ChangedFile?).self) { group in
             for (index, entry) in selected.enumerated() {
                 group.addTask {
-                    let file = await Self.file(entry, base: sha, diffBase: spec.base, root: root, toplevel: toplevel, engine: engine, runner: runner,
+                    let file = await Self.file(entry, base: sha, diffBase: spec.base, root: root, toplevel: toplevel, engine: engine,
                                                unstaged: unstaged[entry.path] ?? [], staged: staged[entry.path] ?? [], head: headChanges.map { $0[entry.path] ?? [] })
                     return (index, file)
                 }
@@ -553,13 +550,6 @@ public struct ChangeSet: Sendable {
         }
         let set = ChangeSet(repository: toplevel, base: sha, baseLabel: resolved.label, files: files, omitted: omitted, worktree: worktree, head: headSHA, branch: branch)
         return highlight ? await offPool { set.highlighted() } : set
-    }
-
-    /// The branch checked out in the worktree at `toplevel`; nil when detached.
-    static func branch(in toplevel: URL, runner: GitRunner) async -> String? {
-        guard let output = try? await runner.run(["symbolic-ref", "--short", "-q", "HEAD"], in: toplevel, allowedStatus: [0, 1]) else { return nil }
-        let name = String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? nil : name
     }
 
     /// Both sides of every file parsed with tree-sitter (highlighting and enclosing symbols).
@@ -624,9 +614,9 @@ public struct ChangeSet: Sendable {
 
     /// Repository-relative pathspecs for `paths` (board-relative or absolute; none: the board
     /// root). Anything outside the repository is refused: a changes tile never reaches past it.
-    public static func pathspecs(_ paths: [String], root: URL, toplevel: URL) throws -> [String] {
+    static func pathspecs(_ paths: [String], root: URL, toplevel: URL) throws(ChangesFailure) -> [String] {
         let top = GitDiffEngine.realPath(toplevel).path
-        func spec(_ path: String) throws -> String {
+        func spec(_ path: String) throws(ChangesFailure) -> String {
             let absolute = path.hasPrefix("/") ? URL(fileURLWithPath: path) : root.appendingPathComponent(path)
             let real = GitDiffEngine.realPath(absolute.standardizedFileURL).path
             if real == top { return "." }
@@ -638,23 +628,22 @@ public struct ChangeSet: Sendable {
 
     /// `-U0` changes per path between the index (`against` nil) or a commit and the working
     /// tree, in working-tree lines; `cached`: between HEAD and the index, in index lines.
-    static func workingTreeChanges(against commit: String?, cached: Bool = false, paths: [String], in toplevel: URL, runner: GitRunner) async -> [String: [LineRangeMapping]] {
-        let args = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=histogram",
-                    "-U0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/"] + (cached ? ["--cached"] : []) + (commit.map { [$0] } ?? []) + ["--"] + paths
-        guard let output = try? await runner.run(args, in: toplevel, maxOutput: 64 << 20) else { return [:] }
+    static func workingTreeChanges(against commit: String?, cached: Bool = false, paths: [String], in toplevel: URL) async -> [String: [LineRangeMapping]] {
+        let args = GitDiffEngine.changeRecords + (cached ? ["--cached"] : []) + (commit.map { [$0] } ?? []) + ["--"] + paths
+        guard let output = try? await GitRunner.shared.run(args, in: toplevel, maxOutput: 64 << 20) else { return [:] }
         return await offPool {
             GitDiffEngine.split(output).mapValues { UnifiedDiff.parse($0).mappings }
         }
     }
 
-    private static func file(_ entry: Entry, base sha: String, diffBase: DiffBase, root: URL, toplevel: URL, engine: GitDiffEngine, runner: GitRunner,
+    private static func file(_ entry: Entry, base sha: String, diffBase: DiffBase, root: URL, toplevel: URL, engine: GitDiffEngine,
                              unstaged: [LineRangeMapping], staged: [LineRangeMapping], head: [LineRangeMapping]?) async -> ChangedFile? {
         let url = toplevel.appendingPathComponent(entry.path)
         let diff: FileDiff
         if entry.status == .renamed, let oldPath = entry.oldPath {
-            diff = await renamed(from: oldPath, to: entry.path, base: sha, in: toplevel, engine: engine, runner: runner)
+            diff = await renamed(from: oldPath, to: entry.path, base: sha, in: toplevel, engine: engine)
         } else {
-            diff = await engine.diff(file: url, base: diffBase)
+            diff = await engine.diff(file: url, base: diffBase, held: toplevel.path)
         }
         var notice: String?
         var status = entry.status
@@ -697,7 +686,7 @@ public struct ChangeSet: Sendable {
     }
 
     /// A file renamed since the base: `oldPath`'s base text against the working tree's `path`.
-    private static func renamed(from oldPath: String, to path: String, base sha: String, in toplevel: URL, engine: GitDiffEngine, runner: GitRunner) async -> FileDiff {
+    private static func renamed(from oldPath: String, to path: String, base sha: String, in toplevel: URL, engine: GitDiffEngine) async -> FileDiff {
         let url = toplevel.appendingPathComponent(path)
         guard let old = await engine.text(of: toplevel.appendingPathComponent(oldPath), at: sha),
               let data = await offPool({ try? Data(contentsOf: url) }) else {
@@ -706,7 +695,7 @@ public struct ChangeSet: Sendable {
         let new = await offPool { SideText(String(decoding: data, as: UTF8.self)) }
         let args = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "-M", "--diff-algorithm=histogram",
                     "-U0", "--inter-hunk-context=0", sha, "--", oldPath, path]
-        guard let patch = try? await runner.run(args, in: toplevel, maxOutput: 3 * GitDiffEngine.maxFileSize) else {
+        guard let patch = try? await GitRunner.shared.run(args, in: toplevel, maxOutput: 3 * GitDiffEngine.maxFileSize) else {
             return FileDiff(state: .tooLarge, base: sha, baseLabel: nil, old: old, new: new, hunks: [])
         }
         let parsed = await offPool { UnifiedDiff.parse(patch) }
@@ -776,4 +765,7 @@ extension ChangedFile {
 public struct ChangesFailure: Error, Equatable, Sendable {
     public var message: String
     public init(_ message: String) { self.message = message }
+
+    /// Discard asked of committed work: a review never rewrites the commits it reads.
+    public static let committed = ChangesFailure("committed: Discard only puts back work not committed yet")
 }

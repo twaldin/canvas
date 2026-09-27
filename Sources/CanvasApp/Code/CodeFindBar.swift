@@ -62,7 +62,7 @@ final class CodeFindBar: NSView, NSTextFieldDelegate {
 
     let field = NSTextField()
     private let count = NSTextField(labelWithString: "")
-    var onChange: ((String) -> Void)?
+    var onChange: (() -> Void)?
     /// Step to the next match (false) or the previous one (true).
     var onStep: ((Bool) -> Void)?
     var onClose: (() -> Void)?
@@ -134,7 +134,7 @@ final class CodeFindBar: NSView, NSTextFieldDelegate {
     }
 
     func controlTextDidChange(_ notification: Notification) {
-        onChange?(field.stringValue)
+        onChange?()
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {

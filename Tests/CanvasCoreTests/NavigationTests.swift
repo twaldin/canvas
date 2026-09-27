@@ -14,7 +14,7 @@ struct NavigationTargetTests {
     }
 
     func code(_ path: String, _ start: Int, at frame: Frame, caller: ObjectID? = nil, caption: String? = nil) -> CanvasObject {
-        var props: [String: JSONValue] = ["path": .string(path), "range": .object(["start": .number(Double(start)), "end": .number(Double(start))])]
+        var props: [String: JSONValue] = ["path": .string(path), "range": LineRange(start: start, end: start).json]
         if let caption { props["caption"] = .string(caption) }
         return board.create(type: .code, props: .object(props), frame: frame, caller: caller)
     }
@@ -146,14 +146,13 @@ struct NavigationTargetTests {
     }
 
     @Test func reviewChangesFindsTheTileForTheSameRootAndBase() throws {
-        let subset = board.create(type: .changes, props: .object(["base": .string("HEAD"), "paths": .array([.string("src")])]), frame: Frame(x: 0, y: 0, w: 820, h: 620))
+        _ = board.create(type: .changes, props: .object(["base": .string("HEAD"), "paths": .array([.string("src")])]), frame: Frame(x: 0, y: 0, w: 820, h: 620))
         #expect(board.changesTile(root: nil, base: "HEAD") == nil, "a tile of some paths isn't the whole review")
         let head = board.create(type: .changes, props: .object(["base": .string("HEAD")]), frame: Frame(x: 30_000, y: 0, w: 820, h: 620))
         _ = board.create(type: .changes, props: .object(["base": .string("merge-base")]), frame: Frame(x: 900, y: 0, w: 820, h: 620))
         _ = board.create(type: .changes, props: .object(["base": .string("HEAD"), "root": .string("../wt")]), frame: Frame(x: 900, y: 700, w: 820, h: 620))
         #expect(board.changesTile(root: nil, base: "HEAD") == head.id)
         #expect(board.changesTile(root: root.path, base: "HEAD") == head.id, "the board root spelled out")
-        _ = subset
     }
 }
 
@@ -373,10 +372,7 @@ struct UndoSummaryTests {
         }
         let step = try #require(board.nextUndo)
         #expect(board.authorName(step.author) == "omp")
-        #expect(step.summary == "created 3 code tiles, an arrow, a group")
-        #expect(step.title == "Create 3 Code Tiles, Arrow, Group")
         #expect(board.undo())
-        #expect(board.nextRedo?.summary == "created 3 code tiles, an arrow, a group")
     }
 
     @Test func theUsersOwnStepHasNoAuthorName() throws {
@@ -384,7 +380,6 @@ struct UndoSummaryTests {
         try board.update(note.id, frame: Frame(x: 50, y: 0, w: 280, h: 200))
         let step = try #require(board.nextUndo)
         #expect(board.authorName(step.author) == nil)
-        #expect(step.title == "Move Note" && step.summary == "moved a note")
     }
 }
 

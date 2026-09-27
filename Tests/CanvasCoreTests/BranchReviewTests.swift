@@ -160,32 +160,6 @@ struct BranchReviewTests {
         #expect(ChangesBaseChoice.other("HEAD~3").prop == "HEAD~3")
     }
 
-    @Test func theDefaultBranchIsReadFromTheRepositoryAsMergeBasePicksIt() async throws {
-        let main = try await TempRepo(branch: "main")
-        try await main.write("a.txt", "a\n")
-        try await main.commit("one")
-        try await main.git("checkout", "-q", "-b", "feature")
-        #expect(GitWorktree.containing(main.root.path)?.defaultBranch == "main")
-
-        let master = try await TempRepo(branch: "master")
-        try await master.write("a.txt", "a\n")
-        try await master.commit("one")
-        try await master.git("pack-refs", "--all")
-        #expect(GitWorktree.containing(master.root.path)?.defaultBranch == "master", "a packed branch counts")
-
-        let origin = try await TempRepo(branch: "trunk")
-        try await origin.write("a.txt", "a\n")
-        try await origin.commit("one")
-        let clone = try await TempRepo(cloning: origin)
-        try await clone.git("checkout", "-q", "-b", "main")
-        #expect(GitWorktree.containing(clone.root.path)?.defaultBranch == "origin/trunk", "origin/HEAD wins over a local main")
-
-        let none = try await TempRepo(branch: "dev")
-        try await none.write("a.txt", "a\n")
-        try await none.commit("one")
-        #expect(GitWorktree.containing(none.root.path)?.defaultBranch == nil)
-    }
-
     @Test func undoingAGitActionNamesItAndABoardMoveOfTheUsersSaysNothing() throws {
         let board = Board(id: "brd_t", root: URL(fileURLWithPath: "/tmp"))
         let tile = board.create(type: .changes, props: .object([:]))

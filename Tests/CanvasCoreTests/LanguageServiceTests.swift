@@ -91,7 +91,7 @@ final class LoginShellTests {
     }
 
     @Test func aChildHoldingTheOutputOpenDoesNotStallTheLookup() async throws {
-        let login = LoginShell(shell: try shell("sleep 30 &\necho /bin/ls"), timeout: .seconds(10))
+        let login = LoginShell(shell: try shell("sleep 30 &\neval \"$2\""), timeout: .seconds(10))
         let start = ContinuousClock.now
         #expect(await offPool { login.resolve("ls") } == URL(fileURLWithPath: "/bin/ls"))
         #expect(start.duration(to: .now) < .seconds(3))

@@ -313,14 +313,10 @@ public struct ChangeRows: Equatable, Sendable {
     public func stickyFile(scroll: CGFloat) -> (file: Int, offset: CGFloat, height: CGFloat)? {
         guard scroll > 0, let top = index(atY: scroll), let file = rows[top].file, let header = index(ofFile: file), tops[header] < scroll else { return nil }
         if case .listed = rows[top] { return nil }
-        let next = rows[(top + 1)...].firstIndex { if case .file = $0 { return true } else { return false } }
-        let offset = next.map { min(0, tops[$0] - scroll - ChangesMetrics.fileHeight) } ?? 0
-        var height = ChangesMetrics.fileHeight
-        if let next, next > 0 {
-            let below = tops[next] - scroll - ChangesMetrics.fileHeight
-            if below > 0, below < self.height(ofRow: next - 1) { height += below }
-        }
-        return (file, offset, height)
+        guard let next = rows[(top + 1)...].firstIndex(where: { if case .file = $0 { true } else { false } }) else { return (file, 0, ChangesMetrics.fileHeight) }
+        let below = tops[next] - scroll - ChangesMetrics.fileHeight
+        let covers = below > 0 && below < height(ofRow: next - 1)
+        return (file, min(0, below), ChangesMetrics.fileHeight + (covers ? below : 0))
     }
 }
 

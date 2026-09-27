@@ -45,9 +45,9 @@ public actor LanguageService {
         return try await server.definition(file, at: position)
     }
 
-    public func references(file: URL, boardRoot: URL, at position: LSPPosition, includeDeclaration: Bool = true) async throws -> [LSPLocation] {
+    public func references(file: URL, boardRoot: URL, at position: LSPPosition) async throws -> [LSPLocation] {
         let (server, file) = try await server(for: file, boardRoot: boardRoot)
-        return try await server.references(file, at: position, includeDeclaration: includeDeclaration)
+        return try await server.references(file, at: position)
     }
 
     public func documentSymbols(file: URL, boardRoot: URL) async throws -> [LSPSymbol] {
@@ -182,12 +182,9 @@ public actor LanguageService {
     private func expire(_ key: Key, token: Int) async {
         guard idleTimers[key]?.token == token, let server = servers[key] else { return }
         // A request still waiting (a slow first index, say) counts as use.
-        if await server.isBusy, idleTimers[key]?.token == token {
-            return touch(key)
-        }
+        let busy = await server.isBusy
         guard idleTimers[key]?.token == token else { return }
-        idleTimers[key] = nil
-        retire(key)
+        if busy { touch(key) } else { retire(key) }
     }
 
     /// Removes a server from the registry synchronously (so no request can reach it) and stops it.

@@ -69,26 +69,14 @@ public enum TextNavigation {
         if found.isEmpty, let match = method.firstMatch(in: line, range: whole) {
             add(text.substring(with: match.range(at: 1)), "method", match.range(at: 1).location)
         }
-        if pathExtension == "py" || pathExtension == "pyi", found.isEmpty, let match = pythonAssignment.firstMatch(in: line, range: whole) {
+        let language = family(pathExtension)
+        if language == "python", found.isEmpty, let match = pythonAssignment.firstMatch(in: line, range: whole) {
             add(text.substring(with: match.range(at: 1)), "variable", match.range(at: 1).location)
         }
-        if pathExtension == "rs", let match = rustStatic.firstMatch(in: line, range: whole) {
+        if language == "rs", let match = rustStatic.firstMatch(in: line, range: whole) {
             add(text.substring(with: match.range(at: 1)), "static", match.range(at: 1).location)
         }
         return found
-    }
-
-    /// A file's top-level declarations (unindented lines), 1-based lines, in source order: an
-    /// outline for files without a language server, beside the tree-sitter symbols.
-    public static func topLevelDeclarations(in text: String, pathExtension: String) -> [(line: Int, declaration: Declaration)] {
-        var result: [(Int, Declaration)] = []
-        for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            guard let first = line.first, first != " ", first != "\t" else { continue }
-            for declaration in declarations(inLine: String(line), pathExtension: pathExtension) {
-                result.append((index + 1, declaration))
-            }
-        }
-        return result
     }
 
     /// One row of an outline made without a language server.
@@ -105,28 +93,31 @@ public enum TextNavigation {
     private static let containers: Set<String> = ["class", "interface", "protocol", "enum", "struct", "trait", "impl", "module", "extension"]
 
     /// A file's outline without a language server, in source order: the tree-sitter declarations
-    /// (types, their members, top-level functions; nothing declared inside a function), plus
-    /// top-level declarations the grammar's query doesn't name (`const`, `type`, `interface`,
-    /// module-level assignments in Python) by `declarations(inLine:)`, or only those for a
-    /// language without a bundled grammar.
+    /// (types, their members, top-level functions; nothing declared inside a function), plus the
+    /// top-level (unindented) declarations the grammar's query doesn't name (`const`, `type`,
+    /// `interface`, module-level assignments in Python) by `declarations(inLine:)`, or only
+    /// those for a language without a bundled grammar.
     public static func outline(of text: String, path: String) -> [OutlineEntry] {
         var entries: [OutlineEntry] = []
-        var stack: [(lines: ClosedRange<Int>, container: Bool)] = []
+        // The symbols enclosing the current one, as tree-sitter qualified it (`Board.follow`).
+        var stack: [(name: String, container: Bool)] = []
         let symbols = SyntaxLanguage(path: path).map { Syntax.analyze(text, language: $0).symbols } ?? []
         for symbol in symbols {
-            while let last = stack.last, !(last.lines.lowerBound <= symbol.lines.lowerBound && symbol.lines.upperBound <= last.lines.upperBound) {
-                stack.removeLast()
-            }
+            while let last = stack.last, !symbol.name.hasPrefix(last.name + ".") { stack.removeLast() }
             let local = stack.contains { !$0.container }
+            let name = stack.last.map { String(symbol.name.dropFirst($0.name.count + 1)) } ?? symbol.name
             let depth = stack.count
-            stack.append((symbol.lines, containers.contains(symbol.kind)))
+            stack.append((symbol.name, containers.contains(symbol.kind)))
             guard !local else { continue }
-            let name = symbol.title ?? symbol.name.split(separator: ".").last.map(String.init) ?? symbol.name
-            entries.append(OutlineEntry(name: name, kind: symbol.kind, line: symbol.lines.lowerBound, depth: depth))
+            entries.append(OutlineEntry(name: symbol.title ?? name, kind: symbol.kind, line: symbol.lines.lowerBound, depth: depth))
         }
         let named = Set(entries.map(\.line))
-        for (line, declaration) in topLevelDeclarations(in: text, pathExtension: (path as NSString).pathExtension) where !named.contains(line) {
-            entries.append(OutlineEntry(name: declaration.name, kind: declaration.kind, line: line, depth: 0))
+        let pathExtension = (path as NSString).pathExtension
+        for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() where !named.contains(index + 1) {
+            guard let first = line.first, first != " ", first != "\t" else { continue }
+            for declaration in declarations(inLine: String(line), pathExtension: pathExtension) {
+                entries.append(OutlineEntry(name: declaration.name, kind: declaration.kind, line: index + 1, depth: 0))
+            }
         }
         return entries.enumerated().sorted { ($0.element.line, $0.offset) < ($1.element.line, $1.offset) }.map(\.element)
     }
@@ -178,15 +169,7 @@ public enum TextNavigation {
     /// but not ignored, binary files skipped, in path order; at most `maxMatches` (`truncated`
     /// says there were more). Runs git off the main thread.
     public static func wordMatches(_ name: String, in root: URL) async throws -> (matches: [Match], truncated: Bool) {
-        let args = ["grep", "-n", "-z", "--column", "-w", "-I", "-F", "--max-count", "\(maxPerFile)", "-e", name]
-        let output: Data
-        do {
-            output = try await GitRunner.shared.run(args + ["--untracked"], in: root, allowedStatus: [0, 1], maxOutput: 8 << 20, timeout: 20)
-        } catch GitError.failed(let status, _) where status == 128 {
-            // Not a repository: the directory's files, minus what .gitignore files exclude.
-            output = try await GitRunner.shared.run(args + ["--no-index", "--exclude-standard"], in: root, allowedStatus: [0, 1], maxOutput: 8 << 20, timeout: 20)
-        }
-        let text = String(decoding: output, as: UTF8.self)
+        let text = try await grep(name, in: root, options: ["--max-count", "\(maxPerFile)"], maxOutput: 8 << 20)
         let matches = await offPool { parse(text) }
         return (Array(matches.prefix(maxMatches)), matches.count > maxMatches)
     }
@@ -195,15 +178,22 @@ public enum TextNavigation {
     /// (`declarations(inLine:)`), those in `file` (relative to `root`) first, then those in files
     /// of its language, then the rest, each in path and line order.
     public static func declarations(of name: String, in root: URL, preferring file: String) async throws -> [Match] {
-        let args = ["grep", "-n", "-z", "--column", "-w", "-I", "-F", "-e", name]
+        let text = try await grep(name, in: root, options: [], maxOutput: 32 << 20)
+        return await offPool { rankDeclarations(of: name, among: parse(text), preferring: file) }
+    }
+
+    /// `git grep` output (`parse`) for whole-word `name` in the files under `root`, tracked or
+    /// untracked but not ignored; outside a repository, the directory's files minus what
+    /// .gitignore files exclude.
+    private static func grep(_ name: String, in root: URL, options: [String], maxOutput: Int) async throws -> String {
+        let args = ["grep", "-n", "-z", "--column", "-w", "-I", "-F"] + options + ["-e", name]
         let output: Data
         do {
-            output = try await GitRunner.shared.run(args + ["--untracked"], in: root, allowedStatus: [0, 1], maxOutput: 32 << 20, timeout: 20)
+            output = try await GitRunner.shared.run(args + ["--untracked"], in: root, allowedStatus: [0, 1], maxOutput: maxOutput, timeout: 20)
         } catch GitError.failed(let status, _) where status == 128 {
-            output = try await GitRunner.shared.run(args + ["--no-index", "--exclude-standard"], in: root, allowedStatus: [0, 1], maxOutput: 32 << 20, timeout: 20)
+            output = try await GitRunner.shared.run(args + ["--no-index", "--exclude-standard"], in: root, allowedStatus: [0, 1], maxOutput: maxOutput, timeout: 20)
         }
-        let text = String(decoding: output, as: UTF8.self)
-        return await offPool { rankDeclarations(of: name, among: parse(text), preferring: file) }
+        return String(decoding: output, as: UTF8.self)
     }
 
     /// `declarations(of:in:preferring:)`'s filter and order over word matches.

@@ -100,6 +100,8 @@ public actor GitDiffEngine {
         var patch = Data()
         var entry = BaseEntry.absent
         var tooLarge = false
+        /// `git status --porcelain` code of a path the base lacks: `??` untracked, `!!` ignored.
+        var status: String?
     }
 
     private struct Request {
@@ -107,7 +109,6 @@ public actor GitDiffEngine {
         var continuation: CheckedContinuation<PatchResult, Never>
     }
 
-    private let runner: GitRunner
     private let watchesRepositories: Bool
     /// Held repositories by top-level path, and which directories lie in them.
     private var repositories: [String: Repository] = [:]
@@ -117,8 +118,7 @@ public actor GitDiffEngine {
     private let cacheLimit = 64
     private var batches: [BatchKey: [Request]] = [:]
 
-    public init(runner: GitRunner = .shared, watchesRepositories: Bool = true) {
-        self.runner = runner
+    public init(watchesRepositories: Bool = true) {
         self.watchesRepositories = watchesRepositories
     }
 
@@ -156,20 +156,24 @@ public actor GitDiffEngine {
 
     // MARK: Diff
 
-    public func diff(file: URL, base: DiffBase) async -> FileDiff {
+    /// `held`: the top level of a repository the caller holds and knows `file` lies in (a changes
+    /// tile's files, as git listed them), so no git runs to find it.
+    public func diff(file: URL, base: DiffBase, held: String? = nil) async -> FileDiff {
         for _ in 0..<3 {
-            if let diff = await attempt(file: file, base: base) { return diff }
+            if let diff = await attempt(file: file, base: base, held: held) { return diff }
         }
         return FileDiff(state: .unstable, base: nil, baseLabel: nil, old: SideText(""), new: SideText(""), hunks: [])
     }
 
     /// One read–diff–verify pass; nil when the file changed underneath it.
-    private func attempt(file: URL, base: DiffBase) async -> FileDiff? {
+    private func attempt(file: URL, base: DiffBase, held: String?) async -> FileDiff? {
         let content = await offPool { Self.read(file) }
         if content.tooLarge { return FileDiff(state: .tooLarge, base: nil, baseLabel: nil, old: SideText(""), new: SideText(""), hunks: []) }
         let data = content.data
         let new = await offPool { SideText(data.map { String(decoding: $0, as: UTF8.self) } ?? "") }
-        guard let repository = await repository(containing: file) else {
+        var found = held.flatMap { repositories[$0] }
+        if found == nil { found = await repository(containing: file) }
+        guard let repository = found else {
             let state: FileDiff.State = content.isDirectory ? .missing : data == nil ? .missing : .notRepository
             return FileDiff(state: state, base: nil, baseLabel: nil, old: SideText(""), new: new, hunks: [])
         }
@@ -217,12 +221,11 @@ public actor GitDiffEngine {
         } else if patch.entry == .absent {
             // New since the base: an agent's new file, tracked yet or not, is work of the branch;
             // a file git ignores (a node_modules frame) isn't, and shows as plain source.
-            let status = (try? await runner.run(["status", "--porcelain=v1", "--ignored=matching", "--untracked-files=all", "--", path], in: repository.toplevel)).map { String(decoding: $0.prefix(2), as: UTF8.self) }
-            if status == "!!" {
+            if patch.status == "!!" {
                 diff = result(.ignored, base: sha, label: resolved.label, new: new)
             } else {
-                var added = result(.added, base: sha, label: resolved.label, new: new, hunks: Self.allAdded(new))
-                added.untracked = status == "??"
+                var added = result(.added, base: sha, label: resolved.label, new: new, hunks: LineRangeMapping.whole(new).map { DiffHunk(mappings: [$0]) })
+                added.untracked = patch.status == "??"
                 diff = added
             }
         } else if parsed.mappings.isEmpty {
@@ -249,10 +252,10 @@ public actor GitDiffEngine {
         guard NoteSource.isRevision(revision) else { return unavailable("not a revision: \(revision)") }
         guard let repository = await repository(containing: file) else { return unavailable("not in a git repository") }
         let toplevel = repository.toplevel
-        let resolved = await Self.resolve(.commit(revision), in: toplevel, runner: runner)
+        let resolved = await Self.resolve(.commit(revision), in: toplevel)
         guard let sha = resolved.sha else { return unavailable(resolved.label, repository: toplevel.path) }
         let path = Self.relative(Self.realPath(file), to: toplevel)
-        guard let data = try? await runner.run(["cat-file", "blob", "--end-of-options", "\(sha):\(path)"], in: toplevel, maxOutput: Self.maxFileSize) else {
+        guard let data = try? await GitRunner.shared.run(["cat-file", "blob", "--end-of-options", "\(sha):\(path)"], in: toplevel, maxOutput: Self.maxFileSize) else {
             return unavailable("not in \(sha.prefix(7))", repository: toplevel.path)
         }
         if Self.looksBinary(data) { return unavailable("binary at \(sha.prefix(7))", repository: toplevel.path) }
@@ -271,12 +274,8 @@ public actor GitDiffEngine {
     public func text(of file: URL, at commit: String) async -> SideText? {
         guard let repository = await repository(containing: file) else { return nil }
         let path = Self.relative(Self.realPath(file), to: repository.toplevel)
-        guard let data = try? await runner.run(["cat-file", "blob", "--end-of-options", "\(commit):\(path)"], in: repository.toplevel, maxOutput: Self.maxFileSize) else { return nil }
+        guard let data = try? await GitRunner.shared.run(["cat-file", "blob", "--end-of-options", "\(commit):\(path)"], in: repository.toplevel, maxOutput: Self.maxFileSize) else { return nil }
         return await offPool { SideText(String(decoding: data, as: UTF8.self)) }
-    }
-
-    private static func allAdded(_ new: SideText) -> [DiffHunk] {
-        new.lineCount == 0 ? [] : [DiffHunk(mappings: [LineRangeMapping(original: 1..<1, modified: 1..<(new.lineCount + 1))])]
     }
 
     private func store(_ diff: FileDiff, for key: CacheKey) {
@@ -323,31 +322,41 @@ public actor GitDiffEngine {
         // What the base has at each path, and how big: gitlinks and oversized blobs never reach
         // `git diff`, whose output would otherwise hold the whole removed file.
         var entries: [String: BaseEntry] = [:]
-        if let listing = try? await runner.run(["--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", key.base, "--"] + paths, in: toplevel) {
+        if let listing = try? await GitRunner.shared.run(["--literal-pathspecs", "ls-tree", "-l", "-z", "--full-tree", key.base, "--"] + paths, in: toplevel) {
             entries = Self.parseTree(listing)
         }
         var results: [String: PatchResult] = [:]
         var diffPaths: [String] = []
+        var absentPaths: [String] = []
         for path in paths {
             let entry = entries[path] ?? .absent
             var result = PatchResult(entry: entry)
             switch entry {
             case .gitlink: break
             case .blob(let size) where size > Self.maxFileSize: result.tooLarge = true
+            case .absent:
+                absentPaths.append(path)
+                diffPaths.append(path)
             default: diffPaths.append(path)
             }
             results[path] = result
         }
+        // Whether the files the base lacks are tracked yet, untracked, or ignored: one status.
+        if !absentPaths.isEmpty,
+           let listing = try? await GitRunner.shared.run(["--literal-pathspecs", "status", "--porcelain=v1", "-z", "--ignored=matching", "--untracked-files=all", "--"] + absentPaths, in: toplevel) {
+            let codes = Self.parseStatus(listing)
+            for path in absentPaths {
+                // An ignored directory is listed as itself (`node_modules/`), not file by file.
+                results[path]?.status = codes[path] ?? codes.first { $0.key.hasSuffix("/") && path.hasPrefix($0.key) }?.value
+            }
+        }
         if !diffPaths.isEmpty {
             diffRuns += 1
-            // -U0 with zero inter-hunk context yields pure change records whatever the user's
-            // diff config says; hunks are regrouped locally.
-            let args = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=histogram",
-                        "-U0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/", key.base, "--"] + diffPaths
+            let args = Self.changeRecords + [key.base, "--"] + diffPaths
             do {
-                let output = try await runner.run(args, in: toplevel, maxOutput: diffPaths.count * 3 * Self.maxFileSize)
+                let output = try await GitRunner.shared.run(args, in: toplevel, maxOutput: diffPaths.count * 3 * Self.maxFileSize)
                 let sections = await offPool { Self.split(output) }
-            for (path, section) in sections where results[path] != nil {
+                for (path, section) in sections where results[path] != nil {
                     results[path]?.patch = section
                 }
             } catch GitError.outputTooLarge {
@@ -358,6 +367,11 @@ public actor GitDiffEngine {
             request.continuation.resume(returning: results[request.path] ?? PatchResult())
         }
     }
+
+    /// `git diff` giving pure change records: -U0 with zero inter-hunk context whatever the
+    /// user's diff config says (hunks are regrouped locally), no renames, byte-exact paths.
+    static let changeRecords = ["--literal-pathspecs", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", "--diff-algorithm=histogram",
+                                "-U0", "--inter-hunk-context=0", "--src-prefix=a/", "--dst-prefix=b/"]
 
     /// `git ls-tree -l -z` records: `<mode> <type> <object> <size>\t<path>\0`.
     static func parseTree(_ listing: Data) -> [String: BaseEntry] {
@@ -374,6 +388,20 @@ public actor GitDiffEngine {
             }
         }
         return entries
+    }
+
+    /// `git status --porcelain=v1 -z` records: `XY <path>\0`, a rename or copy with its source
+    /// path in the next record. Paths to their two-letter code.
+    static func parseStatus(_ listing: Data) -> [String: String] {
+        var codes: [String: String] = [:]
+        var records = listing.split(separator: 0)[...]
+        while let record = records.popFirst() {
+            guard record.count > 3 else { continue }
+            let code = String(decoding: record.prefix(2), as: UTF8.self)
+            codes[String(decoding: record.dropFirst(3), as: UTF8.self)] = code
+            if code.first == "R" || code.first == "C" { _ = records.popFirst() }
+        }
+        return codes
     }
 
     /// Per-file sections of a multi-file patch keyed by path, split on LF bytes and with git's
@@ -454,7 +482,7 @@ public actor GitDiffEngine {
     private func repository(containing file: URL) async -> Repository? {
         let directory = Self.existingAncestor(of: file.deletingLastPathComponent())
         if let known = repositoryOfDirectory[directory.path], let repository = repositories[known] { return repository }
-        guard let output = try? await runner.run(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], in: directory) else { return nil }
+        guard let output = try? await GitRunner.shared.run(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], in: directory) else { return nil }
         let lines = String(decoding: output, as: UTF8.self).split(separator: "\n").map(String.init)
         guard lines.count == 3 else { return nil }
         if let held = repositories[lines[0]] {
@@ -470,27 +498,27 @@ public actor GitDiffEngine {
     /// re-resolves it and tiles showing it reload (`refreshBases`).
     private func resolve(_ base: DiffBase, in repository: Repository) async -> ResolvedBase {
         if let known = repository.bases[base], known.sha != nil { return known }
-        let resolved = await Self.resolve(base, in: repository.toplevel, runner: runner)
+        let resolved = await Self.resolve(base, in: repository.toplevel)
         repository.bases[base] = resolved
         return resolved
     }
 
     /// Git's answer for `base`; a git that couldn't answer (cancelled, timed out, failed) is
     /// `git failed: <why>`, never mistaken for a missing commit.
-    static func resolve(_ base: DiffBase, in toplevel: URL, runner: GitRunner) async -> ResolvedBase {
+    static func resolve(_ base: DiffBase, in toplevel: URL) async -> ResolvedBase {
         do {
-            return try await lookUp(base, in: toplevel, runner: runner)
+            return try await lookUp(base, in: toplevel)
         } catch {
             return ResolvedBase(sha: nil, label: "git failed: \(describe(error))")
         }
     }
 
-    private static func lookUp(_ base: DiffBase, in toplevel: URL, runner: GitRunner) async throws -> ResolvedBase {
+    private static func lookUp(_ base: DiffBase, in toplevel: URL) async throws -> ResolvedBase {
         /// The commit `revision` names; nil when there is none (git exits 1: unborn HEAD, unknown name).
         func verify(_ revision: String) async throws -> String? {
             let data: Data
             do {
-                data = try await runner.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(revision)^{commit}"], in: toplevel)
+                data = try await GitRunner.shared.run(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(revision)^{commit}"], in: toplevel)
             } catch GitError.failed(status: 1, _) {
                 return nil
             }
@@ -505,13 +533,20 @@ public actor GitDiffEngine {
             let sha = try await verify(revision)
             return ResolvedBase(sha: sha, label: sha == nil ? "unknown commit \(revision)" : revision)
         case .mergeBase:
-            guard try await verify("HEAD") != nil else { return ResolvedBase(sha: nil, label: "no commits yet") }
-            guard let branch = try await defaultBranch(in: toplevel, runner: runner) else {
-                return ResolvedBase(sha: nil, label: "no default branch")
+            // HEAD is only checked when git can't answer otherwise: without commits there is no
+            // merge-base, and that is what the tile says, not which branch is missing.
+            guard let branch = try await defaultBranch(in: toplevel) else {
+                return ResolvedBase(sha: nil, label: try await verify("HEAD") == nil ? "no commits yet" : "no default branch")
             }
             let shortName = branch.replacingOccurrences(of: "refs/remotes/", with: "").replacingOccurrences(of: "refs/heads/", with: "")
-            // Exit 1: the histories share no commit.
-            let data = try await runner.run(["merge-base", branch, "HEAD"], in: toplevel, allowedStatus: [0, 1])
+            let data: Data
+            do {
+                // Exit 1: the histories share no commit.
+                data = try await GitRunner.shared.run(["merge-base", branch, "HEAD"], in: toplevel, allowedStatus: [0, 1])
+            } catch GitError.failed(let status, let stderr) {
+                guard try await verify("HEAD") == nil else { throw GitError.failed(status: status, stderr: stderr) }
+                return ResolvedBase(sha: nil, label: "no commits yet")
+            }
             let sha = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             return sha.isEmpty ? ResolvedBase(sha: nil, label: "no merge-base with \(shortName)") : ResolvedBase(sha: sha, label: ResolvedBase.mergeBasePrefix + shortName)
         }
@@ -530,8 +565,8 @@ public actor GitDiffEngine {
     }
 
     /// origin/HEAD's target when the clone has one, else local main, else master.
-    static func defaultBranch(in toplevel: URL, runner: GitRunner) async throws -> String? {
-        let data = try await runner.run(["for-each-ref", "--format=%(refname)%09%(symref)", "refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master"], in: toplevel)
+    static func defaultBranch(in toplevel: URL) async throws -> String? {
+        let data = try await GitRunner.shared.run(["for-each-ref", "--format=%(refname)%09%(symref)", "refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master"], in: toplevel)
         var refs: [String: String] = [:]
         for line in String(decoding: data, as: UTF8.self).split(separator: "\n") {
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
@@ -564,7 +599,7 @@ public actor GitDiffEngine {
         let previous = repository.bases
         var changed = false
         for base in previous.keys {
-            let resolved = await Self.resolve(base, in: repository.toplevel, runner: runner)
+            let resolved = await Self.resolve(base, in: repository.toplevel)
             if resolved != previous[base] { changed = true }
             repository.bases[base] = resolved
         }

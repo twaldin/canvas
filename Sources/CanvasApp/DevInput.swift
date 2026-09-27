@@ -200,7 +200,11 @@ enum DevInput {
                 if let event = key.event(type, modifiers: flags, window: window) { NSApp.postEvent(event, atStart: false) }
             }
         case "scroll":
-            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(number("dy")), wheel2: Int32(number("dx")), wheel3: 0) else { return }
+            // Pixel units are a trackpad's precise scroll; `lines`, a mouse wheel's notches (not
+            // continuous: AppKit reports them as lines, without precise deltas).
+            let lines = fields["lines"] != nil
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: lines ? .line : .pixel, wheelCount: 2, wheel1: Int32(number("dy")), wheel2: Int32(number("dx")), wheel3: 0) else { return }
+            if lines { cg.setIntegerValueField(.scrollWheelEventIsContinuous, value: 0) }
             // CGEvent locations are global with a top-left origin (primary display), not Cocoa's.
             let at = point("x", "y")
             let screen = window.convertPoint(toScreen: at)
@@ -230,6 +234,7 @@ enum DevInput {
             // of relying on sendEvent's hit test (windows on other displays got nothing).
             guard let event = NSEvent(cgEvent: cg), let frame = content.superview,
                   let hit = content.hitTest(frame.convert(at, from: nil)) else { return }
+            if (window as? CanvasWindow)?.zoomsCanvas(event, over: hit) == true { return }
             hit.scrollWheel(with: event)
         case "magnify":
             // A trackpad pinch step as a real gesture event: CG type 29 (gesture) with HID type 8

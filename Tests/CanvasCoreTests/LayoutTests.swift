@@ -672,6 +672,22 @@ struct LayoutBoardTests {
         #expect(try board.scaledFrame(label.id, to: CGSize(width: 200, height: 60)) == Frame(x: 10, y: 10, w: 200, h: 60))
     }
 
+    @Test func scalingABoxedInBrowserTileUpMovesClearOfItsNeighbours() throws {
+        // Game study F3: the game's browser tile with the snapshot image right of it, a note
+        // below, code above and the terminal left, each 24–40 pt away. No corner grows clear of
+        // them and no free slot is within its longer side, so Scale Bigger grew it in place over
+        // the image and the note.
+        let browser = board.create(type: .browser, props: .object(["url": "http://127.0.0.1:8766/"]), frame: Frame(x: 550, y: 530, w: 860, h: 700))
+        let neighbours = [note(1434, 530, 640, 700), note(550, 1270, 900, 600), note(550, -60, 1150, 566), note(-474, 200, 1000, 1400)]
+        let bigger = ObjectScale.rescaled(browser.frame, from: 1, to: 1.25)
+        let size = CGSize(width: bigger.w, height: bigger.h)
+        #expect(try board.refitFrame(browser.id, to: size) == Frame(x: 550, y: 530, w: 1075, h: 875), "a size fit still grows in place, naming what it covers")
+        let frame = try board.scaledFrame(browser.id, to: size)
+        #expect(frame == Frame(x: 1474, y: 1254, w: 1075, h: 875), "the nearest free slot, past the image and the note")
+        _ = try board.update(browser.id, frame: frame, props: .object(["scale": .number(1.25)]))
+        #expect(board.overlaps(of: browser.id).isEmpty && neighbours.allSatisfy { board.overlaps(of: $0.id).isEmpty })
+    }
+
     @Test func stackWrapsLinesAndAlignsAcrossThem() {
         let sizes = [CGSize(width: 100, height: 50), CGSize(width: 100, height: 80), CGSize(width: 100, height: 30)]
         #expect(Layout.stack(sizes, from: .zero, direction: .row, gap: 10) == [CGPoint(x: 0, y: 0), CGPoint(x: 110, y: 0), CGPoint(x: 220, y: 0)])

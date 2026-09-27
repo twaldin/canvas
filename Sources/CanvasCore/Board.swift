@@ -491,9 +491,9 @@ public final class Board {
             let view = viewport() ?? Frame(x: 0, y: 0, w: 0, h: 0)
             return place(Frame(x: view.x + view.w / 2 - width / 2, y: view.y + view.h / 2 - height / 2, w: width, h: height))
         }
-        let beside = freeSlot(width: width, height: height, anchor: anchor.frame, beside: true, minimum: minimum)
+        let beside = freeSlot(width: width, height: height, anchor: anchor.frame, beside: true, minimum: minimum)!
         guard stacking, let previous = latestAnswer(of: caller)?.frame else { return beside }
-        let stacked = freeSlot(width: width, height: height, anchor: previous, beside: true, minimum: minimum, order: [.below, .right, .left, .above])
+        let stacked = freeSlot(width: width, height: height, anchor: previous, beside: true, minimum: minimum, order: [.below, .right, .left, .above])!
         let gap = Self.placementGap
         let below = abs(stacked.y - (previous.maxY + gap)) < 1 && stacked.x < previous.maxX && stacked.maxX > previous.x
         let right = abs(stacked.x - (previous.maxX + gap)) < 1 && stacked.y < previous.maxY && stacked.maxY > previous.y
@@ -523,33 +523,46 @@ public final class Board {
     /// nearer ones outside it, and when none fits, slots partly in view win over ones wholly out
     /// of it. Origins are whole points.
     public func place(_ ideal: Frame) -> Frame {
-        freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false, minimum: nil)
+        freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false, minimum: nil)!
     }
 
-    /// Where `id` goes when it grows to `size` in place (`size: "fit"` without a given origin, or a
-    /// Scale step, `scaledFrame`): grown from its top-left corner when that covers nothing it
-    /// didn't already; else grown from another corner (`Layout.refit`: left, up, or both); else
-    /// moved to the free slot nearest that top-left-grown frame (`place(_:)`'s rule, in view
-    /// first, its own groups aside) among those no farther than its longer side; else grown from
-    /// the top-left anyway (`overlaps(of:)` says onto what).
+    /// Where `id` goes when it grows to `size` in place (`size: "fit"` without a given origin):
+    /// grown from its top-left corner when that covers nothing it didn't already; else grown
+    /// from another corner (`Layout.refit`: left, up, or both); else moved to the free slot
+    /// nearest that top-left-grown frame (`place(_:)`'s rule, in view first, its own groups
+    /// aside) among those no farther than its longer side; else grown from the top-left anyway
+    /// (`overlaps(of:)` says onto what).
     public func refitFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
+        try refitted(id, to: size, anywhere: false)
+    }
+
+    /// The frame `id` takes when its scale changes and its frame becomes `size` (the Scale menu
+    /// and keys, the end of an ⌥-drag, an agent's `props.scale` with a size-only frame): a tile
+    /// makes room by `refitFrame`'s rule, except that when no slot nearby is free it moves to
+    /// the nearest free one farther off (in view first) rather than grow over anything, so
+    /// growing it for legibility never covers its neighbours (the app pans the least that
+    /// keeps a tile the user scaled in view); a text shape (an annotation, often meant to lie
+    /// over something) keeps its top-left corner.
+    public func scaledFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
+        let object = try object(id)
+        guard RenderMath.isTile(object.type) else { return Frame(x: object.frame.x, y: object.frame.y, w: size.width, h: size.height) }
+        return try refitted(id, to: size, anywhere: true)
+    }
+
+    /// `refitFrame`'s rule; `anywhere`: with no free slot nearby, the nearest one farther off
+    /// instead of growing in place.
+    private func refitted(_ id: ObjectID, to size: CGSize, anywhere: Bool) throws -> Frame {
         let current = try object(id).frame
         let grown = Frame(x: current.x, y: current.y, w: size.width, h: size.height)
         let containers = Set(objects.values.filter { $0.type == .group && BoardGeometry.leafMembers(of: $0.id, in: objects).contains(id) }.map(\.id))
         let neighbours = objects.values.filter { $0.id != id && !containers.contains($0.id) && BoardGeometry.countsForOverlaps($0) }.map(\.frame)
         if let corner = Layout.refit(current, to: size, clearOf: neighbours) { return corner }
-        return freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: containers.union([id]), within: max(grown.w, grown.h))
-    }
-
-    /// The frame `id` takes when its scale changes and its frame becomes `size` (the Scale menu
-    /// and keys, the end of an ⌥-drag, an agent's `props.scale` with a size-only frame): a tile
-    /// makes room by `refitFrame`'s rule, so growing it for legibility never silently covers its
-    /// neighbours; a text shape (an annotation, often meant to lie over something) keeps its
-    /// top-left corner.
-    public func scaledFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
-        let object = try object(id)
-        guard RenderMath.isTile(object.type) else { return Frame(x: object.frame.x, y: object.frame.y, w: size.width, h: size.height) }
-        return try refitFrame(id, to: size)
+        let ignoring = containers.union([id])
+        if let nearby = freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: ignoring, within: max(grown.w, grown.h)) {
+            return nearby
+        }
+        guard anywhere else { return Frame(x: grown.x.rounded(), y: grown.y.rounded(), w: grown.w, h: grown.h) }
+        return freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: ignoring)!
     }
 
     /// The objects `id` overlaps by accident, by `layout.check`'s `overlaps` rule.
@@ -561,9 +574,10 @@ public final class Board {
     /// by side in `order`; otherwise it replaces `anchor`, nearest by origin. `minimum`: a slot
     /// partly in view may be cut down to its part in view when that is at least this big.
     /// `ignoring`: objects that don't block (one being moved, and its groups). `within`: only
-    /// slots whose origin is at most that far from `anchor`'s count; with none, `anchor` itself.
+    /// slots whose origin is at most that far from `anchor`'s count, nil when there is none.
+    /// Never nil without `within`: right of the rightmost blocker is always free.
     private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool, minimum: (w: Double, h: Double)?,
-                          order: [Layout.Side] = [.right, .below, .left, .above], ignoring: Set<ObjectID> = [], within: Double? = nil) -> Frame {
+                          order: [Layout.Side] = [.right, .below, .left, .above], ignoring: Set<ObjectID> = [], within: Double? = nil) -> Frame? {
         let gap = Self.placementGap
         let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape && !ignoring.contains($0.id) }
             .map { Frame(x: $0.frame.x - gap, y: $0.frame.y - gap, w: $0.frame.w + 2 * gap, h: $0.frame.h + 2 * gap) }
@@ -627,8 +641,7 @@ public final class Board {
                 if let smaller = cut(slot) { consider(smaller, cut: true) }
             }
         }
-        // Unreachable without `within`: right of the rightmost blocker is always free.
-        return best?.slot ?? Frame(x: anchor.x.rounded(), y: anchor.y.rounded(), w: w, h: h)
+        return best?.slot
     }
 
     // MARK: Tray

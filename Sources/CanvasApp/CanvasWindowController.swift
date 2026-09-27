@@ -920,11 +920,27 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 /// key equivalents ahead of its views and the main menu (AppKit's order for a real key press),
 /// and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings (font size,
 /// tabs), ⌘W as close surface, and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A,
-/// typing) stays with the focused view.
+/// typing) stays with the focused view. Likewise ⌘-scroll zooms the canvas wherever the pointer
+/// is on it, over a tile too; plain scrolling stays with the tile under the pointer.
 final class CanvasWindow: NSWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if let controller = windowController as? CanvasWindowController, controller.handleKeyEquivalent(event) { return true }
         return super.performKeyEquivalent(with: event)
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .scrollWheel, let content = contentView,
+           let hit = content.hitTest(content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
+           zoomsCanvas(event, over: hit) { return }
+        super.sendEvent(event)
+    }
+
+    /// A ⌘-scroll over `view` inside the canvas goes to the canvas (`CanvasWheel`), which zooms.
+    func zoomsCanvas(_ event: NSEvent, over view: NSView) -> Bool {
+        guard event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+              let canvas = (windowController as? CanvasWindowController)?.canvas, view.isDescendant(of: canvas) else { return false }
+        canvas.scrollWheel(with: event)
+        return true
     }
 }
 

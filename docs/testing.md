@@ -64,6 +64,7 @@ scripts/dev.sh input shortcut z --mods cmd           # a key press by character:
 scripts/dev.sh input key return                      # by name: return escape tab space delete forwarddelete up down left right home end pageup pagedown
 scripts/dev.sh input scroll <x> <y> <dx> <dy>
 scripts/dev.sh input scroll <x> <y> <dx> <dy> --repeat 30 --gesture   # one phased trackpad gesture (began and ended without movement)
+scripts/dev.sh input scroll <x> <y> <dx> <dy> --lines   # a mouse wheel's notches (line units, no precise deltas); with --mods cmd, ⌘-scroll
 scripts/dev.sh input magnify <x> <y> <amount>      # one pinch step: zoom × (1 + amount); 0.05 in, -0.05 out
 ```
 

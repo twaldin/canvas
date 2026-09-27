@@ -6,10 +6,12 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 ## Reading a board
 
 - Scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
+  With a mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways.
 - **Groups** are tinted, titled regions of tiles that belong together; an **arrow**'s label says how two things relate, and one into a code tile points at its lines.
   A code tile's **caption** (the line under its header) says why those lines matter. A code tile keeps its range on its code as lines move above or inside it; "⚠︎ stale: …" in its header means that code is gone (the range is left untinted).
-- **⌥⌘→ / ⌥⌘←** step to the next or previous stop: along the selected tile's `relation: "next_step"` arrows when it has one, else to the nearest tile that way.
-  A stop not wholly in view is centered (fitted when larger than the view); "Last step" / "First step" ends a sequence. Each step is a Back entry.
+- **⌥⌘-arrows** (↑ ↓ ← →) move between tiles: to the nearest tile that way, and a terminal landed on takes the keyboard.
+  ⌥⌘→ / ⌥⌘← step along the selected tile's `relation: "next_step"` arrows when it has one ("Last step" / "First step" ends a sequence).
+  A stop not wholly in view is centered (fitted when larger than the view); an agent's terminal comes with its follow tile when both fit. Each step is a Back entry.
 - **⌘P** finds a tile by title or caption.
 - **Links**: a `path:line` link in a note or page, Go to, a definition and a terminal ⌘-click go to the code tile already showing those lines (exactly, or a captioned tile whose range holds them) wherever it is, else open them beside the source.
 - **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
@@ -30,7 +32,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
 - **Pink ring and bubble**: an attention marker (`view.attention`, or a terminal's bell or notification): "look here".
   It clears when the user selects the tile, types in it, or looks at it for a few seconds; View › Clear Attention Markers clears them all.
-  Bubbles sit beside their tile, off other tiles' title bars and never over the terminal the user is typing in.
+  Bubbles sit beside their tile, off other tiles (cut short, the whole message in the tooltip, when that's what keeps them off) and never over the terminal the user is typing in.
 - **Edge pill** (arrow + the start of the message; the whole message in its tooltip): something that needs the user is off screen that way; clicking it goes there.
   It sits on a stretch of the view's edge with no tile under it; when the edge is covered, it is a chip in the toolbar row beside the drawing toolbar.
 - **⌘J**: the next thing that needs the user, blocked agents first, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
@@ -53,7 +55,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
 ## Pointing an agent at things
 
-- **Hyper-click** (⌃⌥⇧⌘-click; Caps Lock mapped to Hyper): stages a mention of a code line, page element, drawing, image pixel, or tile in the **tray**, the bar at the bottom of the window.
+- **Hyper-click** (⌃⌥⇧⌘-click: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win; Caps Lock mapped to Hyper with a key remapper): stages a mention of a code line, page element, drawing, image pixel, or tile in the **tray**, the bar at the bottom of the window.
   Hyper-drag on empty canvas mentions everything inside the box as one group.
 - **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles.
 - **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so): the terminal the user last typed in that runs an agent, else the board's only agent terminal (a dev-server shell beside it never takes it), else the last terminal typed in.
@@ -66,8 +68,8 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 - ⌘9 fits everything (or the largest cluster); ⌘0 is 100% (the selection at 100%); ⌘= and ⌘- step 10–100%.
   Below about 30% (terminals 15%) tiles show as cards; zooming in brings them back live.
 - **Bigger text**: zoom stops at 100%, so the user makes a tile bigger instead: ⌃⌘= / ⌃⌘- step the selected tile (else the one with the keyboard) through 50–200% and ⌃⌘0 puts it back (Object › Scale, also Bigger/Smaller/Actual Size in its right-click menu); ⌥-drag a corner scales freely.
-  A tile scaled up grows up or left, or moves nearby, rather than cover its neighbours.
-- ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; ⌘P again selects the query, Esc closes); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
+  A tile scaled up grows up or left, or moves to the nearest free spot, rather than cover its neighbours; the view follows a tile the user scaled.
+- ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; ⌘P again selects the query, Esc closes; an agent's terminal is framed with its follow tile when both fit); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
   In a terminal Esc belongs to the program: ⌘Esc (View › Leave Tile) leaves any tile.
 - A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.
@@ -75,3 +77,12 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
   Export Selection keeps the titles and borders of groups whose tiles are all selected; a marquee around groups selects them and the arrows between what it selects.
   Its picture is at most 8000 px on its longest side, named after the one tile or group selected, and drawn without canvas chrome (no author marks, × buttons, dot grid or selection), as View › Hide Canvas Chrome shows it; Copy as Image too.
 - A browser tile's menu has Snapshot to Image: the page as it shows now becomes an image tile beside it ("<page title> · <time>", its address as the caption), kept with the board.
+
+## Coming from Linux or Windows
+
+- ⌘ (Command, the Windows key on a PC keyboard) does what Ctrl does elsewhere: ⌘T, ⌘W, ⌘Z, ⌘C, ⌘V, ⌘= / ⌘- zoom.
+  A Ctrl shortcut pressed on the canvas shows a notice naming its ⌘ key, once per key per session.
+- ⌃ stays the terminal's: ⌃C interrupts, ⌃D ends input; ⌘C copies the selection, ⌘V pastes.
+- ⌥ (Option) is Alt; for Alt as Meta in the shell, set `macos-option-as-alt = true` in the user's Ghostty config.
+- Mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; right-click the canvas or a tile for its menu.
+- ⌥⌘-arrows move between tiles like a tiling window manager; ⌘Esc leaves a terminal.

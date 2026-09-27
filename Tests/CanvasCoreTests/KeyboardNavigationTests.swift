@@ -3,7 +3,7 @@ import Foundation
 import Testing
 import CanvasCore
 
-/// Keyboard zoom steps, ⌥⌘-arrow neighbors, Go to's file matching, and the tray's prompt target.
+/// Keyboard zoom steps, the mouse wheel, ⌥⌘-arrow neighbors, Go to's file matching, and the tray's prompt target.
 struct KeyboardNavigationTests {
     @Test func keyboardZoomStepsThroughBrowserLevelsWithinTheLimits() {
         let limits: ClosedRange<CGFloat> = 0.1...1
@@ -23,6 +23,24 @@ struct KeyboardNavigationTests {
         #expect(Layout.zoomStep(from: 0.95, in: true, limits: limits) == 1, "never past the maximum")
         #expect(Layout.zoomStep(from: 1, in: true, limits: limits) == 1)
         #expect(Layout.zoomStep(from: 0.12, in: false, limits: limits) == 0.1)
+    }
+
+    @Test func aWheelNotchPansAUsefulDistanceAndCommandScrollZooms() {
+        let line = CanvasWheel.lineHeight
+        #expect(CanvasWheel.action(dx: 0, dy: -1, precise: false, command: false, shift: false) == .pan(dx: 0, dy: -line), "a notch down pans a line, not a point")
+        #expect(CanvasWheel.action(dx: 0, dy: 2, precise: false, command: false, shift: true) == .pan(dx: 2 * line, dy: 0), "⇧ turns a vertical wheel sideways")
+        #expect(CanvasWheel.action(dx: -1, dy: 0, precise: false, command: false, shift: true) == .pan(dx: -line, dy: 0), "a wheel AppKit already turned sideways stays so")
+        #expect(CanvasWheel.action(dx: 3, dy: -40, precise: true, command: false, shift: false) == .system, "a trackpad keeps the scroll view's own pan")
+        guard case .zoom(let zoomIn) = CanvasWheel.action(dx: 0, dy: 1, precise: false, command: true, shift: false),
+              case .zoom(let zoomOut) = CanvasWheel.action(dx: 0, dy: -1, precise: false, command: true, shift: false),
+              case .zoom(let trackpad) = CanvasWheel.action(dx: 0, dy: line, precise: true, command: true, shift: false) else {
+            Issue.record("⌘-scroll doesn't zoom")
+            return
+        }
+        #expect(zoomIn > 1 && zoomOut < 1, "⌘-scroll up zooms in, down out")
+        #expect(abs(zoomIn * zoomOut - 1) < 1e-9, "a notch in and a notch out come back")
+        #expect(abs(trackpad - zoomIn) < 1e-9, "a trackpad's ⌘-scroll zooms by the same measure, in points")
+        #expect(CanvasWheel.action(dx: -2, dy: 0, precise: false, command: true, shift: false) == .pan(dx: -2 * line, dy: 0), "a sideways ⌘-scroll still pans")
     }
 
     @Test func arrowNeighborPrefersTheSameRowThenTheNearest() {

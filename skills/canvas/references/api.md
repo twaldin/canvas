@@ -47,7 +47,7 @@ A param the method doesn't take, or a required one missing, is `invalid_params` 
 - `props.scale` on any tile or text shape (0.25–8, default 1) magnifies what it draws:
   a tile lays out at frame ÷ scale (a 1200×800 tile at scale 2 shows what a 600×400 one does, twice as big), a text shape's font scales.
   Measure, fit, `layout.check`, `view.render` sizes, and line anchors account for it; everything you get back is in canvas points.
-  An update that sets `scale` with only `w`/`h` in its frame makes room like a `size: "fit"` refit: it grows up or left, or moves to a free spot nearby, instead of over its neighbours, and `overlaps` names what it still covers.
+  An update that sets `scale` with only `w`/`h` in its frame makes room: it grows up or left, or moves to a free spot nearby, else to the nearest free spot farther off, never over its neighbours (the result's frame says where it went).
 - Terminal tiles: `{"cwd": "/path", "command": ["omp"]}` starts an agent in a new tile (its session survives app restarts). Only start agents the user asked for.
   Deleting a terminal tile (`object.delete`, or in a batch that succeeds) ends its session and whatever runs in it, as closing it does for the user.
 - Changes tiles (`type: changes`, `ChangesProps`): `{"base": "HEAD"}` (the default: uncommitted work, staged or not; also `merge-base`, everything the branch changed against the default branch, or a commit or ref; the user can switch it in the tile's header), optional `root` (another worktree of the board's repository, e.g. `"../wt-agent"`: review your worktree on the board where your terminal is), `paths` (files or dirs in it) and `title`.

@@ -23,6 +23,7 @@ final class EmptyBoardHint: NSVisualEffectView {
             ("omp, claude, codex, gemini, and opencode report when they need you, follow their reads, and get your mentions.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("Or right-click anywhere → New Terminal Here.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("Hyper is ⌃⌥⇧⌘: Hyper-click code, notes, shapes, or web pages to point your agent at them.", .systemFont(ofSize: 13), .secondaryLabelColor),
+            ("⌃⌥⇧⌘ is Control+Option+Shift+Command; on a PC keyboard, Ctrl+Alt+Shift+Win.", .systemFont(ofSize: 12), .tertiaryLabelColor),
             ("New here? Help › Canvas Basics explains the dots, markers, tray, and keys.", .systemFont(ofSize: 13), .tertiaryLabelColor),
         ]
         for (text, font, color) in lines {
@@ -33,6 +34,7 @@ final class EmptyBoardHint: NSVisualEffectView {
             stack.addArrangedSubview(label)
         }
         stack.setCustomSpacing(4, after: stack.arrangedSubviews[0])
+        stack.setCustomSpacing(4, after: stack.arrangedSubviews[3])
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([

@@ -83,6 +83,8 @@ final class CanvasDocumentView: NSView {
         default:
             // A selected changes tile's keys say to press Return first (they act once it has the keyboard).
             if canvas?.selectedChangesTile?.keyWhileSelected(event) == true { return }
+            // A ⌃-chord that is a ⌘ shortcut on a Mac says so (`noticeMacKey`).
+            if canvas?.noticeMacKey(for: event) == true { return }
             super.keyDown(with: event)
         }
     }
@@ -393,11 +395,13 @@ final class CanvasView: NSScrollView {
         tile.onFrameCommit = { [weak self] rect, scale in
             guard let self, let object = self.board.objects[id] else { return }
             var frame = Self.canvasFrame(rect)
-            // An ⌥-drag scale makes room like the Scale menu (`Board.scaledFrame`); a plain
-            // resize stays where the user dragged it.
-            if scale != CGFloat(object.scale), let placed = try? self.board.scaledFrame(id, to: CGSize(width: frame.w, height: frame.h)) { frame = placed }
-            let props: JSONValue? = scale == CGFloat(object.scale) ? nil : .object(["scale": Self.scaleProp(Double(scale))])
+            // An ⌥-drag scale makes room like the Scale menu (`Board.scaledFrame`) and the view
+            // follows a tile that moved away; a plain resize stays where the user dragged it.
+            let scaled = scale != CGFloat(object.scale)
+            if scaled, let placed = try? self.board.scaledFrame(id, to: CGSize(width: frame.w, height: frame.h)) { frame = placed }
+            let props: JSONValue? = scaled ? .object(["scale": Self.scaleProp(Double(scale))]) : nil
             _ = try? self.board.update(id, frame: frame, props: props)
+            if scaled { self.keepInView([id]) }
         }
         tile.onResizing = { [weak self] in self?.objectsMoved() }
         tile.onClose = { [weak self] in self?.delete([id]) }
@@ -991,15 +995,17 @@ final class CanvasView: NSScrollView {
     private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser]
 
     /// Return (or Tab) with one tile selected and the canvas holding the keyboard: the tile
-    /// takes it (`TileContent.enterKeyboard`), revealed first; a zoomed-out one comes up at 100%
+    /// takes it (`TileContent.enterKeyboard`), revealed first with the least pan (an agent's
+    /// terminal with its follow tile, `landing`); a zoomed-out one comes up at 100%
     /// so its live view can. False when nothing is selected that types (the key stays the
     /// canvas's).
     func enterSelection() -> Bool {
         guard selection.count == 1, let id = selection.first, let tile = tiles[id], let type = board.objects[id]?.type, Self.enterable.contains(type) else { return false }
         if !tile.isLive, let rect = docFrame(id) {
             apply(Layout.center(rect, in: clearArea, zoom: 1, padding: Self.jumpPadding))
-        } else {
-            reveal(id)
+        } else if let rect = landing(id, padding: Self.jumpPadding / magnification) {
+            let jump = Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification)
+            if jump != currentJump { apply(jump) }
         }
         // On the next turn: a tile just made live builds its view in the liveness pass.
         DispatchQueue.main.async { [weak self] in
@@ -1338,7 +1344,8 @@ final class CanvasView: NSScrollView {
 
     /// Sets `props.scale` of the selected tiles and text shapes, else of the tile holding the
     /// keyboard, resizing each so its content keeps its layout, as one undo step. A tile that
-    /// grows makes room rather than cover its neighbours (`Board.scaledFrame`).
+    /// grows makes room rather than cover its neighbours (`Board.scaledFrame`), and the view
+    /// follows it (`keepInView`).
     func setScale(_ scale: Double) {
         rescale(scaleTargets.filter { $0.scale != scale }.map { ($0, scale) })
     }
@@ -1356,6 +1363,9 @@ final class CanvasView: NSScrollView {
 
     private func rescale(_ changes: [(CanvasObject, Double)]) {
         guard !changes.isEmpty else { return }
+        // What shows, at least in part, clear of the chrome: the view keeps it in view.
+        let clear = Self.docRect(clearViewport)
+        let shown = changes.map(\.0.id).filter { docFrame($0)?.intersects(clear) == true }
         board.transaction {
             for (object, scale) in changes {
                 let size = ObjectScale.rescaled(object.frame, from: object.scale, to: scale)
@@ -1363,6 +1373,23 @@ final class CanvasView: NSScrollView {
                 _ = try? board.update(object.id, frame: frame, props: .object(["scale": Self.scaleProp(scale)]))
             }
         }
+        keepInView(shown)
+    }
+
+    /// After the user scaled `ids` (the ones that showed before): the least pan that shows them
+    /// whole again clear of the chrome, when Scale moved one away or grew it out of view or
+    /// under the toolbar; nothing when they show already. Too big to show whole, their top-left
+    /// shows (the bottom of a terminal being typed in, where its prompt is). Confirm7 study: a
+    /// terminal scaled from the keyboard moved wholly below the view and kept the keyboard.
+    private func keepInView(_ ids: [ObjectID]) {
+        let rects = ids.compactMap { board.objects[$0].map { Self.docRect($0.frame) } }
+        guard let first = rects.first else { return }
+        let union = rects.dropFirst().reduce(first) { $0.union($1) }
+        let shown = Self.docRect(clearViewport)
+        let room = max(0, min(shown.width - union.width, shown.height - union.height) / 2)
+        let typing = ids.count == 1 && ids[0] == focusedTerminal
+        let jump = Layout.reveal(union, from: currentJump, clear: clearArea, padding: min(Self.jumpPadding / magnification, room), bottomFirst: typing)
+        if jump != currentJump { apply(jump) }
     }
 
     /// `props.scale` as written: 1 removes it.
@@ -1475,6 +1502,35 @@ final class CanvasView: NSScrollView {
         apply(Layout.Jump(zoom: viewport.zoom, origin: CGPoint(x: viewport.rect.x + CanvasDocumentView.origin.x, y: viewport.rect.y + CanvasDocumentView.origin.y)))
     }
 
+    /// Scrolling that reaches the canvas (`CanvasWheel`): a wheel notch pans a useful distance,
+    /// ⌘-scroll zooms around the pointer, a trackpad's scroll is the scroll view's own pan.
+    override func scrollWheel(with event: NSEvent) {
+        let flags = event.modifierFlags
+        switch CanvasWheel.action(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas,
+                                  command: flags.contains(.command), shift: flags.contains(.shift)) {
+        case .system:
+            super.scrollWheel(with: event)
+        case .pan(let dx, let dy):
+            let origin = contentView.bounds.origin
+            scroll(to: NSPoint(x: origin.x - dx / magnification, y: origin.y - dy / magnification))
+        case .zoom(let factor):
+            // A window-less event (input replay) carries its screen location.
+            let point = event.window == nil ? window?.convertPoint(fromScreen: event.locationInWindow) ?? event.locationInWindow : event.locationInWindow
+            zoom(by: factor, around: contentView.convert(point, from: nil))
+        }
+    }
+
+    /// The zoom times `factor` (within the limits), keeping the document point `anchor` where it
+    /// is on screen.
+    private func zoom(by factor: CGFloat, around anchor: NSPoint) {
+        let old = magnification
+        let zoom = min(maxMagnification, max(minMagnification, old * factor))
+        guard zoom != old else { return }
+        let origin = contentView.bounds.origin
+        magnification = zoom
+        scroll(to: NSPoint(x: anchor.x - (anchor.x - origin.x) * old / zoom, y: anchor.y - (anchor.y - origin.y) * old / zoom))
+    }
+
     func zoom(to scale: CGFloat) {
         let visible = documentVisibleRect
         setMagnification(min(maxMagnification, max(minMagnification, scale)), centeredAt: NSPoint(x: visible.midX, y: visible.midY))
@@ -1541,17 +1597,30 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// The navigator's "go to": the object fitted (at most 100%, a tall one by its width),
-    /// selected, and given the keyboard (a terminal focuses; anything else leaves it with the
-    /// canvas, so Delete, Esc and ⌘G act on it).
+    /// The navigator's "go to": the object fitted (at most 100%, a tall one by its width; an
+    /// agent's terminal with its follow tile, `landing`), selected, and given the keyboard (a
+    /// terminal focuses; anything else leaves it with the canvas, so Delete, Esc and ⌘G act on it).
     func go(to id: ObjectID) {
-        guard let rect = docFrame(id) else { return }
+        guard let rect = landing(id, padding: Self.fitPadding) else { return }
         navigating {
             fit(rect, readable: true)
             return nil
         }
         setSelection([id])
         takeKeyboard(id)
+    }
+
+    /// What landing on `id` (Go to, ⌘J, an ⌥⌘-arrow step, Return) shows: an agent's terminal
+    /// together with its follow tile when both fit, with `padding` (document points) around
+    /// them, in the view clear of the chrome at the current zoom; else the object alone. Rust
+    /// study F6: landing on omp left the tile following its edits mostly off screen.
+    private func landing(_ id: ObjectID, padding: CGFloat) -> NSRect? {
+        guard let rect = docFrame(id) else { return nil }
+        guard board.objects[id]?.type == .terminal else { return rect }
+        let shown = Self.docRect(clearViewport)
+        return board.followTiles(of: id).compactMap { docFrame($0.id)?.union(rect) }
+            .filter { $0.width + 2 * padding <= shown.width && $0.height + 2 * padding <= shown.height }
+            .min { $0.width * $0.height < $1.width * $1.height } ?? rect
     }
 
     /// Go to's heading row: the note gone to, then (once it is live and laid out, the next
@@ -1647,10 +1716,11 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// An object shown whole like a slide: nothing moves while it is in view with a margin;
-    /// else centered at this zoom, or fitted when larger than the view (`Layout.present`).
+    /// An object shown whole like a slide (an agent's terminal with its follow tile, `landing`):
+    /// nothing moves while it is in view with a margin; else centered at this zoom, or fitted
+    /// when larger than the view (`Layout.present`).
     func present(_ id: ObjectID) {
-        guard let rect = docFrame(id) else { return }
+        guard let rect = landing(id, padding: Self.jumpPadding / magnification) else { return }
         let jump = Layout.present(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification,
                                   zoom: minMagnification...maxMagnification, readable: Self.readableZoom)
         if jump != currentJump { apply(jump) }

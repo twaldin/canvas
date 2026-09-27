@@ -33,9 +33,10 @@ public enum CanvasBasics {
     public static let sections: [Section] = [
         Section(title: "Reading a board", items: [
             Item(term: "Scroll · pinch", text: "scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%."),
+            Item(term: "With a mouse", text: "the wheel pans; ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways."),
             Item(term: "Groups and arrows", text: "a tinted, titled region holds tiles that belong together; an arrow's label says how two things relate, and one into a code tile points at its lines."),
             Item(term: "Captions", text: "the line under a code tile's header says why those lines matter. The tile keeps them as code moves; \"⚠︎ stale\" in its header means they're gone."),
-            Item(term: "⌥⌘→ · ⌥⌘←", text: "step to the next or previous stop: along the board's next-step arrows when the selected tile has one, else to the nearest tile that way. A stop not in view is centered; \"Last step\" ends the walk."),
+            Item(term: "⌥⌘-arrows", text: "move between tiles: ⌥⌘↑ ⌥⌘↓ ⌥⌘← ⌥⌘→ go to the nearest tile that way, and a terminal takes the keyboard. ⌥⌘→ and ⌥⌘← step along the board's next-step arrows when the selected tile has one (\"Last step\" ends the walk). A tile not in view is centered."),
             Item(term: "⌘P", text: "find a tile by its title or caption."),
             Item(term: "Links", text: "a path:line link, Go to or ⌘-click goes to the tile already showing those lines, else opens them beside you. Return enters a code tile to scroll it."),
             Item(term: "⌘[ · ⌘]", text: "back and forward through where you went: steps, links, Go to, definitions, ⌘J, Review Changes."),
@@ -67,7 +68,7 @@ public enum CanvasBasics {
             Item(term: "⌘Z", text: "undoes a Stage, Unstage or Discard and says which."),
         ]),
         Section(title: "Pointing your agent at things", items: [
-            Item(term: "Hyper-click", text: "⌃⌥⇧⌘-click (Caps Lock as Hyper) a code line, page element, drawing or tile to stage it as a mention in the tray at the bottom."),
+            Item(term: "Hyper-click", text: "Hyper is ⌃⌥⇧⌘: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win (a key remapper can make Caps Lock Hyper). Hyper-click a code line, page element, drawing or tile to stage it as a mention in the tray at the bottom."),
             Item(term: "⇧⌘M", text: "mention from the keyboard (Edit › Mention): the hunk or lines you're on in a changes tile, the selected text or range of a code tile, a note's block, a page's selection, a terminal's selection or last command; else the selected tiles."),
             Item(term: "Tray", text: "the chips are staged mentions; \"→ name\" is the terminal they go to with your next prompt. Click it to pick another terminal; ⌃⌥⇧⌘V pastes them into one without an integration."),
             Item(term: "Drawing", text: "the toolbar at the top draws boxes (R), ellipses (O), arrows (A), text (T) and ink (P); V selects. Hyper-click a drawing to show the agent what it marks."),
@@ -83,6 +84,13 @@ public enum CanvasBasics {
             Item(term: "Return · Esc", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas. In a terminal Esc goes to the program: ⌘Esc leaves any tile."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
             Item(term: "⌥⌘/", text: "open or close this legend (Help › Canvas Basics)."),
+        ]),
+        Section(title: "Coming from Linux or Windows", items: [
+            Item(term: "⌘ is your Ctrl", text: "⌘ (Command, the Windows key on a PC keyboard) does what Ctrl does elsewhere: ⌘T, ⌘W, ⌘Z, ⌘C, ⌘V, ⌘= and ⌘- to zoom. A Ctrl shortcut on the canvas says its ⌘ key."),
+            Item(term: "⌃ stays the terminal's", text: "in a terminal ⌃C interrupts and ⌃D ends input; copy the selection with ⌘C and paste with ⌘V."),
+            Item(term: "⌥ is Alt", text: "⌥ (Option) is the Alt key. For Alt as Meta in the shell (Alt-B, Alt-F), set macos-option-as-alt = true in your Ghostty config."),
+            Item(term: "Mouse", text: "the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; right-click the canvas or a tile for its menu."),
+            Item(term: "⌥⌘-arrows", text: "move between tiles like a tiling window manager; a terminal you land on takes the keyboard, and ⌘Esc leaves it."),
         ]),
     ]
 }

@@ -689,14 +689,19 @@ extension CodeTile {
         return TileRender(image: image, contentSize: drawn.content, state: .rendered, reason: nil)
     }
 
+    /// Cards requested together (a pinch out over a dozen live tiles) render one per main turn:
+    /// drawn back to back in the liveness pass, ~5 ms each held the first frame after the pinch
+    /// for ~45 ms. The live view stays up until its card arrives.
     func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
         let appearance = effectiveAppearance
         let size = bounds.size
-        if showsCurrent, loadedBase == diffBase, let document {
-            return deliver(image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image)
-        }
         Task { [weak self] in
-            guard let self, let document = await self.loadOffscreen() else { return deliver(nil) }
+            await MainTurns.next()
+            guard let self else { return deliver(nil) }
+            if self.showsCurrent, self.loadedBase == self.diffBase, let document = self.document {
+                return deliver(self.image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image)
+            }
+            guard let document = await self.loadOffscreen() else { return deliver(nil) }
             deliver(self.image(of: document, size: size, scale: TileFrameView.cardPixelsPerPoint, full: false, appearance: appearance).image)
         }
     }

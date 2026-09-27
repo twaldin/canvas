@@ -295,7 +295,7 @@ A marker's bubble is cut to the object's width (240–480 pt), so put the point 
 The user can clear every marker at once (right-click the canvas); markers aren't undo history.
 Raise one marker per thing your answer points at; they stay together until the user looks, even across app restarts.
 A job in a terminal with no agent integration can flag it without the API: `printf '\e]777;notify;Build;done\a'` (or OSC 9, or a bell) raises a marker there unless the user is typing in it.
-Terminals whose agent reports a lifecycle (omp, Claude Code, Codex) show done and blocked themselves, so their notifications raise nothing.
+Terminals whose agent reports a lifecycle (omp, Claude Code, Codex, Gemini CLI, opencode) show done and blocked themselves, so their notifications raise nothing.
 Your next marker after the user's next prompt clears your earlier turns' markers (the result lists them in `cleared`): don't clear old ones yourself, and never re-raise the cleared ones.
 The user saw them with your last answer; markers left from old turns pile up into clutter.
 
@@ -312,7 +312,7 @@ Every agent change is undoable with ⌘Z, but that is a safety net, not a licens
 Agents in other terminal tiles (any canvas in the app) are reachable by tile id or tile name:
 
 ```sh
-canvas agent.list                                    # every terminal: tile, kind, name, lifecycle, board and root (its repo/worktree)
+canvas agent.list                                    # every terminal: tile, kind, name, lifecycle, board, root, `program` (foreground program) and `title` (its OSC title)
 canvas agent.prompt --target reviewer --text "Review the diff in src/store.ts"   # → waitable, submittedAt
 canvas agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `until` narrows it
 canvas agent.read --target reviewer --since prompt   # only what came after your last agent.prompt (inline images read as [image])
@@ -320,11 +320,12 @@ canvas agent.read --target reviewer --since prompt   # only what came after your
 
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
 Then `agent.read --since prompt` returns just the reply (`--lines N` gives the plain tail).
-Kind `omp`, `claude` or `codex` reports a lifecycle (a fresh Codex from its first prompt). Kind `unknown` (a shell, aider, another CLI) has none:
-`agent.prompt` works, `agent.wait` fails once 15 s pass without a first report (enough for an agent you just started), so poll `agent.read --since prompt`.
-Claude Code runs no hook when its user presses Esc or denies an approval, so its tile keeps its last state until the next prompt.
+Kind `omp`, `claude`, `codex`, `gemini` (before 0.60) or `opencode` reports a lifecycle (a fresh Codex from its first prompt). Kind `unknown` (a shell, aider, another CLI) has none:
+`agent.prompt` works, `agent.wait` fails once 15 s pass without a first report (enough for an agent you just started), so poll `agent.read --since prompt`; `program` and `title` (e.g. Gemini's '✋ Action Required') still hint at its state.
+Claude Code and Gemini CLI run no hook when their user presses Esc or denies an approval, so their tile keeps its last state until the next prompt.
 Don't prompt an agent that is `blocked`; it is waiting for its user (omp reports every approval prompt as blocked, nested ones included, and the user sees it as a ring and bubble on its terminal, on the tab, and as an edge pill when off screen).
-`agent.prompt` to a `blocked` agent fails with `conflict` quoting what it waits on; pass `force: true` only when you know the dialog is gone (e.g. Claude Code after Esc on an approval).
+`agent.prompt` to a `blocked` agent fails with `conflict` quoting what it waits on. Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Tell the user instead; force only when you know the dialog is gone.
+`board.open --select true` switches the user's tab: only when they asked to see that board.
 
 ## Compositions
 

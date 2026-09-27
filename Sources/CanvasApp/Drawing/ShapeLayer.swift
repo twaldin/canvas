@@ -127,8 +127,8 @@ final class ShapeLayer: NSView {
 
     @objc private func viewFrameChanged(_ note: Notification) {
         guard let tile = note.object as? TileFrameView, tile.superview === canvas.document else { return }
-        reroute(boundTo: tile.objectID)
         rerouteAvoiding()
+        reroute(boundTo: tile.objectID)
     }
 
     @objc private func codeRowsMoved(_ note: Notification) {
@@ -172,9 +172,9 @@ final class ShapeLayer: NSView {
     func apply(_ event: BoardEvent) {
         switch event {
         case .objectCreated(let object), .objectUpdated(let object):
+            if object.type != .arrow, object.type != .group { rerouteAvoiding() }
             refresh(object)
             reroute(boundTo: object.id)
-            if object.type != .arrow, object.type != .group { rerouteAvoiding() }
         case .objectDeleted(let id):
             if let item = items.removeValue(forKey: id) {
                 invalidate(item)
@@ -204,7 +204,14 @@ final class ShapeLayer: NSView {
             if let oldSpec = old?.arrow?.spec { unbind(arrow: object.id, oldSpec) }
             for id in [spec.from.objectID, spec.to.objectID].compactMap({ $0 }) { arrowsBound[id, default: []].insert(object.id) }
             if spec.route == .avoid { avoiding.insert(object.id) } else { avoiding.remove(object.id) }
-            items[object.id] = routed(object, spec, previous: old)
+            if spec.route == .avoid {
+                // Routed with the burst's settle, before anything draws; until then it keeps
+                // its last route (a new arrow a provisional one).
+                rerouteAvoiding()
+                items[object.id] = old?.arrow.map { DrawnItem.arrow(object, spec, path: $0.path) } ?? routed(object, spec, previous: old, style: .orthogonal)
+            } else {
+                items[object.id] = routed(object, spec, previous: old)
+            }
             // Siblings between the same two objects shift to make room (or close up).
             if let oldSpec = old?.arrow?.spec, oldSpec.from != spec.from || oldSpec.to != spec.to { rerouteParallels(of: oldSpec, except: object.id) }
             rerouteParallels(of: spec, except: object.id)
@@ -228,8 +235,10 @@ final class ShapeLayer: NSView {
         for arrowID in arrows { reroute(arrow: arrowID) }
     }
 
+    /// An `avoid` arrow waits for a pending settle, which routes it around the latest tiles.
     private func reroute(arrow id: ObjectID) {
         guard let old = items[id], let spec = old.arrow?.spec else { return }
+        if spec.route == .avoid && avoidingStale { return }
         let item = routed(old.object, spec, previous: old)
         guard item.arrow?.path != old.arrow?.path || item.labelRect != old.labelRect else { return }
         invalidate(old)
@@ -284,13 +293,14 @@ final class ShapeLayer: NSView {
     private func obstacles(near area: NSRect, excluding excluded: Set<ObjectID>) -> [CGRect] {
         var rects = canvas.tiles.compactMap { id, tile in excluded.contains(id) || !tile.frame.intersects(area) ? nil : tile.frame }
         for (id, item) in items where !excluded.contains(id) && item.frame.intersects(area) {
-            guard let object = board.objects[id], Board.blocksRoutes(object) else { continue }
+            guard let object = board.objects[id], BoardGeometry.blocksRoutes(object) else { continue }
             rects.append(item.frame)
         }
         return rects
     }
 
-    private func routed(_ object: CanvasObject, _ spec: ArrowSpec, previous: DrawnItem?) -> DrawnItem {
+    /// `style` overrides the arrow's own route style (a provisional route until a settle).
+    private func routed(_ object: CanvasObject, _ spec: ArrowSpec, previous: DrawnItem?, style: ArrowRouteStyle? = nil) -> DrawnItem {
         let shift = dragPreview.ids.contains(object.id) ? dragPreview.offset : .zero
         func end(_ binding: ArrowBinding) -> DrawingGeometry.ArrowEnd? {
             switch binding {
@@ -304,9 +314,11 @@ final class ShapeLayer: NSView {
         let ends = Set([spec.from.objectID, spec.to.objectID].compactMap { $0 })
         if let from = end(spec.from), let to = end(spec.to) {
             let offset = parallelOffset(object.id, spec)
+            let style = style ?? spec.route
             let reach = from.aim.union(to.aim).insetBy(dx: -600, dy: -600)
-            let blockers = spec.route == .avoid ? obstacles(near: reach, excluding: ends.union([object.id])) : []
-            let path = DrawingGeometry.path(from: from, to: to, style: spec.route, offset: offset, obstacles: blockers)
+            let blockers = style == .avoid ? obstacles(near: reach, excluding: ends.union([object.id])) : []
+            let path = DrawingGeometry.path(from: from, to: to, style: style, offset: offset, obstacles: blockers)
+            guard style == spec.route else { return DrawnItem.arrow(object, spec, path: path) }
             let xs = path.map { $0.x }, ys = path.map { $0.y }
             let span = NSRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!).insetBy(dx: -300, dy: -300)
             return DrawnItem.arrow(object, spec, path: path, labelSide: offset, obstacles: obstacles(near: span, excluding: [object.id]))

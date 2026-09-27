@@ -95,20 +95,4 @@ extension Board {
         }
         return found.sorted()
     }
-
-    /// Members of a group, nested groups expanded, without the groups themselves.
-    public func leafMembers(of id: ObjectID) -> [ObjectID] {
-        var seen: Set<ObjectID> = [id]
-        var result: [ObjectID] = []
-        var queue = [id]
-        while let next = queue.popLast() {
-            guard let group = objects[next], let spec = GroupSpec(group.props) else { continue }
-            for member in spec.members where !seen.contains(member) {
-                seen.insert(member)
-                guard let object = objects[member] else { continue }
-                if object.type == .group { queue.append(member) } else { result.append(member) }
-            }
-        }
-        return result
-    }
 }

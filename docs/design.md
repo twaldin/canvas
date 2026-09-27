@@ -132,6 +132,15 @@ Getting lost on a big board must always have a one-step way back.
 - Notes lay out their whole text once per content change (`NoteDisplayView`). TextKit 2 otherwise lays out a viewport around what's visible, and on the canvas that followed every pan and pinch step: each step re-laid out and resized every note on screen, sometimes never converging. One note on the astra replica stalled a pinch for 2 s (the "application not responding" beachball) and once raised AppKit's layout-loop exception.
 - `view.render` encodes its image off the main thread (a full-board PNG took ~300 ms of the canvas's main thread).
 - Blocking work (subprocess pipes, `waitUntilExit`, file reads) never runs inside a Swift task: parked cooperative threads starve the socket servers' request tasks. Use GCD plus a continuation.
+- Agent-built boards (the architecture explainer: one 128-op `object.batch` creating 67 fit code tiles, 3 notes, an HTML tile, 10 groups, 38 line-bound `avoid` arrows, 8 grids and a stack). `layout.check` judges a value snapshot of the board (`BoardGeometry`): it reads each file once and wraps it once per width, concurrently, only for tiles line-bound arrows attach to, and routes, labels, and code fit run off the main actor. New code, note, and HTML tiles that wouldn't be live start as their cards (no live view, no header controls, no load), code headers build their AppKit controls only in a window, background model and card installs run one per main turn (`MainTurns`), and `avoid` arrows touched during a burst route once in the settle instead of per change. Measured on a replica (debug build, `scripts/perf-replica.sh`, board zoomed to fit, a 1500-step scroll burst running during each call; `longest gap` is the main-thread stall):
+
+  | Call | Before (b22714e) | After |
+  | --- | --- | --- |
+  | `object.batch` (128 ops) | 0.54 s, stall 1094 ms | 0.19 s, stall 135 ms |
+  | `board.get` right after | 0.04 s, stall 26 ms | 0.05 s, stall 47 ms |
+  | `layout.check`, whole board | 2.6–3.7 s (8.0 s on 2b87650), stall 327–958 ms | 0.08 s, stall 18–34 ms |
+
+  The reports are identical (whole board, `ids`, and `rect` on a perturbed copy with overlaps, crossings, label overlaps, overflow, and a truncated caption). The live session's 30 s batch and 65 s `board.get` did not reproduce on b22714e or 2b87650 on this replica.
 - Language servers: lazy start, idle shutdown.
 
 ### Optimization spike (measured)

@@ -327,6 +327,33 @@ final class LayoutApiTests {
         let overflowing = Set(report["overflow"]?.array?.compactMap { $0["id"]?.string } ?? [])
         #expect(overflowing == [plain.id], "80 rows don't fit either frame; only the ordinary tile is a layout problem")
     }
+
+    /// `layout.check` reads each file once and wraps it once per width, off the main actor: its
+    /// report is the one the board gives with every line-bound tile's rows computed on its own.
+    @Test func checkWithSharedFilesAtSeveralWidthsMatchesPerTileRows() async throws {
+        // src.txt line 50 is 120 columns: it wraps at 300 pt and 420 pt into different row counts.
+        let narrow = board.create(type: .code, props: Self.code(45, 60), frame: Frame(x: 0, y: 0, w: 300, h: 300))
+        let wider = board.create(type: .code, props: Self.code(45, 60), frame: Frame(x: 0, y: 400, w: 420, h: 300))
+        let missing = board.create(type: .code, props: .object(["path": "gone.txt"]), frame: Frame(x: 0, y: 800, w: 300, h: 200))
+        let target = board.create(type: .note, props: .object(["markdown": "t"]), frame: Frame(x: 900, y: 0, w: 200, h: 900))
+        let wall = board.create(type: .note, props: .object(["markdown": "wall"]), frame: Frame(x: 600, y: -100, w: 60, h: 1100))
+        func bound(_ tile: CanvasObject, _ line: Int) -> JSONValue {
+            .object(["object": .string(tile.id), "lines": .object(["start": .number(Double(line)), "end": .number(Double(line))])])
+        }
+        for (tile, line) in [(narrow, 55), (wider, 52), (missing, 3)] {
+            _ = board.create(type: .arrow, props: .object(["from": bound(tile, line), "to": .object(["object": .string(target.id)]), "route": "straight", "label": "calls"]))
+        }
+        let text = try String(contentsOf: board.root.appendingPathComponent("src.txt"), encoding: .utf8)
+        let rows = [narrow.id: CodeRows(file: text, width: 300), wider.id: CodeRows(file: text, width: 420)]
+        #expect(rows[narrow.id]!.index(ofLine: 55) != rows[wider.id]!.index(ofLine: 55), "the widths wrap line 50 differently")
+        let expected = board.geometry.layoutCheck(rows: rows)
+        #expect(expected.crossings.count == 3 && expected.crossings.allSatisfy { $0.crosses == [wall.id] })
+
+        let report = try await result("layout.check", .object([:]))
+        #expect(report["arrowCrossings"] == .array(expected.crossings.map { .object(["arrow": .string($0.arrow), "crosses": .array($0.crosses.map(JSONValue.string))]) }))
+        #expect(report["labelOverlaps"] == .array(expected.labelOverlaps.map { .object(["arrow": .string($0.arrow), "overlaps": .array($0.overlaps.map(JSONValue.string))]) }))
+        #expect(report["overlaps"] == .array(expected.overlaps.map { .array($0.map(JSONValue.string)) }))
+    }
 }
 
 /// Board-level layout: place/stack math and steps, groups as regions, and arrow routing.
@@ -622,7 +649,7 @@ struct LayoutBoardTests {
             "from": .object(["object": .string(note.id)]),
             "to": .object(["object": .string(tile.id), "lines": .object(["start": 13, "end": 13])]),
         ]))
-        let path = try! #require(board.routes(rows: [tile.id: rows])[bound.id])
+        let path = try! #require(board.geometry.routes(rows: [tile.id: rows])[bound.id])
         #expect(path.last == CGPoint(x: 400 + G.arrowGap, y: 100 + middle(ofRow: 5)))
     }
 
@@ -646,7 +673,7 @@ struct LayoutBoardTests {
         for route in ["straight", "orthogonal", "avoid"] {
             let forward = arrow(a, 12, b, 45, route: route)
             let back = arrow(b, 41, a, 18, route: route)
-            let routes = board.routes()
+            let routes = board.geometry.routes()
             let there = try! #require(routes[forward.id]), home = try! #require(routes[back.id])
             #expect(there[0] == CGPoint(x: 400 + G.arrowGap, y: y(a, 12)) && there[there.count - 1] == CGPoint(x: 600 - G.arrowGap, y: y(b, 45)), "\(route): \(there)")
             #expect(home[0] == CGPoint(x: 600 - G.arrowGap, y: y(b, 41)) && home[home.count - 1] == CGPoint(x: 400 + G.arrowGap, y: y(a, 18)), "\(route): \(home)")
@@ -661,7 +688,7 @@ struct LayoutBoardTests {
         let a = code(0, 0, lines: 10...19)
         let c = code(0, 400, lines: 10...19)
         let loop = arrow(a, 12, c, 15, route: "orthogonal")
-        let path = try! #require(board.routes()[loop.id])
+        let path = try! #require(board.geometry.routes()[loop.id])
         #expect(path.first == CGPoint(x: 400 + G.arrowGap, y: y(a, 12)) && path.last == CGPoint(x: 400 + G.arrowGap, y: y(c, 15)))
         #expect(path.allSatisfy { $0.x >= 400 }, "never through either tile: \(path)")
         #expect(!G.path(path, crosses: a.frame.rect) && !G.path(path, crosses: c.frame.rect))

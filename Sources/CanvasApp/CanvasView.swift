@@ -317,6 +317,11 @@ final class CanvasView: NSScrollView {
         tile.onMoveEnded = { [weak self] event in self?.endMove(event) }
         tile.onTitleDoubleClick = { [weak self] in self?.focus(tile: id) }
         tile.onMenu = { [weak self] in self?.objectMenu(for: id) }
+        // Created where it wouldn't be live (a batch building a board zoomed out or offscreen),
+        // a code, note, or HTML tile starts as its card rather than building its live view for
+        // the liveness pass to swap out. Terminals and browsers start live: they run a session
+        // or a page an agent may be driving.
+        if object.type != .terminal, object.type != .browser, !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
         document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
         tiles[id] = tile
         tile.zoomedOut = appliedScale > 0 && appliedScale < Self.liveThreshold
@@ -1054,12 +1059,7 @@ final class CanvasView: NSScrollView {
         // Mid-pinch, LOD flips and chrome rescaling wait for the gesture to end.
         if !magnifying {
             let scale = magnification
-            let near = documentVisibleRect.insetBy(dx: -Self.liveMargin, dy: -Self.liveMargin)
-            let far = documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
-            for tile in tiles.values {
-                let readable = scale >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
-                tile.setLive(readable && tile.frame.intersects(tile.isLive ? far : near))
-            }
+            for tile in tiles.values { tile.setLive(shouldBeLive(tile, scale: scale)) }
             if scale != appliedScale {
                 appliedScale = scale
                 for tile in tiles.values { tile.zoomedOut = scale < Self.liveThreshold }
@@ -1074,6 +1074,14 @@ final class CanvasView: NSScrollView {
         updateEdges()
         updateSeen()
         updateContentInView()
+    }
+
+    /// Live: readable at `scale` and near the viewport; a live tile stays live a little further
+    /// out and zoomed out (hysteresis), so small pans and zooms don't swap it back and forth.
+    private func shouldBeLive(_ tile: TileFrameView, scale: CGFloat) -> Bool {
+        let margin = tile.isLive ? Self.cardMargin : Self.liveMargin
+        let readable = scale >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
+        return readable && tile.frame.intersects(documentVisibleRect.insetBy(dx: -margin, dy: -margin))
     }
 
     // MARK: Hit testing for mentions

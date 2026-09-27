@@ -50,6 +50,7 @@ public final class BoardRegistry {
 
     private func broadcast(_ event: BoardEvent, board: BoardID) {
         subscribers.removeAll { !$0.connection.isOpen }
+        guard !subscribers.isEmpty else { return }
         let message: JSONValue = .object(["event": .string(event.name), "board": .string(board), "data": event.data])
         for subscriber in subscribers {
             if let filter = subscriber.board, filter != board { continue }
@@ -775,10 +776,13 @@ public final class ApiRouter {
     /// `layout.check`: accidental overlaps, arrows through tiles, labels on tiles or labels,
     /// content that doesn't fit its frame, and truncated captions, for `ids`, for what
     /// intersects `rect`, or for the whole board. Follow tiles are fixed-size viewers: never
-    /// overflow or truncated.
+    /// overflow or truncated. The board is judged as it was when the call arrived: files are read
+    /// concurrently and routes computed off the main actor on that snapshot (a whole-board check
+    /// is dozens of file reads and an `avoid` grid search per arrow).
     private func check(_ p: JSONValue) async throws -> JSONValue {
         let board: Board
         var scope: Set<ObjectID>?
+        var rect: Frame?
         if let ids = p["ids"]?.array?.compactMap(\.string) {
             guard let first = ids.first else { throw Failure("invalid_params", "ids must not be empty") }
             board = try self.board(forObject: first)
@@ -786,62 +790,71 @@ public final class ApiRouter {
             scope = Set(ids)
         } else {
             board = try self.board(p)
-            if let rect = try p["rect"].map({ try $0.decode(Frame.self) }) {
-                let routes = board.routes()
-                scope = Set(board.objects.values.filter { object in
-                    if let path = routes[object.id] { return DrawingGeometry.path(path, crosses: rect.rect) || path.contains { rect.rect.contains($0) } }
-                    return object.frame.intersects(rect)
-                }.map(\.id))
-            }
+            rect = try p["rect"].map { try $0.decode(Frame.self) }
+        }
+        let geometry = board.geometry
+        let objects = geometry.objects
+        let root = board.root
+        if let rect {
+            let routes = await offPool { geometry.routes() }
+            scope = Set(objects.values.filter { object in
+                if let path = routes[object.id] { return DrawingGeometry.path(path, crosses: rect.rect) || path.contains { rect.rect.contains($0) } }
+                return object.frame.intersects(rect)
+            }.map(\.id))
         }
         // Code tiles read from disk: those checked for fit, and those line-bound arrows attach to
         // (their line count bounds the scroll their anchors assume).
         var lineBound = Set<ObjectID>()
-        for object in board.objects.values where object.type == .arrow && (scope?.contains(object.id) ?? true) {
+        for object in objects.values where object.type == .arrow && (scope?.contains(object.id) ?? true) {
             guard let spec = ArrowSpec(object.props) else { continue }
             for case .object(let id, .some, _) in [spec.from, spec.to] { lineBound.insert(id) }
         }
-        var excerpts: [ObjectID: NoteExcerpt] = [:]
-        for object in board.objects.values.sorted(by: { $0.id < $1.id }) where object.type == .code && ((scope?.contains(object.id) ?? true) || lineBound.contains(object.id)) {
-            excerpts[object.id] = try? await ObjectMeasure.codeExcerpt(object.props, root: board.root)
-        }
-        // Line anchors sit on the rows the tile shows at its width: wrapped lines take several.
-        var rows: [ObjectID: CodeRows] = [:]
-        for (id, excerpt) in excerpts {
-            guard let object = board.objects[id], let path = object.props["path"]?.string,
-                  let text = try? await NoteSource.read(path, commit: nil, root: board.root) else {
-                rows[id] = CodeRows(lineCount: excerpt.fileLineCount)
-                continue
+        let read = objects.values.filter { $0.type == .code && ((scope?.contains($0.id) ?? true) || lineBound.contains($0.id)) }
+        let excerpts = await withTaskGroup(of: (ObjectID, NoteExcerpt?).self) { group in
+            for object in read {
+                let props = object.props
+                group.addTask { (object.id, try? await ObjectMeasure.codeExcerpt(props, root: root)) }
             }
-            let width = CGFloat(object.frame.w)
-            rows[id] = await offPool { CodeRows(file: text, width: width) }
+            var excerpts: [ObjectID: NoteExcerpt] = [:]
+            for await (id, excerpt) in group { excerpts[id] = excerpt }
+            return excerpts
         }
-        let report = board.layoutCheck(scope: scope, rows: rows)
-        var overflow: [JSONValue] = []
-        var truncated: [JSONValue] = []
-        let measurable = board.objects.values
+        let rows = await Self.lineRows(of: lineBound.filter { excerpts[$0] != nil }.compactMap { objects[$0] }, excerpts: excerpts, root: root)
+        let measurable = objects.values
             .filter { scope?.contains($0.id) ?? true }
             .filter { $0.type == .code && $0.props["followOf"]?.string == nil || $0.type == .note || ($0.type == .shape && ShapeSpec($0.props)?.kind == .text) }
             .sorted { $0.id < $1.id }
-        for object in measurable {
-            let size: CGSize
-            if object.type == .code {
-                // The rows' own extent, wrapped at the frame's width (so only the height can
-                // overflow); a caption too long for the frame is `truncated`, not overflow.
+        // Code: the rows' own extent, wrapped at the frame's width (so only the height can
+        // overflow); a caption too long for the frame is `truncated`, not overflow.
+        let code = measurable.filter { $0.type == .code }
+        let (report, codeSizes, captionMissing) = await offPool { [scope] in
+            var sizes: [ObjectID: CGSize] = [:]
+            var missing: [ObjectID: CGFloat] = [:]
+            for object in code {
                 guard let excerpt = excerpts[object.id] else { continue }
                 let caption = object.props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-                size = ObjectMeasure.codeRows(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption != nil, follow: false,
-                                              maxWidth: CGFloat(object.frame.w))
-                if let caption, let current = board.objects[object.id]?.frame {
-                    let missing = ObjectMeasure.captionWidth(caption) - current.w
-                    if missing >= 1 { truncated.append(.object(["id": .string(object.id), "what": .string("caption"), "x": .number(missing.rounded(.up))])) }
+                sizes[object.id] = ObjectMeasure.codeRows(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption != nil, follow: false,
+                                                          maxWidth: CGFloat(object.frame.w))
+                if let caption { missing[object.id] = ObjectMeasure.captionWidth(caption) - object.frame.w }
+            }
+            return (geometry.layoutCheck(scope: scope, rows: rows), sizes, missing)
+        }
+        var overflow: [JSONValue] = []
+        var truncated: [JSONValue] = []
+        for object in measurable {
+            let size: CGSize
+            let current = object.frame
+            if object.type == .code {
+                guard let measured = codeSizes[object.id] else { continue }
+                size = measured
+                if let missing = captionMissing[object.id], missing >= 1 {
+                    truncated.append(.object(["id": .string(object.id), "what": .string("caption"), "x": .number(missing.rounded(.up))]))
                 }
             } else {
                 // Notes and text wrap at the frame's width.
-                guard let measured = try? await ObjectMeasure.size(type: object.type, props: object.props, width: object.frame.w, root: board.root) else { continue }
+                guard let measured = try? await ObjectMeasure.size(type: object.type, props: object.props, width: current.w, root: root) else { continue }
                 size = measured
             }
-            guard let current = board.objects[object.id]?.frame else { continue }
             let x = max(0, size.width - current.w)
             let y = max(0, size.height - current.h)
             guard x >= 1 || y >= 1 else { continue }
@@ -854,6 +867,39 @@ public final class ApiRouter {
             "overflow": .array(overflow),
             "truncated": .array(truncated),
         ])
+    }
+
+    /// The visual rows line anchors sit on for each of `tiles` (code tiles with an excerpt): its
+    /// whole file wrapped at its frame width, the way the tile shows it, or one row per line when
+    /// the file can't be read. Each file is read once and wrapped once per width, concurrently.
+    static func lineRows(of tiles: [CanvasObject], excerpts: [ObjectID: NoteExcerpt], root: URL) async -> [ObjectID: CodeRows] {
+        let paths = Set(tiles.compactMap { $0.props["path"]?.string })
+        let texts = await withTaskGroup(of: (String, String?).self) { group in
+            for path in paths { group.addTask { (path, try? await NoteSource.read(path, commit: nil, root: root)) } }
+            var texts: [String: String] = [:]
+            for await (path, text) in group { texts[path] = text }
+            return texts
+        }
+        struct Key: Hashable { var path: String, width: Double }
+        let keys = Set(tiles.compactMap { tile in tile.props["path"]?.string.flatMap { texts[$0] != nil ? Key(path: $0, width: tile.frame.w) : nil } })
+        let wrapped = await withTaskGroup(of: (Key, CodeRows).self) { group in
+            for key in keys {
+                let text = texts[key.path]!
+                group.addTask { (key, await offPool { CodeRows(file: text, width: CGFloat(key.width)) }) }
+            }
+            var wrapped: [Key: CodeRows] = [:]
+            for await (key, rows) in group { wrapped[key] = rows }
+            return wrapped
+        }
+        var rows: [ObjectID: CodeRows] = [:]
+        for tile in tiles {
+            if let path = tile.props["path"]?.string, let found = wrapped[Key(path: path, width: tile.frame.w)] {
+                rows[tile.id] = found
+            } else if let excerpt = excerpts[tile.id] {
+                rows[tile.id] = CodeRows(lineCount: excerpt.fileLineCount)
+            }
+        }
+        return rows
     }
 
     // MARK: Helpers

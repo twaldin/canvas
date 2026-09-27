@@ -106,14 +106,17 @@ public struct ViewState: Sendable {
     public var selection: [ObjectID]
     public var enteredGroup: ObjectID?
     public var visible: Bool
+    /// The window's effective appearance, `dark` or `light`: what tiles, pages, and renders draw in.
+    public var appearance: String
 
-    public init(viewport: Viewport, promptTarget: ObjectID?, focused: ObjectID?, selection: [ObjectID], enteredGroup: ObjectID?, visible: Bool) {
+    public init(viewport: Viewport, promptTarget: ObjectID?, focused: ObjectID?, selection: [ObjectID], enteredGroup: ObjectID?, visible: Bool, appearance: String) {
         self.viewport = viewport
         self.promptTarget = promptTarget
         self.focused = focused
         self.selection = selection
         self.enteredGroup = enteredGroup
         self.visible = visible
+        self.appearance = appearance
     }
 }
 

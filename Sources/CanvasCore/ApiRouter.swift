@@ -722,6 +722,7 @@ public final class ApiRouter {
             var result: [String: JSONValue] = [
                 "board": .string(board.id), "viewport": state.viewport.json,
                 "selection": .array(state.selection.map(JSONValue.string)), "visible": .bool(state.visible),
+                "appearance": .string(state.appearance),
             ]
             if let target = state.promptTarget { result["promptTarget"] = .string(target) }
             if let focused = state.focused { result["focused"] = .string(focused) }
@@ -795,14 +796,14 @@ public final class ApiRouter {
         return .object(params)
     }
 
-    /// The measured size an `object.create`/`object.update` with `size: "fit"` gets, or a note
-    /// created without a frame height (sized to fit its markdown); nil otherwise. Notes and text
+    /// The measured size an `object.create`/`object.update` with `size: "fit"` gets, or a note or
+    /// image created without a frame height (sized to fit its markdown or picture); nil otherwise. Notes and text
     /// wrap at the given frame's `w` (a new note defaults to `ObjectMeasure.defaultNoteWidth`; an
     /// update keeps its current width); code takes the given `w` as its widest (default
     /// `CodeMetrics.defaultFitWidth`, also on an update, so a re-fit can widen a tile as well as
-    /// narrow it). `pending` are the params of creates earlier in the same batch, for updates of `$n`.
+    /// narrow it; an image likewise, default `LocalImage.defaultMaxWidth`). `pending` are the params of creates earlier in the same batch, for updates of `$n`.
     func fitSize(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> CGSize? {
-        let fitsNote = method == "object.create" && p["type"]?.string == ObjectType.note.rawValue && p["frame"]?["h"] == nil
+        let fitsNote = method == "object.create" && [ObjectType.note.rawValue, ObjectType.image.rawValue].contains(p["type"]?.string) && p["frame"]?["h"] == nil
         guard let size = p["size"] ?? (fitsNote ? .string("fit") : nil) else { return nil }
         guard size.string == "fit" else { throw Failure("invalid_params", "size must be \"fit\"") }
         let width = p["frame"]?["w"]?.number
@@ -823,7 +824,7 @@ public final class ApiRouter {
             base = (object.type, object.props, object.frame.w, board.root)
         }
         let props = p["props"].map { base.props.merging($0) } ?? base.props
-        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? (base.type == .code ? nil : base.width), root: base.root)
+        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? ([.code, .image].contains(base.type) ? nil : base.width), root: base.root)
     }
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
@@ -840,7 +841,7 @@ public final class ApiRouter {
             origin = (x, y)
         } else {
             let board = try board(p)
-            let placed = board.place(width: size.width, height: size.height, near: caller(p, on: board))
+            let placed = board.place(width: size.width, height: size.height, near: caller(p, on: board), stacking: true)
             origin = (placed.x, placed.y)
         }
         params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))

@@ -131,6 +131,11 @@ extension CanvasView {
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "HTML", dot: nil)
         case .changes:
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "Changes", dot: nil)
+        case .image:
+            // Found by its file too; the caption says which chart it is.
+            let path = nonEmpty(props["path"])
+            return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "Image", dot: nil,
+                                subtitle: nonEmpty(props["caption"]), terms: path.map { [$0] } ?? [], toolTip: path)
         case .browser:
             // Found by its address too ("localhost"); the host (and port) says which site it is.
             let url = nonEmpty(props["url"])

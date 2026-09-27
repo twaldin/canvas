@@ -2,8 +2,9 @@ import Foundation
 
 /// Which files a follow tile re-aims at: text files that exist in the agent's project. Agents
 /// also read what a code tile can't usefully show (their own `view.render` PNGs, screenshots,
-/// archives, files they are about to delete, scratch files in the temp directory); following
-/// those left the tile on "file not found: .tmp-render.png" or a binary notice.
+/// archives, files they are about to delete, scratch files in the temp directory, data files
+/// past the code tile's size limit); following those left the tile on "file not found:
+/// .tmp-render.png", a binary notice, or "file too large to show".
 public enum FollowFilter {
     /// Images, documents, archives, and other binaries, by extension (lowercased).
     static let binaryExtensions: Set<String> = [
@@ -20,7 +21,8 @@ public enum FollowFilter {
     /// root, the terminal's cwd) or in another worktree of a project's repository (an agent
     /// working in a `git worktree` of the board's repo: same common git directory); it isn't
     /// under a temp directory unless that project is too (scratch files outside a project that
-    /// lives in the temp directory); it exists, is a regular file, and isn't binary (by
+    /// lives in the temp directory); it exists, is a regular file no larger than
+    /// `GitDiffEngine.maxFileSize` (by its size attribute, unread), and isn't binary (by
     /// extension, or a NUL byte in its first 8000 bytes, git's own test).
     public static func follows(_ path: String, projects: [String], tempDirectories: [String] = tempDirectories) -> Bool {
         let file = URL(fileURLWithPath: path).standardizedFileURL
@@ -30,9 +32,10 @@ public enum FollowFilter {
             containing = [worktree.toplevel]
         }
         guard !containing.isEmpty, !binaryExtensions.contains(file.pathExtension.lowercased()) else { return false }
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory), !isDirectory.boolValue else { return false }
         let real = file.resolvingSymlinksInPath().path
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: real),
+              attributes[.type] as? FileAttributeType != .typeDirectory,
+              (attributes[.size] as? Int ?? 0) <= GitDiffEngine.maxFileSize else { return false }
         let temps = tempDirectories.map(Self.resolved).filter { contains($0, real) }
         guard containing.contains(where: { project in temps.allSatisfy { contains($0, Self.resolved(project)) } }) else { return false }
         guard let handle = FileHandle(forReadingAtPath: file.path) else { return false }

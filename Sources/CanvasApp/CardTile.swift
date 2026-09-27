@@ -43,7 +43,7 @@ final class CardTile: NSView, TileContent {
             label.stringValue = props["text"]?.string ?? ""
             label.alignment = .center
         case .browser:
-            label.stringValue = "\(props["title"]?.string ?? "Browser")\n\(props["url"]?.string ?? "")"
+            label.stringValue = "\((props["title"] ?? props["pageTitle"])?.string ?? "Browser")\n\(props["url"]?.string ?? "")"
         case .html:
             label.stringValue = props["title"]?.string ?? "HTML tile"
         default:

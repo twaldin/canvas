@@ -135,14 +135,14 @@ struct UndoTests {
         // Meanwhile the agent re-aims its follow tile, the page retitles itself, and the app
         // writes back what a note resolved.
         try board.follow(tile: agent.id, path: "b.py", range: LineRange(start: 2, end: 2), action: "edit")
-        try board.update(page.id, props: .object(["title": .string("Dashboard")]), actor: .system)
+        try board.writeBookkeeping(page.id, props: .object(["pageTitle": .string("Dashboard")]))
         try board.update(note.id, props: .object(["markdown": .string("mine, anchored")]), actor: .system)
         try board.follow(tile: agent.id, path: "a.py", range: LineRange(start: 2, end: 2), action: "read")
         #expect(board.history.undoSteps.count == steps + 2)
 
         #expect(board.undo())
         #expect(board.objects[note.id] == nil, "⌘Z undoes the user's last own action")
-        #expect(board.objects[page.id]?.props["title"]?.string == "Dashboard")
+        #expect(board.objects[page.id]?.props["pageTitle"]?.string == "Dashboard")
         #expect(board.undo())
         let back = try board.object(follow.id)
         #expect(back.frame.x == follow.frame.x, "the user's move is undone")
@@ -154,6 +154,38 @@ struct UndoTests {
         // Undoing the terminal's creation takes its follow tile along.
         while board.undo() {}
         #expect(board.objects.isEmpty)
+    }
+
+    @Test func aPagesOwnTitleIsBookkeepingThatNeverFightsTheAgent() throws {
+        // The designer study: the page's title replaced the agent's `title` and bumped `rev`, so the
+        // creator's `object.update rev: 1` failed with a conflict.
+        let board = makeBoard()
+        let agent = terminal(on: board)
+        let page = board.create(type: .browser, props: .object(["url": .string("http://localhost:5173/gui"), "title": .string("/gui at phone width (390)")]),
+                                frame: Frame(x: 900, y: 0, w: 390, h: 800), caller: agent.id)
+        var announced: [ObjectID] = []
+        board.onEvent = { if case .objectUpdated(let object) = $0 { announced.append(object.id) } }
+        var saves = 0
+        board.onChange = { saves += 1 }
+        let revision = board.revision, logged = board.activity.cursor, steps = board.history.undoSteps.count
+
+        try board.writeBookkeeping(page.id, props: .object(["pageTitle": .string("GUI")]))
+        let titled = try board.object(page.id)
+        #expect(titled.rev == 1 && titled.updatedBy == nil, "not a revision of the object")
+        #expect(titled.props["title"]?.string == "/gui at phone width (390)" && titled.props["pageTitle"]?.string == "GUI")
+        #expect(board.changed(since: revision) == [page.id] && announced == [page.id] && saves == 1, "shown, persisted, and seen by board.get since")
+        #expect(board.history.undoSteps.count == steps, "no undo step")
+        #expect(board.activity.cursor == logged, "not logged")
+        #expect(throws: BoardError.self) { try board.writeBookkeeping(page.id, props: .object(["title": .string("x")])) }
+
+        // The creator's update at the rev it got still lands; undoing it keeps the live page title.
+        try board.update(page.id, rev: 1, frame: Frame(x: 900, y: 0, w: 390, h: 844), caller: agent.id)
+        try board.writeBookkeeping(page.id, props: .object(["pageTitle": .string("GUI · cart")]))
+        #expect(board.undo())
+        let undone = try board.object(page.id)
+        #expect(undone.frame.h == 800 && undone.props["pageTitle"]?.string == "GUI · cart" && undone.props["title"]?.string == "/gui at phone width (390)")
+        #expect(board.redo())
+        #expect(try board.object(page.id).props["pageTitle"]?.string == "GUI · cart")
     }
 
     @Test func aNewChangeAfterUndoDropsTheRedoBranch() throws {

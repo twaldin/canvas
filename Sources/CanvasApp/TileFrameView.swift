@@ -178,8 +178,9 @@ final class TileFrameView: NSView {
             let path = props["path"].flatMap(\.string).map(PathLabel.short) ?? "code"
             return props["followOf"] != nil ? "↳ \(path)" : path
         case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "Note"
-        case .browser: return props["title"]?.string ?? props["url"]?.string ?? "Browser"
+        case .browser: return [props["title"], props["pageTitle"], props["url"]].lazy.compactMap { $0?.string }.first { !$0.isEmpty } ?? "Browser"
         case .html: return props["title"]?.string ?? "HTML"
+        case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map(PathLabel.short) ?? "Image"
         case .changes:
             let spec = ChangesSpec(props)
             return props["title"]?.string ?? (spec.paths.isEmpty ? "Changes" : "Changes: \(spec.paths.map(PathLabel.short).joined(separator: ", "))")

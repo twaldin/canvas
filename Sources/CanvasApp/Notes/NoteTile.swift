@@ -24,6 +24,8 @@ final class NoteTile: NSView, TileContent {
     private var document: Document
     private var fences: [NoteMarkdown.AnchoredFence] = []
     private var excerpts: [String: NoteExcerpt] = [:]
+    /// `![alt](path)` pictures by destination, re-read when their files change.
+    private var images: [String: NSImage] = [:]
     /// Text each fence showed when first resolved: re-finds moved ranges, stands in when lost,
     /// for fences whose anchor couldn't be written back (see `persistAnchors`).
     private var captured: [String: [String]] = [:]
@@ -154,7 +156,7 @@ final class NoteTile: NSView, TileContent {
     /// and excerpts but no text layout (about 1 MB per note on a large board).
     private func renderDisplay() {
         guard live || isEditing else { return }
-        let text = NoteRenderer(excerpts: excerpts).render(document, placeholder: Self.placeholder)
+        let text = NoteRenderer(excerpts: excerpts, images: images).render(document, placeholder: Self.placeholder)
         display.textStorage?.setAttributedString(text)
     }
 
@@ -167,7 +169,12 @@ final class NoteTile: NSView, TileContent {
         pendingResolve = nil
         resolveTask?.cancel()
         guard live, window != nil else { return }
-        guard !fences.isEmpty else {
+        let sources = NoteImages.sources(in: document)
+        guard !fences.isEmpty || !sources.isEmpty else {
+            if !images.isEmpty {
+                images = [:]
+                renderDisplay()
+            }
             watch(files: [], root: false)
             return
         }
@@ -182,23 +189,27 @@ final class NoteTile: NSView, TileContent {
                 results[job.key] = await NoteSource.excerpt(for: job.fence, root: root, captured: captured[job.key], body: job.body)
                 if Task.isCancelled { return }
             }
+            let images = await NoteImages.load(sources, root: root)
+            if Task.isCancelled { return }
             guard let self, self.resolveGeneration == generation else { return }
-            self.apply(results)
+            self.apply(results, images: images, imageFiles: Array(NoteImages.files(sources, root: root).values))
         }
     }
 
-    private func apply(_ results: [String: NoteExcerpt]) {
+    private func apply(_ results: [String: NoteExcerpt], images: [String: NSImage], imageFiles: [URL]) {
         for (key, excerpt) in results where captured[key] == nil && excerpt.status == .exact && !excerpt.lines.isEmpty {
             captured[key] = excerpt.lines
         }
-        if results != excerpts {
+        // Images come back re-read (a chart re-saved in place): any image re-renders.
+        if results != excerpts || !images.isEmpty || !self.images.isEmpty {
             excerpts = results
+            self.images = images
             renderDisplay()
         }
         let unpinned = fences.filter { $0.fence.commit == nil }
         let files = unpinned.compactMap { results[$0.key]?.path }.filter { !$0.isEmpty }
         let unfound = unpinned.contains { $0.fence.path == nil && results[$0.key]?.path.isEmpty != false }
-        watch(files: Set(files.map { FileEvents.canonical(board.absoluteURL($0).path) }), root: unfound)
+        watch(files: Set(files.map { FileEvents.canonical(board.absoluteURL($0).path) } + imageFiles.map { FileEvents.canonical($0.path) }), root: unfound)
         persistAnchors(results)
     }
 
@@ -512,7 +523,9 @@ final class NoteTile: NSView, TileContent {
         if resolved != excerpts, !live {
             excerpts = resolved
         }
-        let text = NoteRenderer(excerpts: resolved).render(document, placeholder: Self.placeholder)
+        let sources = NoteImages.sources(in: document)
+        let pictures = await NoteImages.load(sources, root: root)
+        let text = NoteRenderer(excerpts: resolved, images: pictures).render(document, placeholder: Self.placeholder)
         let inset = NSSize(width: 8, height: 10)
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()

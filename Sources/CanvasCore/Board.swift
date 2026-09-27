@@ -189,7 +189,7 @@ public final class Board {
         if let fitted = fittedFrame(ofGroup: object) {
             object.frame = fitted
         } else if frame == nil {
-            object.frame = place(width: size.w, height: size.h, near: caller)
+            object.frame = place(width: size.w, height: size.h, near: caller, stacking: true)
         }
         commit(object)
         history.record(.created(object))
@@ -205,6 +205,24 @@ public final class Board {
     public func update(_ id: ObjectID, rev: Int? = nil, frame: Frame? = nil, z: Double? = nil, props: JSONValue? = nil, caller: ObjectID? = nil, actor: ActivityActor? = nil) throws -> CanvasObject {
         if actor == .system { return try unrecorded { try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: []) } }
         return try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: [])
+    }
+
+    /// Writes props the app keeps about an object rather than its content (a browser's
+    /// `pageTitle`; `UndoHistory.bookkeeping` names them per type): stored, persisted, and
+    /// announced (`objectUpdated`, a new board revision for `board.get since`), but the object's
+    /// `rev`, `updatedBy`, and `updatedAt` stay, so an agent's `object.update rev:` still holds;
+    /// never an undo step, never rewound, never logged.
+    public func writeBookkeeping(_ id: ObjectID, props: JSONValue) throws {
+        let before = try object(id)
+        let allowed = UndoHistory.bookkeeping(before)
+        guard let keys = props.object?.keys, keys.allSatisfy(allowed.contains) else {
+            throw BoardError.invalidParams("\(before.type.rawValue) bookkeeping is \(allowed.sorted()), not \(props.object.map { $0.keys.sorted() } ?? [])")
+        }
+        var object = before
+        object.props = object.props.merging(props)
+        guard object != before else { return }
+        commit(object)
+        onEvent?(.objectUpdated(object))
     }
 
     /// `update`, re-bounding the groups that contain the object in the same undo step.
@@ -376,6 +394,7 @@ public final class Board {
         case .note: (280, 266)
         case .html: (640, 506)
         case .changes: (820, 620)
+        case .image: (640, 506)
         case .shape: (160, 100)
         case .arrow, .group: (0, 0)
         }
@@ -385,6 +404,8 @@ public final class Board {
     public static let placementGap = 24.0
     /// The smallest a follow tile gets so that it lands wholly in view beside its terminal.
     public static let followMinimumSize = (w: 400.0, h: 300.0)
+    /// How recent an agent's last object must be for its next one to stack beside it (`place`).
+    public static let answerStackWindow: TimeInterval = 10 * 60
 
     /// Where a new object goes when nobody gave it a frame: the free slot nearest the caller's
     /// tile, touching it at `placementGap` when there's room (right first, then below, left,
@@ -393,10 +414,41 @@ public final class Board {
     /// center. See `place(_:)` for what counts as free. `shrinkingTo` (a follow tile's minimum
     /// size): when nothing that size fits wholly in view, a smaller slot that does, down to the
     /// minimum, beats one partly outside it.
-    public func place(width: Double, height: Double, near caller: ObjectID?, shrinkingTo minimum: (w: Double, h: Double)? = nil) -> Frame {
-        if let caller, let anchor = objects[caller] { return freeSlot(width: width, height: height, anchor: anchor.frame, beside: true, minimum: minimum) }
-        let view = viewport() ?? Frame(x: 0, y: 0, w: 0, h: 0)
-        return place(Frame(x: view.x + view.w / 2 - width / 2, y: view.y + view.h / 2 - height / 2, w: width, h: height))
+    ///
+    /// `stacking` (an agent's own create without a frame; `caller` is that agent): its answers
+    /// stack instead of going round the terminal. When the caller created a tile within
+    /// `answerStackWindow` that is still on the board (not a follow tile), the slot beside the
+    /// newest such tile, below first, then right, is taken if it touches that tile at
+    /// `placementGap` below or right of it and is no less in view (wholly, partly, not at all)
+    /// than the slot beside the caller; otherwise the caller rule above applies.
+    public func place(width: Double, height: Double, near caller: ObjectID?, shrinkingTo minimum: (w: Double, h: Double)? = nil, stacking: Bool = false) -> Frame {
+        guard let caller, let anchor = objects[caller] else {
+            let view = viewport() ?? Frame(x: 0, y: 0, w: 0, h: 0)
+            return place(Frame(x: view.x + view.w / 2 - width / 2, y: view.y + view.h / 2 - height / 2, w: width, h: height))
+        }
+        let beside = freeSlot(width: width, height: height, anchor: anchor.frame, beside: true, minimum: minimum)
+        guard stacking, let previous = latestAnswer(of: caller)?.frame else { return beside }
+        let stacked = freeSlot(width: width, height: height, anchor: previous, beside: true, minimum: minimum, order: [.below, .right, .left, .above])
+        let gap = Self.placementGap
+        let below = abs(stacked.y - (previous.maxY + gap)) < 1 && stacked.x < previous.maxX && stacked.maxX > previous.x
+        let right = abs(stacked.x - (previous.maxX + gap)) < 1 && stacked.y < previous.maxY && stacked.maxY > previous.y
+        return (below || right) && inViewClass(stacked) <= inViewClass(beside) ? stacked : beside
+    }
+
+    /// The tile `caller` (an agent) created last, within `answerStackWindow`, follow tiles aside.
+    private func latestAnswer(of caller: ObjectID) -> CanvasObject? {
+        let since = Date().addingTimeInterval(-Self.answerStackWindow)
+        return objects.values
+            .filter { $0.createdBy == .agent(tile: caller) && $0.createdAt >= since && RenderMath.isTile($0.type) && $0.props["followOf"] == nil }
+            .max { ($0.createdAt, $0.z) < ($1.createdAt, $1.z) }
+    }
+
+    /// 0 wholly inside the viewport (kept `placementGap` from its edges) or no viewport, 1 partly, 2 outside.
+    private func inViewClass(_ slot: Frame) -> Int {
+        let gap = Self.placementGap
+        guard let view = viewport(), view.w > 2 * gap, view.h > 2 * gap else { return 0 }
+        let screen = Frame(x: view.x + gap, y: view.y + gap, w: view.w - 2 * gap, h: view.h - 2 * gap)
+        return screen.contains(slot) ? 0 : screen.intersects(slot) ? 1 : 2
     }
 
     /// The free slot nearest `ideal` (a frame of the object's size, e.g. at a click point). A slot
@@ -409,10 +461,11 @@ public final class Board {
         freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false, minimum: nil)
     }
 
-    /// `beside`: the slot goes next to `anchor` (an object), nearest by the gap between them;
-    /// otherwise it replaces `anchor`, nearest by origin. `minimum`: a slot partly in view may be
-    /// cut down to its part in view when that is at least this big.
-    private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool, minimum: (w: Double, h: Double)?) -> Frame {
+    /// `beside`: the slot goes next to `anchor` (an object), nearest by the gap between them, then
+    /// by side in `order`; otherwise it replaces `anchor`, nearest by origin. `minimum`: a slot
+    /// partly in view may be cut down to its part in view when that is at least this big.
+    private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool, minimum: (w: Double, h: Double)?,
+                          order: [Layout.Side] = [.right, .below, .left, .above]) -> Frame {
         let gap = Self.placementGap
         let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape }
             .map { Frame(x: $0.frame.x - gap, y: $0.frame.y - gap, w: $0.frame.w + 2 * gap, h: $0.frame.h + 2 * gap) }
@@ -431,26 +484,26 @@ public final class Board {
             ys.formUnion([screen.y.rounded(.up), (screen.maxY - h).rounded(.down)])
         }
         // In view, cut down to fit in view, partly in view, out of view; then distance to the
-        // anchor, then side (right, below, left, above), then distance from where that side's
-        // slot would ideally start; ties go top-left first.
+        // anchor, then side (in `order`), then distance from where that side's slot would ideally
+        // start; ties go top-left first.
         typealias Cost = (Int, Double, Int, Double, Double, Double)
         func cost(_ slot: Frame, cut: Bool) -> Cost {
             let outside = cut ? 1 : screen.map { $0.contains(slot) ? 0 : $0.intersects(slot) ? 2 : 3 } ?? 0
             guard beside else { return (outside, 0, 0, hypot(slot.x - anchor.x, slot.y - anchor.y), slot.y, slot.x) }
             let dx = max(0, anchor.x - slot.maxX, slot.x - anchor.maxX)
             let dy = max(0, anchor.y - slot.maxY, slot.y - anchor.maxY)
-            let side: Int
+            let side: Layout.Side
             let ideal: (x: Double, y: Double)
             if slot.x >= anchor.maxX {
-                (side, ideal) = (0, (anchor.maxX + gap, anchor.y))
+                (side, ideal) = (.right, (anchor.maxX + gap, anchor.y))
             } else if slot.y >= anchor.maxY {
-                (side, ideal) = (1, (anchor.x, anchor.maxY + gap))
+                (side, ideal) = (.below, (anchor.x, anchor.maxY + gap))
             } else if slot.maxX <= anchor.x {
-                (side, ideal) = (2, (anchor.x - w - gap, anchor.y))
+                (side, ideal) = (.left, (anchor.x - w - gap, anchor.y))
             } else {
-                (side, ideal) = (3, (anchor.x, anchor.y - h - gap))
+                (side, ideal) = (.above, (anchor.x, anchor.y - h - gap))
             }
-            return (outside, hypot(dx, dy).rounded(), side, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
+            return (outside, hypot(dx, dy).rounded(), order.firstIndex(of: side) ?? order.count, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
         }
         /// A slot partly in view cut down to its part in view, when that is at least `minimum`.
         func cut(_ slot: Frame) -> Frame? {
@@ -635,9 +688,9 @@ public final class Board {
     /// parallel edits land within milliseconds) stays listed. Ignored (returns nil) while the
     /// terminal doesn't follow (`props.follow` false) and for files `FollowFilter` rejects:
     /// outside the board root, the terminal's cwd, and every other worktree of their
-    /// repositories, scratch files in the temp directory, missing files, images, and other
-    /// binaries. The tile keeps its last real file. A file outside the root keeps its absolute
-    /// path, so the tile diffs it in its own worktree.
+    /// repositories, scratch files in the temp directory, missing files, files over the code
+    /// tile's size limit, images, and other binaries. The tile keeps its last real file. A file
+    /// outside the root keeps its absolute path, so the tile diffs it in its own worktree.
     @discardableResult
     public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject? {
         let terminal = try object(tile)

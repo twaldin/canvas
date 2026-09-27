@@ -18,8 +18,17 @@ export function canvasGuidance(agent: GuidanceAgent, tile: string): string {
     "Write code references as repo-relative `path:line` (`src/app.ts:42`, `src/app.ts:42-60`): the user ⌘-clicks them to open the code beside you.",
     "When your answer is something the user will come back to (a plan, a walkthrough across several files, a comparison), put it on the canvas or offer to; one-off answers stay in the terminal.",
     "To show the user code, a page, or a diagram beside this terminal, use the canvas (skill, `canvas` CLI, SDK). Never drive the Canvas app with GUI automation (Computer Use, AppleScript) and never publish it elsewhere (artifacts, gists) instead.",
+    ...browserLines(agent),
     ...connectionLines(agent, socket, tile, board),
   ].join("\n");
+}
+
+/** omp's `browser` drives Canvas browser tiles here (the cmux backend), which it can't resize. */
+function browserLines(agent: GuidanceAgent): string[] {
+  if (agent !== "omp") return [];
+  return [
+    "Your `browser` opens its page in a Canvas browser tile beside you, and the tile is the viewport: `viewport`, `tab.setViewport` and `tab.emulate` don't change it and `tab.devices()` is unsupported. For a phone or tablet width, keep that tile (the user sees it; don't switch to a headless browser) and resize it: `canvas object.update --id <tile> --json '{\"frame\":{\"w\":390,\"h\":902}}'` (w = the CSS width; h = the height + 58 for the title and address bars; the tile is your newest browser object in `canvas board.get`), then read innerWidth again.",
+  ];
 }
 
 function skillLines(agent: GuidanceAgent): string[] {

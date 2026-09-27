@@ -71,6 +71,13 @@ public enum HtmlKit {
         case "json": "application/json"
         case "svg": "image/svg+xml"
         case "png": "image/png"
+        case "jpg", "jpeg": "image/jpeg"
+        case "gif": "image/gif"
+        case "webp": "image/webp"
+        case "heic", "heif": "image/heic"
+        case "tif", "tiff": "image/tiff"
+        case "bmp": "image/bmp"
+        case "pdf": "application/pdf"
         case "woff2": "font/woff2"
         default: "application/octet-stream"
         }

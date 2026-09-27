@@ -22,11 +22,12 @@ public final class UndoHistory {
     static let followBookkeeping: Set<String> = ["path", "range", "lastAction", "history"]
 
     /// The props of `object` nobody sets on purpose: a terminal's lifecycle, session and title;
-    /// a page's title (the app's write-back); a follow tile's aim and history.
+    /// a browser page's own title (`props.pageTitle`, the app's write-back; `title` is the
+    /// creator's and stays undoable); a follow tile's aim and history.
     static func bookkeeping(_ object: CanvasObject) -> Set<String> {
         switch object.type {
         case .terminal: terminalBookkeeping
-        case .browser: ["title"]
+        case .browser: ["pageTitle"]
         case .code where object.props["followOf"]?.string != nil: followBookkeeping
         default: []
         }

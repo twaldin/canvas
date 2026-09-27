@@ -401,10 +401,11 @@ final class BrowserTile: NSView, TileContent {
         }
     }
 
-    /// The page named itself: the app's write-back, not anyone's edit.
+    /// The page named itself: bookkeeping (`props.pageTitle`), not anyone's edit, so the tile's
+    /// `rev` stays and an agent's own `title` keeps its place.
     private func commitTitle(_ title: String?) {
-        guard let title, !title.isEmpty, title != object.props["title"]?.string else { return }
-        _ = try? board.update(objectID, props: .object(["title": .string(title)]), actor: .system)
+        guard let title, !title.isEmpty, title != object.props["pageTitle"]?.string else { return }
+        try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .string(title)]))
     }
 
     /// A new tile beside this one (⌘-click, `target=_blank`, `window.open`), credited like a

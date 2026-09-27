@@ -25,12 +25,14 @@ Error codes: `not_found` (no such object/agent/board; a code tile's file or `pin
 - `tray.list` shows what the user has staged but not yet sent. Don't drain the tray yourself; your harness attaches it to the user's next prompt.
   The tray's mentions are for the terminal it shows (`view.get` `promptTarget`): `tray.drain` from any other terminal returns none (`held` says how many wait) and leaves them staged.
   A drawn shape's mention quotes its whole text, says `over <type> <id>` (or `partly over`, for a shape mostly on a tile) with the region in that tile's units, and for a shape on a browser or HTML tile lists the page elements under it (`<selector> "<text>"`, as the page is laid out when the prompt is sent). A Hyper-click on a drawing mentions the whole selection or drawing group it belongs to.
+- `view.get` says what the user sees, including `appearance` (`dark` or `light`): tiles and renders draw in it, so style charts and pages to match
+  (dark: a transparent or dark background with light text, e.g. matplotlib `plt.style.use("dark_background")` and `savefig(…, transparent=True)`).
 - An arrow's `frame` is the bounds of its routed line as drawn.
 
 ## Objects
 
 - `frame` is `{x, y, w, h}` in canvas points (100% zoom): the whole box the object draws. A tile's 26 pt title bar is inside its frame, at the top.
-  Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room). Without a calling terminal (a script outside any tile), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray.
+  Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room); within 10 minutes of your last tile, the next one stacks below it (else right of it) when that is as much in view. Without a calling terminal (a script outside any tile), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray.
 - `props` on `object.update` merge shallowly: `{"range": …}` replaces `range` and keeps other props. Set a prop to `null` to clear it.
   `frame` on `object.update` may give any of `x, y, w, h` (`{"frame": {"h": 420}}`); the rest stay. On create it needs all four, or `size: "fit"` (below).
 - A prop the type doesn't define (a typo like `colour` or `markdwon`) is kept, but `object.create`/`object.update` (and each batch op's result) add `warnings`, one per unknown key naming the type's real props. No `warnings` key means every prop is known.
@@ -45,6 +47,11 @@ Error codes: `not_found` (no such object/agent/board; a code tile's file or `pin
   The user reviews there: hunks as a unified diff, Stage and Revert per hunk and per file, each one ⌘Z. To show them what you changed, create one (`size: "fit"` sizes it to every hunk, at most 4000 pt tall) rather than an HTML diff.
   `object.get` adds `changes`: `files` (board-relative `path`, `status` added/modified/deleted/renamed, `added`/`removed`, `hunks` with `header`, `old`/`new` `{start, count}`, and `status` unstaged/staged/committed) as git has them now, so hunks the user reverted are gone and staged ones say so;
   `props.reviewed` lists what they staged or reverted (`action`, `path`, `scope`, `header`). The tile writes `reviewed`; changing it yourself does nothing to git.
+- Image tiles (`type: image`, `ImageProps`): `{"path": "out/fig.png", "caption": "…"}` (board-relative or absolute; png, jpg, gif, webp, heic, tiff, bmp, svg, a pdf's first page).
+  This is where a chart goes: save the figure to a file and create the tile, no base64 in HTML. Without a frame (or `frame` of just x, y, w) it fits its picture: one point per pixel, at most `w` (default 960) wide.
+  It reloads when the file changes on disk, so re-save the chart to the same path to update it (no `object.update` needed). A Hyper-click on it mentions `image <path> · pixel (x, y) of W×H`.
+- Images elsewhere: a note shows `![alt](out/fig.png)` (board-relative, or an absolute path inside the board root or the temp directory), scaled to its width;
+  an HTML tile loads `<img src="out/fig.png">` the same way (board-relative, or `/tmp/…`); `file://` URLs and paths anywhere else never load in a page.
 
 ## Layout
 
@@ -56,9 +63,12 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   a range whose longest line fits stays exactly that narrow, longer lines soft-wrap and the height counts their extra rows, and a caption wider than that truncates.
   Notes: the rendered markdown, live fences resolved, at `width` (default 280). Text shapes: at `width`, or one unwrapped line per paragraph.
   HTML: the page laid out `width` wide (default 640) once it has rendered (Mermaid, `<canvas-code>` excerpts), as tall as its document, at most 4000 pt (a longer page scrolls in the tile).
-  Changes: every file and hunk row, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 pt. Browser tiles are `unsupported`.
-- `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note, text, or an HTML page, or to cap a code tile's width);
-  an update re-measures at the object's current position and width (code: at `frame.w` or the 960 pt default, never its current width, so a re-fit can widen it).
+  Changes: every file and hunk row, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 pt.
+  Images: the picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip. Browser tiles are `unsupported`.
+- `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note, text, or an HTML page, or to cap a code tile's or image's width);
+  an update re-measures at the object's current position and width (code and images: at `frame.w` or the 960 pt default, never their current width, so a re-fit can widen them).
+  After changing an HTML tile's `html` or a note's `markdown`, refit it in the same call: `canvas.object.update(id=tile, props={"html": page}, size="fit")` (the tile doesn't grow by itself).
+  `object.measure` takes `width`, not `frame`.
 - `canvas.layout.place(id=a, near=b, side="right", gap=40, align="start")` (`side`: right, left, above, below; `align`: start, center, end)
   and `canvas.layout.stack(ids=[a, b, c], direction="row", gap=40, wrap_at=2400, align="start", origin={"x": 0, "y": 0})` (all but `ids` optional) move objects in one undo step and return the new frames.
   Groups move with their members, so `canvas.layout.stack(ids=[lane1, lane2], direction="column")` lays out lanes; bound arrows follow.

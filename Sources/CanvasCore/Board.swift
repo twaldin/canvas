@@ -108,9 +108,10 @@ public final class Board {
     /// The canvas rect the board's window shows (canvas coordinates); nil without a window.
     /// Placement prefers slots inside it.
     public var viewport: () -> Frame? = { nil }
-    /// An arrow's route as currently drawn (canvas coordinates), so deleting what it points at
-    /// keeps its end exactly where the user saw it. Without it, routes come from object frames.
-    public var arrowRoute: ((ObjectID) -> (start: CGPoint, end: CGPoint)?)?
+    /// An arrow's routed line as currently drawn (canvas coordinates, at least two points), so
+    /// deleting what it points at keeps its end exactly where the user saw it and its reported
+    /// frame is what is drawn. Without it, routes come from object frames.
+    public var arrowPath: ((ObjectID) -> [CGPoint]?)?
     /// Terminal tiles that left the board for good, once the step that removed them is over:
     /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create). A terminal a failed
     /// batch deleted and put back never counts. The app ends their sessions.
@@ -186,7 +187,7 @@ public final class Board {
         }
         commit(object)
         history.record(.created(object))
-        log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(object.frame))")
+        log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
         onEvent?(.objectCreated(object))
         return object
     }
@@ -307,7 +308,7 @@ public final class Board {
             markMentionsEdited(for: object.id)
             onEvent?(.objectUpdated(object))
         } else {
-            log(.created, object, actor: replayActor, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(object.frame))")
+            log(.created, object, actor: replayActor, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
             onEvent?(.objectCreated(object))
         }
     }
@@ -467,12 +468,13 @@ public final class Board {
     }
 
     /// Resolve every staged mention at its current revision and return the prompt context.
-    /// `peek` leaves the tray intact for a later `commit` of exactly these ids.
+    /// `peek` leaves the tray intact for a later `commit` of exactly these ids. `caller` is the
+    /// terminal the context goes to: mentions of it say so, other terminals are named.
     /// Old-side and pinned code excerpts are read from git, hence async.
-    public func drain(peek: Bool = false) async -> (mentions: [MentionContext.Resolved], context: String) {
+    public func drain(peek: Bool = false, caller: ObjectID? = nil) async -> (mentions: [MentionContext.Resolved], context: String) {
         var resolved: [MentionContext.Resolved] = []
         for (index, mention) in tray.enumerated() {
-            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self))
+            resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self, caller: caller))
         }
         let context = MentionContext.render(resolved, board: self)
         if !peek { commit(resolved.map(\.id)) }

@@ -91,16 +91,21 @@ public final class ApiRouter {
     public var viewState: ((Board) -> ViewState?)?
     /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`), read and
     /// trimmed off the main actor; nil when the session doesn't exist.
-    public var readTerminal: ((Board, ObjectID, _ lines: Int) async -> (text: String, lines: Int)?)?
+    public var readTerminal: ((Board, ObjectID, _ lines: Int) async -> TerminalTail.Tail?)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
     static let readLinesDefault = 100
     static let readLinesMax = 2000
+    /// How much of a terminal `agent.prompt` remembers from just before it submits: enough to
+    /// cover the screen the reply is compared against (`agent.read` `since: "prompt"`).
+    static let promptMarkLines = 400
 
     /// Terminals prompted through the API that have not yet reported work; `agent.wait` must not
     /// answer from the pre-prompt state.
     private var pendingPrompts: Set<ObjectID> = []
+    /// Each prompted terminal's text just before its last `agent.prompt` submitted.
+    private var promptMarks: [ObjectID: TerminalTail.Tail] = [:]
     private var waiters: [Waiter] = []
 
     private struct Waiter {
@@ -132,12 +137,10 @@ public final class ApiRouter {
             }
             if method == "agent.wait" { return try wait(id, params, connection) }
             if method == "agent.read" { return Self.ok(id, try await read(params)) }
+            if method == "agent.prompt" { return Self.ok(id, try await prompt(params)) }
             if method == "view.render" { return Self.ok(id, try await render(params)) }
             if method == "view.snapshot" { return Self.ok(id, try await snapshot(params)) }
-            if method == "tray.drain" {
-                let drained = try await board(params).drain(peek: params["peek"]?.bool ?? false)
-                return Self.ok(id, .object(["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)]))
-            }
+            if method == "tray.drain" { return Self.ok(id, try await drain(params)) }
             switch method {
             case "object.measure": return Self.ok(id, try await measure(params))
             case "object.batch": return Self.ok(id, try await batch(params))
@@ -198,13 +201,23 @@ public final class ApiRouter {
         return nil
     }
 
-    /// The response for a satisfied waiter, or nil while it must keep waiting.
+    /// The response for a satisfied waiter, or nil while it must keep waiting. A terminal whose
+    /// agent reports no lifecycle (or stopped reporting one: it exited) can never satisfy it.
     private func reply(to waiter: Waiter, on board: Board) -> JSONValue? {
         guard let terminal = board.objects[waiter.tile] else {
             return Self.error(waiter.id, Failure("not_found", "terminal \(waiter.tile) was closed"))
         }
-        guard !pendingPrompts.contains(waiter.tile), waiter.until.contains(Self.state(of: terminal)) else { return nil }
+        let state = Self.state(of: terminal)
+        if state == LifecycleState.unknown.rawValue, !waiter.until.contains(state) {
+            return Self.error(waiter.id, Self.lifecycleUnknown(terminal))
+        }
+        guard !pendingPrompts.contains(waiter.tile), waiter.until.contains(state) else { return nil }
         return Self.ok(waiter.id, .object(["agent": agentEntry(terminal, on: board)]))
+    }
+
+    static func lifecycleUnknown(_ terminal: CanvasObject) -> Failure {
+        Failure("unavailable", "terminal \(terminal.id) reports no agent lifecycle (nothing in it has a Canvas integration, or its agent exited), "
+            + "so agent.wait can't tell when it is done; poll agent.read with since: \"prompt\" instead")
     }
 
     private func observe(_ event: BoardEvent, on board: Board) {
@@ -219,6 +232,7 @@ public final class ApiRouter {
         case .objectDeleted(let id):
             tile = id
             pendingPrompts.remove(id)
+            promptMarks.removeValue(forKey: id)
         default:
             return
         }
@@ -265,22 +279,79 @@ public final class ApiRouter {
         return .object(entry.filter { $0.value != .null })
     }
 
-    /// `agent.read`: the tail of the session text. The read runs off the main actor (it spawns
+    /// `agent.read`: the tail of the session text, or with `since: "prompt"` what the terminal
+    /// printed after the last `agent.prompt` to it. The read runs off the main actor (it spawns
     /// `zmx history`), and the reply stays in order because each connection is served serially.
     private func read(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"))
-        let requested = p["lines"]?.int ?? Self.readLinesDefault
+        let since = p["since"]?.string
+        guard since == nil || since == "prompt" else { throw Failure("invalid_params", "since must be \"prompt\"") }
+        let requested = p["lines"]?.int ?? (since == nil ? Self.readLinesDefault : Self.readLinesMax)
         guard requested >= 1 else { throw Failure("invalid_params", "lines must be at least 1") }
         guard let readTerminal else { throw Failure("unsupported", "reading terminals needs the app UI") }
-        guard let tail = await readTerminal(board, terminal.id, min(requested, Self.readLinesMax)) else {
+        var mark: TerminalTail.Tail?
+        if since != nil {
+            guard let found = promptMarks[terminal.id] else {
+                throw Failure("not_found", "no agent.prompt has reached terminal \(terminal.id) since Canvas started; read with lines instead")
+            }
+            mark = found
+        }
+        // A reply is compared against the screen it followed, so it reads the most there is.
+        guard let tail = await readTerminal(board, terminal.id, mark == nil ? min(requested, Self.readLinesMax) : Self.readLinesMax) else {
             throw Failure("unavailable", "terminal \(terminal.id) has no running session")
         }
+        var result: [String: JSONValue] = [:]
+        var shown = tail
+        if let mark {
+            let boundary = tail.boundary(after: mark)
+            let reply = tail.rows(from: boundary)
+            shown = reply.suffix(min(requested, Self.readLinesMax))
+            // Cut by `lines`, or the reply is longer than the tail reaches.
+            result["truncated"] = .bool(shown.lines < reply.lines || (tail.positions.first ?? 0) > boundary)
+        }
         let current = board.objects[terminal.id] ?? terminal
+        result["agent"] = agentEntry(current, on: board)
+        result["text"] = .string(shown.text)
+        result["lines"] = .number(Double(shown.lines))
+        return .object(result)
+    }
+
+    /// `agent.prompt`: remembers the terminal's text as it is just before submitting (the reply
+    /// boundary for `agent.read` `since: "prompt"`), then pastes and presses Enter. From then on
+    /// `agent.wait` ignores the state the agent was in before this prompt.
+    private func prompt(_ p: JSONValue) async throws -> JSONValue {
+        let (board, terminal) = try agentTile(try string(p, "target"))
+        let text = try string(p, "text")
+        guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
+        let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
+        guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        guard submitToTerminal(board, terminal.id, text) else {
+            throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
+        }
+        // Only a reporting agent's next report can end the pre-prompt state.
+        let waitable = Self.state(of: current) != LifecycleState.unknown.rawValue
+        if waitable { pendingPrompts.insert(terminal.id) }
+        promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
         return .object([
             "agent": agentEntry(current, on: board),
-            "text": .string(tail.text),
-            "lines": .number(Double(tail.lines)),
+            "submittedAt": .string(Date().formatted(.iso8601)),
+            "waitable": .bool(waitable),
         ])
+    }
+
+    /// `tray.drain`: the tray's mentions go to the terminal the tray shows (the board's prompt
+    /// target), so a caller tile gets them only when it is that terminal; any other caller gets
+    /// none and the tray stays as it is. Without a caller (a script) or a window, anyone drains.
+    private func drain(_ p: JSONValue) async throws -> JSONValue {
+        let board = try board(p)
+        let caller = p["caller"]?.string
+        if let caller, let state = viewState?(board), state.promptTarget != caller {
+            var result: [String: JSONValue] = ["mentions": .array([]), "context": .string(""), "held": .number(Double(board.tray.count))]
+            if let target = state.promptTarget { result["target"] = .string(target) }
+            return .object(result)
+        }
+        let drained = await board.drain(peek: p["peek"]?.bool ?? false, caller: caller)
+        return .object(["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)])
     }
 
     // MARK: Images
@@ -395,7 +466,7 @@ public final class ApiRouter {
 
         case "board.get":
             let board = try board(p)
-            let objects = board.snapshot.objects.map(summarized)
+            let objects = board.reported(board.snapshot.objects).map(summarized)
             var result: [String: JSONValue] = [
                 "board": .string(board.id), "root": .string(board.root.path),
                 "revision": .number(Double(board.revision)), "objects": try JSONValue.encode(objects),
@@ -477,7 +548,7 @@ public final class ApiRouter {
             let id = try string(p, "id")
             let board = try board(forObject: id)
             let object = try board.object(id)
-            var result: [String: JSONValue] = ["object": try JSONValue.encode(object)]
+            var result: [String: JSONValue] = ["object": try JSONValue.encode(board.reported(object))]
             switch p["as"]?.string ?? "raw" {
             case "graph": result["graph"] = graph(of: object, on: board)
             case "raw": break
@@ -492,14 +563,14 @@ public final class ApiRouter {
             guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             let frame = try p["frame"].map { try $0.decode(Frame.self) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p, on: board))
-            return Self.withWarnings(["object": try JSONValue.encode(object)], type.unknownPropWarnings(props))
+            return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], type.unknownPropWarnings(props))
 
         case "object.update":
             let id = try string(p, "id")
             let board = try board(forObject: id)
             let frame = try p["frame"].map { try $0.decode(Frame.self) }
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p, on: board))
-            return Self.withWarnings(["object": try JSONValue.encode(object)], object.type.unknownPropWarnings(p["props"]))
+            return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
             let id = try string(p, "id")
@@ -585,9 +656,11 @@ public final class ApiRouter {
             return .object([:])
 
         case "agent.list":
+            // Every terminal: one whose agent never reported (a shell, aider, an unhooked CLI) is
+            // kind and lifecycle `unknown`, so tools still see it and can prompt and read it.
             var agents: [JSONValue] = []
-            for board in registry.boards.values {
-                for object in board.objects.values where object.type == .terminal && object.props["agent"]?["kind"]?.string != nil {
+            for board in registry.boards.values.sorted(by: { $0.id < $1.id }) {
+                for object in board.objects.values.sorted(by: { $0.id < $1.id }) where object.type == .terminal {
                     agents.append(agentEntry(object, on: board))
                 }
             }
@@ -623,15 +696,6 @@ public final class ApiRouter {
             if let focused = state.focused { result["focused"] = .string(focused) }
             if let group = state.enteredGroup { result["enteredGroup"] = .string(group) }
             return .object(result)
-
-        case "agent.prompt":
-            let (board, terminal) = try agentTile(try string(p, "target"))
-            guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
-            guard submitToTerminal(board, terminal.id, try string(p, "text")) else {
-                throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
-            }
-            pendingPrompts.insert(terminal.id)
-            return .object(["agent": agentEntry(terminal, on: board)])
 
         default:
             throw Failure("invalid_params", "unknown method \(method)")

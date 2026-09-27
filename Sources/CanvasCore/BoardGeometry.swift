@@ -47,13 +47,14 @@ public struct BoardGeometry: Sendable {
     /// Every arrow's routed polyline from object frames alone (the app routes the same way from
     /// what it draws): parallel arrows offset apart, `avoid` routes around blocking objects, an
     /// end bound to `lines` of a code tile at that line's row (`CodeMetrics.lineY`, freshly
-    /// aimed; `rows` gives a tile's visual rows when known, else one row per line).
-    public func routes(rows: [ObjectID: CodeRows] = [:]) -> [ObjectID: [CGPoint]] {
+    /// aimed; `rows` gives a tile's visual rows when known, else one row per line). `only`
+    /// routes just those arrows (offsets still account for all of them).
+    public func routes(rows: [ObjectID: CodeRows] = [:], only: Set<ObjectID>? = nil) -> [ObjectID: [CGPoint]] {
         let arrows = objects.values.filter { $0.type == .arrow }.compactMap { arrow in ArrowSpec(arrow.props).map { (arrow, $0) } }
         let offsets = DrawingGeometry.parallelOffsets(arrows.map { ($0.0.id, $0.1.from.objectID, $0.1.to.objectID) })
         let blockers = objects.values.filter(Self.blocksRoutes)
         var result: [ObjectID: [CGPoint]] = [:]
-        for (arrow, spec) in arrows {
+        for (arrow, spec) in arrows where only?.contains(arrow.id) ?? true {
             guard let from = arrowEnd(spec.from, rows: rows), let to = arrowEnd(spec.to, rows: rows) else { continue }
             let ends = Set([spec.from.objectID, spec.to.objectID].compactMap { $0 })
             let obstacles = spec.route == .avoid ? blockers.filter { !ends.contains($0.id) }.map(\.frame.rect) : []

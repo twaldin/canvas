@@ -94,6 +94,49 @@ final class AgentBoardApiTests {
         #expect(try await call("agent.read", #"{"target":"\#(tile)","lines":0}"#)["error"]?["code"] == .string("invalid_params"))
     }
 
+    /// agent.prompt to `tile` whose session reads `after` once the prompt is in.
+    func prompt(_ tile: ObjectID, _ text: String, after: String) async throws {
+        router.submitToTerminal = { [unowned self] _, target, _ in
+            sessions[target] = after
+            return true
+        }
+        #expect(try await call("agent.prompt", #"{"target":"\#(tile)","text":"\#(text)"}"#)["ok"] == .bool(true))
+    }
+
+    @Test func readSincePromptReturnsOnlyWhatFollowedIt() async throws {
+        let shell = terminal()
+        #expect(try await call("agent.read", #"{"target":"\#(shell)","since":"prompt"}"#)["error"]?["code"] == .string("not_found"), "nothing was prompted yet")
+        sessions[shell] = "Last login\n$ ls\na b\n$"
+        try await prompt(shell, "make", after: "Last login\n$ ls\na b\n$ make\nbuilding\ndone\n$")
+        let reply = try await call("agent.read", #"{"target":"\#(shell)","since":"prompt"}"#)
+        #expect(reply["result"]?["text"] == .string("$ make\nbuilding\ndone\n$"), "from the line the prompt changed")
+        #expect(reply["result"]?["truncated"] == .bool(false))
+
+        // A TUI redraws its input box where the reply goes: the reply starts where the old screen changed.
+        let tui = terminal()
+        sessions[tui] = "old answer\n\n╭────╮\n│ >  │\n╰────╯\nmodel · 12%"
+        try await prompt(tui, "explain", after: "old answer\n\n› explain\n\nreply one\nreply two\n\n╭────╮\n│ >  │\n╰────╯\nmodel · 14%")
+        let answer = try await call("agent.read", #"{"target":"\#(tui)","since":"prompt"}"#)
+        #expect(answer["result"]?["text"]?.string?.hasPrefix("› explain\n\nreply one\nreply two\n") == true)
+        #expect(answer["result"]?["text"]?.string?.contains("old answer") == false)
+
+        let capped = try await call("agent.read", #"{"target":"\#(tui)","since":"prompt","lines":2}"#)
+        #expect(capped["result"]?["text"] == .string("╰────╯\nmodel · 14%"))
+        #expect(capped["result"]?["truncated"] == .bool(true))
+        #expect(try await call("agent.read", #"{"target":"\#(tui)","since":"start"}"#)["error"]?["code"] == .string("invalid_params"))
+    }
+
+    @Test func aReplyLongerThanTheTailIsReturnedWholeUpToTheCapAndMarkedTruncated() async throws {
+        let tile = terminal()
+        sessions[tile] = "$"
+        let output = (1...3000).map { "row \($0)" }.joined(separator: "\n")
+        try await prompt(tile, "seq", after: "$ seq\n" + output + "\n$")
+        let reply = try await call("agent.read", #"{"target":"\#(tile)","since":"prompt"}"#)
+        #expect(reply["result"]?["lines"] == .number(2000))
+        #expect(reply["result"]?["text"]?.string?.hasSuffix("row 3000\n$") == true)
+        #expect(reply["result"]?["truncated"] == .bool(true))
+    }
+
     // MARK: board.list
 
     @Test func listMarksBoardsWhoseRootIsGoneAsArchived() async throws {

@@ -65,6 +65,7 @@ export type CodeProps = {
   path: string;
   /** lines to scroll to and tint; the tile always shows the whole file */
   range?: LineRange;
+  /** the declaration the range shows; with a range it only names it, and `size: "fit"` fits the range */
   symbol?: string;
   /** one-line subtitle under the tile's header (plain text, `inline code` allowed); never wraps: object.measure and size "fit" widen the tile to show all of it, and layout.check reports a caption its frame cuts off (`truncated`) */
   caption?: string;
@@ -167,6 +168,7 @@ export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "sh
 export type CanvasObject = {
   id: Id;
   type: ObjectType;
+  /** the whole box the object draws; an arrow's is the bounds of its routed line as drawn (bound ends follow what they point at) */
   frame: Frame;
   z: number;
   rev: number;
@@ -175,7 +177,7 @@ export type CanvasObject = {
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;
-  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ShapeProps | ArrowProps | GroupProps, selected by type */
+  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one) */
   props: Record<string, unknown>;
 };
 
@@ -381,6 +383,7 @@ export type ObjectGetResult = {
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props: Record<string, unknown>;
   frame?: Frame | FitFrame;
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
@@ -401,6 +404,7 @@ export type ObjectUpdateParams = {
   frame?: Frame | FitFrame;
   /** measure the frame's size from the content */
   size?: "fit";
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props?: Record<string, unknown>;
   caller?: Id;
 };
@@ -419,6 +423,7 @@ export type ObjectDeleteResult = Record<string, unknown>;
 export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props: Record<string, unknown>;
   /** wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640) */
   width?: number;
@@ -573,8 +578,12 @@ export type TrayDrainParams = {
 };
 export type TrayDrainResult = {
   mentions: ResolvedMention[];
-  /** ready-to-inject prompt context block; empty string when the tray was empty */
+  /** ready-to-inject prompt context block; empty string when the tray was empty or its mentions are for another terminal */
   context: string;
+  /** present when the caller isn't the terminal the tray shows: the mentions left staged for it */
+  held?: number;
+  /** with `held`: the terminal the tray shows, if any */
+  target?: Id;
 };
 
 export type TrayCommitParams = {
@@ -619,7 +628,11 @@ export type AgentPromptParams = {
   text: string;
 };
 export type AgentPromptResult = {
+  /** as it was when the prompt was submitted (its lifecycle is still the previous turn's) */
   agent: Agent;
+  submittedAt: string;
+  /** the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none and `agent.wait` fails at once, so poll `agent.read` with `since: "prompt"` */
+  waitable: boolean;
 };
 
 export type AgentWaitParams = {
@@ -634,14 +647,18 @@ export type AgentWaitResult = {
 export type AgentReadParams = {
   /** agent name or tile id */
   target: string;
-  /** tail length; larger values are capped at 2000 */
+  /** tail length; larger values are capped at 2000. With `since`: the last this many lines of the reply (default 2000) */
   lines?: number;
+  /** only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started */
+  since?: "prompt";
 };
 export type AgentReadResult = {
   agent: Agent;
   text: string;
   /** number of lines returned */
   lines: number;
+  /** with `since`: the reply has more lines than returned */
+  truncated?: boolean;
 };
 
 export type FollowReportParams = {
@@ -799,7 +816,7 @@ export interface CanvasApi {
     stage(params: TrayStageParams): Promise<TrayStageResult>;
     /** Remove one staged mention. */
     unstage(params: TrayUnstageParams): Promise<TrayUnstageResult>;
-    /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). */
+    /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets no mentions and an empty context, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title). */
     drain(params?: TrayDrainParams): Promise<TrayDrainResult>;
     /** Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. */
     commit(params: TrayCommitParams): Promise<TrayCommitResult>;
@@ -811,11 +828,11 @@ export interface CanvasApi {
     report_session(params: AgentReportSessionParams): Promise<AgentReportSessionResult>;
     /** The agent in this tile exited; clear its lifecycle authority. */
     release(params: AgentReleaseParams): Promise<AgentReleaseResult>;
-    /** Agents across all open boards. */
+    /** Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, aider, a CLI without Canvas hooks) has kind and lifecycle `unknown`. */
     list(params?: AgentListParams): Promise<AgentListResult>;
-    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter. Rejected with `conflict` if that agent is blocked. */
+    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. */
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
-    /** Wait until the target agent reaches one of the given states. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
+    /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` (no reporting agent, or its agent exited) fails at once with `unavailable` unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
     /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. */
     read(params: AgentReadParams): Promise<AgentReadResult>;

@@ -36,7 +36,9 @@ public enum MentionContext {
         }
     }
 
-    public static func resolve(_ mention: Mention, index: Int, on board: Board) async -> Resolved {
+    /// `caller`: the terminal this context goes to. A mention of it says `(your terminal)`, one of
+    /// another terminal names it, so an agent never takes "this terminal" for its own by guess.
+    public static func resolve(_ mention: Mention, index: Int, on board: Board, caller: ObjectID? = nil) async -> Resolved {
         let edited = mention.edited ? " (edited)" : ""
         var lines: [String] = []
         switch mention.target {
@@ -58,16 +60,16 @@ public enum MentionContext {
             let textPart = text.map { " \"\(clip($0, 80))\"" } ?? ""
             lines.append("[\(index)] dom \(url) · \(selector)\(textPart) · \(board.objects[object]?.type.rawValue ?? "browser") tile \(object)\(edited)")
         case .terminal(let object, let text):
-            lines.append("[\(index)] terminal tile \(object)\(edited)")
+            lines.append("[\(index)] terminal tile \(object)\(terminalName(object, on: board, caller: caller))\(edited)")
             lines.append(contentsOf: text.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
         case .group(let objects, let name):
             lines.append("[\(index)] group \(name.map { "\"\($0)\" " } ?? "")of \(objects.count) objects\(edited)")
             for id in objects {
-                if let object = board.objects[id] { lines.append("    - \(describe(object, on: board))") }
+                if let object = board.objects[id] { lines.append("    - \(describe(object, on: board, caller: caller))") }
             }
         case .object(let id):
             if let object = board.objects[id] {
-                lines.append("[\(index)] \(describe(object, on: board))\(edited)")
+                lines.append("[\(index)] \(describe(object, on: board, caller: caller))\(edited)")
                 if object.type == .note, let markdown = object.props["markdown"]?.string {
                     lines.append(contentsOf: markdown.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
                 }
@@ -89,11 +91,12 @@ public enum MentionContext {
     }
 
     /// One-line description with spatial relations: what a shape encloses, what it's drawn on, and its arrows.
-    static func describe(_ object: CanvasObject, on board: Board) -> String {
+    static func describe(_ object: CanvasObject, on board: Board, caller: ObjectID? = nil) -> String {
         let author = object.createdBy == .user ? "drawn by user" : "by agent"
         var parts = ["\(object.type.rawValue) \(object.id)"]
         let title = title(of: object)
         if !title.isEmpty { parts.append("\"\(clip(title, 60))\"") }
+        if object.type == .terminal, object.id == caller { parts.append("(your terminal)") }
         if object.type == .shape { parts.append("(\(author))") }
         if object.type == .shape {
             let enclosed = board.enclosed(by: object).map(\.id)
@@ -141,10 +144,19 @@ public enum MentionContext {
         }
     }
 
+    /// ` (your terminal)` for the caller's own terminal, else the terminal's name in quotes.
+    static func terminalName(_ id: ObjectID, on board: Board, caller: ObjectID?) -> String {
+        if id == caller { return " (your terminal)" }
+        guard let terminal = board.objects[id] else { return "" }
+        return " \"\(clip(title(of: terminal), 60))\""
+    }
+
     static func title(of object: CanvasObject) -> String {
         let props = object.props
+        func nonEmpty(_ key: String) -> String? { props[key]?.string.flatMap { $0.isEmpty ? nil : $0 } }
         switch object.type {
-        case .terminal: return props["title"]?.string ?? props["agent"]?["kind"]?.string ?? "terminal"
+        // The user's own name for it first: what "the fees terminal" means.
+        case .terminal: return nonEmpty("name") ?? nonEmpty("title") ?? props["agent"]?["kind"]?.string ?? "terminal"
         case .browser: return props["title"]?.string ?? props["url"]?.string ?? ""
         case .code: return props["path"]?.string ?? ""
         case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["markdown"]?.string?.split(separator: "\n").first.map(String.init) ?? ""

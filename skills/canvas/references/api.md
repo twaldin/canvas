@@ -9,9 +9,10 @@ This page covers the conventions the catalog doesn't spell out.
 | --- | --- | --- |
 | Call | `canvas.agent.read(target="obj_…", lines=50)` | `canvas agent.read --target obj_… --lines 50` |
 | camelCase params | snake_case keywords: `timeout_ms`, `session_id` | as in the schema: `--timeoutMs` |
-| Nested params | dicts: `props={"range": {"start": 1, "end": 9}}` | `--props.range.start 1` or `--json '{"props":{…}}'` |
-| Result | the `result` object as a dict | pretty JSON on stdout |
+| Nested params | dicts: `props={"range": {"start": 1, "end": 9}}` | `--props.range.start 1`, `--json '{"props":{…}}'`, or `--json @params.json` (`@-`: stdin) |
+| Result | the `result` object as a dict | pretty JSON on stdout; `object.create`/`update` print prop values over 1 KB elided (`--full` prints them) |
 | Error | raises `CanvasError` (`.code`) | `code: message` on stderr, exit 1 |
+| Props per type | `help(canvas.object.create)`; the schema's `CodeProps`, `NoteProps`, … | `canvas methods CodeProps` |
 
 Error codes: `not_found` (no such object/agent/board), `conflict` (stale `rev`: re-read, re-apply, retry),
 `invalid_params`, `unavailable` (e.g. a terminal without a running session, or the app isn't running), `unsupported`, `timeout` (`agent.wait`).
@@ -22,6 +23,8 @@ Error codes: `not_found` (no such object/agent/board), `conflict` (stale `rev`: 
 - Poll cheaply: keep `revision` from one `board.get` and pass it as `since` next time; `changed` lists ids created or changed after it.
 - `object.get --as graph` gives `encloses`, `enclosedBy`, `overlaps`, `arrowsOut`, `arrowsIn`. To look at an object use `view.render` (`canvas render <id> --out file.png`).
 - `tray.list` shows what the user has staged but not yet sent. Don't drain the tray yourself; your harness attaches it to the user's next prompt.
+  The tray's mentions are for the terminal it shows (`view.get` `promptTarget`): `tray.drain` from any other terminal returns none (`held` says how many wait) and leaves them staged.
+- An arrow's `frame` is the bounds of its routed line as drawn.
 
 ## Objects
 
@@ -40,25 +43,26 @@ Error codes: `not_found` (no such object/agent/board), `conflict` (stale `rev`: 
 
 Sizes, positions, and checks, so you never measure tiles by hand or move 40 objects one call at a time:
 
-- `object.measure(type, props, width?)` → `{w, h}`: the whole frame (title bar included) that shows the content without scrolling.
-  Code: exactly `range` (the tile shows no extra context and no neighbouring lines), plus 20 pt when `caption` is set, and at least as wide as the whole caption;
+- `canvas.object.measure(type="code", props={…}, width=960)` → `{w, h}` (`width` optional): the whole frame (title bar included) that shows the content without scrolling.
+  Code: exactly `range` (the tile shows no extra context and no neighbouring lines; with no range, the `symbol`'s declaration), plus 20 pt when `caption` is set, and at least as wide as the whole caption;
   `width` is the maximum width (default 960 pt, about 120 columns):
   a range whose longest line fits stays exactly that narrow, longer lines soft-wrap and the height counts their extra rows, and a caption wider than that truncates.
   Notes: the rendered markdown, live fences resolved, at `width` (default 280). Text shapes: at `width`, or one unwrapped line per paragraph.
   HTML: the page laid out `width` wide (default 640) once it has rendered (Mermaid, `<canvas-code>` excerpts), as tall as its document, at most 4000 pt (a longer page scrolls in the tile). Browser tiles are `unsupported`.
 - `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note, text, or an HTML page, or to cap a code tile's width);
   an update re-measures at the object's current position and width (code: at `frame.w` or the 960 pt default, never its current width, so a re-fit can widen it).
-- `layout.place(id, near, side=right|left|above|below, gap=40, align=start|center|end)` and `layout.stack(ids, direction=row|column, gap=40, wrapAt?, align?, origin?)` move objects in one undo step and return the new frames.
-  Groups move with their members, so `layout.stack([lane1, lane2], direction="column")` lays out lanes; bound arrows follow.
-- `layout.translate(ids, dx, dy)` moves objects by an offset in one undo step (groups with their members, free arrow ends along, bound arrows follow).
+- `canvas.layout.place(id=a, near=b, side="right", gap=40, align="start")` (`side`: right, left, above, below; `align`: start, center, end)
+  and `canvas.layout.stack(ids=[a, b, c], direction="row", gap=40, wrap_at=2400, align="start", origin={"x": 0, "y": 0})` (all but `ids` optional) move objects in one undo step and return the new frames.
+  Groups move with their members, so `canvas.layout.stack(ids=[lane1, lane2], direction="column")` lays out lanes; bound arrows follow.
+- `canvas.layout.translate(ids=[…], dx=12000, dy=0)` moves objects by an offset in one undo step (groups with their members, free arrow ends along, bound arrows follow).
   Build a layout offscreen (e.g. at x + 12000) in one batch, check it, then translate its groups into place.
-- `layout.grid(cells=[{id, row, col}], colGap=40, rowGap=40, colAlign?, rowAlign?, origin?)` puts cells in shared columns and rows:
+- `canvas.layout.grid(cells=[{"id": a, "row": 0, "col": 0}, …], col_gap=40, row_gap=40, col_align="start", row_align="start", origin={"x": 0, "y": 0})` (all but `cells` optional) puts cells in shared columns and rows:
   each column is as wide as its widest cell, each row as tall as its tallest, so a column lines up across lanes (cells in different groups; the groups re-fit).
   Unused row/col numbers take no space; `origin` defaults to the cells' current top-left.
-  Between rows of different groups leave `rowGap` for both groups' padding plus the 32 pt title band (e.g. 24 + 24 + 32 + your gap).
+  Between rows of different groups leave `row_gap` for both groups' padding plus the 32 pt title band (e.g. 24 + 24 + 32 + your gap).
   Returns `frames`, `columns` `[{col, x, w}]`, and `rows` `[{row, y, h}]`.
 - `object.batch(ops)`: `[{method, params}]` with `object.create/update/delete` and `layout.place/stack/translate/grid`, applied as one revision and one ⌘Z, or not at all (the error names the failing op).
-  `"$0"` anywhere in a later op's params is the id op 0 created:
+  `"$0"` anywhere in a later op's params is the id op 0 created. Op params are the schema's own names (`colGap`, not `col_gap`):
   ```python
   canvas.object.batch(ops=[
       {"method": "object.create", "params": {"type": "code", "props": {"path": "src/a.ts", "range": {"start": 10, "end": 30}}, "size": "fit", "frame": {"x": 0, "y": 0}}},
@@ -67,7 +71,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
       {"method": "object.create", "params": {"type": "group", "props": {"members": ["$0", "$1"], "title": "Request path", "color": "blue"}}},
   ])
   ```
-- `layout.check(ids? | rect?)` → `overlaps` (pairs),
+- `canvas.layout.check(ids=[…])`, `canvas.layout.check(rect={"x": 0, "y": 0, "w": 4000, "h": 3000})`, or the whole board with neither → `overlaps` (pairs),
   `arrowCrossings` (`{arrow, crosses}`: routes through tiles, text, or filled shapes other than the arrow's own ends),
   `labelOverlaps` (`{arrow, overlaps}`: the arrow's label, placed as drawn, lies on these tiles, text, or filled shapes, its own ends included, or on these arrows' labels; widen the gap or shorten the label),
   `overflow` (`{id, x, y}`: points of code/note/text/HTML content beyond the frame; for code, its range's rows and longest line; for HTML, its page laid out at the frame's width),
@@ -91,7 +95,14 @@ and `attention.changed` (`{id, active, message?, raisedBy?}`: a marker raised, o
 
 ## Agents
 
-`agent.list` covers every canvas in the app. `lifecycle.state` is `working`, `blocked` (waiting for its user: an approval or a question),
-`idle`, `done` (idle with results the user hasn't looked at yet), or `unknown` (no integration reporting).
-`agent.read` returns up to 2000 lines of the terminal's text, trailing blank lines removed.
+`agent.list` lists every terminal tile in the app. `lifecycle.state` is `working`, `blocked` (waiting for its user: an approval or a question),
+`idle`, `done` (idle with results the user hasn't looked at yet), or `unknown` (no integration reporting: a shell, aider, a CLI without Canvas hooks; its `kind` is `unknown` too).
+`agent.read` returns up to 2000 lines of the terminal's text, trailing blank lines removed; `since="prompt"` returns only what followed your last `agent.prompt` to it (`truncated` when there was more).
+`agent.prompt` returns `waitable`: then `agent.wait` right after it waits for that prompt's turn (it ignores the state from before the prompt), so wait for `done` directly:
+```python
+canvas.agent.prompt(target="fees", text="review the diff, read-only")
+canvas.agent.wait(target="fees", timeout_ms=900_000)      # done, idle, or blocked
+reply = canvas.agent.read(target="fees", since="prompt")["text"]
+```
+On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` fails at once with `unavailable`; poll `agent.read(since="prompt")` instead.
 `agent.wait` survives an app restart: the SDKs and CLI ask again once the app is back, with `timeoutMs` reduced by the time already waited.

@@ -232,7 +232,7 @@ struct ArrowBindingLifecycleTests {
         let a = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
         let b = board.create(type: .terminal, props: .object([:]), frame: Frame(x: 300, y: 0, w: 100, h: 100))
         let arrow = board.create(type: .arrow, props: ArrowSpec(from: .object(a.id), to: .object(b.id)).props)
-        board.arrowRoute = { id in id == arrow.id ? (CGPoint(x: 106, y: 50), CGPoint(x: 294, y: 63)) : nil }
+        board.arrowPath = { id in id == arrow.id ? [CGPoint(x: 106, y: 50), CGPoint(x: 200, y: 50), CGPoint(x: 294, y: 63)] : nil }
         try board.delete(b.id)
         #expect(ArrowSpec(try board.object(arrow.id).props)?.to == .point(CGPoint(x: 294, y: 63)))
     }

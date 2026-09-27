@@ -328,7 +328,7 @@ class TrayApi:
         return self._call("tray.unstage", params, [])
 
     def drain(self, *, board: "Id" | None = None, caller: "Id" | None = None, peek: bool | None = None) -> dict[str, Any]:
-        """Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing)."""
+        """Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets no mentions and an empty context, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title)."""
         params = {"board": board, "caller": caller, "peek": peek}
         return self._call("tray.drain", params, ["board","caller"])
 
@@ -358,23 +358,23 @@ class AgentApi:
         return self._call("agent.release", params, [])
 
     def list(self) -> dict[str, Any]:
-        """Agents across all open boards."""
+        """Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, aider, a CLI without Canvas hooks) has kind and lifecycle `unknown`."""
         params = {}
         return self._call("agent.list", params, [])
 
     def prompt(self, *, target: str, text: str) -> dict[str, Any]:
-        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter. Rejected with `conflict` if that agent is blocked."""
+        """Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first."""
         params = {"target": target, "text": text}
         return self._call("agent.prompt", params, [])
 
     def wait(self, *, target: str, until: list[Literal["working", "blocked", "idle", "done", "unknown"]] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
-        """Wait until the target agent reaches one of the given states. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited."""
+        """Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` (no reporting agent, or its agent exited) fails at once with `unavailable` unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited."""
         params = {"target": target, "until": until, "timeoutMs": timeout_ms}
         return self._call("agent.wait", params, [])
 
-    def read(self, *, target: str, lines: int | None = None) -> dict[str, Any]:
+    def read(self, *, target: str, lines: int | None = None, since: Literal["prompt"] | None = None) -> dict[str, Any]:
         """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line."""
-        params = {"target": target, "lines": lines}
+        params = {"target": target, "lines": lines, "since": since}
         return self._call("agent.read", params, [])
 
 @_snake_case_hints

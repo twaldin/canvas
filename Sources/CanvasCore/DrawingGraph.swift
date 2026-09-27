@@ -33,20 +33,54 @@ extension Board {
     /// the arrow keeps its drawn direction (also after a reload) and its other end keeps routing.
     /// The rewrite is a cascade of the delete, credited to whoever deleted.
     func detachArrows(from id: ObjectID, actor: ActivityActor, caller: ObjectID?) {
-        // Without the app's drawn routes, route from frames, once, and only when an arrow needs it.
-        var computed: [ObjectID: [CGPoint]]?
-        for arrow in objects.values.sorted(by: { $0.id < $1.id }) where arrow.type == .arrow && arrow.id != id {
-            guard var spec = ArrowSpec(arrow.props), spec.from.objectID == id || spec.to.objectID == id else { continue }
-            var drawn = arrowRoute?(arrow.id)
-            if drawn == nil {
-                if computed == nil { computed = BoardGeometry(objects: objects, labelSizes: [:]).routes() }
-                drawn = computed?[arrow.id].map { (start: $0[0], end: $0[$0.count - 1]) }
-            }
-            guard let route = drawn else { continue }
-            if spec.from.objectID == id { spec.from = .point(route.start) }
-            if spec.to.objectID == id { spec.to = .point(route.end) }
+        let bound = objects.values.sorted(by: { $0.id < $1.id }).compactMap { arrow -> (CanvasObject, ArrowSpec)? in
+            guard arrow.type == .arrow, arrow.id != id, let spec = ArrowSpec(arrow.props), spec.from.objectID == id || spec.to.objectID == id else { return nil }
+            return (arrow, spec)
+        }
+        guard !bound.isEmpty else { return }
+        let paths = arrowPaths(bound.map(\.0.id))
+        for (arrow, var spec) in bound {
+            guard let path = paths[arrow.id] else { continue }
+            if spec.from.objectID == id { spec.from = .point(path[0]) }
+            if spec.to.objectID == id { spec.to = .point(path[path.count - 1]) }
             _ = try? write(arrow.id, rev: nil, frame: nil, z: nil, props: .object(["from": spec.from.json, "to": spec.to.json]),
                            caller: caller, actor: actor, cause: "bound object \(id) deleted", refitting: [])
         }
+    }
+
+    /// Each arrow's routed line: as the app draws it, else routed from object frames (the ones
+    /// the app hasn't drawn, together). Arrows whose ends are gone have none.
+    func arrowPaths(_ ids: [ObjectID]) -> [ObjectID: [CGPoint]] {
+        var paths: [ObjectID: [CGPoint]] = [:]
+        var missing: Set<ObjectID> = []
+        for id in ids {
+            if let drawn = arrowPath?(id), drawn.count >= 2 { paths[id] = drawn } else { missing.insert(id) }
+        }
+        if !missing.isEmpty {
+            paths.merge(BoardGeometry(objects: objects, labelSizes: [:]).routes(only: missing)) { drawn, _ in drawn }
+        }
+        return paths
+    }
+
+    /// Objects as the API reports them: an arrow's frame is the bounds of its routed line (what
+    /// is drawn; the stored frame means nothing once an end is bound), everything else as stored.
+    public func reported(_ list: [CanvasObject]) -> [CanvasObject] {
+        let arrows = list.filter { $0.type == .arrow }.map(\.id)
+        guard !arrows.isEmpty else { return list }
+        let paths = arrowPaths(arrows)
+        return list.map { object in
+            guard let path = paths[object.id] else { return object }
+            var copy = object
+            copy.frame = Self.bounds(of: path)
+            return copy
+        }
+    }
+
+    public func reported(_ object: CanvasObject) -> CanvasObject { reported([object])[0] }
+
+    static func bounds(of path: [CGPoint]) -> Frame {
+        let xs = path.map(\.x), ys = path.map(\.y)
+        let minX = xs.min()!, minY = ys.min()!
+        return Frame(x: Double(minX), y: Double(minY), w: Double(xs.max()! - minX), h: Double(ys.max()! - minY))
     }
 }

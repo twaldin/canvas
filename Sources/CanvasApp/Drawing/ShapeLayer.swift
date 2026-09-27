@@ -101,8 +101,8 @@ final class ShapeLayer: NSView {
         canvas.onSelectionChange = { [unowned layer] in layer.selectionChanged() }
         canvas.onSelectionDrag = { [unowned layer] ids, offset in layer.previewDrag(ids, offset: offset) }
         canvas.moveProps = { object, dx, dy in ShapeLayer.moveProps(object, dx: dx, dy: dy) }
-        canvas.board.arrowRoute = { [unowned layer] id in
-            layer.items[id]?.arrow.map { (ShapeLayer.canvasPoint($0.start), ShapeLayer.canvasPoint($0.end)) }
+        canvas.board.arrowPath = { [unowned layer] id in
+            layer.items[id]?.arrow.map { $0.path.map(ShapeLayer.canvasPoint) }
         }
         let toolbar = DrawingToolbar(layer: layer)
         toolbar.translatesAutoresizingMaskIntoConstraints = false

@@ -93,7 +93,7 @@
       "properties": {
         "path": { "type": "string", "description": "path relative to the board root" },
         "range": { "$ref": "#/definitions/LineRange", "description": "lines to scroll to and tint; the tile always shows the whole file" },
-        "symbol": { "type": "string" },
+        "symbol": { "type": "string", "description": "the declaration the range shows; with a range it only names it, and `size: \"fit\"` fits the range" },
         "caption": { "type": "string", "description": "one-line subtitle under the tile's header (plain text, `inline code` allowed); never wraps: object.measure and size \"fit\" widen the tile to show all of it, and layout.check reports a caption its frame cuts off (`truncated`)" },
         "diffBase": { "type": "string", "default": "merge-base", "description": "gutter signs show changes against this: merge-base | head | <sha>" },
         "followOf": { "$ref": "#/definitions/Id", "description": "terminal tile this follow tile tracks" },
@@ -220,7 +220,7 @@
       "properties": {
         "id": { "$ref": "#/definitions/Id" },
         "type": { "$ref": "#/definitions/ObjectType" },
-        "frame": { "$ref": "#/definitions/Frame" },
+        "frame": { "$ref": "#/definitions/Frame", "description": "the whole box the object draws; an arrow's is the bounds of its routed line as drawn (bound ends follow what they point at)" },
         "z": { "type": "number" },
         "rev": { "type": "integer", "minimum": 1 },
         "parent": { "$ref": "#/definitions/Id" },
@@ -228,7 +228,7 @@
         "updatedBy": { "$ref": "#/definitions/Actor" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ShapeProps | ArrowProps | GroupProps, selected by type" }
+        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one)" }
       },
       "additionalProperties": false
     },
@@ -478,7 +478,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
@@ -498,7 +498,7 @@
           "rev": { "type": "integer" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
-          "props": { "type": "object" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false
@@ -523,7 +523,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
           "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
@@ -700,7 +700,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "tray.drain": {
-      "description": "Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing).",
+      "description": "Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets no mentions and an empty context, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title).",
       "params": {
         "type": "object",
         "properties": {
@@ -715,7 +715,9 @@
         "required": ["mentions", "context"],
         "properties": {
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/ResolvedMention" } },
-          "context": { "type": "string", "description": "ready-to-inject prompt context block; empty string when the tray was empty" }
+          "context": { "type": "string", "description": "ready-to-inject prompt context block; empty string when the tray was empty or its mentions are for another terminal" },
+          "held": { "type": "integer", "description": "present when the caller isn't the terminal the tray shows: the mentions left staged for it" },
+          "target": { "$ref": "#/definitions/Id", "description": "with `held`: the terminal the tray shows, if any" }
         }
       }
     },
@@ -772,22 +774,30 @@
       "result": { "type": "object", "properties": {} }
     },
     "agent.list": {
-      "description": "Agents across all open boards.",
+      "description": "Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, aider, a CLI without Canvas hooks) has kind and lifecycle `unknown`.",
       "params": { "type": "object", "properties": {}, "additionalProperties": false },
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter. Rejected with `conflict` if that agent is blocked.",
+      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first.",
       "params": {
         "type": "object",
         "required": ["target", "text"],
         "properties": { "target": { "type": "string", "description": "agent name or tile id" }, "text": { "type": "string" } },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["agent"], "properties": { "agent": { "$ref": "#/definitions/Agent" } } }
+      "result": {
+        "type": "object",
+        "required": ["agent", "submittedAt", "waitable"],
+        "properties": {
+          "agent": { "$ref": "#/definitions/Agent", "description": "as it was when the prompt was submitted (its lifecycle is still the previous turn's)" },
+          "submittedAt": { "type": "string", "format": "date-time" },
+          "waitable": { "type": "boolean", "description": "the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none and `agent.wait` fails at once, so poll `agent.read` with `since: \"prompt\"`" }
+        }
+      }
     },
     "agent.wait": {
-      "description": "Wait until the target agent reaches one of the given states. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited.",
+      "description": "Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` (no reporting agent, or its agent exited) fails at once with `unavailable` unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited.",
       "resend": true,
       "params": {
         "type": "object",
@@ -808,7 +818,8 @@
         "required": ["target"],
         "properties": {
           "target": { "type": "string", "description": "agent name or tile id" },
-          "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "tail length; larger values are capped at 2000" }
+          "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "tail length; larger values are capped at 2000. With `since`: the last this many lines of the reply (default 2000)" },
+          "since": { "const": "prompt", "description": "only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started" }
         },
         "additionalProperties": false
       },
@@ -818,7 +829,8 @@
         "properties": {
           "agent": { "$ref": "#/definitions/Agent" },
           "text": { "type": "string" },
-          "lines": { "type": "integer", "description": "number of lines returned" }
+          "lines": { "type": "integer", "description": "number of lines returned" },
+          "truncated": { "type": "boolean", "description": "with `since`: the reply has more lines than returned" }
         }
       }
     },

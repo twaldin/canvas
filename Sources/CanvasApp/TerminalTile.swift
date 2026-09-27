@@ -132,7 +132,7 @@ final class TerminalTile: NSView, TileContent {
     /// The last `limit` lines of the session's text; nil when zmx is missing or the session
     /// doesn't exist. Streams zmx's output through a bounded tail (never the whole scrollback)
     /// and blocks until zmx exits, so call it off the main actor when it isn't for drawing.
-    nonisolated static func history(session: String, lines limit: Int) -> (text: String, lines: Int)? {
+    nonisolated static func history(session: String, lines limit: Int) -> TerminalTail.Tail? {
         guard let zmx = AppPaths.zmx else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: zmx)

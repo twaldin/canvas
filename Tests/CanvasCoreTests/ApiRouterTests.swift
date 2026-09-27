@@ -77,6 +77,7 @@ final class ApiRouterTests {
 
     @Test func waitTimesOutWithTimeoutCode() async throws {
         let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
         let client = try connect()
         client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(tile)","until":["idle"],"timeoutMs":30}}"#)
         let reply = try await client.next()
@@ -86,6 +87,7 @@ final class ApiRouterTests {
 
     @Test func waitFailsWhenTheTerminalCloses() async throws {
         let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
         let client = try connect()
         client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(tile)","until":["idle"]}}"#)
         client.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
@@ -94,6 +96,124 @@ final class ApiRouterTests {
         let reply = try await client.next()
         #expect(reply["id"] == .string("w"))
         #expect(reply["error"]?["code"] == .string("not_found"))
+    }
+
+    @Test func terminalsWithoutAReportingAgentAreListedAndCantBeWaitedOn() async throws {
+        let shell = terminal()
+        let omp = terminal()
+        try board.reportLifecycle(tile: omp, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp")
+        let client = try connect()
+        let agents = try await call(client, "agent.list", [:])["result"]?["agents"]?.array ?? []
+        let byTile = Dictionary(uniqueKeysWithValues: agents.compactMap { entry in entry["tile"]?.string.map { ($0, entry) } })
+        #expect(Set(byTile.keys) == [shell, omp], "every terminal, reporting or not")
+        #expect(byTile[shell]?["kind"] == .string("unknown"))
+        #expect(byTile[shell]?["lifecycle"]?["state"] == .string("unknown"))
+        #expect(byTile[omp]?["kind"] == .string("omp"))
+
+        // Prompting works; the reply says a wait can't follow it, and a wait fails at once.
+        let prompted = try await call(client, "agent.prompt", ["target": .string(shell), "text": "make test"])
+        #expect(prompted["result"]?["waitable"] == .bool(false))
+        let waited = try await call(client, "agent.wait", ["target": .string(shell), "timeoutMs": 60000])
+        #expect(waited["error"]?["code"] == .string("unavailable"))
+        #expect(waited["error"]?["message"]?.string?.contains("reports no agent lifecycle") == true)
+        // Asking for `unknown` itself is answered.
+        let unknown = try await call(client, "agent.wait", ["target": .string(shell), "until": ["unknown"]])
+        #expect(unknown["result"]?["agent"]?["tile"] == .string(shell))
+    }
+
+    @Test func aWaitOnAnAgentThatExitsFailsInsteadOfHanging() async throws {
+        let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        let client = try connect()
+        client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(tile)"}}"#)
+        client.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == .string("ping"))
+        try board.releaseAgent(tile: tile)
+        let reply = try await client.next()
+        #expect(reply["id"] == .string("w"))
+        #expect(reply["error"]?["code"] == .string("unavailable"))
+    }
+
+    @Test func promptSaysItCanBeWaitedOnForAnAgentThatReports() async throws {
+        let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp")
+        let client = try connect()
+        let prompted = try #require(try await call(client, "agent.prompt", ["target": .string(tile), "text": "go"])["result"])
+        #expect(prompted["waitable"] == .bool(true))
+        #expect(prompted["submittedAt"]?.string.flatMap { try? Date($0, strategy: .iso8601) } != nil)
+    }
+
+    /// The window's state with `target` as the terminal the tray shows.
+    func showTray(to target: ObjectID?) {
+        router.viewState = { _ in
+            ViewState(viewport: Viewport(rect: Frame(x: 0, y: 0, w: 1000, h: 800), zoom: 1), promptTarget: target, focused: nil, selection: [], enteredGroup: nil, visible: true)
+        }
+    }
+
+    @Test func onlyTheTerminalTheTrayShowsDrainsIt() async throws {
+        let shown = terminal()
+        let other = terminal()
+        _ = try board.update(other, props: .object(["name": "fees"]))
+        showTray(to: shown)
+        try board.stage(.terminal(object: other, text: "npm test"))
+        try board.stage(.object(shown))
+        let client = try connect()
+
+        let held = try #require(try await call(client, "tray.drain", ["caller": .string(other)])["result"])
+        #expect(held["mentions"] == .array([]))
+        #expect(held["context"] == .string(""))
+        #expect(held["held"] == .number(2))
+        #expect(held["target"] == .string(shown))
+        #expect(board.tray.count == 2, "another terminal's prompt leaves the tray as it is")
+
+        let peeked = try #require(try await call(client, "tray.drain", ["caller": .string(shown), "peek": .bool(true)])["result"])
+        let context = try #require(peeked["context"]?.string)
+        #expect(context.contains("[1] terminal tile \(other) \"fees\""), "another terminal is named")
+        #expect(context.contains("[2] terminal \(shown) \"terminal\" (your terminal)"))
+        #expect(board.tray.count == 2)
+
+        // A script (no caller) drains whatever the tray shows.
+        let drained = try #require(try await call(client, "tray.drain", [:])["result"])
+        #expect(drained["mentions"]?.array?.count == 2)
+        #expect(board.tray.isEmpty)
+    }
+
+    @Test func withNoTargetShownEveryCallerTerminalIsHeldBack() async throws {
+        let a = terminal()
+        _ = terminal()
+        showTray(to: nil)
+        try board.stage(.object(a))
+        let client = try connect()
+        let held = try #require(try await call(client, "tray.drain", ["caller": .string(a)])["result"])
+        #expect(held["held"] == .number(1))
+        #expect(held["target"] == nil)
+        #expect(board.tray.count == 1)
+    }
+
+    @Test func arrowsReportTheBoundsOfTheirRouteNotAZeroSizePoint() async throws {
+        let a = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
+        let b = board.create(type: .note, props: .object(["markdown": "b"]), frame: Frame(x: 400, y: 200, w: 100, h: 100))
+        let arrow = board.create(type: .arrow, props: ArrowSpec(from: .object(a.id), to: .object(b.id)).props)
+        #expect(arrow.frame.w == 0 && arrow.frame.h == 0, "the stored frame of a bound arrow is a placeholder")
+        let route = try #require(board.geometry.routes()[arrow.id])
+        let xs = route.map { Double($0.x) }, ys = route.map { Double($0.y) }
+        let expected = Frame(x: xs.min()!, y: ys.min()!, w: xs.max()! - xs.min()!, h: ys.max()! - ys.min()!)
+        #expect(expected.w > 200 && expected.h > 100)
+        let client = try connect()
+
+        let objects = try await call(client, "board.get", [:])["result"]?["objects"]?.array ?? []
+        let listed = try #require(objects.first { $0["id"] == .string(arrow.id) })
+        #expect(try listed["frame"]?.decode(Frame.self) == expected)
+        let got = try await call(client, "object.get", ["id": .string(arrow.id)])
+        #expect(try got["result"]?["object"]?["frame"]?.decode(Frame.self) == expected)
+        let history = try await call(client, "board.history", [:])["result"]?["entries"]?.array ?? []
+        let created = history.compactMap { $0["summary"]?.string }.first { $0.hasPrefix("created arrow") }
+        #expect(created?.hasSuffix(String(format: "at (%.0f, %.0f) %.0f×%.0f", expected.x, expected.y, expected.w, expected.h)) == true)
+
+        // With a window, what is drawn (the app's routed line) is what is reported.
+        board.arrowPath = { id in id == arrow.id ? [CGPoint(x: 110, y: 50), CGPoint(x: 250, y: 50), CGPoint(x: 250, y: 240), CGPoint(x: 390, y: 240)] : nil }
+        let drawn = try await call(client, "object.get", ["id": .string(arrow.id)])
+        #expect(try drawn["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 110, y: 50, w: 280, h: 190))
     }
 
     @Test func promptFailsWhenTheSurfaceIsNotAttached() async throws {

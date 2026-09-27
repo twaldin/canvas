@@ -3,7 +3,7 @@ import Testing
 import CanvasCore
 
 struct TerminalTailTests {
-    func tail(_ text: String, limit: Int, chunk: Int? = nil) -> (text: String, lines: Int) {
+    func tail(_ text: String, limit: Int, chunk: Int? = nil) -> TerminalTail.Tail {
         var tail = TerminalTail(limit: limit)
         let bytes = Data(text.utf8)
         var start = 0
@@ -57,6 +57,6 @@ struct TerminalTailTests {
 
     @Test func emptyOrAllBlankTextHasNoLines() {
         #expect(tail("", limit: 5).lines == 0)
-        #expect(tail("   \n\n  \n", limit: 5) == ("", 0))
+        #expect(tail("   \n\n  \n", limit: 5).text == "")
     }
 }

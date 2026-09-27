@@ -240,15 +240,17 @@ public enum Layout {
     }
 
     /// `reveal`, keeping what shows of `kept` (the tile something was opened from) in view too
-    /// when both fit; otherwise `rect` alone.
+    /// when both fit, with the padding cut down to what room is left (a code tile opened beside
+    /// a changes tile that together just fit shows both whole); otherwise `rect` alone.
     public static func reveal(_ rect: CGRect, keeping kept: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat) -> Jump {
         let zoom = jump.zoom
         let shown = CGRect(x: jump.origin.x + clear.minX / zoom, y: jump.origin.y + clear.minY / zoom, width: clear.width / zoom, height: clear.height / zoom)
         let visible = kept.intersection(shown)
         guard !visible.isNull, !visible.isEmpty else { return reveal(rect, from: jump, clear: clear, padding: padding) }
         let both = rect.union(visible)
-        guard both.width + 2 * padding <= shown.width, both.height + 2 * padding <= shown.height else { return reveal(rect, from: jump, clear: clear, padding: padding) }
-        return reveal(both, from: jump, clear: clear, padding: padding)
+        guard both.width <= shown.width, both.height <= shown.height else { return reveal(rect, from: jump, clear: clear, padding: padding) }
+        let room = min(padding, (shown.width - both.width) / 2, (shown.height - both.height) / 2)
+        return reveal(both, from: jump, clear: clear, padding: room)
     }
 
     /// A tile opened from `source` (a ⌘-clicked reference, in document coordinates): no pan

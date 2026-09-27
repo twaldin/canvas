@@ -15,14 +15,15 @@ protocol CodeNavigationHost: AnyObject {
     func sourcePosition(atViewPoint point: NSPoint) -> (line: Int, character: Int)?
     /// Scrolls a 1-based source line into view.
     func reveal(line: Int)
-    /// Re-aims the view at lines of its own file (a same-file definition).
-    func aim(at lines: LineRange)
 }
 
 /// Language features for one code view, answered by the app's shared language servers:
 ///  - hover (pointer still for ~500 ms) shows the server's hover docs; moving cancels the request
-///  - ⌘-click goes to the definition: same file re-aims the tile, another file opens a code tile
-///    beside it; ⌥⌘-click always opens a new tile
+///  - ⌘-click goes to the definition: this tile re-aims when it is plain navigation surface
+///    and the definition is in its file, else a plain tile in view showing the file, else a new
+///    tile beside it (`Board.openForNavigation`); ⌥⌘-click always opens a new tile
+///  - without the language's server, definitions, references and the outline come from text
+///    search and tree-sitter (`TextNavigation`), labelled so
 ///  - the context menu adds Go to Definition, Find References, and Outline
 ///  - the Outline button lists the file's symbols; choosing one reveals it
 /// Code tiles never take keyboard focus, so nothing here does either.
@@ -227,7 +228,13 @@ final class CodeNavigation: NSObject {
 
     func goToDefinition(at position: (line: Int, character: Int), anchor: NSPoint, newTile: Bool) {
         run(anchor: anchor) { [weak self] file, root in
-            let locations = try await Self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
+            let locations: [LSPLocation]
+            do {
+                locations = try await Self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
+            } catch let error where Self.textFallback(for: error) != nil {
+                try await self?.textDefinition(at: position, file: file, root: root, anchor: anchor, newTile: newTile, reason: Self.textFallback(for: error) ?? "")
+                return
+            }
             guard let self else { return }
             switch locations.count {
             case 0: await self.showEmpty("No definition found", file: file, root: root, anchor: anchor)
@@ -250,8 +257,14 @@ final class CodeNavigation: NSObject {
         showMessage("Finding references…", anchor: anchor)
         run(anchor: anchor) { [weak self] file, root in
             var seen = Set<String>()
-            let locations = try await Self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
-                .filter { seen.insert("\($0.url.resolvingSymlinksInPath().path):\($0.range.start.line)").inserted }
+            let answer: [LSPLocation]
+            do {
+                answer = try await Self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
+            } catch let error where Self.textFallback(for: error) != nil {
+                try await self?.textReferences(at: position, file: file, root: root, anchor: anchor, reason: Self.textFallback(for: error) ?? "")
+                return
+            }
+            let locations = answer.filter { seen.insert("\($0.url.resolvingSymlinksInPath().path):\($0.range.start.line)").inserted }
             guard let self else { return }
             guard !locations.isEmpty else { return await self.showEmpty("No references found", file: file, root: root, anchor: anchor) }
             let lines = await Self.languages.lineTexts(locations)
@@ -263,7 +276,7 @@ final class CodeNavigation: NSObject {
     }
 
     private func showLocations(_ title: String, _ locations: [LSPLocation], lines: [String], anchor: NSPoint, newTile: Bool,
-                               openAll: (title: String, run: @MainActor () -> Void)? = nil) {
+                               openAll: (title: String, run: @MainActor () -> Void)? = nil, note: String? = nil) {
         let rows = zip(locations, lines).map { location, line in
             NavigationPanel.Row(title: "\(boardPath(location.url)):\(location.range.start.line + 1)", detail: line) { [weak self] in
                 NavigationPanel.current?.dismiss()
@@ -271,7 +284,86 @@ final class CodeNavigation: NSObject {
             }
         }
         // The user asked for it: the list takes the keyboard until it closes.
-        let panel = NavigationPanel.filterList(title: title, rows: rows, headerAction: openAll)
+        let panel = NavigationPanel.filterList(title: title, rows: rows, headerAction: openAll, note: note)
+        present(panel, anchor: anchor)
+        panel.focusFilter()
+    }
+
+    // MARK: Without a language server
+
+    /// The one-line reason a request falls back to text search: the language's server isn't
+    /// installed, has no configuration, failed to start, or exited. Nil for anything else (a
+    /// timeout, the server's own error), which is shown as it is.
+    nonisolated static func textFallback(for error: Error) -> String? {
+        guard let error = error as? LSPError else { return nil }
+        switch error {
+        case .unavailable, .unsupportedLanguage, .startFailed, .serverExited: return error.errorDescription
+        default: return nil
+        }
+    }
+
+    /// The name under the cursor, or nil (with `reason` shown) when there is none.
+    private func identifier(at position: (line: Int, character: Int), file: URL) async -> String? {
+        await offPool { Self.identifier(in: file, line: position.line, character: position.character) }
+    }
+
+    /// Where a text search's match is, as a location the lists and Open All take.
+    nonisolated private static func location(_ match: TextNavigation.Match, in root: URL) -> LSPLocation {
+        let position = LSPPosition(line: match.line - 1, character: max(0, match.column - 1))
+        return LSPLocation(url: root.appendingPathComponent(match.path), range: LSPRange(start: position, end: position))
+    }
+
+    /// Go to Definition without a language server: the likely declarations of the name under the
+    /// cursor (`TextNavigation.declarations`), this file's first; one opens, several list, each
+    /// labelled as a text search with the server's hint as a note.
+    private func textDefinition(at position: (line: Int, character: Int), file: URL, root: URL, anchor: NSPoint, newTile: Bool, reason: String) async throws {
+        guard let name = await identifier(at: position, file: file) else { return showMessage(reason, anchor: anchor) }
+        let searchRoot = TextNavigation.searchRoot(for: file, boardRoot: root)
+        let relative = String(file.resolvingSymlinksInPath().path.dropFirst(searchRoot.path.count + 1))
+        let found = try await TextNavigation.declarations(of: name, in: searchRoot, preferring: relative)
+        try Task.checkCancellation()
+        let locations = found.map { Self.location($0, in: searchRoot) }
+        switch locations.count {
+        case 0: showMessage("No declaration of \(name) found by text search (no language server). \(reason)", anchor: anchor)
+        case 1: open(locations[0], newTile: newTile)
+        default:
+            showLocations("\(locations.count) likely declarations of \(name) · text search, no language server", locations,
+                          lines: found.map { $0.text.trimmingCharacters(in: .whitespaces) }, anchor: anchor, newTile: newTile, note: reason)
+        }
+    }
+
+    /// Find References without a language server: the lines of the root's files with the name as
+    /// a whole word (`TextNavigation.wordMatches`), labelled text matches, with Open All.
+    private func textReferences(at position: (line: Int, character: Int), file: URL, root: URL, anchor: NSPoint, reason: String) async throws {
+        guard let name = await identifier(at: position, file: file) else { return showMessage(reason, anchor: anchor) }
+        let searchRoot = TextNavigation.searchRoot(for: file, boardRoot: root)
+        let (matches, truncated) = try await TextNavigation.wordMatches(name, in: searchRoot)
+        try Task.checkCancellation()
+        guard !matches.isEmpty else { return showMessage("No text matches for \(name) (no language server). \(reason)", anchor: anchor) }
+        let locations = matches.map { Self.location($0, in: searchRoot) }
+        let count = truncated ? "First \(matches.count)" : "\(matches.count)"
+        let title = "\(count) text \(matches.count == 1 ? "match" : "matches") for \(name) · no language server"
+        showLocations(title, locations, lines: matches.map { $0.text.trimmingCharacters(in: .whitespaces) }, anchor: anchor, newTile: false,
+                      openAll: ("Open All ⌘↩", { [weak self] in self?.openAll(locations, name: name) }), note: reason)
+    }
+
+    /// Outline without a language server: tree-sitter's declarations and the file's top-level
+    /// ones by pattern (`TextNavigation.outline`).
+    private func textOutline(file: URL, anchor: NSPoint, reason: String) async {
+        let path = file.path
+        let entries = await offPool { () -> [TextNavigation.OutlineEntry] in
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { return [] }
+            return TextNavigation.outline(of: text, path: path)
+        }
+        guard !Task.isCancelled else { return }
+        guard !entries.isEmpty else { return showMessage("No symbols found without a language server. \(reason)", anchor: anchor) }
+        let rows = entries.map { entry in
+            NavigationPanel.Row(title: entry.name, detail: "\(entry.kind) · L\(entry.line)", indent: entry.depth) { [weak self] in
+                NavigationPanel.current?.dismiss()
+                self?.host?.reveal(line: entry.line)
+            }
+        }
+        let panel = NavigationPanel.filterList(title: "Outline · from syntax, no language server", rows: rows, note: reason)
         present(panel, anchor: anchor)
         panel.focusFilter()
     }
@@ -306,10 +398,13 @@ final class CodeNavigation: NSObject {
             }
             let title = "\(entries.count == 1 ? "1 reference" : "\(entries.count) references")\(name.map { " to \($0)" } ?? "")"
             guard let self, let opened = try? self.board.openExcerpts(excerpts, title: title, beside: self.tile) else { return }
-            let canvas = self.codeView.flatMap { sequence(first: $0, next: \.superview).first { $0 is CanvasView } as? CanvasView }
             // The least pan that shows the first reference (the group's title sits just above it);
-            // a long list runs on below and to the right.
-            canvas?.reveal(opened.tiles[0])
+            // a long list runs on below and to the right. One step of Navigate Back.
+            guard let canvas = self.canvas else { return }
+            canvas.navigating {
+                canvas.reveal(opened.tiles[0])
+                return nil
+            }
         }
     }
 
@@ -341,19 +436,38 @@ final class CodeNavigation: NSObject {
         showMessage([text, server?.config.emptyResultHint].compactMap { $0 }.joined(separator: ". "), anchor: anchor)
     }
 
-    /// Same file: re-aim this tile (the user's own jump, never held back like an agent's
-    /// re-aim). Another file (or `newTile`): a code tile beside this one.
+    /// A definition, near this tile and never re-aiming someone else's (`Board.openForNavigation`):
+    /// this tile when it is plain navigation surface and the definition is in its file, else a
+    /// plain tile in view showing that file, else a new tile beside this one, shown with the
+    /// least pan that keeps this one in view. `newTile` (⌥⌘) always opens a new tile. One step of
+    /// Navigate Back.
     private func open(_ location: LSPLocation, newTile: Bool) {
-        guard let host else { return }
-        let path = boardPath(location.url)
-        let lines = location.range.lines
-        if !newTile, path == boardPath(board.absoluteURL(host.navigationPath)) {
-            host.aim(at: lines)
-        } else {
-            let range = JSONValue.object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
-            let size = Board.defaultSize(.code)
-            board.create(type: .code, props: .object(["path": .string(path), "range": range]), frame: board.place(width: size.w, height: size.h, near: tile))
+        let aim = CodeAim(path: boardPath(location.url), range: location.range.lines)
+        let board = board, tile = tile
+        let go = { [weak self] () -> CodeReaim? in
+            var opened = (id: tile, reaim: CodeReaim?.none)
+            if newTile {
+                let lines = location.range.lines
+                let range = JSONValue.object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
+                let size = Board.defaultSize(.code)
+                opened.id = board.create(type: .code, props: .object(["path": .string(aim.path), "range": range]), frame: board.place(width: size.w, height: size.h, near: tile)).id
+            } else {
+                let found = board.openForNavigation(aim, from: tile)
+                opened = (found.id, found.reaim)
+            }
+            if opened.id != tile { self?.canvas?.reveal(opened.id, keeping: tile) }
+            return opened.reaim
         }
+        guard let canvas else {
+            _ = go()
+            return
+        }
+        canvas.navigating(landing: aim, go)
+    }
+
+    /// The canvas this code view is on.
+    private var canvas: CanvasView? {
+        codeView.flatMap { sequence(first: $0, next: \.superview).first { $0 is CanvasView } as? CanvasView }
     }
 
     /// Board-relative when under the root. Servers report symlink-resolved paths (/private/tmp
@@ -387,7 +501,14 @@ final class CodeNavigation: NSObject {
     /// Top-level symbols and the members of types (not locals), filtered as the user types.
     func showOutline(anchor: NSPoint) {
         run(anchor: anchor) { [weak self] file, root in
-            let symbols = LSPSymbol.outline(try await Self.languages.documentSymbols(file: file, boardRoot: root))
+            let answer: [LSPSymbol]
+            do {
+                answer = try await Self.languages.documentSymbols(file: file, boardRoot: root)
+            } catch let error where Self.textFallback(for: error) != nil {
+                await self?.textOutline(file: file, anchor: anchor, reason: Self.textFallback(for: error) ?? "")
+                return
+            }
+            let symbols = LSPSymbol.outline(answer)
             guard let self else { return }
             guard !symbols.isEmpty else { return self.showMessage("No symbols", anchor: anchor) }
             let rows = symbols.map { entry in

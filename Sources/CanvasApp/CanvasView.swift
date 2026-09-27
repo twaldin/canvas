@@ -342,10 +342,18 @@ final class CanvasView: NSScrollView {
             terminal.onOpenedCode = { [weak self] opened, created, source in
                 guard let self else { return }
                 if !created { self.setSelection([opened]) }
+                let from = self.viewport
                 self.reveal(opened, openedFrom: source.isNull ? .null : self.document.convert(source, from: nil))
+                self.recordNavigation(from: from, landing: self.board.objects[opened].flatMap(CodeAim.init))
             }
         }
-        (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
+        (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in
+            guard let self else { return }
+            self.navigating(landing: self.board.objects[opened].flatMap(CodeAim.init)) {
+                self.reveal(opened)
+                return nil
+            }
+        }
         // A clicked line: user navigation, like a terminal's ⌘-click (the keyboard stays put);
         // the least pan that shows the code tile keeps the diff in view too.
         (content as? ChangesTile)?.onOpenedCode = { [weak self] opened, created in
@@ -951,6 +959,12 @@ final class CanvasView: NSScrollView {
     /// ⌥⌘-moves so far, so the opposite arrow goes back (`TileWalk`).
     private var walk = TileWalk()
 
+    /// Navigate Back/Forward, Go to's Recent section, and how deep in a navigation the view is
+    /// (`CanvasView+Navigation`).
+    var navigation = NavigationHistory()
+    var recentLocations = RecentLocations()
+    var navigationDepth = 0
+
     /// ⌥⌘-arrow: the nearest tile that way from the focused tile, else the selection, else the
     /// viewport center (`Layout.neighbor`), or the tile the previous move came from when this is
     /// its opposite arrow (`TileWalk`); shown with the least pan, selected, and given the keyboard.
@@ -1000,8 +1014,10 @@ final class CanvasView: NSScrollView {
 
     /// Review Changes: a changes tile for the uncommitted work of the board root, or of another
     /// worktree of its repository (`root`), at a document point (`createHere`), selected with the
-    /// canvas holding the keyboard, so j/k step through hunks.
+    /// canvas holding the keyboard, so j/k step through hunks. With one already on the board for
+    /// that directory and base (`Board.changesTile`), Review Changes goes to it instead.
     func createChanges(at point: NSPoint, root: String? = nil) {
+        if let existing = board.changesTile(root: root, base: "HEAD") { return go(to: existing) }
         var props: [String: JSONValue] = ["base": .string("HEAD")]
         if let root { props["root"] = .string(root) }
         let changes = createHere(.changes, props: .object(props), at: point)
@@ -1237,6 +1253,11 @@ final class CanvasView: NSScrollView {
         Layout.Jump(zoom: magnification, origin: contentView.bounds.origin)
     }
 
+    /// Shows a viewport `viewport` reported earlier (Navigate Back/Forward).
+    func show(_ viewport: Viewport) {
+        apply(Layout.Jump(zoom: viewport.zoom, origin: CGPoint(x: viewport.rect.x + CanvasDocumentView.origin.x, y: viewport.rect.y + CanvasDocumentView.origin.y)))
+    }
+
     func zoom(to scale: CGFloat) {
         let visible = documentVisibleRect
         setMagnification(min(maxMagnification, max(minMagnification, scale)), centeredAt: NSPoint(x: visible.midX, y: visible.midY))
@@ -1260,8 +1281,14 @@ final class CanvasView: NSScrollView {
     /// when taller than the view); without one, around the viewport's center.
     func zoomToActualSize() {
         let rects = selection.compactMap(docFrame)
-        guard let first = rects.first else { return zoom(to: 1) }
-        apply(Layout.center(rects.dropFirst().reduce(first) { $0.union($1) }, in: clearArea, zoom: 1, padding: Self.jumpPadding))
+        navigating {
+            if let first = rects.first {
+                apply(Layout.center(rects.dropFirst().reduce(first) { $0.union($1) }, in: clearArea, zoom: 1, padding: Self.jumpPadding))
+            } else {
+                zoom(to: 1)
+            }
+            return nil
+        }
     }
 
     /// Room kept around whatever a fit shows, in document points.
@@ -1284,7 +1311,10 @@ final class CanvasView: NSScrollView {
     func zoomToFit() {
         let rects = selectableRects().map(\.rect) + groups.values.filter { !$0.isHidden }.map(\.frame)
         guard let target = Layout.fitTarget(rects, viewport: clearArea.size, padding: Self.fitPadding, minZoom: minMagnification) else { return }
-        fit(target)
+        navigating {
+            fit(target)
+            return nil
+        }
     }
 
     /// The navigator's "go to": the object fitted (at most 100%, a tall one by its width),
@@ -1292,7 +1322,10 @@ final class CanvasView: NSScrollView {
     /// canvas, so Delete, Esc and ⌘G act on it).
     func go(to id: ObjectID) {
         guard let rect = docFrame(id) else { return }
-        fit(rect, readable: true)
+        navigating {
+            fit(rect, readable: true)
+            return nil
+        }
         setSelection([id])
         takeKeyboard(id)
     }

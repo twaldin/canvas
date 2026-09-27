@@ -265,6 +265,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
     @objc func pasteMentions(_ sender: Any?) { keyController?.pasteMentions(sender) }
     @objc func goToNextNeedsYou(_ sender: Any?) { keyController?.goToNextNeedsYou(sender) }
+    @objc func navigateBack(_ sender: Any?) { keyController?.navigateBack(sender) }
+    @objc func navigateForward(_ sender: Any?) { keyController?.navigateForward(sender) }
     @objc func reviewChanges(_ sender: Any?) { keyController?.reviewChanges(sender) }
     @objc func clearAttentionMarkers(_ sender: Any?) { keyController?.clearAttentionMarkers(sender) }
     @objc func toggleFollowFiles(_ sender: Any?) { keyController?.toggleFollowFiles(sender) }
@@ -394,6 +396,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Go to…", #selector(toggleNavigator(_:)), "p"),
             // ⌘J: no shell sees ⌘, and Ghostty binds nothing to it.
             item("Go to Next Needs-You", #selector(goToNextNeedsYou(_:)), "j"),
+            // ⌘[ / ⌘] as in Xcode, PyCharm and Safari: the board window takes them ahead of a
+            // terminal (Ghostty's go to split has no splits here); a page with the keyboard goes
+            // back itself. Send to Back and Bring to Front are ⇧⌘[ / ⇧⌘].
+            item("Back", #selector(navigateBack(_:)), "["),
+            item("Forward", #selector(navigateForward(_:)), "]"),
             .separator(),
             item("Actual Size", #selector(zoomToActual(_:)), "0"),
             item("Zoom In", #selector(zoomIn(_:)), "="),

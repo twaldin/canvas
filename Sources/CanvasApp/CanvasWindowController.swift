@@ -10,6 +10,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let navigator = NavigatorPanel()
     private let nothingHere = NothingHerePill(frame: .zero)
     private let emptyHint = EmptyBoardHint()
+    private let undoHUD = UndoHUD()
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
@@ -66,7 +67,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
         }
         // Above the toolbar and tray, so the navigator is never covered.
-        for view in [nothingHere, navigator] {
+        for view in [nothingHere, undoHUD, navigator] {
             view.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(view)
         }
@@ -75,6 +76,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         NSLayoutConstraint.activate([
             nothingHere.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             nothingHere.bottomAnchor.constraint(equalTo: tray.topAnchor, constant: -10),
+            undoHUD.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            undoHUD.bottomAnchor.constraint(equalTo: tray.topAnchor, constant: -52),
+            undoHUD.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
             navigator.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             navigator.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
             navigatorWidth,
@@ -271,20 +275,23 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// Go to's file and symbol rows: the code tile already showing the file (follow tiles
-    /// excluded: they're their agent's) re-aimed at the lines (`Board.showCode`) and gone to;
-    /// else a new one placed in view like any object the user asks for.
+    /// Go to's file, symbol and Recent rows: a code tile in view already showing the lines, else
+    /// a plain code tile in view showing the file re-aimed at them (never an agent's, captioned,
+    /// grouped or follow tile: `Board.openForNavigation`), gone to; else a new one placed in view
+    /// like any object the user asks for. One step of Navigate Back.
     private func open(path: String, lines: LineRange?) {
-        let existing = board.objects.values
-            .filter { $0.type == .code && $0.props["path"]?.string == path && $0.props["followOf"] == nil }
-            .max { $0.z < $1.z }
-        if let existing {
-            if let lines { _ = try? board.showCode(path: path, range: lines, beside: existing.id) }
-            return canvas.go(to: existing.id)
+        let aim = CodeAim(path: path, range: lines)
+        canvas.navigating(landing: aim) {
+            let opened = board.openForNavigation(aim, from: nil)
+            if opened.created {
+                canvas.reveal(opened.id)
+                canvas.setSelection([opened.id])
+                canvas.takeKeyboard(opened.id)
+            } else {
+                canvas.go(to: opened.id)
+            }
+            return opened.reaim
         }
-        var props: [String: JSONValue] = ["path": .string(path)]
-        if let lines { props["range"] = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))]) }
-        canvas.openForUser(.code, props: .object(props))
     }
 
     /// When the language servers last answered a Go to symbol search with symbols (they are warm).
@@ -369,19 +376,65 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// ⌘Z undoes the latest board change (the user's or an agent's). A text field or editor with
-    /// its own pending edits undoes those first.
+    /// its own pending edits undoes those first. Undoing an agent's change is never silent: a
+    /// brief HUD names it and who made it.
     @objc func undoCanvas(_ sender: Any?) {
         if let text = window?.firstResponder as? NSTextView, text.isEditable, let manager = text.undoManager, manager.canUndo {
             return manager.undo()
         }
-        board.undo()
+        let step = board.nextUndo
+        guard board.undo(), let step, let author = board.authorName(step.author) else { return }
+        undoHUD.show("Undid \(author): \(step.summary) · ⇧⌘Z redoes")
     }
 
     @objc func redoCanvas(_ sender: Any?) {
         if let text = window?.firstResponder as? NSTextView, text.isEditable, let manager = text.undoManager, manager.canRedo {
             return manager.redo()
         }
-        board.redo()
+        let step = board.nextRedo
+        guard board.redo(), let step, let author = board.authorName(step.author) else { return }
+        undoHUD.show("Redid \(author): \(step.summary) · ⌘Z undoes")
+    }
+
+    /// Edit ▸ Undo/Redo named for the step they'd take (`Undo Create 9 Code Tiles, 6 Arrows
+    /// (omp)`), or the text editor's own.
+    private func undoTitle(redo: Bool) -> String {
+        if let manager = textUndoManager, redo ? manager.canRedo : manager.canUndo {
+            return redo ? manager.redoMenuItemTitle : manager.undoMenuItemTitle
+        }
+        let verb = redo ? "Redo" : "Undo"
+        guard let step = redo ? board.nextRedo : board.nextUndo else { return verb }
+        let title = step.title
+        let author = board.authorName(step.author).map { " (\($0))" } ?? ""
+        return title.isEmpty ? verb : "\(verb) \(title)\(author)"
+    }
+
+    /// View ▸ Back (⌘[): the view and re-aimed tile before the last navigation. A page with the
+    /// keyboard goes back itself, as in Safari.
+    @objc func navigateBack(_ sender: Any?) {
+        if let page = focusedPage {
+            page.credit.user()
+            page.webView?.goBack()
+            return
+        }
+        canvas.navigateBack()
+    }
+
+    /// View ▸ Forward (⌘]): what Back undid, again; a page with the keyboard goes forward itself.
+    @objc func navigateForward(_ sender: Any?) {
+        if let page = focusedPage {
+            page.credit.user()
+            page.webView?.goForward()
+            return
+        }
+        canvas.navigateForward()
+    }
+
+    /// The browser tile whose page (not its address field) holds the keyboard.
+    private var focusedPage: BrowserTile? {
+        guard let id = canvas.focusedTile, let browser = canvas.tiles[id]?.content as? BrowserTile,
+              let webView = browser.webView, let responder = window?.firstResponder as? NSView, responder.isDescendant(of: webView) else { return nil }
+        return browser
     }
 
     @objc func deleteSelection(_ sender: Any?) {
@@ -476,8 +529,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     func validate(_ item: NSMenuItem) -> Bool {
         let selection = canvas.selection
         switch item.action {
-        case #selector(undoCanvas(_:)): return textUndoManager?.canUndo == true || board.history.canUndo
-        case #selector(redoCanvas(_:)): return textUndoManager?.canRedo == true || board.history.canRedo
+        case #selector(undoCanvas(_:)):
+            item.title = undoTitle(redo: false)
+            return textUndoManager?.canUndo == true || board.history.canUndo
+        case #selector(redoCanvas(_:)):
+            item.title = undoTitle(redo: true)
+            return textUndoManager?.canRedo == true || board.history.canRedo
+        case #selector(navigateBack(_:)): return focusedPage?.webView?.canGoBack ?? canvas.canNavigateBack
+        case #selector(navigateForward(_:)): return focusedPage?.webView?.canGoForward ?? canvas.canNavigateForward
         case #selector(deleteSelection(_:)), #selector(bringToFront(_:)), #selector(sendToBack(_:)): return !selection.isEmpty
         case #selector(groupSelection(_:)): return selection.count >= 2
         case #selector(ungroupSelection(_:)):
@@ -520,7 +579,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The View menu's navigation shortcuts, matched on the key's characters: ⌘P, ⌘9, ⌘0, ⌘= (and
-    /// ⌘+), ⌘-. Nil for anything else, which stays with the focused view.
+    /// ⌘+), ⌘-, ⌘[ and ⌘] (Back, Forward). Nil for anything else, which stays with the focused view.
     static func navigationAction(for event: NSEvent) -> Selector? {
         guard event.type == .keyDown else { return nil }
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
@@ -530,6 +589,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case ("0", .command): return #selector(zoomToActual(_:))
         case ("=", .command), ("+", .command), ("+", [.command, .shift]): return #selector(zoomIn(_:))
         case ("-", .command): return #selector(zoomOut(_:))
+        // Ghostty's ⌘[ / ⌘] (go to split) have no splits here; a page keeps its own back.
+        case ("[", .command): return #selector(navigateBack(_:))
+        case ("]", .command): return #selector(navigateForward(_:))
         default: return nil
         }
     }

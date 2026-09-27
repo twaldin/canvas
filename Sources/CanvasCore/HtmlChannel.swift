@@ -27,7 +27,7 @@ public enum HtmlChannel {
                 try Task.checkCancellation()
             }
             guard FileManager.default.fileExists(atPath: file.url.path) else { throw HtmlError.notFound(file.relative) }
-            return try openCode(path: file.relative, range: range, symbol: symbol, beside: tile, on: board)
+            return openCode(path: file.relative, range: range, symbol: symbol, beside: tile, on: board)
 
         case .getState(let key):
             return state(try board.object(tile).props, key: key)
@@ -57,10 +57,10 @@ public enum HtmlChannel {
         return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
-    /// Re-aims the topmost code tile already showing `path`, else creates one to the right of the
-    /// HTML tile (`Board.showCode`). The click is the user's.
-    static func openCode(path: String, range: LineRange?, symbol: String?, beside tile: ObjectID, on board: Board) throws -> JSONValue {
-        let opened = try board.showCode(path: path, range: range, symbol: symbol, beside: tile)
+    /// The user's navigation to code from the HTML tile (`Board.openForNavigation`): a plain
+    /// code tile in view showing `path` re-aimed, else a new one to the right of the HTML tile.
+    static func openCode(path: String, range: LineRange?, symbol: String?, beside tile: ObjectID, on board: Board) -> JSONValue {
+        let opened = board.openForNavigation(CodeAim(path: path, range: range, symbol: symbol), from: tile)
         return .object(["tile": .string(opened.id), "created": .bool(opened.created)])
     }
 }

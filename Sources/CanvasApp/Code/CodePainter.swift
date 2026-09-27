@@ -14,19 +14,19 @@ enum CodeTheme {
     static var modified: NSColor { .systemBlue }
     static var deleted: NSColor { .systemRed }
 
+    /// Syntax colors for code and diff lines alike: red and green mean removed and added in a
+    /// changes tile and beside a code tile's diff gutter, so strings, keywords, and numbers take
+    /// other hues.
     static func color(_ style: SyntaxStyle) -> NSColor {
         switch style {
-        case .keyword: .systemPink
-        case .string: .systemRed
-        case .comment: .secondaryLabelColor
-        case .number: .systemPurple
-        case .type: .systemTeal
-        case .function: .systemIndigo
+        case .keyword: .systemPurple
+        case .string: .systemBlue
+        case .number, .builtin: .systemIndigo
+        case .type, .tag: .systemTeal
+        case .function: .systemCyan
         case .property: .systemBrown
+        case .comment, .punctuation: .secondaryLabelColor
         case .variable: .labelColor
-        case .builtin: .systemPurple
-        case .tag: .systemBlue
-        case .punctuation: .secondaryLabelColor
         }
     }
 }

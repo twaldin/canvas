@@ -57,7 +57,10 @@ export type TerminalProps = {
 
 export type BrowserProps = {
   url: string;
+  /** names the tile; the app never overwrites it */
   title?: string;
+  /** written by the app: the page's own title; shown when `title` is unset; never bumps rev */
+  pageTitle?: string;
   scale?: Scale;
 };
 

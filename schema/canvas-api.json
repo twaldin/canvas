@@ -85,7 +85,12 @@
     "BrowserProps": {
       "type": "object",
       "required": ["url"],
-      "properties": { "url": { "type": "string" }, "title": { "type": "string" }, "scale": { "$ref": "#/definitions/Scale" } },
+      "properties": {
+        "url": { "type": "string" },
+        "title": { "type": "string", "description": "names the tile; the app never overwrites it" },
+        "pageTitle": { "type": "string", "description": "written by the app: the page's own title; shown when `title` is unset; never bumps rev" },
+        "scale": { "$ref": "#/definitions/Scale" }
+      },
       "additionalProperties": false
     },
     "CodeProps": {

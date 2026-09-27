@@ -203,6 +203,24 @@ public final class Board {
         try write(id, rev: rev, frame: frame, z: z, props: props, caller: caller, actor: actor, refitting: [])
     }
 
+    /// Writes props the app keeps about an object rather than its content (a browser's
+    /// `pageTitle`; `UndoHistory.bookkeeping` names them per type): stored, persisted, and
+    /// announced (`objectUpdated`, a new board revision for `board.get since`), but the object's
+    /// `rev`, `updatedBy`, and `updatedAt` stay, so an agent's `object.update rev:` still holds;
+    /// never an undo step, never rewound, never logged.
+    public func writeBookkeeping(_ id: ObjectID, props: JSONValue) throws {
+        let before = try object(id)
+        let allowed = UndoHistory.bookkeeping(before.type)
+        guard let keys = props.object?.keys, keys.allSatisfy(allowed.contains) else {
+            throw BoardError.invalidParams("\(before.type.rawValue) bookkeeping is \(allowed.sorted()), not \(props.object.map { $0.keys.sorted() } ?? [])")
+        }
+        var object = before
+        object.props = object.props.merging(props)
+        guard object != before else { return }
+        commit(object)
+        onEvent?(.objectUpdated(object))
+    }
+
     /// `update`, re-bounding the groups that contain the object in the same undo step.
     /// `refitting` holds the groups already being re-bounded (nested groups, cycles). `cause`
     /// marks a cascade of another change (credited to that change's actor) and says why.

@@ -135,12 +135,15 @@ final class CmuxRouterTests {
     @Test func closedSurfacesLeaveTheBoardAndTheList() async throws {
         let shell = terminal(at: Frame(x: 0, y: 0, w: 100, h: 100))
         let page = browser()
+        try board.update(page.id, props: .object(["title": .string("checkout at 390")]))
+        try board.writeBookkeeping(page.id, props: .object(["pageTitle": .string("Checkout – Shop")]))
         let client = try connect()
         client.send(#"{"id":"l","method":"surface.list","params":{"surface_id":"\#(shell.id)"}}"#)
         let listed = try await client.next()["result"]
         #expect(listed?["workspace_id"] == .string(board.id))
         #expect(listed?["surfaces"]?.array?.compactMap { $0["id"]?.string } == [shell.id, page.id])
         #expect(listed?["surfaces"]?.array?.last?["type"] == .string("browser"))
+        #expect(listed?["surfaces"]?.array?.last?["title"] == .string("Checkout – Shop"), "cmux's title is the page's own")
 
         client.send(#"{"id":"x","method":"surface.close","params":{"surface_id":"\#(page.id)"}}"#)
         #expect(try await client.next()["ok"] == .bool(true))

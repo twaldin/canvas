@@ -136,7 +136,8 @@ public final class CmuxRouter {
             .sorted { $0.z < $1.z }
             .map { object -> JSONValue in
                 var row: [String: JSONValue] = ["id": .string(object.id), "type": .string(object.type.rawValue)]
-                if let title = object.props["title"]?.string { row["title"] = .string(title) }
+                // cmux's title is the page's own; the agent's `title` only names the tile.
+                if let title = (object.props["pageTitle"] ?? object.props["title"])?.string { row["title"] = .string(title) }
                 if object.type == .browser, let url = object.props["url"]?.string { row["url"] = .string(url) }
                 return .object(row)
             }

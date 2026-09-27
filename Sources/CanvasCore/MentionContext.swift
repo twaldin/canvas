@@ -159,7 +159,7 @@ public enum MentionContext {
         switch object.type {
         // The user's own name for it first: what "the fees terminal" means.
         case .terminal: return nonEmpty("name") ?? nonEmpty("title") ?? props["agent"]?["kind"]?.string ?? "terminal"
-        case .browser: return props["title"]?.string ?? props["url"]?.string ?? ""
+        case .browser: return nonEmpty("title") ?? nonEmpty("pageTitle") ?? props["url"]?.string ?? ""
         case .code: return props["path"]?.string ?? ""
         case .note: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["markdown"]?.string?.split(separator: "\n").first.map(String.init) ?? ""
         case .html: return props["title"]?.string ?? "html"

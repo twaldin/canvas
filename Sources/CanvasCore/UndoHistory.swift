@@ -1,8 +1,9 @@
 import Foundation
 
 /// Linear undo/redo of board content changes, whoever made them: ⌘Z undoes the latest change
-/// even when an agent made it. Bookkeeping that tracks a terminal rather than content (agent
-/// lifecycle, session, title) is never recorded and never rewound.
+/// even when an agent made it. Bookkeeping that tracks a tile rather than its content (a
+/// terminal's agent lifecycle, session, title; a browser's page title) is never recorded and
+/// never rewound.
 @MainActor
 public final class UndoHistory {
     public enum Change: Sendable {
@@ -14,8 +15,15 @@ public final class UndoHistory {
         case effect(UndoEffect)
     }
 
-    /// Props a terminal's integrations keep current on their own.
-    static let terminalBookkeeping: Set<String> = ["lifecycle", "agent", "title"]
+    /// Props the app or a tile's integrations keep current on their own, by type: a terminal's
+    /// agent lifecycle, session, and title; a browser page's own title (`Board.writeBookkeeping`).
+    static func bookkeeping(_ type: ObjectType) -> Set<String> {
+        switch type {
+        case .terminal: ["lifecycle", "agent", "title"]
+        case .browser: ["pageTitle"]
+        default: []
+        }
+    }
 
     public private(set) var undoSteps: [[Change]] = []
     public private(set) var redoSteps: [[Change]] = []
@@ -110,8 +118,9 @@ public final class UndoHistory {
     }
 
     static func contentProps(_ object: CanvasObject) -> JSONValue {
-        guard object.type == .terminal, var props = object.props.object else { return object.props }
-        for key in terminalBookkeeping { props.removeValue(forKey: key) }
+        let keys = bookkeeping(object.type)
+        guard !keys.isEmpty, var props = object.props.object else { return object.props }
+        for key in keys { props.removeValue(forKey: key) }
         return .object(props)
     }
 
@@ -122,8 +131,8 @@ public final class UndoHistory {
         object.z = target.z
         object.parent = target.parent
         var props = contentProps(target).object ?? [:]
-        if current.type == .terminal, let live = current.props.object {
-            for key in terminalBookkeeping { props[key] = live[key] }
+        if let live = current.props.object {
+            for key in bookkeeping(current.type) { props[key] = live[key] }
         }
         object.props = .object(props)
         return object
@@ -214,7 +223,7 @@ extension Board {
 
     /// Deletes an object for undo/redo and returns what to bring back later: the live object,
     /// whose content matches the recorded snapshot (later steps were already reverted) and whose
-    /// bookkeeping (agent session, lifecycle, title) is the latest the integrations reported.
+    /// bookkeeping (agent session, lifecycle, titles) is the latest the integrations reported.
     private func removeLive(_ recorded: CanvasObject) -> CanvasObject {
         guard let live = objects[recorded.id] else { return recorded }
         try? delete(recorded.id)

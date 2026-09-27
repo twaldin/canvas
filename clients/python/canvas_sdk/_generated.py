@@ -72,6 +72,7 @@ class TerminalProps(TypedDict):
 class BrowserProps(TypedDict):
     url: Required[str]
     title: NotRequired[str]
+    pageTitle: NotRequired[str]
     scale: NotRequired["Scale"]
 
 class CodeProps(TypedDict):

@@ -61,6 +61,26 @@ extension Board {
         return true
     }
 
+    /// A program in terminal `tile` asked for the user: a desktop notification (OSC 9, OSC 777
+    /// `notify`) or a bell. The marker goes on the terminal itself, raised by the app rather than
+    /// an agent (no `raisedBy`, so no turn ever clears it; looking at the terminal does). Repeats
+    /// coalesce: the same message again changes nothing, and a bell never replaces a marker already
+    /// on the terminal, whose message says more. False when nothing changed.
+    @discardableResult
+    public func raiseTerminalNotice(_ tile: ObjectID, message: String, bell: Bool) -> Bool {
+        guard objects[tile]?.type == .terminal else { return false }
+        if let current = attention[tile], bell || current.message == message { return false }
+        _ = try? raiseAttention(tile, message: message, caller: nil)
+        return true
+    }
+
+    /// The marker text for a desktop notification: "title: body", or whichever part is there.
+    public static func noticeMessage(title: String, body: String) -> String {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines), body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if title.isEmpty { return body.isEmpty ? "Notification" : body }
+        return body.isEmpty ? title : "\(title): \(body)"
+    }
+
     /// `tile`'s agent started a new turn: its markers so far belong to earlier turns.
     func agentStartedTurn(_ tile: ObjectID) {
         var changed = false

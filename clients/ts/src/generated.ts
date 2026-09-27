@@ -26,6 +26,20 @@ export type LineRange = {
   end: number;
 };
 
+/** live: the anchored lines are where written; relocated: found elsewhere by content, or longer or shorter by lines inserted or removed inside; stale: the content is gone (a note shows its last text dimmed, a code tile an untinted range); applied: a proposal whose text the file already reads; missing: no such file or commit */
+export type AnchorState = "live" | "relocated" | "stale" | "applied" | "missing";
+
+/** how an anchored range (a note fence, a code tile's range) resolves against disk now */
+export type AnchorStatus = {
+  state: AnchorState;
+  /** where it resolved (absent when stale or missing) */
+  range?: LineRange;
+  /** relocated: the range as written */
+  written?: LineRange;
+  /** stale or missing: why */
+  reason?: string;
+};
+
 /** how much bigger the object draws its content than its natural size: a tile lays out at frame size ÷ scale and draws magnified (header, text, page, terminal cells), so resizing the frame by the same factor keeps its layout; a text shape scales its font. Out-of-range values clamp; 1 is written as absent. The user sets it with ⌥-drag on a tile corner, a text shape's corner, or the Scale menu */
 export type Scale = number;
 
@@ -67,8 +81,10 @@ export type BrowserProps = {
 export type CodeProps = {
   /** path relative to the board root */
   path: string;
-  /** lines to scroll to and tint; the tile always shows the whole file */
+  /** lines to scroll to and tint; the tile always shows the whole file. Kept on the code it showed: when lines are inserted or removed above or inside it, the tile re-finds it by content and writes the moved range back (no rev, no undo step); code that is gone leaves it untinted with a stale warning in the header (not follow tiles or pinned tiles) */
   range?: LineRange;
+  /** the range's first line (trimmed), which re-finds the range after lines move; written back by the tile, or given with the range. An update that changes range or path without an anchor drops it */
+  anchor?: string;
   /** the declaration the range shows; with a range it only names it, and `size: "fit"` fits the range */
   symbol?: string;
   /** one-line subtitle under the tile's header (plain text, `inline code` allowed); never wraps: object.measure and size "fit" widen the tile to show all of it, and layout.check reports a caption its frame cuts off (`truncated`) */
@@ -572,6 +588,27 @@ export type ObjectGetResult = {
   page?: PageLog;
   /** terminals only: the last command the shell finished, as in `agent.list` */
   lastCommand?: TerminalCommand;
+  /** notes only: each anchored fence (excerpt or proposal; fences with the same info string are one) resolved against disk now, as the note shows it */
+  fences?: {
+    /** the fence's info string */
+    info: string;
+    /** 1-based markdown lines of its opening fence lines */
+    markdownLines: number[];
+    /** the file, as written or as a symbol search found it */
+    path?: string;
+    symbol?: string;
+    commit?: string;
+    propose: boolean;
+    state: AnchorState;
+    /** where it resolved (absent when stale or missing) */
+    range?: LineRange;
+    /** relocated: the range as written */
+    written?: LineRange;
+    /** stale or missing: why */
+    reason?: string;
+  }[];
+  /** code tiles showing a range (not follow tiles or pinned tiles): how the range resolves against disk now, by props.anchor */
+  rangeStatus?: AnchorStatus;
   /** changes tiles only */
   changes?: {
     repository?: string;
@@ -1069,7 +1106,7 @@ export interface CanvasApi {
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
   object: {
-    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. To look at an object, `view.render` it. */
+    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. A note adds `fences`: each anchored fence's state (live, relocated, stale, applied, missing), resolved range and reason, resolved against disk now; a code tile showing a range adds `rangeStatus`, the same for its range. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;

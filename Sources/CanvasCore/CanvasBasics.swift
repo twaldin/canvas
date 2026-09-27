@@ -34,7 +34,7 @@ public enum CanvasBasics {
         Section(title: "Reading a board", items: [
             Item(term: "Scroll · pinch", text: "scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%."),
             Item(term: "Groups and arrows", text: "a tinted, titled region holds tiles that belong together; an arrow's label says how two things relate, and one into a code tile points at its lines."),
-            Item(term: "Captions", text: "the line under a code tile's header says why those lines matter."),
+            Item(term: "Captions", text: "the line under a code tile's header says why those lines matter. The tile keeps them as code moves; \"⚠︎ stale\" in its header means they're gone."),
             Item(term: "⌥⌘→ · ⌥⌘←", text: "step to the next or previous stop: along the board's next-step arrows when the selected tile has one, else to the nearest tile that way. A stop not in view is centered; \"Last step\" ends the walk."),
             Item(term: "⌘P", text: "find a tile by its title or caption."),
             Item(term: "Links", text: "a path:line link, Go to or ⌘-click goes to the tile already showing those lines, else opens them beside you. Return enters a code tile to scroll it."),

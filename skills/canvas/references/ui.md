@@ -7,7 +7,7 @@ Point the user at Help › Canvas Basics for the same text in the app.
 
 - Scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
 - **Groups** are tinted, titled regions of tiles that belong together; an **arrow**'s label says how two things relate, and one into a code tile points at its lines.
-  A code tile's **caption** (the line under its header) says why those lines matter.
+  A code tile's **caption** (the line under its header) says why those lines matter. A code tile keeps its range on its code as lines move above or inside it; "⚠︎ stale: …" in its header means that code is gone (the range is left untinted).
 - **⌥⌘→ / ⌥⌘←** step to the next or previous stop: along the selected tile's `relation: "next_step"` arrows when it has one, else to the nearest tile that way.
   A stop not wholly in view is centered (fitted when larger than the view); "Last step" / "First step" ends a sequence. Each step is a Back entry.
 - **⌘P** finds a tile by title or caption.

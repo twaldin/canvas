@@ -305,8 +305,8 @@ public final class NoteRenderer {
         }
     }
 
-    /// `src/app.ts:10-40 · symbol X · @1a2b3c4 · moved from L10`, the path opening a code tile;
-    /// a lost anchor says so in the caption.
+    /// `src/app.ts:10-40 · symbol X · @1a2b3c4 · was L8-38`, the path opening a code tile; a
+    /// lost anchor says so in the caption, an applied proposal quietly too.
     private func caption(_ fence: NoteFence, excerpt: NoteExcerpt?, context: Context, line: Int) {
         let style = style(context, spacing: 0, before: 2)
         style.firstLineHeadIndent = context.indent + NoteBlockFragment.inset + 4
@@ -326,7 +326,8 @@ public final class NoteRenderer {
         var details: [String] = []
         if let symbol = fence.symbol { details.append("symbol \(symbol)") }
         if let commit = fence.commit { details.append("@\(commit)") }
-        if case .relocated(let from)? = excerpt?.status { details.append("moved from L\(from)") }
+        if case .relocated(let from)? = excerpt?.status { details.append(from.start == from.end ? "was L\(from.start)" : "was L\(from.start)-\(from.end)") }
+        if excerpt?.applied == true { details.append("✓ applied") }
         if !details.isEmpty { append(" · " + details.joined(separator: " · "), base) }
         if case .stale(let reason)? = excerpt?.status {
             append("  ⚠ stale: \(reason)", base.merging([.foregroundColor: NSColor.systemOrange, .font: NSFont.systemFont(ofSize: 10.5, weight: .bold)]) { $1 })

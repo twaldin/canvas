@@ -43,6 +43,22 @@
       "additionalProperties": false,
       "description": "1-based inclusive line range"
     },
+    "AnchorState": {
+      "enum": ["live", "relocated", "stale", "applied", "missing"],
+      "description": "live: the anchored lines are where written; relocated: found elsewhere by content, or longer or shorter by lines inserted or removed inside; stale: the content is gone (a note shows its last text dimmed, a code tile an untinted range); applied: a proposal whose text the file already reads; missing: no such file or commit"
+    },
+    "AnchorStatus": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "$ref": "#/definitions/AnchorState" },
+        "range": { "$ref": "#/definitions/LineRange", "description": "where it resolved (absent when stale or missing)" },
+        "written": { "$ref": "#/definitions/LineRange", "description": "relocated: the range as written" },
+        "reason": { "type": "string", "description": "stale or missing: why" }
+      },
+      "additionalProperties": false,
+      "description": "how an anchored range (a note fence, a code tile's range) resolves against disk now"
+    },
     "Scale": {
       "type": "number",
       "minimum": 0.25,
@@ -98,7 +114,8 @@
       "required": ["path"],
       "properties": {
         "path": { "type": "string", "description": "path relative to the board root" },
-        "range": { "$ref": "#/definitions/LineRange", "description": "lines to scroll to and tint; the tile always shows the whole file" },
+        "range": { "$ref": "#/definitions/LineRange", "description": "lines to scroll to and tint; the tile always shows the whole file. Kept on the code it showed: when lines are inserted or removed above or inside it, the tile re-finds it by content and writes the moved range back (no rev, no undo step); code that is gone leaves it untinted with a stale warning in the header (not follow tiles or pinned tiles)" },
+        "anchor": { "type": "string", "description": "the range's first line (trimmed), which re-finds the range after lines move; written back by the tile, or given with the range. An update that changes range or path without an anchor drops it" },
         "symbol": { "type": "string", "description": "the declaration the range shows; with a range it only names it, and `size: \"fit\"` fits the range" },
         "caption": { "type": "string", "description": "one-line subtitle under the tile's header (plain text, `inline code` allowed); never wraps: object.measure and size \"fit\" widen the tile to show all of it, and layout.check reports a caption its frame cuts off (`truncated`)" },
         "diffBase": { "type": "string", "default": "merge-base", "description": "gutter signs show changes against this: merge-base | head | <sha>" },
@@ -638,7 +655,7 @@
       }
     },
     "object.get": {
-      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. To look at an object, `view.render` it.",
+      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. A note adds `fences`: each anchored fence's state (live, relocated, stale, applied, missing), resolved range and reason, resolved against disk now; a code tile showing a range adds `rangeStatus`, the same for its range. To look at an object, `view.render` it.",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -657,6 +674,29 @@
           "graph": { "type": "object" },
           "page": { "$ref": "#/definitions/PageLog", "description": "browser tiles only" },
           "lastCommand": { "$ref": "#/definitions/TerminalCommand", "description": "terminals only: the last command the shell finished, as in `agent.list`" },
+          "fences": {
+            "type": "array",
+            "description": "notes only: each anchored fence (excerpt or proposal; fences with the same info string are one) resolved against disk now, as the note shows it",
+            "items": {
+              "type": "object",
+              "description": "the fence as written, and its AnchorStatus fields",
+              "required": ["info", "markdownLines", "propose", "state"],
+              "properties": {
+                "info": { "type": "string", "description": "the fence's info string" },
+                "markdownLines": { "type": "array", "items": { "type": "integer" }, "description": "1-based markdown lines of its opening fence lines" },
+                "path": { "type": "string", "description": "the file, as written or as a symbol search found it" },
+                "symbol": { "type": "string" },
+                "commit": { "type": "string" },
+                "propose": { "type": "boolean" },
+                "state": { "$ref": "#/definitions/AnchorState" },
+                "range": { "$ref": "#/definitions/LineRange", "description": "where it resolved (absent when stale or missing)" },
+                "written": { "$ref": "#/definitions/LineRange", "description": "relocated: the range as written" },
+                "reason": { "type": "string", "description": "stale or missing: why" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "rangeStatus": { "$ref": "#/definitions/AnchorStatus", "description": "code tiles showing a range (not follow tiles or pinned tiles): how the range resolves against disk now, by props.anchor" },
           "changes": {
             "type": "object",
             "description": "changes tiles only",

@@ -205,14 +205,13 @@ final class NoteTile: NSView, TileContent {
             let images = await NoteImages.load(sources, root: root)
             if Task.isCancelled { return }
             guard let self, self.resolveGeneration == generation else { return }
+            self.resolveTask = nil
             self.apply(results, images: images, imageFiles: Array(NoteImages.files(sources, root: root).values))
         }
     }
 
     private func apply(_ results: [String: NoteExcerpt], images: [String: NSImage], imageFiles: [URL]) {
-        for (key, excerpt) in results where captured[key] == nil && excerpt.status == .exact && !excerpt.lines.isEmpty {
-            captured[key] = excerpt.lines
-        }
+        capture(results)
         // Images come back re-read (a chart re-saved in place): any image re-renders.
         if results != excerpts || !images.isEmpty || !self.images.isEmpty {
             excerpts = results
@@ -225,6 +224,34 @@ final class NoteTile: NSView, TileContent {
         let root = linkRoot
         watch(files: Set(files.map { FileEvents.canonical($0.hasPrefix("/") ? $0 : root.appendingPathComponent($0).path) } + imageFiles.map { FileEvents.canonical($0.path) }), root: unfound)
         persistAnchors(results)
+    }
+
+    /// The text each fence showed when it first resolved to exactly what it names.
+    private func capture(_ results: [String: NoteExcerpt]) {
+        for (key, excerpt) in results where captured[key] == nil && excerpt.status == .exact && !excerpt.applied && !excerpt.lines.isEmpty {
+            captured[key] = excerpt.lines
+        }
+    }
+
+    /// Every anchored fence resolved against disk now, with the text it captured, and shown: a
+    /// note that isn't live watches nothing, so a render or `object.get` of it must not trust
+    /// what it resolved last (a source restored since would still show its stale badge).
+    func resolvedExcerpts() async -> [String: NoteExcerpt] {
+        let jobs = fences
+        let captured = captured
+        let root = linkRoot
+        var results: [String: NoteExcerpt] = [:]
+        for job in jobs {
+            results[job.key] = await NoteSource.excerpt(for: job.fence, root: root, captured: captured[job.key], body: job.body)
+        }
+        // The markdown changed meanwhile: its own resolution is on its way.
+        guard jobs == fences else { return results }
+        capture(results)
+        if results != excerpts {
+            excerpts = results
+            renderDisplay()
+        }
+        return results
     }
 
     /// A line-range fence without `anchor=` gets its resolved first line written back as
@@ -526,17 +553,13 @@ final class NoteTile: NSView, TileContent {
     }
 
     /// Lays the note out on its own text stack (never the on-screen view, which only holds text
-    /// while live) and draws every paragraph. Anchored fences the note hasn't resolved yet (it
-    /// was never live) are resolved first.
+    /// while live) and draws every paragraph. Anchored fences resolve against disk first unless
+    /// the note is live and caught up (watching its files, nothing pending): an offscreen note's
+    /// last resolution may predate any number of changes.
     func render(_ request: TileRenderRequest) async -> TileRender {
-        var resolved = excerpts
+        let current = live && window != nil && pendingResolve == nil && resolveTask == nil && fences.allSatisfy { excerpts[$0.key] != nil }
+        let resolved = current ? excerpts : await resolvedExcerpts()
         let root = linkRoot
-        for fence in fences where resolved[fence.key] == nil {
-            resolved[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: captured[fence.key], body: fence.body)
-        }
-        if resolved != excerpts, !live {
-            excerpts = resolved
-        }
         let sources = NoteImages.sources(in: document)
         let pictures = await NoteImages.load(sources, root: root)
         let text = NoteRenderer(excerpts: resolved, images: pictures).render(document, placeholder: Self.placeholder)

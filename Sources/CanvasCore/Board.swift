@@ -252,6 +252,22 @@ public final class Board {
         guard let keys = props.object?.keys, keys.allSatisfy(allowed.contains) else {
             throw BoardError.invalidParams("\(before.type.rawValue) bookkeeping is \(allowed.sorted()), not \(props.object.map { $0.keys.sorted() } ?? [])")
         }
+        commitBookkeeping(before, props: props)
+    }
+
+    /// A code tile's range re-found by content (`NoteAnchor`, from the tile's reload of its
+    /// file) and the first line it is anchored by, written like `writeBookkeeping`: the app keeps
+    /// the range on the code it showed, nobody chose to move it, so no `rev`, undo step, or log.
+    /// Only a code tile whose range anchors (`CodeAnchor.fence`).
+    public func reanchor(_ id: ObjectID, range: LineRange, anchor: String?) throws {
+        let before = try object(id)
+        guard before.type == .code, CodeAnchor.fence(before.props) != nil else {
+            throw BoardError.invalidParams("only a code tile showing a range, not a follow tile or pinned to a commit, is re-anchored")
+        }
+        commitBookkeeping(before, props: .object(["range": range.json, "anchor": anchor.map(JSONValue.string) ?? .null]))
+    }
+
+    private func commitBookkeeping(_ before: CanvasObject, props: JSONValue) {
         var object = before
         object.props = object.props.merging(props)
         guard object != before else { return }
@@ -268,7 +284,15 @@ public final class Board {
         var object = before
         if let frame { object.frame = frame }
         if let z { object.z = z }
-        if let props { object.props = object.props.merging(props) }
+        if let props {
+            object.props = object.props.merging(props)
+            // A code tile aimed elsewhere without an anchor drops its old one, which named the
+            // first line of the range it showed before.
+            if object.type == .code, props["anchor"] == nil,
+               object.props["range"] != before.props["range"] || object.props["path"] != before.props["path"] {
+                object.props = object.props.merging(.object(["anchor": .null]))
+            }
+        }
         if let fitted = fittedFrame(ofGroup: object) { object.frame = fitted }
         object.rev += 1
         object.updatedAt = Date()

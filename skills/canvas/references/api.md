@@ -23,6 +23,7 @@ A param the method doesn't take, or a required one missing, is `invalid_params` 
 - `board.get` returns every object with heavy props trimmed (long markdown, HTML source); `object.get` returns one object whole.
 - Poll cheaply: keep `revision` from one `board.get` and pass it as `since` next time; `changed` lists ids created or changed after it.
 - `object.get --as graph` gives `encloses`, `enclosedBy`, `overlaps`, `arrowsOut`, `arrowsIn`. To look at an object use `view.render` (`canvas render <id> --out file.png`).
+- `object.get` on a note adds `fences`: per anchored fence its `info`, `markdownLines`, `path`, `symbol`, `propose`, and `state` (`live`, `relocated`, `stale`, `applied`, `missing`) with the resolved `range`, the `written` range when relocated, and the stale `reason`, resolved against disk now; on a code tile showing a range, `rangeStatus` (the same fields). Check these instead of rendering to see whether excerpts are still true.
 - `object.get` on a browser tile adds `page`: what the page reported since it loaded (`errors`, `warnings`, the latest 100 `entries`: console messages, uncaught errors and rejections, failed requests, each with `level`, `text`, `source` `url:line:column`, `time`), `vitals` (null when not measured, never zeros; `unsupported` names what WebKit can't measure), and a `cursor`.
   Pass `--since <cursor>` next time for only what came after (after a reload: all of the new page, `reloaded: true`). `loaded: false`: the tile has no page now; `canvas render <id>` loads it.
 - `tray.list` shows what the user has staged but not yet sent. Don't drain the tray yourself; your harness attaches it to the user's next prompt.
@@ -42,6 +43,7 @@ A param the method doesn't take, or a required one missing, is `invalid_params` 
 - A prop the type doesn't define (a typo like `colour` or `markdwon`) is kept, but `object.create`/`object.update` (and each batch op's result) add `warnings`, one per unknown key naming the type's real props. No `warnings` key means every prop is known.
 - Every change bumps `rev`. Pass `rev` on updates to objects the user may be editing; the `rev` a create or update returns is current.
   A note's line-range fences (`file=src/a.ts#L10-40`) come back with an `anchor="<first line>"` added, as the tile would write it.
+  A code tile's `range` stays on its code: when lines move above or inside it the tile re-finds it and writes the new `range` (and `anchor`, its first line) back without a new `rev`; an update that changes `range` without `anchor` drops the old one.
 - `props.scale` on any tile or text shape (0.25–8, default 1) magnifies what it draws:
   a tile lays out at frame ÷ scale (a 1200×800 tile at scale 2 shows what a 600×400 one does, twice as big), a text shape's font scales.
   Measure, fit, `layout.check`, `view.render` sizes, and line anchors account for it; everything you get back is in canvas points.

@@ -51,6 +51,15 @@ class LineRange(TypedDict):
     start: Required[int]
     end: Required[int]
 
+AnchorState = Literal["live", "relocated", "stale", "applied", "missing"]
+
+class AnchorStatus(TypedDict):
+    """how an anchored range (a note fence, a code tile's range) resolves against disk now"""
+    state: Required["AnchorState"]
+    range: NotRequired["LineRange"]
+    written: NotRequired["LineRange"]
+    reason: NotRequired[str]
+
 Scale = float
 
 class Lifecycle(TypedDict):
@@ -78,6 +87,7 @@ class BrowserProps(TypedDict):
 class CodeProps(TypedDict):
     path: Required[str]
     range: NotRequired["LineRange"]
+    anchor: NotRequired[str]
     symbol: NotRequired[str]
     caption: NotRequired[str]
     diffBase: NotRequired[str]
@@ -320,7 +330,7 @@ class ObjectApi:
         self._call = call
 
     def get(self, *, id: "Id", as_: Literal["raw", "graph"] | None = None, since: str | None = None) -> dict[str, Any]:
-        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. To look at an object, `view.render` it."""
+        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. A note adds `fences`: each anchored fence's state (live, relocated, stale, applied, missing), resolved range and reason, resolved against disk now; a code tile showing a range adds `rangeStatus`, the same for its range. To look at an object, `view.render` it."""
         params = {"id": id, "as": as_, "since": since}
         return self._call("object.get", params, [])
 

@@ -782,16 +782,22 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// A new terminal with keyboard focus: at a document point (its top-left), moved to the
-    /// nearest free spot on whole points (`Board.place`), else placed and revealed like any new
-    /// object the user asks for (`openForUser`).
+    /// A new terminal with keyboard focus: at a document point (`createHere`), else placed and
+    /// revealed like any new object the user asks for (`openForUser`).
     func createTerminal(at point: NSPoint? = nil) {
         let props: JSONValue = .object(["cwd": .string(board.root.path), "command": .array([])])
         guard let point else { return openForUser(.terminal, props: props) }
-        let size = Board.defaultSize(.terminal)
-        let frame = board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h))
-        let object = board.create(type: .terminal, props: props, frame: frame)
-        takeKeyboard(object.id)
+        takeKeyboard(createHere(.terminal, props: props, at: point).id)
+    }
+
+    /// New Terminal/Note/Browser Here: the object's top-left at a document point, moved to the
+    /// nearest free spot on whole points, wholly in view clear of the toolbar and tray when there's
+    /// room (`Board.place`); when there isn't, the canvas pans the least that shows it.
+    private func createHere(_ type: ObjectType, props: JSONValue, at point: NSPoint) -> CanvasObject {
+        let size = Board.defaultSize(type)
+        let object = board.create(type: type, props: props, frame: board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h)))
+        reveal(object.id)
+        return object
     }
 
     /// A new object the user asked for without saying where (File › Open File, New Note, New
@@ -862,19 +868,15 @@ final class CanvasView: NSScrollView {
         return true
     }
 
+    /// An empty note at a document point (`createHere`).
     func createNote(at point: NSPoint) {
-        let size = Board.defaultSize(.note)
-        let frame = Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h)
-        let note = board.create(type: .note, props: .object(["markdown": .string("")]), frame: frame)
-        setSelection([note.id])
+        setSelection([createHere(.note, props: .object(["markdown": .string("")]), at: point).id])
     }
 
-    /// An empty browser tile at a document point (its top-left) moved to the nearest free spot,
-    /// with the address field focused for the user to type where to go.
+    /// An empty browser tile at a document point (`createHere`), with the address field focused
+    /// for the user to type where to go.
     func createBrowser(at point: NSPoint) {
-        let size = Board.defaultSize(.browser)
-        let frame = board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h))
-        let browser = board.create(type: .browser, props: .object(["url": .string("about:blank")]), frame: frame)
+        let browser = createHere(.browser, props: .object(["url": .string("about:blank")]), at: point)
         setSelection([browser.id])
         DispatchQueue.main.async { [weak self] in
             (self?.tiles[browser.id]?.content as? BrowserTile)?.focusAddress()

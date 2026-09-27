@@ -290,6 +290,17 @@ struct BoardTests {
         #expect(board.place(width: 640, height: 446, near: nil) == Frame(x: -320, y: -780, w: 640, h: 446))
     }
 
+    @Test func aSpotChosenNearTheViewsEdgeStillLandsWhollyInTheView() {
+        // New Terminal Here near the bottom-right of the view: the terminal's top-left at the
+        // click would put its bottom under the tray and its right side past the window.
+        let board = makeBoard()
+        let view = Frame(x: -720, y: -380, w: 1440, h: 760)
+        board.viewport = { view }
+        let placed = board.place(Frame(x: 30, y: 70, w: 1000, h: 620))
+        let inset = Frame(x: view.x + Board.placementGap, y: view.y + Board.placementGap, w: view.w - 2 * Board.placementGap, h: view.h - 2 * Board.placementGap)
+        #expect(inset.contains(placed), "\(placed) is not wholly inside \(inset)")
+    }
+
     @Test func aBoardNeedsYouWhenAnAgentIsBlockedElseWhenOneFinishedUnseen() throws {
         let board = makeBoard()
         let a = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))

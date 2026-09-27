@@ -67,7 +67,7 @@ extension Board {
     public func terminalNotified(_ tile: ObjectID, message: String, bell: Bool, program: String?, watched: Bool, answersKey: Bool = false) -> TerminalNoticeEffect {
         guard let terminal = objects[tile], terminal.type == .terminal, !NotifyingAgent.integrationReports(terminal) else { return .none }
         if let program, !(bell && answersKey) {
-            let kind = NotifyingAgent.reports(terminal) ? terminal.props["agent"]?["kind"]?.string ?? NotifyingAgent.kind(program: program) : NotifyingAgent.kind(program: program)
+            let kind = (NotifyingAgent.reports(terminal) ? terminal.props["agent"]?["kind"]?.string : nil) ?? NotifyingAgent.kind(program: program)
             if watched { seenSinceWorking.insert(tile) } else { seenSinceWorking.remove(tile) }
             setNotifiedLifecycle(tile, kind: kind, state: watched ? .idle : .done, message: message, seen: watched)
             return .lifecycle

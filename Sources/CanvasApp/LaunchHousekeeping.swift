@@ -12,13 +12,12 @@ extension Housekeeping {
         let ghostty = TerminalController.managedConfigDirectory
         let renders = ApiRouter.scratchImages
         let logs = AppPaths.zmxLogs
-        let zmx = AppPaths.zmx
         DispatchQueue.global(qos: .utility).async {
             let now = Date()
             remove(staleGhosttyConfigs(listing(ghostty), now: now), in: ghostty)
             remove(staleRenders(listing(renders), now: now), in: renders)
-            if let zmx, let live = liveSessions(zmx: zmx) {
-                remove(deadSessionLogs(listing(logs), live: live, now: now), in: logs)
+            if let list = Zmx.list() {
+                remove(deadSessionLogs(listing(logs), live: sessionNames(zmxList: list), now: now), in: logs)
             }
         }
     }
@@ -37,21 +36,5 @@ extension Housekeeping {
     private nonisolated static func remove(_ names: [String], in directory: URL) {
         for name in names { try? FileManager.default.removeItem(at: directory.appendingPathComponent(name)) }
         if !names.isEmpty { NSLog("Canvas: removed %d leftover files from %@", names.count, directory.path) }
-    }
-
-    /// Every running zmx session's name (any instance's); nil when `zmx list` fails. Blocks
-    /// until zmx exits.
-    private nonisolated static func liveSessions(zmx: String) -> Set<String>? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = ["list"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return sessionNames(zmxList: String(decoding: data, as: UTF8.self))
     }
 }

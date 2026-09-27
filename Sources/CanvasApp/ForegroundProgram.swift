@@ -16,18 +16,8 @@ enum ForegroundProgram {
 
     /// The pid of the session's shell (`zmx list`'s `pid=`); nil when zmx or the session is
     /// missing. Blocks until zmx exits: call it off the main actor.
-    nonisolated static func shellPid(session: String) -> pid_t? {
-        guard let zmx = AppPaths.zmx else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: zmx)
-        process.arguments = ["list"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        for line in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline) {
+    static func shellPid(session: String) -> pid_t? {
+        for line in (Zmx.list() ?? "").split(whereSeparator: \.isNewline) {
             let fields = line.split(separator: "\t")
             guard fields.first?.drop(while: { $0 == " " || $0 == "*" }) == "name=\(session)" else { continue }
             return fields.lazy.compactMap { $0.hasPrefix("pid=") ? pid_t($0.dropFirst(4)) : nil }.first
@@ -54,8 +44,6 @@ enum ForegroundProgram {
         return TerminalName.program(argv: argv)
     }
 
-    private static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "fish", "ksh", "tcsh", "csh", "nu", "elvish", "xonsh"]
-
     /// The foreground job's leader (`state`): nil when the shell is gone, `.some(nil)` at its prompt.
     private static func leader(shell: pid_t) -> pid_t?? {
         guard let info = bsdInfo(shell) else { return nil }
@@ -64,7 +52,7 @@ enum ForegroundProgram {
         var leader = group
         if leader == shell {
             let argv = arguments(shell) ?? []
-            if let first = argv.first, !shells.contains(String(first.split(separator: "/").last ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "-"))) {
+            if let first = argv.first, !SessionProcesses.isShell(first) {
                 return .some(shell)
             }
             guard argv.contains("-c") else { return .some(nil) }

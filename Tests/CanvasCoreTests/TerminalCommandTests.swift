@@ -32,7 +32,7 @@ struct TerminalCommandTests {
 
     @Test func aBellNamesWhatRangIt() {
         let now = Date()
-        let last = (command: TerminalCommand(command: "make test", exit: 1, durationMs: 900), finishedAt: now.addingTimeInterval(-2))
+        let last = TerminalCommandLog.Entry(command: TerminalCommand(command: "make test", exit: 1, durationMs: 900), finishedAt: now.addingTimeInterval(-2))
         #expect(TerminalCommand.bellMessage(program: "pytest", shell: "zsh", last: last, at: now) == "pytest rang the bell", "the foreground program first")
         #expect(TerminalCommand.bellMessage(program: nil, shell: "zsh", last: last, at: now) == "Bell after `make test`")
         #expect(TerminalCommand.bellMessage(program: nil, shell: "zsh", last: last, at: now.addingTimeInterval(10)) == "zsh rang the bell", "a command long done isn't why")
@@ -168,11 +168,11 @@ struct TerminalCommandTests {
         #expect(!promptTitle, "the prompt's own title")
         let started = tracker.title("aider --model x", at: t0.addingTimeInterval(2), promptTitle: "~/src/app")
         #expect(started)
-        #expect(tracker.runningCommand == "aider --model x")
+        #expect(tracker.running == "aider --model x")
         let retitled = tracker.title("aider: thinking", at: t0.addingTimeInterval(3), promptTitle: "~/src/app")
         #expect(!retitled, "the program retitling isn't a new command")
         _ = tracker.finished(exit: 0, durationNanos: 1_000_000, at: t0.addingTimeInterval(9), shellAtPrompt: true, agentReporting: false)
-        #expect(tracker.runningCommand == nil)
+        #expect(tracker.running == nil)
     }
 
     @Test func anAgentTUIsOwnMarksAndSpinnerTitlesAreNotCommandsButTheShellsFailureStillIs() {
@@ -214,7 +214,7 @@ struct TerminalCommandTests {
         let long = TerminalCommand(command: "export PATH=$HOME/.rustup/bin:$PATH; cargo build --release", exit: 0, durationMs: 35_900)
         #expect(long.noticeMessage == "cargo build --release finished · 35 s")
         let now = Date()
-        #expect(TerminalCommand.bellMessage(program: nil, shell: "zsh", last: (TerminalCommand(command: "cd app && make test", exit: 1), now), at: now) == "Bell after `make test`")
+        #expect(TerminalCommand.bellMessage(program: nil, shell: "zsh", last: TerminalCommandLog.Entry(command: TerminalCommand(command: "cd app && make test", exit: 1), finishedAt: now), at: now) == "Bell after `make test`")
     }
 
     /// `clear; cargo build` with two E0277s and an E0308, as rustc prints them.
@@ -423,7 +423,7 @@ struct TerminalMentionTests {
         try board.stage(.terminal(object: shell, text: output, part: .command, command: TerminalCommand(command: "go test ./...", exit: 1, durationMs: 42_000)))
         try board.stage(.object(shell))
         let context = await board.drain().context
-        #expect(context.contains("[1] command `go test ./...` · exit 1 · 42 s · output of terminal tile \(shell) \"go · ~/src/app\" · all of it: canvas agent.read --target \(shell) --block -3"),
+        #expect(context.contains("[1] command `go test ./...` · exit 1 · 42 s · output of terminal tile \(shell) \"go · ~/src/app\" · read it: canvas agent.read --target \(shell) --block -3"),
                 "the call that reads that block, counted from the terminal's newest command")
         #expect(context.contains("    ok 10\n    … 20 lines omitted …\n    ok 31"))
         #expect(context.contains("[2] terminal \(shell) \"go · ~/src/app\""))

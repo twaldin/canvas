@@ -176,6 +176,19 @@ class ConnectionTest(unittest.TestCase):
         self.assertEqual(raised.exception.code, "unavailable")
         self.assertIn("board.get was not sent", str(raised.exception))
 
+    def test_a_socket_that_is_there_but_refuses_this_process_names_a_sandbox_at_once(self) -> None:
+        # What a sandbox does to the connect: the socket exists, this process may not use it.
+        self.serve()
+        os.chmod(self.path, 0)
+        client = self.client()
+        started = time.monotonic()
+        with self.assertRaises(CanvasError) as raised:
+            client.board.get()
+        self.assertLess(time.monotonic() - started, 5, "no waiting for an app that is already there")
+        self.assertEqual(raised.exception.code, "unavailable")
+        self.assertIn(f"Canvas socket {self.path} exists", str(raised.exception))
+        self.assertIn("a sandbox (e.g. Codex's) may be blocking", str(raised.exception))
+
     def test_connection_lost_after_sending_is_not_resent(self) -> None:
         app = self.serve()
         client = self.client()

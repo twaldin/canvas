@@ -32,6 +32,7 @@ Reusable helpers live in compositions directories and load on first use:
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import select
@@ -79,6 +80,19 @@ class _NotSent(Exception):
 
 class _ReplyLost(Exception):
     """The request left but the connection closed before its reply: it may have applied."""
+
+
+def _sandboxed(path: str, error: OSError) -> bool:
+    """A socket this process may not connect to, or can't see although it is there: a sandbox
+    (Codex's seatbelt answers ENOENT), not a missing app. Waiting for the app wouldn't help."""
+    return error.errno in (errno.EPERM, errno.EACCES) or (error.errno == errno.ENOENT and os.path.exists(path))
+
+
+def _sandbox_message(path: str, error: OSError) -> str:
+    return (
+        f"Canvas socket {path} exists but connecting to it failed ({errno.errorcode.get(error.errno or 0, error)}): "
+        "a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it"
+    )
 
 
 class Canvas(GeneratedApi):
@@ -210,6 +224,8 @@ class Canvas(GeneratedApi):
                 sock.connect(self.socket_path)
             except OSError as error:
                 sock.close()
+                if _sandboxed(self.socket_path, error):
+                    raise _NotSent(_sandbox_message(self.socket_path, error)) from None
                 if time.monotonic() >= deadline:
                     waited = f" after waiting {wait:g}s for the app" if wait else ""
                     raise _NotSent(f"Canvas socket {self.socket_path}: {error.strerror or error}{waited}") from None

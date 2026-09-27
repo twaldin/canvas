@@ -20,6 +20,10 @@ final class BrowserTile: NSView, TileContent {
     static let refreshInterval: TimeInterval = 1
     /// How long a page counts as agent-driven after the last cmux command.
     static let drivenIdle: TimeInterval = 60
+    /// Longest a command waits for a page it just made visible to present a frame.
+    static let revealWait: TimeInterval = 0.5
+    /// How long a released web view outlives its release (see `release`).
+    static let closeDelay: TimeInterval = 2
 
     let objectID: ObjectID
     let board: Board
@@ -93,12 +97,26 @@ final class BrowserTile: NSView, TileContent {
         webView?.frame = pageFrame
     }
 
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        NotificationCenter.default.removeObserver(self)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else {
+        guard let window else {
             // Closed or its canvas went away: nothing will show or drive this page again.
             release()
             return
+        }
+        // A driven page moves to the stage while its window is off screen (minimized, a
+        // background tab, the app hidden) and back when it returns.
+        let center = NotificationCenter.default
+        for name in [NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+            center.addObserver(self, selector: #selector(windowVisibilityChanged), name: name, object: window)
+        }
+        for name in [NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+            center.addObserver(self, selector: #selector(windowVisibilityChanged), name: name, object: NSApp)
         }
         // The frame view starts out live and only reports changes, and the canvas decides
         // liveness on the next main-queue pass; look after that pass so offscreen tiles never load.
@@ -130,7 +148,7 @@ final class BrowserTile: NSView, TileContent {
         let controller = configuration.userContentController
         controller.addUserScript(WKUserScript(source: BrowserScripts.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: BrowserScripts.world))
         controller.add(PageMessages(tile: self), contentWorld: BrowserScripts.world, name: BrowserScripts.messageName)
-        let view = WKWebView(frame: pageFrame, configuration: configuration)
+        let view = BrowserWebView(frame: pageFrame, configuration: configuration)
         view.autoresizingMask = [.width, .height]
         view.navigationDelegate = self
         view.uiDelegate = self
@@ -167,17 +185,38 @@ final class BrowserTile: NSView, TileContent {
         return view
     }
 
-    /// Puts the web view on screen, creating it on first use.
+    /// Shows the web view in the tile, creating it on first use.
     private func attach() {
         releaseTimer?.invalidate()
         releaseTimer = nil
-        let view = ensureWebView()
-        if view.superview !== self {
-            view.frame = pageFrame
-            addSubview(view, positioned: .below, relativeTo: cover)
-        }
+        ensureWebView()
+        placePage()
         setPageActivity(true)
         scheduleSnapshotRefresh()
+    }
+
+    /// Where the web view belongs: in the tile while it's live and its window is on screen; in
+    /// the stage while an agent drives it and the tile can't show it; otherwise in the live tile
+    /// (a hidden page until its window returns) or detached until released.
+    private func placePage() {
+        guard let webView else { return }
+        let shown = isLive && window?.isVisible == true
+        if drivenTimer != nil, !shown {
+            releaseTimer?.invalidate()
+            releaseTimer = nil
+            if !WebStage.isParked(webView) { WebStage.park(webView, frame: pageFrame) }
+        } else if isLive {
+            guard webView.superview !== self else { return }
+            webView.frame = pageFrame
+            addSubview(webView, positioned: .below, relativeTo: cover)
+        } else if webView.superview != nil {
+            webView.removeFromSuperview()
+            scheduleRelease()
+        }
+    }
+
+    @objc private func windowVisibilityChanged() {
+        placePage()
     }
 
     /// Page-activity reporting (DOM observer, timers, messages) runs only while on screen.
@@ -199,6 +238,10 @@ final class BrowserTile: NSView, TileContent {
         webView.uiDelegate = nil
         webView.stopLoading()
         webView.removeFromSuperview()
+        // Closed in the same breath as the stop, a page WebKit treated as visible (the stage) with
+        // a navigation in flight leaves a dangling display-link client in WebKit (macOS 26), which
+        // crashes the app while its window is minimized; letting the stop settle first doesn't.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeDelay) { _ = webView }
         self.webView = nil
         pendingNavigations = []
         uncommittedNavigations = []
@@ -219,19 +262,40 @@ final class BrowserTile: NSView, TileContent {
     // MARK: Agent-driven pages
 
     /// Keeps the page visible to WebKit while an agent drives it, so requestAnimationFrame, timers
-    /// and IntersectionObserver run as they would for a user: an offscreen tile's web view waits in
-    /// a clipped stage view inside the window (a detached or hidden-ancestor view is a hidden page),
-    /// and window occlusion detection is off (another Space or a covered window hides the page
-    /// too). `drivenIdle` after the last command the normal detach/release policy resumes.
-    func markDriven() {
+    /// and IntersectionObserver run as they would for a user: window occlusion detection is off
+    /// (another Space or a covered window hides the page too), and while the tile can't show the
+    /// page (offscreen, its window minimized or in a background tab, the app hidden) the web view
+    /// waits in `WebStage`. `drivenIdle` after the last command the normal detach/release policy
+    /// resumes. A page this made visible gets up to `revealWait` to present a frame first, so
+    /// the command that follows already sees `visibilityState` "visible".
+    func markDriven() async {
         let webView = ensureWebView()
+        let wasVisible = webView.superview === self && window?.isVisible == true && window?.occlusionState.contains(.visible) == true
+        let starting = drivenTimer == nil
         drivenTimer?.invalidate()
         drivenTimer = Timer.scheduledTimer(withTimeInterval: Self.drivenIdle, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.endDriven() }
         }
+        placePage()
+        guard starting else { return }
         WebStage.setOcclusionDetection(false, on: webView)
-        if !isLive { stage(webView) }
-        if webView.superview == nil { scheduleRelease() }
+        if window?.occlusionState.contains(.visible) == false { refreshOcclusion(webView) }
+        if !wasVisible { await presented(webView, within: Self.revealWait) }
+    }
+
+    /// Until the page's next frame is on screen, or `limit` passes.
+    private func presented(_ webView: WKWebView, within limit: TimeInterval) async {
+        @MainActor final class Once { var done = false }
+        let once = Once()
+        await withCheckedContinuation { continuation in
+            let finish: @MainActor () -> Void = {
+                guard !once.done else { return }
+                once.done = true
+                continuation.resume()
+            }
+            WebStage.afterNextPresentationUpdate(webView, finish)
+            DispatchQueue.main.asyncAfter(deadline: .now() + limit) { MainActor.assumeIsolated { finish() } }
+        }
     }
 
     private func endDriven() {
@@ -239,21 +303,17 @@ final class BrowserTile: NSView, TileContent {
         guard let webView else { return }
         WebStage.setOcclusionDetection(true, on: webView)
         if webView.superview === self {
-            // WebKit re-reads occlusion only on the next window change; re-parenting forces it.
-            webView.removeFromSuperview()
-            addSubview(webView, positioned: .below, relativeTo: cover)
+            refreshOcclusion(webView)
         } else {
-            webView.removeFromSuperview()
-            scheduleRelease()
+            placePage()
         }
     }
 
-    /// Parks the web view in the window's stage: in the window and never hidden, clipped to nothing.
-    private func stage(_ webView: WKWebView) {
-        guard !WebStage.isParked(webView), window != nil else { return }
-        releaseTimer?.invalidate()
-        releaseTimer = nil
-        WebStage.park(webView, frame: pageFrame, in: window)
+    /// WebKit re-reads occlusion only on the next window change; re-parenting in the tile forces it.
+    private func refreshOcclusion(_ webView: WKWebView) {
+        guard webView.superview === self else { return }
+        webView.removeFromSuperview()
+        addSubview(webView, positioned: .below, relativeTo: cover)
     }
 
     func load(_ address: String) {
@@ -284,9 +344,10 @@ final class BrowserTile: NSView, TileContent {
         _ = try? board.update(objectID, props: .object(["url": .string(url)]))
     }
 
+    /// The page named itself: the app's write-back, not anyone's edit.
     private func commitTitle(_ title: String?) {
         guard let title, !title.isEmpty, title != object.props["title"]?.string else { return }
-        _ = try? board.update(objectID, props: .object(["title": .string(title)]))
+        _ = try? board.update(objectID, props: .object(["title": .string(title)]), actor: .system)
     }
 
     /// A new tile beside this one (⌘-click, `target=_blank`, `window.open`).
@@ -418,13 +479,7 @@ final class BrowserTile: NSView, TileContent {
         } else {
             readyWaiters.removeAll()
             setPageActivity(false)
-            guard let webView else { return }
-            if drivenTimer != nil {
-                stage(webView)
-            } else {
-                webView.removeFromSuperview()
-                scheduleRelease()
-            }
+            placePage()
         }
     }
 
@@ -444,10 +499,38 @@ final class BrowserTile: NSView, TileContent {
         }
     }
 
-    /// The address bar and the page as loaded now. A page that isn't loaded (the tile has been
-    /// offscreen) isn't loaded just for a render, which would navigate the user's app: it shows
-    /// its last capture and reports a placeholder.
+    /// The address bar and the page. Rendering counts as driving the page (`markDriven`): one
+    /// that isn't loaded, or that its tile can't show now (offscreen, its window minimized or in
+    /// a background tab), loads in the stage and is waited for until the render's deadline.
     func render(_ request: TileRenderRequest) async -> TileRender {
+        await markDriven()
+        if let webView { await settle(webView) }
+        return await capture(request)
+    }
+
+    /// The zoomed-out card shows the page as it is; only an agent's render loads one.
+    func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
+        let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,
+                                        appearance: window?.effectiveAppearance ?? NSApp.effectiveAppearance)
+        Task { @MainActor in
+            await MainTurns.next()
+            let render = await self.capture(request)
+            deliver(render.state == .rendered ? render.image : nil)
+        }
+    }
+
+    /// Until the page has loaded and that frame is presented, or the render is cancelled.
+    private func settle(_ webView: WKWebView) async {
+        while self.webView === webView, webView.isLoading || !pendingNavigations.isEmpty {
+            guard !Task.isCancelled else { return }
+            await nextChange(before: Date().addingTimeInterval(0.25))
+        }
+        guard !Task.isCancelled, self.webView === webView else { return }
+        await presented(webView, within: 1)
+    }
+
+    /// The address bar and the page as loaded now; a page not loaded yet shows its last capture.
+    private func capture(_ request: TileRenderRequest) async -> TileRender {
         let bar = request.image(of: chrome)
         var page: NSImage?
         var reason: String?
@@ -455,8 +538,8 @@ final class BrowserTile: NSView, TileContent {
             page = try? await webView.takeSnapshot(configuration: WKSnapshotConfiguration())
             if page == nil { reason = "the page did not produce a snapshot" }
         } else {
-            reason = webView?.isLoading == true ? "the page is still loading" : "the page isn't loaded (tile offscreen)"
-            if let cachedImage { reason! += "; showing its last capture" }
+            reason = webView?.isLoading == true ? "the page is still loading" : "the page isn't loaded"
+            if cachedImage != nil { reason! += "; showing its last capture" }
         }
         let shown = page ?? cachedImage
         let image = request.image { bounds in
@@ -560,6 +643,12 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         uncommittedNavigations.removeAll { $0 === navigation }
         signalChange()
     }
+}
+
+/// The first click into a page acts (follows the link, presses the button) even while the
+/// window isn't key, as the canvas's own gestures do; WebKit alone only activates the window.
+final class BrowserWebView: WKWebView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 /// The script message handler for page activity. WebKit retains handlers strongly, so this

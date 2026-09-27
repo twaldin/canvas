@@ -32,7 +32,7 @@ public final class CmuxRouter {
             }
             let params = request["params"] ?? .object([:])
             guard params.object != nil else { throw CmuxError.invalidParams("params must be an object") }
-            return ok(id, try await dispatch(method, params))
+            return ok(id, try await dispatch(method, params, connection: connection))
         } catch let error as CmuxError {
             return failure(id, error)
         } catch let error as BoardError {
@@ -66,13 +66,17 @@ public final class CmuxRouter {
         .object(["id": id, "ok": .bool(false), "error": .object(["code": .string(error.code), "message": .string(error.message)])])
     }
 
-    private func dispatch(_ method: String, _ params: JSONValue) async throws -> JSONValue {
+    private func dispatch(_ method: String, _ params: JSONValue, connection: SocketServer.Connection) async throws -> JSONValue {
         switch method {
-        case "browser.open_split": return try openSplit(params)
+        case "browser.open_split": return try openSplit(params, connection: connection)
         case "surface.list": return try list(params)
         case "surface.close":
             let (board, browser) = try browserSurface(params)
-            try board.delete(browser.id)
+            // omp sends only the browser's id: credit the terminal this connection opened splits
+            // from, else the terminal that opened this tile (omp closes only surfaces it opened).
+            let opener: ObjectID? = if case .agent(let tile) = browser.createdBy { tile } else { nil }
+            let caller = connection.caller.flatMap { board.objects[$0] != nil ? $0 : nil } ?? opener
+            try board.delete(browser.id, caller: caller)
             return .object(["surface_id": .string(browser.id), "workspace_id": .string(board.id)])
         default:
             guard let command = try CmuxBrowserCommand.parse(method: method, params: params) else {
@@ -88,7 +92,7 @@ public final class CmuxRouter {
 
     /// A new browser tile beside the calling terminal (`surface_id`), else in the viewport of
     /// the workspace board (`workspace_id`) or the frontmost board.
-    private func openSplit(_ params: JSONValue) throws -> JSONValue {
+    private func openSplit(_ params: JSONValue, connection: SocketServer.Connection) throws -> JSONValue {
         let callerID = try CmuxBrowserCommand.optional(params, "surface_id", \.string)
         let workspace = try CmuxBrowserCommand.optional(params, "workspace_id", \.string)
         let caller = callerID.flatMap { id in registry.board(containing: id).map { ($0, $0.objects[id]!) } }
@@ -99,6 +103,7 @@ public final class CmuxRouter {
         guard let url = BrowserURL.normalize(raw) else { throw CmuxError.invalidParams("not a URL: \(raw)") }
         let anchor = caller.flatMap { $0.1.type == .terminal ? $0.1.id : nil }
         let browser = board.create(type: .browser, props: .object(["url": .string(url.absoluteString)]), caller: anchor)
+        if let anchor { connection.caller = anchor }
         return .object([
             "surface_id": .string(browser.id),
             "workspace_id": .string(board.id),

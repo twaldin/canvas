@@ -2,31 +2,53 @@ import AppKit
 import WebKit
 
 /// Where web views wait while nobody sees them but WebKit must still treat them as visible
-/// (a detached or hidden-ancestor view is a hidden page: no layout, no requestAnimationFrame):
-/// a zero-size clipped view inside the window's content, plus window occlusion detection off
-/// (another Space or a covered window hides the page too).
+/// (a detached or hidden-ancestor view, or one in a window that isn't on screen — minimized,
+/// in a background tab, the app hidden — is a hidden page: no layout, no requestAnimationFrame):
+/// a 1 pt transparent, click-through window of its own that stays on screen whatever the board
+/// windows do, plus window occlusion detection off (another Space or a covered window hides the
+/// page too). The window is ordered in only while something waits in it, so it never keeps
+/// the app alive after the last board window closes.
 @MainActor
 enum WebStage {
-    private static let stageID = NSUserInterfaceItemIdentifier("canvas.webStage")
+    private static var window: NSWindow?
 
-    /// Parks `view` in the window's stage at `frame`; false when there's no window.
-    @discardableResult
-    static func park(_ view: NSView, frame: NSRect, in window: NSWindow?) -> Bool {
-        guard let content = window?.contentView else { return false }
-        let stage = content.subviews.first { $0.identifier == stageID } ?? {
-            let stage = NSView(frame: .zero)
-            stage.identifier = stageID
-            stage.clipsToBounds = true
-            content.addSubview(stage)
-            return stage
-        }()
+    /// Parks `view` in the stage at `frame` (its size is what the page lays out at).
+    static func park(_ view: NSView, frame: NSRect) {
+        let stage = window ?? makeWindow()
         view.frame = frame
-        if view.superview !== stage { stage.addSubview(view) }
-        return true
+        if view.superview !== stage.contentView { stage.contentView?.addSubview(view) }
+        if !stage.isVisible { stage.orderBack(nil) }
     }
 
     static func isParked(_ view: NSView) -> Bool {
-        view.superview?.identifier == stageID
+        window.map { view.window === $0 } ?? false
+    }
+
+    private static func makeWindow() -> NSWindow {
+        let screen = NSScreen.screens.first?.frame ?? .zero
+        let stage = NSWindow(contentRect: NSRect(x: screen.minX, y: screen.minY, width: 1, height: 1), styleMask: .borderless, backing: .buffered, defer: false)
+        stage.isReleasedWhenClosed = false
+        stage.alphaValue = 0
+        stage.ignoresMouseEvents = true
+        stage.hasShadow = false
+        stage.isExcludedFromWindowsMenu = true
+        stage.collectionBehavior = [.stationary, .ignoresCycle, .fullScreenNone]
+        stage.contentView = StageView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+        window = stage
+        return stage
+    }
+
+    /// Orders the stage out once its last web view leaves (moved to a tile, released).
+    private final class StageView: NSView {
+        override func willRemoveSubview(_ subview: NSView) {
+            super.willRemoveSubview(subview)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.subviews.isEmpty else { return }
+                    self.window?.orderOut(nil)
+                }
+            }
+        }
     }
 
     /// WebKit SPI `-[WKWebView _setWindowOcclusionDetectionEnabled:]` (macOS 10.13+); skipped if absent.

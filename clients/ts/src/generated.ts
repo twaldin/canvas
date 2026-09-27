@@ -691,7 +691,7 @@ export type ViewRenderParams = {
   out?: string;
   /** format of the temporary file when no `out` is given */
   format?: "png" | "jpeg";
-  /** how long to wait for content (HTML pages, file reads) before drawing placeholders */
+  /** how long to wait for content (HTML pages, browser pages including loading one that isn't loaded, file reads) before drawing placeholders */
   timeoutMs?: number;
 };
 export type ViewRenderResult = {

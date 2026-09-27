@@ -17,14 +17,14 @@ Exactly what omp's cmux browser backend sends (`src/tools/browser/cmux/`), frame
 
 Surface and workspace ids stay `obj_…`/`brd_…` on the wire, which omp 18.3 accepts; omp ≤18.1's owner inspection (`surface.list` via its surface-observation module) requires UUID ids and is unsupported.
 
-A page an agent is driving stays visible to WebKit for 60 s after its last command, even when its tile is offscreen or the window is on another Space or covered: `requestAnimationFrame`, timers and `IntersectionObserver` run as they would for a user. Then the tile's normal detach/release policy resumes.
+A page an agent is driving stays visible to WebKit for 60 s after its last command, even when its tile is offscreen, the window is minimized, in a background tab, on another Space, or covered, or the app is hidden: `document.visibilityState` is `visible` and `requestAnimationFrame`, timers and `IntersectionObserver` run as they would for a user. Window occlusion detection is off for the page, and while its tile can't show it the web view waits in `WebStage`, a transparent click-through window of its own that stays on screen (ordered in only while something waits in it). A page that was hidden gets up to 0.5 s to present a frame before the command runs, so the first command already sees it visible. Then the tile's normal detach/release policy resumes. `view.render` of a browser tile counts as a command: a page that isn't loaded loads (in the stage) and is waited for until the render's `timeoutMs`.
 
 | Method | Params | Result |
 | --- | --- | --- |
 | `browser.open_split` | `url`, `surface_id` (caller), `workspace_id`, `focus` (ignored) | `surface_id`, `workspace_id`, `url`, `created_split`, `placement_strategy` — a browser tile beside the calling terminal |
 | `browser.navigate` / `back` / `forward` / `reload` | `url` (navigate) | `url` |
 | `browser.url.get` | — | `url`, `title` |
-| `browser.eval` | `script` (an expression, page world) | `value` |
+| `browser.eval` | `script` (page world) | `value`. A script that is one expression runs as the body of an async function (`await` works) and a promise it returns is awaited, as Chromium's `Runtime.evaluate` with `awaitPromise` does; anything else (statements) runs as a program whose completion value is returned, without awaiting. Neither is subject to the page's CSP |
 | `browser.snapshot` | `interactive`, `max_depth` | `snapshot` text, `refs` (`e1` → `{role,name}`), `page` (`title,url,ready_state`, plus `text,html` when not interactive) |
 | `browser.screenshot` | — | `png_base64` (one pixel per CSS pixel), `width`, `height` |
 | `browser.click` / `dblclick` / `hover` / `focus` / `check` / `uncheck` / `scroll_into_view` | `selector` (CSS or snapshot ref `@e3`) | — |
@@ -33,7 +33,7 @@ A page an agent is driving stays visible to WebKit for 60 s after its last comma
 | `browser.scroll` | `dx`, `dy` | `scroll_x`, `scroll_y` |
 | `browser.wait` | one of `load_state` (`interactive`/`complete`), `url_contains`, `selector`; `timeout_ms` | `url` |
 | `surface.list` | `surface_id` or `workspace_id` | `workspace_id`, `window_id` (null), `surfaces` (`id`, `type`, `title`, `url`) |
-| `surface.close` | `surface_id` (browser only) | — |
+| `surface.close` | `surface_id` (browser only) | — ; `board.history` credits the terminal the connection opened splits from (`browser.open_split`'s `surface_id`), else the terminal that opened the tile |
 
 Error codes: `invalid_params`, `not_found`, `method_not_found`, `unauthorized`, `timeout`, `js_error`, `unavailable`. The plain-text line `auth <password>` answers `OK: …` or `ERROR: …`.
 

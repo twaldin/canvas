@@ -147,6 +147,36 @@ final class CmuxRouterTests {
         #expect(try await client.next()["error"]?["code"] == .string("not_found"))
     }
 
+    @Test func closingASurfaceCreditsTheCallingTerminal() async throws {
+        let agent = terminal(at: Frame(x: 0, y: 0, w: 400, h: 300))
+        let other = terminal(at: Frame(x: 0, y: 400, w: 400, h: 300))
+        let client = try connect()
+        // omp opens from its own terminal, then closes with only the browser's id.
+        client.send(#"{"id":"o","method":"browser.open_split","params":{"surface_id":"\#(agent.id)"}}"#)
+        let opened = try #require(try await client.next()["result"]?["surface_id"]?.string)
+        client.send(#"{"id":"c","method":"surface.close","params":{"surface_id":"\#(opened)"}}"#)
+        #expect(try await client.next()["ok"] == .bool(true))
+        #expect(board.activity.entries.last { $0.kind == .deleted }?.actor == .agent(agent.id))
+
+        // Another agent's connection closing a tile it didn't open is credited to that agent.
+        let theirs = try connect()
+        theirs.send(#"{"id":"o","method":"browser.open_split","params":{"surface_id":"\#(other.id)"}}"#)
+        _ = try await theirs.next()
+        client.send(#"{"id":"o2","method":"browser.open_split","params":{"surface_id":"\#(agent.id)"}}"#)
+        let second = try #require(try await client.next()["result"]?["surface_id"]?.string)
+        theirs.send(#"{"id":"c","method":"surface.close","params":{"surface_id":"\#(second)"}}"#)
+        _ = try await theirs.next()
+        #expect(board.activity.entries.last { $0.kind == .deleted }?.actor == .agent(other.id))
+
+        // A fresh connection (omp reconnected) falls back to the terminal that opened the tile.
+        client.send(#"{"id":"o3","method":"browser.open_split","params":{"surface_id":"\#(agent.id)"}}"#)
+        let third = try #require(try await client.next()["result"]?["surface_id"]?.string)
+        let fresh = try connect()
+        fresh.send(#"{"id":"c","method":"surface.close","params":{"surface_id":"\#(third)"}}"#)
+        _ = try await fresh.next()
+        #expect(board.activity.entries.last { $0.kind == .deleted }?.actor == .agent(agent.id))
+    }
+
     @Test func passwordGatesRequestsUntilAuth() async throws {
         let page = browser()
         let client = try connect(password: "s3cret")
@@ -187,5 +217,19 @@ struct BrowserURLTests {
         #expect(BrowserURL.normalize("intranet") == nil)
         #expect(BrowserURL.normalize("javascript:alert(1)") == nil)
         #expect(BrowserURL.normalize("") == nil)
+    }
+}
+
+@MainActor
+struct CmuxEvalTests {
+    /// One expression is awaited (its body returns it); statements run as a program.
+    @Test func onlyASingleExpressionIsAwaited() {
+        #expect(CmuxEval.awaitingBody("fetch('/x').then(r => r.status)") != nil)
+        #expect(CmuxEval.awaitingBody("(await fetch('/x')).status") != nil, "await works inside an expression")
+        #expect(CmuxEval.awaitingBody("document.title // trailing comment") != nil)
+        #expect(CmuxEval.awaitingBody("(() => { const a = 1; return a })()") != nil)
+        #expect(CmuxEval.awaitingBody("var x = 2; x * 3") == nil)
+        #expect(CmuxEval.awaitingBody("document.title;") == nil)
+        #expect(CmuxEval.awaitingBody("1)); alert((1") == nil, "nothing that escapes the wrapper counts as an expression")
     }
 }

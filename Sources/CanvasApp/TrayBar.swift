@@ -53,13 +53,18 @@ final class TrayBar: NSVisualEffectView {
         box.wantsLayer = true
         box.layer?.cornerRadius = 7
         box.layer?.backgroundColor = NSColor.systemPurple.withAlphaComponent(0.22).cgColor
-        let label = NSTextField(labelWithString: mention.label + (mention.edited ? " · edited" : ""))
+        let label = NSTextField(labelWithString: mention.label)
         label.font = .systemFont(ofSize: 12)
-        label.lineBreakMode = .byTruncatingMiddle
+        // DOM labels lead with what a person recognizes and end with the CSS path; code
+        // locations keep both the file name's start and its line.
+        if case .dom = mention.target { label.lineBreakMode = .byTruncatingTail } else { label.lineBreakMode = .byTruncatingMiddle }
         let remove = NSButton(title: "✕", target: self, action: #selector(removeClicked(_:)))
         remove.isBordered = false
         remove.identifier = NSUserInterfaceItemIdentifier(mention.id)
-        let row = NSStackView(views: [label, remove])
+        // Outside the label, so truncation never hides it.
+        let edited = mention.edited ? [NSTextField(labelWithString: "· edited")] : []
+        edited.forEach { $0.font = .systemFont(ofSize: 12) }
+        let row = NSStackView(views: [label] + edited + [remove])
         row.spacing = 4
         row.edgeInsets = NSEdgeInsets(top: 3, left: 8, bottom: 3, right: 4)
         row.translatesAutoresizingMaskIntoConstraints = false

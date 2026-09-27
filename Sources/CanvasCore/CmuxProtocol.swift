@@ -1,4 +1,5 @@
 import Foundation
+import JavaScriptCore
 
 /// A cmux v2 failure, sent as `{"id","ok":false,"error":{"code","message"}}`.
 public struct CmuxError: Error, Equatable, Sendable {
@@ -123,6 +124,27 @@ public enum CmuxBrowserCommand: Equatable, Sendable {
         guard let value = params[key], value != .null else { return nil }
         guard let typed = read(value) else { throw CmuxError.invalidParams("\(key) has the wrong type") }
         return typed
+    }
+}
+
+/// How `browser.eval` runs its script. An expression is returned from an async function, so a
+/// promise it yields is awaited, as Chromium's `Runtime.evaluate` (`awaitPromise`) and Puppeteer
+/// do; `await` works inside it. Anything else (statements) runs as a program whose completion
+/// value is the result, and can't be awaited.
+@MainActor
+public enum CmuxEval {
+    /// Parses only; nothing runs here.
+    private static let parser = JSContext()!
+
+    /// The async function body that returns `script`'s value, or nil when `script` isn't a
+    /// single expression.
+    public static func awaitingBody(_ script: String) -> String? {
+        // Newlines keep a trailing `// comment` from swallowing the closing parenthesis.
+        let body = "return (\n\(script)\n);"
+        // The function WebKit's callAsyncJavaScript compiles around a body.
+        let source = JSStringCreateWithCFString("(async function () {\n\(body)\n})" as CFString)
+        defer { JSStringRelease(source) }
+        return JSCheckScriptSyntax(parser.jsGlobalContextRef, source, nil, 1, nil) ? body : nil
     }
 }
 

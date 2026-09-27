@@ -43,6 +43,7 @@ export type TerminalProps = {
   title?: string;
   /** a name other agents address this terminal by (agent.prompt/wait/read `target`) */
   name?: string;
+  /** the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`). Removed when the agent exits (agent.release) */
   agent?: {
     kind: string;
     sessionId?: string;
@@ -156,6 +157,14 @@ export type FitFrame = {
   y: number;
   /** wrap width for notes and text; for code the widest the tile may get (default 960), past which long lines wrap; for html the width the page lays out at (default 640) */
   w?: number;
+};
+
+/** any of x, y, w, h; the rest keep their current values (with size: fit, w is the wrap or widest width and h is measured) */
+export type FramePatch = {
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
 };
 
 export type Size = {
@@ -404,7 +413,7 @@ export type ObjectCreateResult = {
 export type ObjectUpdateParams = {
   id: Id;
   rev?: number;
-  frame?: Frame | FitFrame;
+  frame?: FramePatch;
   /** measure the frame's size from the content */
   size?: "fit";
   /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
@@ -602,6 +611,8 @@ export type AgentReportParams = {
   message?: string;
   seq?: number;
   source?: string;
+  /** identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input) */
+  call?: string;
 };
 export type AgentReportResult = Record<string, unknown>;
 
@@ -629,6 +640,8 @@ export type AgentPromptParams = {
   /** agent name or tile id */
   target: string;
   text: string;
+  /** send even though the target is `blocked` (e.g. Claude Code stays blocked after you press Esc on or deny an approval, since it runs no hook then) */
+  force?: boolean;
 };
 export type AgentPromptResult = {
   /** as it was when the prompt was submitted (its lifecycle is still the previous turn's) */
@@ -789,9 +802,9 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
-    /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
+    /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
@@ -825,15 +838,15 @@ export interface CanvasApi {
     commit(params: TrayCommitParams): Promise<TrayCommitResult>;
   };
   agent: {
-    /** Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. */
+    /** Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. `working` without `call` (a new prompt) and `idle` end every wait. */
     report(params: AgentReportParams): Promise<AgentReportResult>;
     /** Report the agent's native session identity so the tile can resume it after a reboot. */
     report_session(params: AgentReportSessionParams): Promise<AgentReportSessionResult>;
-    /** The agent in this tile exited; clear its lifecycle authority. */
+    /** The agent in this tile exited; clear its lifecycle authority and its recorded session (`agent.report_session`), so after a reboot the tile runs its `command` (a plain shell when it has none) instead of resuming that session. */
     release(params: AgentReleaseParams): Promise<AgentReleaseResult>;
     /** Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, aider, a CLI without Canvas hooks) has kind and lifecycle `unknown`. */
     list(params?: AgentListParams): Promise<AgentListResult>;
-    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. */
+    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. */
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
     /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;

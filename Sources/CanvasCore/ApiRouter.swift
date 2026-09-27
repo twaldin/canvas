@@ -152,6 +152,7 @@ public final class ApiRouter {
             case "object.batch": return Self.ok(id, try await batch(params))
             case "layout.check": return Self.ok(id, try await check(params))
             case "object.create", "object.update":
+                let params = try await anchored(method, params)
                 return Self.ok(id, try dispatch(method, try fitted(method, params, size: try await fitSize(method, params))))
             default: break
             }
@@ -341,10 +342,15 @@ public final class ApiRouter {
 
     /// `agent.prompt`: remembers the terminal's text as it is just before submitting (the reply
     /// boundary for `agent.read` `since: "prompt"`), then pastes and presses Enter. From then on
-    /// `agent.wait` ignores the state the agent was in before this prompt.
+    /// `agent.wait` ignores the state the agent was in before this prompt. A `blocked` agent is
+    /// refused unless `force`: its screen holds a dialog or selector, which would take the text.
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"))
         let text = try string(p, "text")
+        if Self.state(of: terminal) == LifecycleState.blocked.rawValue, p["force"]?.bool != true {
+            let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
+            throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Answer it in the tile, or pass force: true to send anyway")
+        }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
@@ -584,14 +590,14 @@ public final class ApiRouter {
             let board = try board(p)
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
             guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
-            let frame = try p["frame"].map { try $0.decode(Frame.self) }
+            let frame = try p["frame"].map { try Self.frame($0, onto: nil) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p, on: board))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], type.unknownPropWarnings(props))
 
         case "object.update":
             let id = try string(p, "id")
             let board = try board(forObject: id)
-            let frame = try p["frame"].map { try $0.decode(Frame.self) }
+            let frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p, on: board))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
@@ -665,7 +671,8 @@ public final class ApiRouter {
         case "agent.report":
             let tile = try string(p, "tile")
             guard let state = LifecycleState(rawValue: try string(p, "state")) else { throw Failure("invalid_params", "unknown state") }
-            try board(forObject: tile).reportLifecycle(tile: tile, kind: try string(p, "kind"), state: state, message: p["message"]?.string, seq: p["seq"]?.int, source: p["source"]?.string)
+            try board(forObject: tile).reportLifecycle(tile: tile, kind: try string(p, "kind"), state: state, message: p["message"]?.string, seq: p["seq"]?.int,
+                                                       source: p["source"]?.string, call: p["call"]?.string)
             return .object([:])
 
         case "agent.report_session":
@@ -752,6 +759,32 @@ public final class ApiRouter {
         return .object(["w": .number(size.width), "h": .number(size.height)])
     }
 
+    /// `object.create`/`object.update` params with a note's markdown anchored the way its tile
+    /// would write it back (`NoteMarkdown.anchoringRanges`), so the result's `rev` is the one the
+    /// next update needs. `pending` are the params of creates earlier in the same batch.
+    func anchored(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> JSONValue {
+        guard var params = p.object, var props = p["props"]?.object, let markdown = props["markdown"]?.string else { return p }
+        let root: URL
+        if method == "object.create" {
+            guard p["type"]?.string == ObjectType.note.rawValue else { return p }
+            root = try board(p).root
+        } else {
+            let id = try string(p, "id")
+            if let index = Self.reference(id) {
+                guard let created = pending[index], created["type"]?.string == ObjectType.note.rawValue else { return p }
+                root = try board(created).root
+            } else {
+                guard let board = try? board(forObject: id), board.objects[id]?.type == .note else { return p }
+                root = board.root
+            }
+        }
+        let text = await NoteMarkdown.anchoringRanges(markdown, root: root)
+        guard text != markdown else { return p }
+        props["markdown"] = .string(text)
+        params["props"] = .object(props)
+        return .object(params)
+    }
+
     /// The measured size an `object.create`/`object.update` with `size: "fit"` gets, or a note
     /// created without a frame height (sized to fit its markdown); nil otherwise. Notes and text
     /// wrap at the given frame's `w` (a new note defaults to `ObjectMeasure.defaultNoteWidth`; an
@@ -789,19 +822,34 @@ public final class ApiRouter {
         guard let size, var params = p.object else { return p }
         params.removeValue(forKey: "size")
         let origin: (x: Double, y: Double)
-        if let x = p["frame"]?["x"]?.number, let y = p["frame"]?["y"]?.number {
+        if method == "object.update" {
+            let id = try string(p, "id")
+            let current = try board(forObject: id).object(id).frame
+            origin = (p["frame"]?["x"]?.number ?? current.x, p["frame"]?["y"]?.number ?? current.y)
+        } else if let x = p["frame"]?["x"]?.number, let y = p["frame"]?["y"]?.number {
             origin = (x, y)
-        } else if method == "object.create" {
+        } else {
             let board = try board(p)
             let placed = board.place(width: size.width, height: size.height, near: caller(p, on: board))
             origin = (placed.x, placed.y)
-        } else {
-            let id = try string(p, "id")
-            let current = try board(forObject: id).object(id).frame
-            origin = (current.x, current.y)
         }
         params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
         return .object(params)
+    }
+
+    /// A `frame` param: all of x, y, w, h, or, onto `base` (an update's current frame), any of
+    /// them, the rest kept.
+    static func frame(_ value: JSONValue, onto base: Frame?) throws -> Frame {
+        guard value.object != nil else { throw Failure("invalid_params", "frame must be an object with x, y, w, h") }
+        func side(_ key: String, _ current: Double?) throws -> Double {
+            if let given = value[key], given != .null {
+                guard let number = given.number else { throw Failure("invalid_params", "frame.\(key) must be a number") }
+                return number
+            }
+            guard let current else { throw Failure("invalid_params", "frame needs x, y, w, and h (missing \(key)); with size: \"fit\", x and y (and w) are enough") }
+            return current
+        }
+        return Frame(x: try side("x", base?.x), y: try side("y", base?.y), w: try side("w", base?.w), h: try side("h", base?.h))
     }
 
     /// `$n` → n, the index of an earlier batch op.
@@ -815,7 +863,7 @@ public final class ApiRouter {
     /// `object.batch`: every op applies or none does, as one board revision and one undo step.
     /// Sizes are measured before anything changes, so nothing else interleaves with the writes.
     private func batch(_ p: JSONValue) async throws -> JSONValue {
-        guard let ops = p["ops"]?.array, !ops.isEmpty else { throw Failure("invalid_params", "ops must be a non-empty array") }
+        guard var ops = p["ops"]?.array, !ops.isEmpty else { throw Failure("invalid_params", "ops must be a non-empty array") }
         let board = try board(p)
         func prepared(_ method: String, _ raw: JSONValue) -> JSONValue {
             var params = raw.object ?? [:]
@@ -830,8 +878,10 @@ public final class ApiRouter {
             guard Self.batchMethods.contains(method) else {
                 throw Failure("invalid_params", "op \(index): method must be one of \(Self.batchMethods.sorted().joined(separator: ", "))")
             }
-            let params = prepared(method, op["params"] ?? .object([:]))
+            let params: JSONValue
             do {
+                params = try await anchored(method, prepared(method, op["params"] ?? .object([:])), pending: pending)
+                ops[index] = op.merging(JSONValue.object(["params": params]))
                 sizes.append(try await fitSize(method, params, pending: pending))
             } catch {
                 throw Self.labelled(error, op: index, method)

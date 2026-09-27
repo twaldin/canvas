@@ -31,8 +31,10 @@ Error codes: `not_found` (no such object/agent/board; a code tile's file or `pin
 - `frame` is `{x, y, w, h}` in canvas points (100% zoom): the whole box the object draws. A tile's 26 pt title bar is inside its frame, at the top.
   Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room). Without a calling terminal (a script outside any tile), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray.
 - `props` on `object.update` merge shallowly: `{"range": …}` replaces `range` and keeps other props. Set a prop to `null` to clear it.
+  `frame` on `object.update` may give any of `x, y, w, h` (`{"frame": {"h": 420}}`); the rest stay. On create it needs all four, or `size: "fit"` (below).
 - A prop the type doesn't define (a typo like `colour` or `markdwon`) is kept, but `object.create`/`object.update` (and each batch op's result) add `warnings`, one per unknown key naming the type's real props. No `warnings` key means every prop is known.
-- Every change bumps `rev`. Pass `rev` on updates to objects the user may be editing.
+- Every change bumps `rev`. Pass `rev` on updates to objects the user may be editing; the `rev` a create or update returns is current.
+  A note's line-range fences (`file=src/a.ts#L10-40`) come back with an `anchor="<first line>"` added, as the tile would write it.
 - `props.scale` on any tile or text shape (0.25–8, default 1) magnifies what it draws:
   a tile lays out at frame ÷ scale (a 1200×800 tile at scale 2 shows what a 600×400 one does, twice as big), a text shape's font scales.
   Measure, fit, `layout.check`, `view.render` sizes, and line anchors account for it; everything you get back is in canvas points.
@@ -105,4 +107,6 @@ canvas.agent.wait(target="fees", timeout_ms=900_000)      # done, idle, or block
 reply = canvas.agent.read(target="fees", since="prompt")["text"]
 ```
 On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` gives it 15 s to report (an agent you just launched there) and then fails with `unavailable`; for a shell or a CLI without integration, poll `agent.read(since="prompt")` instead.
+`agent.prompt` to a `blocked` agent fails with `conflict` naming what it waits on (an approval or a question on its screen would take your text): tell the user, or `agent.wait` for it to move on.
+`force=True` sends anyway, e.g. to a Claude Code agent that stays `blocked` after the user pressed Esc on an approval.
 `agent.wait` survives an app restart: the SDKs and CLI ask again once the app is back, with `timeoutMs` reduced by the time already waited.

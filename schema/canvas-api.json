@@ -72,6 +72,7 @@
         "agent": {
           "type": "object",
           "required": ["kind"],
+          "description": "the agent reporting in this tile. When the tile's session is gone (a reboot) it resumes `sessionId` (`omp --resume`, `claude --resume`, `codex resume`). Removed when the agent exits (agent.release)",
           "properties": { "kind": { "type": "string" }, "sessionId": { "type": "string" }, "sessionPath": { "type": "string" } },
           "additionalProperties": false
         },
@@ -211,6 +212,12 @@
       "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number", "description": "wrap width for notes and text; for code the widest the tile may get (default 960), past which long lines wrap; for html the width the page lays out at (default 640)" } },
       "additionalProperties": false,
       "description": "with size: fit (or for a new note), where the object goes; the rest of its frame is measured"
+    },
+    "FramePatch": {
+      "type": "object",
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number" }, "h": { "type": "number" } },
+      "additionalProperties": false,
+      "description": "any of x, y, w, h; the rest keep their current values (with size: fit, w is the wrap or widest width and h is measured)"
     },
     "Size": { "type": "object", "required": ["w", "h"], "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "additionalProperties": false },
     "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "shape", "arrow", "group"] },
@@ -472,7 +479,7 @@
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy.",
+      "description": "Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
@@ -490,14 +497,14 @@
       "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" } } }
     },
     "object.update": {
-      "description": "Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w.",
+      "description": "Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w.",
       "params": {
         "type": "object",
         "required": ["id"],
         "properties": {
           "id": { "$ref": "#/definitions/Id" },
           "rev": { "type": "integer" },
-          "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }] },
+          "frame": { "$ref": "#/definitions/FramePatch" },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
           "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
           "caller": { "$ref": "#/definitions/Id" }
@@ -733,7 +740,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "agent.report": {
-      "description": "Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored.",
+      "description": "Report lifecycle state for the agent running in a terminal tile. Stale `seq` values from the same source are ignored. With `call`, `blocked` means that tool call waits for the user's approval and `working` that it finished: while any reported call waits, the tile stays `blocked` (with the oldest waiting call's message) whatever other calls finish; finishing it re-raises the next one. `working` without `call` (a new prompt) and `idle` end every wait.",
       "params": {
         "type": "object",
         "required": ["tile", "kind", "state"],
@@ -743,7 +750,8 @@
           "state": { "enum": ["working", "blocked", "idle", "unknown"] },
           "message": { "type": "string" },
           "seq": { "type": "integer" },
-          "source": { "type": "string" }
+          "source": { "type": "string" },
+          "call": { "type": "string", "description": "identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input)" }
         },
         "additionalProperties": false
       },
@@ -765,7 +773,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "agent.release": {
-      "description": "The agent in this tile exited; clear its lifecycle authority.",
+      "description": "The agent in this tile exited; clear its lifecycle authority and its recorded session (`agent.report_session`), so after a reboot the tile runs its `command` (a plain shell when it has none) instead of resuming that session.",
       "params": {
         "type": "object",
         "required": ["tile", "kind"],
@@ -780,11 +788,15 @@
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first.",
+      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter. The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true.",
       "params": {
         "type": "object",
         "required": ["target", "text"],
-        "properties": { "target": { "type": "string", "description": "agent name or tile id" }, "text": { "type": "string" } },
+        "properties": {
+          "target": { "type": "string", "description": "agent name or tile id" },
+          "text": { "type": "string" },
+          "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` (e.g. Claude Code stays blocked after you press Esc on or deny an approval, since it runs no hook then)" }
+        },
         "additionalProperties": false
       },
       "result": {

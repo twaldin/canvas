@@ -499,6 +499,36 @@ final class ApiRouterTests {
         try board.delete(d.id)
         #expect(board.attention.isEmpty)
     }
+
+    @Test func anAgentIsCreditedOnAnotherBoardItWorksOn() async throws {
+        let agent = terminal()
+        let otherRoot = dir.appendingPathComponent("other")
+        try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+        let other = registry.open(root: otherRoot)
+        let client = try connect()
+        let created = try await call(client, "object.create", ["board": .string(other.id), "caller": .string(agent), "type": .string("note"),
+                                                               "props": .object(["markdown": .string("from next door")])])
+        let id = try #require(created["result"]?["object"]?["id"]?.string, "\(created)")
+        #expect(other.objects[id]?.createdBy == .agent(tile: agent))
+        _ = try await call(client, "object.update", ["id": .string(id), "caller": .string(agent), "props": .object(["markdown": .string("edited")])])
+        #expect(other.objects[id]?.updatedBy == .agent(tile: agent))
+        let note = board.create(type: .note, props: .object(["markdown": .string("not a terminal")]))
+        let fake = try await call(client, "object.create", ["board": .string(other.id), "caller": .string(note.id), "type": .string("note"),
+                                                            "props": .object(["markdown": .string("x")])])
+        let fakeID = try #require(fake["result"]?["object"]?["id"]?.string)
+        #expect(other.objects[fakeID]?.createdBy == .user, "only a terminal tile is an agent")
+    }
+
+    @Test func unknownOrMissingParamsNameWhatTheMethodTakes() async throws {
+        let note = board.create(type: .note, props: .object(["markdown": .string("n")]))
+        let client = try connect()
+        let guessed = try await call(client, "layout.translate", ["ids": .array([.string(note.id)]), "delta": .array([.number(10), .number(0)])])
+        #expect(guessed["error"]?["code"] == .string("invalid_params"))
+        #expect(guessed["error"]?["message"] == .string("unknown param delta; missing dx, dy; layout.translate takes ids (required), dx (required), dy (required), caller"))
+        let batch = try await call(client, "object.batch", ["ops": .array([.object(["method": .string("object.update"), "params": .object(["id": .string(note.id), "text": .string("x")])])])])
+        #expect(batch["error"]?["message"] == .string("op 0 (object.update): unknown param text; object.update takes id (required), rev, frame, size, props, caller"))
+        #expect(board.objects[note.id]?.frame.x == note.frame.x, "nothing moved")
+    }
 }
 
 /// Minimal blocking NDJSON client; reads happen off the main actor so the server can answer.

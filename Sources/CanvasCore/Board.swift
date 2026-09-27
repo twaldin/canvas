@@ -87,6 +87,9 @@ public final class Board {
     private var revHighWater: [ObjectID: Int] = [:]
     /// While an atomic step runs, every change shares this one board revision.
     private var pinnedRevision: Int?
+    /// Per terminal, the code tile its last ⌘-click opened or re-aimed and that tile's `rev`
+    /// then (`openCode`); in memory only.
+    var codePreviews: [ObjectID: (tile: ObjectID, rev: Int)] = [:]
 
     public var onEvent: ((BoardEvent) -> Void)?
     /// Content changes by anyone, for ⌘Z; see UndoHistory.

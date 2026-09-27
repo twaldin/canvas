@@ -24,6 +24,48 @@ struct TerminalReferencesTests {
         #expect(refs("a.ts:20-10") == ["a.ts 20-20"])
     }
 
+    @Test func rangesWithAnEnOrEmDash() {
+        #expect(refs("see main.go:223–231 and url.go:52—57, foo.rs#L3–L5") == ["main.go 223-231", "url.go 52-57", "foo.rs 3-5"])
+    }
+
+    /// A viewport `columns` wide showing `rows`; what ⌘-click at (`row`, `column`) opens among `files`.
+    func hit(_ rows: [String], columns: Int, row: Int, column: Int, files: Set<String>) -> String? {
+        guard let hit = TerminalReferences.hit(row: row, column: column, columns: columns, read: { rows.indices.contains($0) ? rows[$0] : nil },
+                                               resolve: { files.contains($0) ? $0 : nil }) else { return nil }
+        return "\(hit.file) \(hit.lines.start)-\(hit.lines.end) " + hit.runs.map { "\($0.row):\($0.column)+\($0.width)" }.joined(separator: " ")
+    }
+
+    @Test func aReferenceWrappedAtTheTerminalsEdgeIsOne() {
+        // 20 columns: "error at src/walk.rs" fills the row, ":123:5" goes on below.
+        let rows = ["error at src/walk.rs", ":123:5 here", "next"]
+        let files: Set<String> = ["src/walk.rs"]
+        #expect(hit(rows, columns: 20, row: 0, column: 12, files: files) == "src/walk.rs 123-123 0:9+11 1:0+6")
+        #expect(hit(rows, columns: 20, row: 1, column: 2, files: files) == "src/walk.rs 123-123 0:9+11 1:0+6", "from either half")
+        // A whole reference at the end of a shorter row is complete; a full row goes on.
+        let split = ["error at src/walk.rs:12", "3 here"]
+        #expect(hit(split, columns: 30, row: 0, column: 12, files: files) == "src/walk.rs 12-12 0:9+14")
+        #expect(hit(split, columns: 23, row: 0, column: 12, files: files) == "src/walk.rs 123-123 0:9+14 1:0+1")
+    }
+
+    @Test func aReferenceATuiBrokeInsideItsMarginsIsJoinedWhenTheJoinResolves() {
+        // opencode wraps its reply itself: padding on the left, a scrollbar in the last column.
+        let rows = [
+            "  depth() at src/dir_entry.     ▐",
+            "  rs:16 keeps it; the walk at   ▐",
+            "  src/walk.rs:661-              ▐",
+            "  668 checks it.                ▐",
+        ]
+        let files: Set<String> = ["src/dir_entry.rs", "src/walk.rs"]
+        #expect(hit(rows, columns: 33, row: 0, column: 16, files: files) == "src/dir_entry.rs 16-16 0:13+14 1:2+5")
+        #expect(hit(rows, columns: 33, row: 1, column: 3, files: files) == "src/dir_entry.rs 16-16 0:13+14 1:2+5")
+        #expect(hit(rows, columns: 33, row: 3, column: 3, files: files) == "src/walk.rs 661-668 2:2+16 3:2+3", "a range broken after its dash")
+        // Joins are only guesses: a row alone wins when the joined text names no file.
+        let grep = ["src/a.rs:3:  let x = foo.", "src/b.rs:7:  bar()"]
+        #expect(hit(grep, columns: 40, row: 1, column: 2, files: ["src/a.rs", "src/b.rs"]) == "src/b.rs 7-7 1:0+10")
+        #expect(hit(["see src/", "main.rs:4 now"], columns: 40, row: 1, column: 2, files: ["src/main.rs", "main.rs"]) == "src/main.rs 4-4 0:4+4 1:0+9")
+        #expect(hit(["done: a.rs:1", "0 more"], columns: 40, row: 1, column: 0, files: ["a.rs"]) == nil, "a whole reference at a row's end isn't continued")
+    }
+
     @Test func referenceAtAnOffset() {
         let text = "error in src/foo.ts:42 then lib/b.ts:3"
         #expect(TerminalReferences.reference(in: text, at: 12)?.path == "src/foo.ts")
@@ -82,17 +124,48 @@ struct TerminalBoardTests {
         return Board(id: "brd_test", root: root)
     }
 
-    @Test func openCodeSelectsTheTileAlreadyShowingThatRange() throws {
+    @Test func openCodeReaimsTheTerminalsPreviewUntilTheUserKeepsIt() throws {
         let board = makeBoard()
         let terminal = board.create(type: .terminal, props: .object([:]))
         let path = root.appendingPathComponent("src/a.ts").path
-        let first = board.openCode(path: path, lines: LineRange(start: 42, end: 42), beside: terminal.id)
-        #expect(first.created)
-        #expect(board.objects[first.id]?.props["path"]?.string == "src/a.ts", "stored board-relative")
-        let again = board.openCode(path: path, lines: LineRange(start: 42, end: 42), beside: terminal.id)
-        #expect(!again.created && again.id == first.id)
-        let other = board.openCode(path: path, lines: LineRange(start: 7, end: 9), beside: terminal.id)
-        #expect(other.created && other.id != first.id, "another range of the same file is another tile")
+        struct Opened: Equatable { var id: ObjectID, created: Bool }
+        func open(_ start: Int, from tile: ObjectID = terminal.id, newTile: Bool = false) -> Opened {
+            let opened = board.openCode(path: path, lines: LineRange(start: start, end: start), beside: tile, newTile: newTile)
+            return Opened(id: opened.id, created: opened.created)
+        }
+        func line(_ id: ObjectID) -> Double? { board.objects[id]?.props["range"]?["start"]?.number }
+        let preview = open(42)
+        #expect(preview.created)
+        #expect(board.objects[preview.id]?.props["path"]?.string == "src/a.ts", "stored board-relative")
+        #expect(open(7) == Opened(id: preview.id, created: false), "the next ⌘-click re-aims the same tile")
+        #expect(line(preview.id) == 7)
+        #expect(open(7) == Opened(id: preview.id, created: false))
+
+        // ⌥⌘-click opens a tile of its own; the preview stays the preview.
+        let kept = open(9, newTile: true)
+        #expect(kept.created && kept.id != preview.id)
+        #expect(open(9) == Opened(id: kept.id, created: false), "a tile already showing that range is selected, not re-aimed")
+        #expect(line(preview.id) == 7)
+        #expect(open(12) == Opened(id: preview.id, created: false))
+
+        // Another terminal has its own preview.
+        let other = board.create(type: .terminal, props: .object([:]))
+        let theirs = open(30, from: other.id)
+        #expect(theirs.created && theirs.id != preview.id)
+
+        // Scrolled or clicked in (the app's keepCode), or moved: the user keeps it.
+        board.keepCode(preview.id)
+        let second = open(50)
+        #expect(second.created && second.id != preview.id)
+        #expect(line(preview.id) == 12)
+        let frame = board.objects[second.id]!.frame
+        try board.update(second.id, frame: Frame(x: frame.x + 40, y: frame.y, w: frame.w, h: frame.h))
+        let third = open(60)
+        #expect(third.created && third.id != second.id, "a moved preview is kept")
+        #expect(line(second.id) == 50)
+        #expect(open(61) == Opened(id: third.id, created: false))
+        try board.delete(third.id)
+        #expect(open(62).created, "a closed preview is gone")
     }
 
     @Test func openCodeIgnoresFollowTiles() throws {

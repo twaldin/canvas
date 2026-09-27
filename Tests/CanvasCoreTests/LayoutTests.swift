@@ -658,6 +658,17 @@ struct LayoutBoardTests {
         #expect(up.origin.x == 0)
     }
 
+    @Test func aTileOpenedFromAReferencePansOnlyWhenMostlyHiddenAndKeepsTheReferenceInView() {
+        let now = Layout.Jump(zoom: 0.5, origin: .zero)  // shows x 0…2880, y 116…1628
+        let reference = CGRect(x: 100, y: 600, width: 200, height: 17)
+        let halfShown = CGRect(x: 2500, y: 600, width: 640, height: 446)
+        #expect(Layout.reveal(halfShown, from: now, clear: clear, padding: 40, openedFrom: reference) == now, "more than half shows: no pan")
+        let hidden = CGRect(x: 2700, y: 600, width: 640, height: 446)
+        #expect(Layout.reveal(hidden, from: now, clear: clear, padding: 40, openedFrom: .null) == Layout.Jump(zoom: 0.5, origin: CGPoint(x: 500, y: 0)))
+        #expect(Layout.reveal(hidden, from: now, clear: clear, padding: 40, openedFrom: reference) == Layout.Jump(zoom: 0.5, origin: CGPoint(x: 100, y: 0)),
+                "the pan stops where the clicked reference would leave the view")
+    }
+
     @Test func nearbyGroupsAreOneClusterAndALoneObjectIsItsOwn() {
         let left = [CGRect(x: 0, y: 0, width: 400, height: 300), CGRect(x: 500, y: 0, width: 400, height: 300)]
         // 1400 pt right of `left`: within the margin, so the groups join.

@@ -136,6 +136,7 @@ public final class ApiRouter {
         }
         let params = request["params"] ?? .object([:])
         do {
+            try Self.checkParams(method, params)
             if method == "events.subscribe" {
                 registry.subscribe(connection, board: params["board"]?.string, events: params["events"]?.array?.compactMap(\.string))
                 connection.send(.object(["id": id, "ok": .bool(true), "result": .object([:])]))
@@ -188,6 +189,21 @@ public final class ApiRouter {
 
     static func error(_ id: JSONValue, _ failure: Failure) -> JSONValue {
         .object(["id": id, "ok": .bool(false), "error": .object(["code": .string(failure.code), "message": .string(failure.message)])])
+    }
+
+    /// Rejects a param the method's schema doesn't list and a required one that is missing,
+    /// naming what the method accepts (`ApiParams`, generated from the schema), so a caller
+    /// that guessed (`delta` for `dx`/`dy`) can correct itself from the error alone.
+    static func checkParams(_ method: String, _ params: JSONValue) throws {
+        guard let spec = ApiParams.methods[method], let given = params.object else { return }
+        let unknown = given.keys.filter { !spec.accepted.contains($0) }.sorted()
+        let missing = spec.required.filter { given[$0] == nil || given[$0] == .null }
+        guard !unknown.isEmpty || !missing.isEmpty else { return }
+        var problems: [String] = []
+        if !unknown.isEmpty { problems.append("unknown param\(unknown.count == 1 ? "" : "s") \(unknown.joined(separator: ", "))") }
+        if !missing.isEmpty { problems.append("missing \(missing.joined(separator: ", "))") }
+        let accepted = spec.accepted.isEmpty ? "no params" : spec.accepted.map { spec.required.contains($0) ? "\($0) (required)" : $0 }.joined(separator: ", ")
+        throw Failure("invalid_params", "\(problems.joined(separator: "; ")); \(method) takes \(accepted)")
     }
 
     /// A result with `warnings` (unknown props) when there are any.
@@ -596,20 +612,20 @@ public final class ApiRouter {
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
             guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             let frame = try p["frame"].map { try Self.frame($0, onto: nil) }
-            let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p, on: board))
+            let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], type.unknownPropWarnings(props))
 
         case "object.update":
             let id = try string(p, "id")
             let board = try board(forObject: id)
             let frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
-            let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p, on: board))
+            let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
         case "object.delete":
             let id = try string(p, "id")
             let board = try board(forObject: id)
-            try board.delete(id, caller: caller(p, on: board))
+            try board.delete(id, caller: caller(p))
             return .object([:])
 
         case "layout.place":
@@ -618,7 +634,7 @@ public final class ApiRouter {
             let near = try string(p, "near")
             guard board.objects[near] != nil else { throw BoardError.notFound("object \(near) on this board") }
             let frames = try board.place(id, near: near, side: try option(p, "side", Layout.Side.self) ?? .right, gap: p["gap"]?.number ?? Layout.defaultGap,
-                                         align: try option(p, "align", Layout.Align.self) ?? .start, caller: caller(p, on: board))
+                                         align: try option(p, "align", Layout.Align.self) ?? .start, caller: caller(p))
             return .object(["frames": try JSONValue.encode(frames)])
 
         case "layout.stack":
@@ -626,7 +642,7 @@ public final class ApiRouter {
             let board = try board(forObject: ids[0])
             for id in ids where board.objects[id] == nil { throw BoardError.notFound("object \(id) on this board") }
             let frames = try board.stack(ids, direction: try option(p, "direction", Layout.Direction.self) ?? .row, gap: p["gap"]?.number ?? Layout.defaultGap,
-                                         wrapAt: p["wrapAt"]?.number, align: try option(p, "align", Layout.Align.self) ?? .start, origin: try point(p, "origin"), caller: caller(p, on: board))
+                                         wrapAt: p["wrapAt"]?.number, align: try option(p, "align", Layout.Align.self) ?? .start, origin: try point(p, "origin"), caller: caller(p))
             return .object(["frames": try JSONValue.encode(frames)])
 
         case "layout.translate":
@@ -634,7 +650,7 @@ public final class ApiRouter {
             guard let dx = p["dx"]?.number, let dy = p["dy"]?.number else { throw Failure("invalid_params", "dx and dy are required numbers") }
             let board = try board(forObject: ids[0])
             for id in ids where board.objects[id] == nil { throw BoardError.notFound("object \(id) on this board") }
-            return .object(["frames": try JSONValue.encode(try board.translate(ids, dx: dx, dy: dy, caller: caller(p, on: board)))])
+            return .object(["frames": try JSONValue.encode(try board.translate(ids, dx: dx, dy: dy, caller: caller(p)))])
 
         case "layout.grid":
             guard let raw = p["cells"]?.array, !raw.isEmpty else { throw Failure("invalid_params", "cells must be a non-empty array of {id, row, col}") }
@@ -648,7 +664,7 @@ public final class ApiRouter {
             for cell in cells where board.objects[cell.id] == nil { throw BoardError.notFound("object \(cell.id) on this board") }
             let placed = try board.grid(cells, colGap: p["colGap"]?.number ?? Layout.defaultGap, rowGap: p["rowGap"]?.number ?? Layout.defaultGap,
                                         colAlign: try option(p, "colAlign", Layout.Align.self) ?? .start, rowAlign: try option(p, "rowAlign", Layout.Align.self) ?? .start,
-                                        origin: try point(p, "origin"), caller: caller(p, on: board))
+                                        origin: try point(p, "origin"), caller: caller(p))
             return .object([
                 "frames": try JSONValue.encode(placed.frames),
                 "columns": .array(placed.grid.columns.map { .object(["col": .number(Double($0.index)), "x": .number($0.start), "w": .number($0.length)]) }),
@@ -714,7 +730,7 @@ public final class ApiRouter {
                 board.clearAttention(id)
                 return .object(["id": .string(id), "active": .bool(false)])
             }
-            let raised = try board.raiseAttention(id, message: p["message"]?.string, caller: caller(p, on: board))
+            let raised = try board.raiseAttention(id, message: p["message"]?.string, caller: caller(p))
             var result: [String: JSONValue] = ["id": .string(id), "active": .bool(true)]
             if !raised.cleared.isEmpty { result["cleared"] = .array(raised.cleared.map(JSONValue.string)) }
             return .object(result)
@@ -781,7 +797,7 @@ public final class ApiRouter {
     func reusableChanges(_ p: JSONValue) throws -> JSONValue? {
         guard p["type"]?.string == ObjectType.changes.rawValue, let props = p["props"], props.object != nil else { return nil }
         let board = try board(p)
-        guard let caller = caller(p, on: board) else { return nil }
+        guard let caller = caller(p) else { return nil }
         let spec = ChangesSpec(props)
         let root = spec.directory(boardRoot: board.root).path
         let existing = board.objects.values
@@ -872,7 +888,7 @@ public final class ApiRouter {
             origin = (x, y)
         } else {
             let board = try board(p)
-            let placed = board.place(width: size.width, height: size.height, near: caller(p, on: board), stacking: true)
+            let placed = board.place(width: size.width, height: size.height, near: caller(p), stacking: true)
             origin = (placed.x, placed.y)
         }
         params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
@@ -922,6 +938,7 @@ public final class ApiRouter {
             }
             let params: JSONValue
             do {
+                try Self.checkParams(method, op["params"] ?? .object([:]))
                 params = try await anchored(method, prepared(method, op["params"] ?? .object([:])), pending: pending)
                 ops[index] = op.merging(JSONValue.object(["params": params]))
                 sizes.append(try await fitSize(method, params, pending: pending))
@@ -1152,9 +1169,11 @@ public final class ApiRouter {
         return board
     }
 
-    /// A caller is only honored when it is a terminal tile on this board.
-    func caller(_ p: JSONValue, on board: Board) -> ObjectID? {
-        guard let caller = p["caller"]?.string, board.objects[caller]?.type == .terminal else { return nil }
+    /// A caller is only honored when it is a terminal tile, on any open board: an agent working
+    /// on another board (`board` given) is credited there as on its own. Placement near it
+    /// (`Board.place(near:)`) applies only on its own board.
+    func caller(_ p: JSONValue) -> ObjectID? {
+        guard let caller = p["caller"]?.string, registry.board(containing: caller)?.objects[caller]?.type == .terminal else { return nil }
         return caller
     }
 

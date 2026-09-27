@@ -16,6 +16,7 @@ This page covers the conventions the catalog doesn't spell out.
 
 Error codes: `not_found` (no such object/agent/board; a code tile's file or `pinnedCommit` that isn't there), `conflict` (stale `rev`: re-read, re-apply, retry),
 `invalid_params`, `unavailable` (e.g. a terminal without a running session, or the app isn't running), `unsupported`, `timeout` (`agent.wait`).
+A param the method doesn't take, or a required one missing, is `invalid_params` naming every param it takes (`unknown param delta; missing dx, dy; layout.translate takes ids (required), dx (required), dy (required), caller`); the same for each `object.batch` op.
 
 ## Reading the board
 
@@ -32,7 +33,7 @@ Error codes: `not_found` (no such object/agent/board; a code tile's file or `pin
 ## Objects
 
 - `frame` is `{x, y, w, h}` in canvas points (100% zoom): the whole box the object draws. A tile's 26 pt title bar is inside its frame, at the top.
-  Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room); within 10 minutes of your last tile, the next one stacks below it (else right of it) when that is as much in view. Without a calling terminal (a script outside any tile), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray.
+  Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room); within 10 minutes of your last tile, the next one stacks below it (else right of it) when that is as much in view. Without a calling terminal (a script outside any tile), or on another board (`board`), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray. Objects you create or change on another board are still credited to your terminal (`createdBy`, `board.history`).
 - `props` on `object.update` merge shallowly: `{"range": …}` replaces `range` and keeps other props. Set a prop to `null` to clear it.
   `frame` on `object.update` may give any of `x, y, w, h` (`{"frame": {"h": 420}}`); the rest stay. On create it needs all four, or `size: "fit"` (below).
 - A prop the type doesn't define (a typo like `colour` or `markdwon`) is kept, but `object.create`/`object.update` (and each batch op's result) add `warnings`, one per unknown key naming the type's real props. No `warnings` key means every prop is known.

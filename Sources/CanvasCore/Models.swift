@@ -78,7 +78,7 @@ public enum Actor: Codable, Equatable, Sendable {
 }
 
 public enum ObjectType: String, Codable, Sendable, CaseIterable {
-    case terminal, browser, code, note, html, shape, arrow, group
+    case terminal, browser, code, note, html, changes, shape, arrow, group
 
     /// The props this type defines (schema `TerminalProps` … `GroupProps`). Others are kept but
     /// reported: `object.create`/`object.update` name them in `warnings`.
@@ -89,6 +89,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         case .code: ["path", "range", "symbol", "caption", "diffBase", "followOf", "lastAction", "history", "pinnedCommit", "scale"]
         case .note: ["markdown", "title", "scale"]
         case .html: ["html", "title", "allowNetwork", "state", "scale"]
+        case .changes: ["base", "paths", "title", "reviewed", "scale"]
         case .shape: ["kind", "text", "points", "color", "fill", "scale"]
         case .arrow: ["from", "to", "relation", "label", "color", "route"]
         case .group: ["members", "title", "color", "padding"]

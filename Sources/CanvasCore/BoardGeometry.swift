@@ -20,7 +20,7 @@ public struct BoardGeometry: Sendable {
     /// groups never block.
     public static func blocksRoutes(_ object: CanvasObject) -> Bool {
         switch object.type {
-        case .terminal, .browser, .code, .note, .html: return true
+        case .terminal, .browser, .code, .note, .html, .changes: return true
         case .shape:
             guard let spec = ShapeSpec(object.props) else { return false }
             return spec.kind == .text || (spec.kind != .ink && spec.fill != .none)

@@ -28,17 +28,17 @@ public actor GitRunner {
         self.limit = limit
     }
 
-    /// stdout of `git <args>` run in `directory`. Exit codes outside `allowedStatus` throw
-    /// `GitError.failed` with git's stderr; more than `maxOutput` bytes of stdout stops git and
-    /// throws `GitError.outputTooLarge`; running past `timeout` stops git and throws
-    /// `GitError.timedOut`.
-    public func run(_ args: [String], in directory: URL, allowedStatus: Set<Int32> = [0], maxOutput: Int = .max, timeout: TimeInterval? = nil) async throws -> Data {
+    /// stdout of `git <args>` run in `directory`, with `input` on its stdin (none by default).
+    /// Exit codes outside `allowedStatus` throw `GitError.failed` with git's stderr; more than
+    /// `maxOutput` bytes of stdout stops git and throws `GitError.outputTooLarge`; running past
+    /// `timeout` stops git and throws `GitError.timedOut`.
+    public func run(_ args: [String], in directory: URL, input: Data? = nil, allowedStatus: Set<Int32> = [0], maxOutput: Int = .max, timeout: TimeInterval? = nil) async throws -> Data {
         try await acquire()
         defer { release() }
         try Task.checkCancellation()
         let request = Request()
         let result = try await withTaskCancellationHandler {
-            try await Self.spawn(args, in: directory, maxOutput: maxOutput, timeout: timeout, request: request)
+            try await Self.spawn(args, in: directory, input: input, maxOutput: maxOutput, timeout: timeout, request: request)
         } onCancel: {
             request.cancel()
         }
@@ -124,7 +124,7 @@ public actor GitRunner {
         var data = Data()
     }
 
-    private static func spawn(_ args: [String], in directory: URL, maxOutput: Int, timeout: TimeInterval?, request: Request) async throws -> (status: Int32, stdout: Data, stderr: Data) {
+    private static func spawn(_ args: [String], in directory: URL, input: Data?, maxOutput: Int, timeout: TimeInterval?, request: Request) async throws -> (status: Int32, stdout: Data, stderr: Data) {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
@@ -141,12 +141,22 @@ public actor GitRunner {
                 let stderr = Pipe()
                 process.standardOutput = stdout
                 process.standardError = stderr
-                process.standardInput = FileHandle.nullDevice
+                let stdin = input.map { _ in Pipe() }
+                process.standardInput = stdin ?? FileHandle.nullDevice
                 do {
                     try process.run()
                 } catch {
                     continuation.resume(throwing: GitError.launch(error.localizedDescription))
                     return
+                }
+                if let stdin, let input {
+                    // A git that exits early must fail the write with EPIPE, not kill the app.
+                    let writer = stdin.fileHandleForWriting
+                    _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        try? writer.write(contentsOf: input)
+                        try? writer.close()
+                    }
                 }
                 if !request.attach(process) { process.terminate() }
                 if let timeout {

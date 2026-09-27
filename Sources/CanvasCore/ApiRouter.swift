@@ -147,6 +147,7 @@ public final class ApiRouter {
             if method == "view.render" { return Self.ok(id, try await render(params)) }
             if method == "view.snapshot" { return Self.ok(id, try await snapshot(params)) }
             if method == "tray.drain" { return Self.ok(id, try await drain(params)) }
+            if method == "object.get" { return Self.ok(id, try await get(params)) }
             switch method {
             case "object.measure": return Self.ok(id, try await measure(params))
             case "object.batch": return Self.ok(id, try await batch(params))
@@ -750,6 +751,15 @@ public final class ApiRouter {
         guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
         let size = try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: p["width"]?.number, root: try board(p).root)
         return .object(["w": .number(size.width), "h": .number(size.height)])
+    }
+
+    /// `object.get`; a changes tile's result adds `changes`: its files and hunks as git has them
+    /// now (`ChangeSet.json`), next to the actions the user took in `props.reviewed`.
+    private func get(_ p: JSONValue) async throws -> JSONValue {
+        let result = try dispatch("object.get", p)
+        guard let id = p["id"]?.string, let board = registry.board(containing: id), let object = board.objects[id], object.type == .changes else { return result }
+        let set = await ChangeSet.load(root: board.root, spec: ChangesSpec(object.props), highlight: false)
+        return result.merging(.object(["changes": set.json]))
     }
 
     /// The measured size an `object.create`/`object.update` with `size: "fit"` gets, or a note

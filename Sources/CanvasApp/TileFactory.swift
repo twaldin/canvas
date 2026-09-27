@@ -16,6 +16,7 @@ enum TileFactory {
         case .note: NoteTile(object: object, board: board)
         case .browser: BrowserTile(object: object, board: board)
         case .html: HtmlTile(object: object, board: board)
+        case .changes: ChangesTile(object: object, board: board)
         default: CardTile(object: object)
         }
     }

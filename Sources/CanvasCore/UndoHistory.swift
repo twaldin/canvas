@@ -9,6 +9,9 @@ public final class UndoHistory {
         case created(CanvasObject)
         case updated(before: CanvasObject, after: CanvasObject)
         case deleted(CanvasObject)
+        /// Something outside the board the step did (a changes tile's git action), undone and
+        /// redone with it.
+        case effect(UndoEffect)
     }
 
     /// Props a terminal's integrations keep current on their own.
@@ -46,6 +49,8 @@ public final class UndoHistory {
             openUpdates[after.id] = open.count
         case .created(let object), .deleted(let object):
             openUpdates.removeValue(forKey: object.id)
+        case .effect:
+            break
         }
         open.append(change)
         if depth == 0 { close() }
@@ -125,6 +130,18 @@ public final class UndoHistory {
     }
 }
 
+/// A step's change outside the board: what undo and redo run for it (on the main actor; slow
+/// work goes to a task of its own).
+public struct UndoEffect: Sendable {
+    public let undo: @MainActor @Sendable () -> Void
+    public let redo: @MainActor @Sendable () -> Void
+
+    public init(undo: @escaping @MainActor @Sendable () -> Void, redo: @escaping @MainActor @Sendable () -> Void) {
+        self.undo = undo
+        self.redo = redo
+    }
+}
+
 extension Board {
     /// Groups every change made inside `body` into one undo step (a multi-object gesture).
     public func transaction<T>(_ body: () throws -> T) rethrows -> T {
@@ -158,6 +175,9 @@ extension Board {
                 case .deleted(let object):
                     put(object)
                     replayed.append(change)
+                case .effect(let effect):
+                    effect.undo()
+                    replayed.append(change)
                 }
             }
         }
@@ -182,6 +202,9 @@ extension Board {
                     replayed.append(change)
                 case .deleted(let object):
                     replayed.append(.deleted(removeLive(object)))
+                case .effect(let effect):
+                    effect.redo()
+                    replayed.append(change)
                 }
             }
         }

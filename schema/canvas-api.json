@@ -143,6 +143,33 @@
       },
       "additionalProperties": false
     },
+    "ChangesProps": {
+      "type": "object",
+      "properties": {
+        "base": { "type": "string", "default": "HEAD", "description": "what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch) | a commit" },
+        "paths": { "type": "array", "items": { "type": "string" }, "description": "files or directories to limit it to, board-relative or absolute (default: the board root); a path outside the board's repository lists nothing and says so" },
+        "title": { "type": "string" },
+        "reviewed": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "written by the tile: the Stage and Revert actions the user took, oldest first (⌘Z of one removes its entry). Agents read it; writing it changes nothing in git",
+          "items": {
+            "type": "object",
+            "properties": {
+              "action": { "enum": ["stage", "revert"] },
+              "path": { "type": "string", "description": "board-relative" },
+              "scope": { "enum": ["hunk", "file"] },
+              "status": { "enum": ["added", "modified", "deleted", "renamed"] },
+              "header": { "type": "string", "description": "the hunk's `@@ -a,b +c,d @@` (scope hunk)" },
+              "added": { "type": "integer" },
+              "removed": { "type": "integer" }
+            }
+          }
+        },
+        "scale": { "$ref": "#/definitions/Scale" }
+      },
+      "additionalProperties": false
+    },
     "ShapeProps": {
       "type": "object",
       "required": ["kind"],
@@ -213,7 +240,7 @@
       "description": "with size: fit (or for a new note), where the object goes; the rest of its frame is measured"
     },
     "Size": { "type": "object", "required": ["w", "h"], "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "additionalProperties": false },
-    "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "shape", "arrow", "group"] },
+    "ObjectType": { "enum": ["terminal", "browser", "code", "note", "html", "changes", "shape", "arrow", "group"] },
     "CanvasObject": {
       "type": "object",
       "required": ["id", "type", "frame", "z", "rev", "createdBy", "createdAt", "updatedAt", "props"],
@@ -228,7 +255,7 @@
         "updatedBy": { "$ref": "#/definitions/Actor" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one)" }
+        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one)" }
       },
       "additionalProperties": false
     },
@@ -458,7 +485,7 @@
       }
     },
     "object.get": {
-      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it.",
+      "description": "Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), next to `props.reviewed` (what they staged or reverted). To look at an object, `view.render` it.",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -468,18 +495,62 @@
       "result": {
         "type": "object",
         "required": ["object"],
-        "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "graph": { "type": "object" } }
+        "properties": {
+          "object": { "$ref": "#/definitions/CanvasObject" },
+          "graph": { "type": "object" },
+          "changes": {
+            "type": "object",
+            "description": "changes tiles only",
+            "properties": {
+              "repository": { "type": "string" },
+              "base": { "type": ["string", "null"], "description": "full SHA of the base" },
+              "baseLabel": { "type": "string", "description": "HEAD, merge-base with main, or the commit as written" },
+              "added": { "type": "integer" },
+              "removed": { "type": "integer" },
+              "notice": { "type": "string", "description": "why nothing is listed (not a repository, no commits, a path outside it)" },
+              "omitted": { "type": "integer", "description": "changed files past the 300 the tile loads" },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": { "type": "string", "description": "board-relative, else absolute" },
+                    "oldPath": { "type": "string", "description": "renamed files: the name in the base" },
+                    "status": { "enum": ["added", "modified", "deleted", "renamed"], "description": "untracked files are added" },
+                    "added": { "type": "integer" },
+                    "removed": { "type": "integer" },
+                    "notice": { "type": "string", "description": "why it has no hunks: binary file, too large to show, submodule, mode changed" },
+                    "hunks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "header": { "type": "string", "description": "`@@ -a,b +c,d @@` as `git diff -U3` prints it" },
+                          "old": { "type": "object", "properties": { "start": { "type": "integer" }, "count": { "type": "integer" } } },
+                          "new": { "type": "object", "properties": { "start": { "type": "integer" }, "count": { "type": "integer" } } },
+                          "added": { "type": "integer" },
+                          "removed": { "type": "integer" },
+                          "status": { "enum": ["unstaged", "staged", "committed"], "description": "unstaged: the working tree differs from the index there; staged: the index has it; committed: HEAD has it (a base older than HEAD)" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy.",
+      "description": "Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, at most 4000 tall). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
@@ -499,7 +570,7 @@
           "rev": { "type": "integer" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false
@@ -517,14 +588,14 @@
       "result": { "type": "object", "properties": {} }
     },
     "object.measure": {
-      "description": "Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest). Other types are `unsupported`.",
+      "description": "Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: every file and hunk row (unfolded) under its header, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 tall. Other types are `unsupported`.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
           "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640)" },
           "caller": { "$ref": "#/definitions/Id" }
         },

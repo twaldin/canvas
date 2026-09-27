@@ -104,6 +104,27 @@ export type HtmlProps = {
   scale?: Scale;
 };
 
+export type ChangesProps = {
+  /** what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch) | a commit */
+  base?: string;
+  /** files or directories to limit it to, board-relative or absolute (default: the board root); a path outside the board's repository lists nothing and says so */
+  paths?: string[];
+  title?: string;
+  /** written by the tile: the Stage and Revert actions the user took, oldest first (⌘Z of one removes its entry). Agents read it; writing it changes nothing in git */
+  reviewed?: ({
+    action?: "stage" | "revert";
+    /** board-relative */
+    path?: string;
+    scope?: "hunk" | "file";
+    status?: "added" | "modified" | "deleted" | "renamed";
+    /** the hunk's `@@ -a,b +c,d @@` (scope hunk) */
+    header?: string;
+    added?: number;
+    removed?: number;
+  })[];
+  scale?: Scale;
+};
+
 export type ShapeProps = {
   kind: "rect" | "ellipse" | "text" | "ink";
   text?: string;
@@ -163,7 +184,7 @@ export type Size = {
   h: number;
 };
 
-export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "shape" | "arrow" | "group";
+export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "shape" | "arrow" | "group";
 
 export type CanvasObject = {
   id: Id;
@@ -177,7 +198,7 @@ export type CanvasObject = {
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;
-  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one) */
+  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one) */
   props: Record<string, unknown>;
 };
 
@@ -381,12 +402,54 @@ export type ObjectGetParams = {
 export type ObjectGetResult = {
   object: CanvasObject;
   graph?: Record<string, unknown>;
+  /** changes tiles only */
+  changes?: {
+    repository?: string;
+    /** full SHA of the base */
+    base?: unknown;
+    /** HEAD, merge-base with main, or the commit as written */
+    baseLabel?: string;
+    added?: number;
+    removed?: number;
+    /** why nothing is listed (not a repository, no commits, a path outside it) */
+    notice?: string;
+    /** changed files past the 300 the tile loads */
+    omitted?: number;
+    files?: ({
+      /** board-relative, else absolute */
+      path?: string;
+      /** renamed files: the name in the base */
+      oldPath?: string;
+      /** untracked files are added */
+      status?: "added" | "modified" | "deleted" | "renamed";
+      added?: number;
+      removed?: number;
+      /** why it has no hunks: binary file, too large to show, submodule, mode changed */
+      notice?: string;
+      hunks?: ({
+        /** `@@ -a,b +c,d @@` as `git diff -U3` prints it */
+        header?: string;
+        old?: {
+          start?: number;
+          count?: number;
+        };
+        new?: {
+          start?: number;
+          count?: number;
+        };
+        added?: number;
+        removed?: number;
+        /** unstaged: the working tree differs from the index there; staged: the index has it; committed: HEAD has it (a base older than HEAD) */
+        status?: "unstaged" | "staged" | "committed";
+      })[];
+    })[];
+  };
 };
 
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props: Record<string, unknown>;
   frame?: Frame | FitFrame;
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
@@ -407,7 +470,7 @@ export type ObjectUpdateParams = {
   frame?: Frame | FitFrame;
   /** measure the frame's size from the content */
   size?: "fit";
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props?: Record<string, unknown>;
   caller?: Id;
 };
@@ -426,7 +489,7 @@ export type ObjectDeleteResult = Record<string, unknown>;
 export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props: Record<string, unknown>;
   /** wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640) */
   width?: number;
@@ -787,15 +850,15 @@ export interface CanvasApi {
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
   object: {
-    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it. */
+    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), next to `props.reviewed` (what they staged or reverted). To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, at most 4000 tall). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
-    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest). Other types are `unsupported`. */
+    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: every file and hunk row (unfolded) under its header, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 tall. Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;

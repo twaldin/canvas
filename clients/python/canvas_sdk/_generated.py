@@ -98,6 +98,13 @@ class HtmlProps(TypedDict):
     state: NotRequired[dict[str, Any]]
     scale: NotRequired["Scale"]
 
+class ChangesProps(TypedDict):
+    base: NotRequired[str]
+    paths: NotRequired[list[str]]
+    title: NotRequired[str]
+    reviewed: NotRequired[list[dict[str, Any]]]
+    scale: NotRequired["Scale"]
+
 class ShapeProps(TypedDict):
     kind: Required[Literal["rect", "ellipse", "text", "ink"]]
     text: NotRequired[str]
@@ -127,7 +134,7 @@ class Size(TypedDict):
     w: Required[float]
     h: Required[float]
 
-ObjectType = Literal["terminal", "browser", "code", "note", "html", "shape", "arrow", "group"]
+ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "shape", "arrow", "group"]
 
 class CanvasObject(TypedDict):
     id: Required["Id"]
@@ -249,12 +256,12 @@ class ObjectApi:
         self._call = call
 
     def get(self, *, id: "Id", as_: Literal["raw", "graph"] | None = None) -> dict[str, Any]:
-        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it."""
+        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), next to `props.reviewed` (what they staged or reverted). To look at an object, `view.render` it."""
         params = {"id": id, "as": as_}
         return self._call("object.get", params, [])
 
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
+        """Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, at most 4000 tall). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
         params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "caller": caller}
         return self._call("object.create", params, ["board","caller"])
 
@@ -269,7 +276,7 @@ class ObjectApi:
         return self._call("object.delete", params, ["caller"])
 
     def measure(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, width: float | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest). Other types are `unsupported`."""
+        """Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: every file and hunk row (unfolded) under its header, as wide as the longest line up to `width` (default 960, at least 480), at most 4000 tall. Other types are `unsupported`."""
         params = {"board": board, "type": type, "props": props, "width": width, "caller": caller}
         return self._call("object.measure", params, ["board","caller"])
 

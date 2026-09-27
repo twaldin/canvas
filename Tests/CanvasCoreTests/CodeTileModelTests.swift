@@ -67,6 +67,8 @@ struct CodeBoardTests {
 
     @Test func followKeepsRecentLocationsNewestFirstWithoutRepeats() throws {
         let board = Board(id: "brd_test", root: root)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for name in ["a.ts", "b.ts", "c.ts"] { FileManager.default.createFile(atPath: root.appendingPathComponent(name).path, contents: Data("x\n".utf8)) }
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/"), "command": .array([])]))
         try board.follow(tile: terminal.id, path: "a.ts", range: LineRange(start: 1, end: 2), action: "read")
         try board.follow(tile: terminal.id, path: "b.ts", range: nil, action: "edit")

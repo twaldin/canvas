@@ -210,6 +210,10 @@ public final class Board {
         return object
     }
 
+    /// Removes an object. Within the same undo step: arrows bound to it detach; a deleted
+    /// terminal takes its follow tile with it; a closed follow tile stops its terminal following
+    /// (`props.follow` false) so the next report doesn't bring it back. Undo and redo replay
+    /// exactly what was recorded.
     public func delete(_ id: ObjectID, caller: ObjectID? = nil) throws {
         guard objects[id] != nil else { throw BoardError.notFound("object \(id)") }
         let actor = ActivityActor(caller: caller)
@@ -228,6 +232,13 @@ public final class Board {
         onEvent?(.objectDeleted(id))
         if tray.count != before { trayChanged() }
         refitGroups(containing: id, actor: actor, caller: caller)
+        guard !history.replaying else { return }
+        if removed.type == .terminal {
+            for follow in followTiles(of: id) { try delete(follow.id, caller: caller) }
+        } else if let terminal = removed.props["followOf"]?.string.flatMap({ objects[$0] }), terminal.props["follow"]?.bool != false {
+            _ = try write(terminal.id, rev: nil, frame: nil, z: nil, props: .object(["follow": .bool(false)]), caller: caller, actor: actor,
+                          cause: "its follow tile was closed", refitting: [])
+        }
     }
 
     /// Logs a change. A cascade (`cause` set, with the object's state `before` it) that hits an
@@ -514,18 +525,20 @@ public final class Board {
     public static let followHistoryLimit = 8
 
     /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use, and
-    /// record the location at the front of the tile's history. Files outside the board root and
-    /// the terminal's cwd (scratch files, the agent's own config) are ignored: returns nil.
+    /// record the location at the front of the tile's history. Ignored (returns nil) while the
+    /// terminal doesn't follow (`props.follow` false) and for files `FollowFilter` rejects:
+    /// outside the board root and the terminal's cwd, scratch files in the temp directory,
+    /// missing files, images, and other binaries. The tile keeps its last real file.
     @discardableResult
     public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject? {
         let terminal = try object(tile)
-        let absolute = absoluteURL(path).standardizedFileURL.path
-        let projects = [root.standardizedFileURL.path] + [terminal.props["cwd"]?.string].compactMap { $0 }.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
-        guard projects.contains(where: { $0 == "/" || absolute.hasPrefix($0 + "/") }) else { return nil }
+        guard terminal.props["follow"]?.bool != false else { return nil }
+        let projects = [root.path] + [terminal.props["cwd"]?.string].compactMap { $0 }
+        guard FollowFilter.follows(absoluteURL(path).path, projects: projects) else { return nil }
         let relative = relativePath(path)
         let rangeValue: JSONValue = range.map { .object(["start": .number(Double($0.start)), "end": .number(Double($0.end))]) } ?? .null
         var props: [String: JSONValue] = ["path": .string(relative), "followOf": .string(tile), "lastAction": .string(action), "range": rangeValue]
-        let existing = objects.values.first { $0.type == .code && $0.props["followOf"]?.string == tile }
+        let existing = followTiles(of: tile).first
         var entry: [String: JSONValue] = ["path": .string(relative), "action": .string(action)]
         if range != nil { entry["range"] = rangeValue }
         var history = existing?.props["history"]?.array ?? []
@@ -547,6 +560,21 @@ public final class Board {
                         summary: "\(existing == nil ? "follow tile created" : "follow tile re-aimed") at \(relative)\(at) (\(action))")
         onEvent?(.followUpdated(tile: tile, follow: follow.id))
         return follow
+    }
+
+    /// The code tiles following `terminal` (one, unless an undo or a copy made more).
+    public func followTiles(of terminal: ObjectID) -> [CanvasObject] {
+        objects.values.filter { $0.type == .code && $0.props["followOf"]?.string == terminal }
+    }
+
+    /// Turns a terminal's follow mode on (the next report creates its tile) or off (its follow
+    /// tile goes), in one undo step.
+    public func setFollowing(_ tile: ObjectID, _ on: Bool, caller: ObjectID? = nil) throws {
+        guard try object(tile).type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
+        try atomically {
+            try update(tile, props: .object(["follow": .bool(on)]), caller: caller)
+            if !on { for follow in followTiles(of: tile) { try delete(follow.id, caller: caller) } }
+        }
     }
 
     /// Keep what a follow tile shows (`path`/`range`, which a user holding the tile may keep

@@ -52,6 +52,8 @@ final class CodeHeaderBar: NSView {
         let pin = NSButton(title: "Pin", target: nil, action: nil)
         let caption = NSTextField(labelWithString: "")
         let strip = NSStackView()
+        /// The strip's location buttons, newest first (some hidden when the strip is too narrow).
+        var stripButtons: [NSButton] = []
         /// What the caption and the strip's buttons were built for.
         var captionShown: String?
         var stripShown: (history: [Location], current: Location?) = ([], nil)
@@ -209,17 +211,23 @@ final class CodeHeaderBar: NSView {
         if controls.stripShown.history != history || controls.stripShown.current != current {
             controls.stripShown = (history, current)
             // Re-aims shift the same few locations along: retitle the buttons already there.
-            let buttons = controls.strip.arrangedSubviews.compactMap { $0 as? NSButton }
-            for extra in buttons.dropFirst(history.count) { extra.removeFromSuperview() }
+            for extra in controls.stripButtons.dropFirst(history.count) {
+                controls.strip.removeArrangedSubview(extra)
+                extra.removeFromSuperview()
+            }
+            controls.stripButtons = Array(controls.stripButtons.prefix(history.count))
             for (index, location) in history.enumerated() {
-                let button = index < buttons.count ? buttons[index] : NSButton(title: "", target: self, action: #selector(locationClicked(_:)))
+                let button = index < controls.stripButtons.count ? controls.stripButtons[index] : NSButton(title: "", target: self, action: #selector(locationClicked(_:)))
                 button.tag = index
                 button.isBordered = false
                 button.title = location.title
                 button.font = location == current ? .boldSystemFont(ofSize: 11) : .systemFont(ofSize: 11)
                 button.contentTintColor = location == current ? .labelColor : .linkColor
                 button.toolTip = location.path
-                if index >= buttons.count { controls.strip.addArrangedSubview(button) }
+                if index >= controls.stripButtons.count {
+                    controls.stripButtons.append(button)
+                    controls.strip.addArrangedSubview(button)
+                }
             }
         }
         needsLayout = true
@@ -254,6 +262,25 @@ final class CodeHeaderBar: NSView {
         }
         controls.strip.frame = NSRect(x: 6, y: y, width: max(0, bounds.width - 12), height: CodeMetrics.historyHeight - 2)
         controls.strip.isHidden = history.isEmpty
+        fitStrip(controls)
+    }
+
+    /// Shows the current location and as many of the newest others as fit, whole, in order; the
+    /// oldest drop off a narrow tile (a strip wider than its frame clipped or squeezed buttons,
+    /// the current one included).
+    private func fitStrip(_ controls: Controls) {
+        let buttons = controls.stripButtons
+        let widths = buttons.map(\.fittingSize.width)
+        let pinned = history.firstIndex { $0 == current }
+        var room = controls.strip.frame.width - (pinned.map { widths[$0] } ?? 0)
+        var shown = Set(pinned.map { [$0] } ?? [])
+        for index in buttons.indices where index != pinned {
+            let needed = widths[index] + (shown.isEmpty ? 0 : controls.strip.spacing)
+            guard needed <= room else { break }
+            room -= needed
+            shown.insert(index)
+        }
+        for (index, button) in buttons.enumerated() where button.isHidden == shown.contains(index) { button.isHidden = !shown.contains(index) }
     }
 
     override func draw(_ dirtyRect: NSRect) {

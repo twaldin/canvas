@@ -47,6 +47,8 @@ export type TerminalProps = {
     sessionPath?: string;
   };
   lifecycle?: Lifecycle;
+  /** follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again */
+  follow?: boolean;
   scale?: Scale;
 };
 
@@ -757,7 +759,7 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
+    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). Pass `rev` for optimistic concurrency. `size: fit` re-measures the frame from the (patched) content at its current position and width (code: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
@@ -809,7 +811,7 @@ export interface CanvasApi {
     read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {
-    /** Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile (unless the user is working in it, which holds re-aims for ~10 s). Files outside the board root and the terminal's cwd are ignored. */
+    /** Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root and the terminal's cwd, scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file. */
     report(params: FollowReportParams): Promise<FollowReportResult>;
   };
   view: {

@@ -65,6 +65,7 @@ class TerminalProps(TypedDict):
     title: NotRequired[str]
     agent: NotRequired[dict[str, Any]]
     lifecycle: NotRequired["Lifecycle"]
+    follow: NotRequired[bool]
     scale: NotRequired["Scale"]
 
 class BrowserProps(TypedDict):
@@ -251,7 +252,7 @@ class ObjectApi:
         return self._call("object.get", params, [])
 
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Create an object. Omit `frame` to let the canvas place it next to the calling agent's terminal (or the viewport center for users). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
+        """Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), so `frame` may be just x, y, w. The caller's tile (CANVAS_TILE_ID) becomes createdBy."""
         params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "caller": caller}
         return self._call("object.create", params, ["board","caller"])
 
@@ -381,7 +382,7 @@ class FollowApi:
         self._call = call
 
     def report(self, *, tile: "Id", path: str, action: Literal["read", "edit", "write", "lsp", "search"], range: "LineRange" | None = None) -> dict[str, Any]:
-        """Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile (unless the user is working in it, which holds re-aims for ~10 s). Files outside the board root and the terminal's cwd are ignored."""
+        """Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root and the terminal's cwd, scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file."""
         params = {"tile": tile, "path": path, "range": range, "action": action}
         return self._call("follow.report", params, [])
 

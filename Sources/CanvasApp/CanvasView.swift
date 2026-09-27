@@ -116,6 +116,9 @@ final class CanvasView: NSScrollView {
     private(set) var tiles: [ObjectID: TileFrameView] = [:]
     private var groups: [ObjectID: GroupView] = [:]
     private var markers: [ObjectID: AttentionMarker] = [:]
+    /// Terminals whose agent is blocked (waiting on the user), with their lifecycle message: an
+    /// edge pill points at each while it is offscreen, like a marker's.
+    private var blocked: [ObjectID: String] = [:]
     private(set) var selection: Set<ObjectID> = []
     /// The group being worked in: zoomed to, everything else dimmed.
     private(set) var enteredGroup: ObjectID?
@@ -297,6 +300,7 @@ final class CanvasView: NSScrollView {
             groups.removeValue(forKey: id)?.removeFromSuperview()
             if enteredGroup == id { exitGroup() }
             hideMarker(id)
+            if blocked.removeValue(forKey: id) != nil { layoutPills() }
             seenLocally.remove(id)
             if selection.contains(id) { setSelection(selection.subtracting([id])) }
             scheduleGeometry()
@@ -394,7 +398,7 @@ final class CanvasView: NSScrollView {
 
     /// Board changes re-lay out what's drawn around objects on the next turn, after every other
     /// consumer of the event (the drawing layer's outlines) has caught up, then re-run culling,
-    /// edge chevrons, and seen eligibility, since an object may have moved into or out of view.
+    /// edge pills, and seen eligibility, since an object may have moved into or out of view.
     private func scheduleGeometry() {
         geometryDirty = true
         scheduleLiveness()
@@ -404,7 +408,7 @@ final class CanvasView: NSScrollView {
     private func objectsMoved() {
         refreshRings()
         refreshGroups()
-        layoutMarkers()
+        layoutPills()
         refreshFocusHoles()
     }
 
@@ -778,16 +782,22 @@ final class CanvasView: NSScrollView {
         }
     }
 
-    /// A new terminal with keyboard focus: at a document point (its top-left), moved to the
-    /// nearest free spot on whole points (`Board.place`), else placed and revealed like any new
-    /// object the user asks for (`openForUser`).
+    /// A new terminal with keyboard focus: at a document point (`createHere`), else placed and
+    /// revealed like any new object the user asks for (`openForUser`).
     func createTerminal(at point: NSPoint? = nil) {
         let props: JSONValue = .object(["cwd": .string(board.root.path), "command": .array([])])
         guard let point else { return openForUser(.terminal, props: props) }
-        let size = Board.defaultSize(.terminal)
-        let frame = board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h))
-        let object = board.create(type: .terminal, props: props, frame: frame)
-        takeKeyboard(object.id)
+        takeKeyboard(createHere(.terminal, props: props, at: point).id)
+    }
+
+    /// New Terminal/Note/Browser Here: the object's top-left at a document point, moved to the
+    /// nearest free spot on whole points, wholly in view clear of the toolbar and tray when there's
+    /// room (`Board.place`); when there isn't, the canvas pans the least that shows it.
+    private func createHere(_ type: ObjectType, props: JSONValue, at point: NSPoint) -> CanvasObject {
+        let size = Board.defaultSize(type)
+        let object = board.create(type: type, props: props, frame: board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h)))
+        reveal(object.id)
+        return object
     }
 
     /// A new object the user asked for without saying where (File › Open File, New Note, New
@@ -858,19 +868,15 @@ final class CanvasView: NSScrollView {
         return true
     }
 
+    /// An empty note at a document point (`createHere`).
     func createNote(at point: NSPoint) {
-        let size = Board.defaultSize(.note)
-        let frame = Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h)
-        let note = board.create(type: .note, props: .object(["markdown": .string("")]), frame: frame)
-        setSelection([note.id])
+        setSelection([createHere(.note, props: .object(["markdown": .string("")]), at: point).id])
     }
 
-    /// An empty browser tile at a document point (its top-left) moved to the nearest free spot,
-    /// with the address field focused for the user to type where to go.
+    /// An empty browser tile at a document point (`createHere`), with the address field focused
+    /// for the user to type where to go.
     func createBrowser(at point: NSPoint) {
-        let size = Board.defaultSize(.browser)
-        let frame = board.place(Frame(x: point.x - CanvasDocumentView.origin.x, y: point.y - CanvasDocumentView.origin.y, w: size.w, h: size.h))
-        let browser = board.create(type: .browser, props: .object(["url": .string("about:blank")]), frame: frame)
+        let browser = createHere(.browser, props: .object(["url": .string("about:blank")]), at: point)
         setSelection([browser.id])
         DispatchQueue.main.async { [weak self] in
             (self?.tiles[browser.id]?.content as? BrowserTile)?.focusAddress()
@@ -956,6 +962,8 @@ final class CanvasView: NSScrollView {
         menu.addItem(MenuAction.item("New Terminal Here") { [weak self] in self?.createTerminal(at: point) })
         menu.addItem(MenuAction.item("New Note Here") { [weak self] in self?.createNote(at: point) })
         menu.addItem(MenuAction.item("New Browser Here") { [weak self] in self?.createBrowser(at: point) })
+        menu.addItem(.separator())
+        menu.addItem(MenuAction.item("Clear Attention Markers", enabled: !board.attention.isEmpty) { [weak self] in self?.board.clearAllAttention() })
         if enteredGroup != nil {
             menu.addItem(.separator())
             menu.addItem(MenuAction.item("Exit Group") { [weak self] in self?.exitGroup() })
@@ -1102,8 +1110,9 @@ final class CanvasView: NSScrollView {
     // MARK: Attention
 
     /// Shows the board's marker on an object (`Board.attention`): a pulsing ring and message,
-    /// plus an edge chevron while the object is offscreen. The user acknowledges it (the board
-    /// clears it) by selecting it, focusing it, clicking it, or looking at it for a while.
+    /// plus an edge pill while the object is offscreen. The user acknowledges it (the board
+    /// clears it) by selecting it, focusing it, clicking it or its bubble, or looking at it for
+    /// a while; the empty canvas's menu clears them all.
     private func showMarker(_ id: ObjectID, message: String?) {
         guard board.objects[id] != nil else { return }
         if let marker = markers[id] {
@@ -1117,38 +1126,66 @@ final class CanvasView: NSScrollView {
             attention.addSubview(marker)
             markers[id] = marker
         }
-        layoutMarkers()
+        layoutPills()
         scheduleLiveness()
     }
 
     private func hideMarker(_ id: ObjectID) {
         guard let marker = markers.removeValue(forKey: id) else { return }
         marker.removeFromSuperview()
+        layoutPills()
         scheduleLiveness()
     }
 
-    /// Markers live in window space: re-placed on every pan and pinch step (`boundsChanged`) and
-    /// whenever objects move, around their object's rect as it is on screen now, their bubbles
-    /// kept in the area the chrome leaves clear (`clearArea`, what jumps aim at).
-    private func layoutMarkers() {
-        guard !markers.isEmpty else { return }
-        let visible = attention.bounds
-        let clear = clearArea
-        for marker in markers.values {
-            guard let rect = docFrame(marker.objectID) else { continue }
-            let shown = attention.convert(rect, from: document)
-            marker.isHidden = !shown.insetBy(dx: -60, dy: -60).intersects(visible)
-            if !marker.isHidden { marker.place(around: shown, clear: clear) }
-        }
-    }
-
-    private func updateEdges() {
+    /// Markers and edge pills live in window space: re-placed on every pan and pinch step
+    /// (`boundsChanged`), whenever objects move, and on every scene pass, around their objects'
+    /// rects as they are on screen now. `PillLayout` keeps them off each other, a bubble off
+    /// other tiles where it can, and all of them in the area the chrome leaves clear
+    /// (`clearArea`, what jumps aim at). An object in view shows its marker's bubble; one out of
+    /// view (marked, or a blocked agent's terminal) gets an edge pill instead.
+    private func layoutPills() {
+        guard !markers.isEmpty || !blocked.isEmpty || !edges.subviews.isEmpty else { return }
         let visible = documentVisibleRect
-        let pointers = markers.values.compactMap { marker -> AttentionEdgeView.Pointer? in
-            guard let rect = docFrame(marker.objectID), !rect.intersects(visible) else { return nil }
-            return .init(id: marker.objectID, message: marker.message, target: edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document))
+        let zoom = magnification
+        var shownMarkers: [PillLayout.Marker] = []
+        var shownRects: [ObjectID: NSRect] = [:]
+        var pointers: [ObjectID: AttentionEdgeView.Pointer] = [:]
+        func point(_ rect: NSRect) -> NSPoint { edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document) }
+        for marker in markers.values {
+            guard let rect = docFrame(marker.objectID) else {
+                marker.isHidden = true
+                continue
+            }
+            marker.isHidden = !rect.intersects(visible)
+            if marker.isHidden {
+                pointers[marker.objectID] = .init(id: marker.objectID, message: marker.message, target: point(rect))
+                continue
+            }
+            let shown = attention.convert(rect, from: document)
+            let titleBar: CGFloat = if let tile = tiles[marker.objectID] { TileFrameView.titleHeight * tile.scale * zoom }
+                else if groups[marker.objectID] != nil { CGFloat(GroupSpec.titleHeight) * zoom } else { 0 }
+            let ringWidth = shown.width + 2 * AttentionMarker.inset
+            shownRects[marker.objectID] = shown
+            shownMarkers.append(.init(id: marker.objectID, target: shown, ringInset: AttentionMarker.inset,
+                                      size: CGSize(width: PillLayout.bubbleWidth(natural: marker.naturalWidth, ringWidth: ringWidth), height: AttentionMarker.bubbleHeight),
+                                      titleBar: titleBar))
         }
-        edges.show(pointers.sorted { $0.id < $1.id }, clear: pointers.isEmpty ? edges.bounds : clearArea)
+        for (id, message) in blocked where pointers[id] == nil {
+            guard let rect = docFrame(id), !rect.intersects(visible) else { continue }
+            pointers[id] = .init(id: id, message: message.isEmpty ? "Needs you" : message, target: point(rect))
+        }
+        let onScreen = tiles.values.filter { $0.frame.intersects(visible) }.map { (id: $0.objectID, rect: attention.convert($0.frame, from: document)) }
+        let clear = clearArea
+        let placement = PillLayout.place(markers: shownMarkers, edges: pointers.values.map { .init(id: $0.id, target: $0.target, size: AttentionEdgeView.size(for: $0.message)) },
+                                         tiles: onScreen, clear: clear)
+        for (id, bubble) in placement.bubbles {
+            if let marker = markers[id], let shown = shownRects[id] { marker.place(around: shown, bubble: bubble) }
+        }
+        edges.show(pointers.values.sorted { $0.id < $1.id }.map { pointer in
+            var pointer = pointer
+            pointer.frame = placement.edges[pointer.id] ?? .zero
+            return pointer
+        })
     }
 
     // MARK: Nothing in view
@@ -1183,10 +1220,16 @@ final class CanvasView: NSScrollView {
     }
 
     private func lifecycleChanged(_ terminal: CanvasObject) {
+        let lifecycle = terminal.props["lifecycle"]
         // A new `working` report starts a new unseen stretch (Board resets its seen set too).
-        if terminal.props["lifecycle"]?["state"]?.string == LifecycleState.working.rawValue,
-           terminal.props["lifecycle"]?["seen"]?.bool != true {
+        if lifecycle?["state"]?.string == LifecycleState.working.rawValue, lifecycle?["seen"]?.bool != true {
             seenLocally.remove(terminal.id)
+        }
+        // The scene pass re-lays out the pills.
+        if lifecycle?["state"]?.string == LifecycleState.blocked.rawValue {
+            blocked[terminal.id] = lifecycle?["message"]?.string ?? ""
+        } else {
+            blocked.removeValue(forKey: terminal.id)
         }
         scheduleLiveness()
     }
@@ -1218,14 +1261,14 @@ final class CanvasView: NSScrollView {
         })
     }
 
-    // MARK: Scene pass (zoom LOD, offscreen culling, chevrons, seen)
+    // MARK: Scene pass (zoom LOD, offscreen culling, pills, seen)
 
     @objc private func boundsChanged() {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("scene.boundsChanged", since: perfStart) }
         // Every pan and pinch step, not coalesced: the grid is one layer move, markers a few.
         updateGrid()
-        layoutMarkers()
+        layoutPills()
         board.activity.viewportChanged(viewport, actor: viewportMover, rev: board.revision)
         scheduleActivitySettle()
         scheduleLiveness()
@@ -1299,7 +1342,7 @@ final class CanvasView: NSScrollView {
                 for tile in tiles.values { (tile.content as? BrowserTile)?.zoomChanged() }
             }
         }
-        updateEdges()
+        layoutPills()
         updateSeen()
         updateContentInView()
     }

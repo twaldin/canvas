@@ -12,7 +12,7 @@ final class HyperMonitor {
 
     private var monitor: Any?
     private let canvasFor: (NSWindow?) -> CanvasView?
-    private var marquee: (canvas: CanvasView, start: NSPoint)?
+    private var marquee: (canvas: CanvasView, start: NSPoint, focus: NSResponder?)?
     /// Where Hyper is being held, so an async hover answer from a tile can redraw the outline.
     private var hoverContext: (canvas: CanvasView, point: NSPoint)?
 
@@ -47,18 +47,20 @@ final class HyperMonitor {
             updateHover(canvas, event: event, active: hyper)
             return event
         case .leftMouseDown where hyper:
+            let focus = event.window?.firstResponder
             if let shape = canvas.shape(atWindowPoint: event.locationInWindow) {
                 Self.toggle(.object(shape), on: canvas.board)
-                restoreFocus(canvas)
+                Self.keepFocus(focus, in: event.window)
             } else if let (tile, point) = canvas.tile(atWindowPoint: event.locationInWindow) {
                 let content = tile.content
                 let fallback = MentionTarget.object(tile.objectID)
-                Task { @MainActor [weak self] in
+                let window = event.window
+                Task { @MainActor in
                     Self.toggle(await content.resolveMention(at: point) ?? fallback, on: canvas.board)
-                    self?.restoreFocus(canvas)
+                    Self.keepFocus(focus, in: window)
                 }
             } else {
-                marquee = (canvas, canvas.document.convert(event.locationInWindow, from: nil))
+                marquee = (canvas, canvas.document.convert(event.locationInWindow, from: nil), focus)
             }
             return nil
         case .leftMouseDragged where marquee != nil:
@@ -72,10 +74,10 @@ final class HyperMonitor {
                 let ids = canvas.objects(inDocRect: Self.rect(marquee.start, current))
                 if ids.count == 1 { _ = try? canvas.board.stage(.object(ids[0])) }
                 if ids.count > 1 { _ = try? canvas.board.stage(.group(objects: ids, name: nil)) }
+                Self.keepFocus(marquee.focus, in: event.window)
             }
             marquee = nil
             canvas.overlay.outline = nil
-            restoreFocus(canvas)
             return nil
         default:
             return event
@@ -112,10 +114,13 @@ final class HyperMonitor {
         canvas.showOutline(tile.content.outline(for: target) ?? tile.content.bounds, in: tile)
     }
 
-    /// Staging never steals keyboard focus from the prompt-target terminal.
-    private func restoreFocus(_ canvas: CanvasView) {
-        guard let target = canvas.promptTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile else { return }
-        terminal.focus()
+    /// Staging a mention never moves keyboard focus: whatever had it when the Hyper-click began
+    /// (a terminal, the canvas, a page) still has it, so a key meant for the canvas (Esc) never
+    /// reaches an agent the user didn't click into.
+    private static func keepFocus(_ responder: NSResponder?, in window: NSWindow?) {
+        guard let window, let responder, window.firstResponder !== responder else { return }
+        if let view = responder as? NSView, view.window !== window { return }
+        window.makeFirstResponder(responder)
     }
 
     static func rect(_ a: NSPoint, _ b: NSPoint) -> NSRect {

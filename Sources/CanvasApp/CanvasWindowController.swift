@@ -96,6 +96,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
         settlePromptTarget()
         refreshTray()
+        refreshTab()
         emptyHint.isHidden = !board.objects.isEmpty
     }
 
@@ -109,11 +110,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case .objectCreated, .objectDeleted:
             settlePromptTarget()
             refreshTray()
+            refreshTab()
             emptyHint.isHidden = !board.objects.isEmpty
         case .objectUpdated(let object) where object.type == .terminal:
             // An agent starting or exiting in a terminal can move the target.
             settlePromptTarget()
             if object.id == canvas.promptTarget { refreshTray() }
+            refreshTab()
         default: break
         }
     }
@@ -123,6 +126,30 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         trayTitleWork = nil
         let title = canvas.promptTarget.flatMap { board.objects[$0] }.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
         tray.show(board.tray, targetTitle: title, hasTerminal: board.objects.values.contains { $0.type == .terminal })
+    }
+
+    /// What the tab last showed (`NeedsYou`), so a terminal's frequent updates redraw nothing.
+    private var tabState: NeedsYou?
+
+    /// The board's tab says when an agent on it needs the user, so one waiting on a background
+    /// tab is seen: an orange dot for a blocked agent, a quieter green one for an agent that
+    /// finished unseen (`NeedsYou`); nothing for working or idle agents. The tooltip says who
+    /// and what.
+    private func refreshTab() {
+        guard let window else { return }
+        let state = NeedsYou.of(board.objects.values)
+        guard state != tabState else { return }
+        tabState = state
+        guard let state else {
+            window.tab.accessoryView = nil
+            window.tab.toolTip = nil
+            return
+        }
+        // An accessory view, not a colored title: the tab bar draws titles in its own color.
+        let blocked = state.level == .blocked
+        window.tab.accessoryView = TabDot(color: blocked ? .systemOrange : .systemGreen.withAlphaComponent(0.75), diameter: blocked ? 9 : 7)
+        let label = state.terminals.count == 1 ? board.objects[state.terminals[0]].map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) } ?? "An agent" : "\(state.terminals.count) agents"
+        window.tab.toolTip = blocked ? "\(label) needs you\(state.message.map { ": \($0)" } ?? "")" : "\(label) finished (not seen yet)"
     }
 
     private var trayTitleWork: DispatchWorkItem?
@@ -390,5 +417,26 @@ final class CanvasWindow: NSWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if let controller = windowController as? CanvasWindowController, controller.handleKeyEquivalent(event) { return true }
         return super.performKeyEquivalent(with: event)
+    }
+}
+
+/// The dot at the trailing edge of a board's tab while an agent on it needs the user.
+private final class TabDot: NSView {
+    private let color: NSColor
+    private let diameter: CGFloat
+
+    init(color: NSColor, diameter: CGFloat) {
+        self.color = color
+        self.diameter = diameter
+        super.init(frame: NSRect(x: 0, y: 0, width: diameter + 6, height: diameter + 6))
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: diameter + 6, height: diameter + 6) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(x: (bounds.width - diameter) / 2, y: (bounds.height - diameter) / 2, width: diameter, height: diameter)).fill()
     }
 }

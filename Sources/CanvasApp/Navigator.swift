@@ -44,7 +44,7 @@ extension CanvasView {
                 groups.append((rect, NavigatorRow(target: .object(object.id), title: title, kind: "Group", dot: nil)))
             } else if let tile = self.tiles[object.id] {
                 var row = Self.navigatorRow(for: object, shownTitle: tile.title)
-                row.terms = [Self.nonEmpty(object.props["caption"]).map(CodeCaption.text), Self.nonEmpty(object.props["name"])].compactMap { $0 }
+                row.terms += [Self.nonEmpty(object.props["caption"]).map(CodeCaption.text), Self.nonEmpty(object.props["name"])].compactMap { $0 }
                 tiles.append((rect, row))
             }
         }
@@ -71,6 +71,10 @@ extension CanvasView {
             let command = object.props["command"]?.array?.compactMap(\.string).joined(separator: " ") ?? ""
             if !command.isEmpty { return command }
             return Self.nonEmpty(object.props["cwd"]).map { ($0 as NSString).abbreviatingWithTildeInPath }
+        }
+        // Pages with one title: their addresses, without the scheme.
+        if object.type == .browser, let url = Self.nonEmpty(object.props["url"]) {
+            return url.replacingOccurrences(of: #"^[a-zA-Z][a-zA-Z0-9+.-]*://"#, with: "", options: .regularExpression)
         }
         if let caption = Self.nonEmpty(object.props["caption"]) { return CodeCaption.text(caption) }
         let group = board.objects.values.first { $0.type == .group && GroupSpec($0.props)?.members.contains(id) == true }
@@ -100,6 +104,12 @@ extension CanvasView {
             return NavigatorRow(target: .object(object.id), title: title ?? line ?? "Empty note", kind: "Note", dot: nil)
         case .html:
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "HTML", dot: nil)
+        case .browser:
+            // Found by its address too ("localhost"); the host (and port) says which site it is.
+            let url = nonEmpty(props["url"])
+            let host = url.flatMap(URLComponents.init(string:)).flatMap { parts in parts.host.map { host in parts.port.map { "\(host):\($0)" } ?? host } }
+            return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "Browser", dot: nil,
+                                subtitle: host, terms: url.map { [$0] } ?? [], toolTip: url)
         default:
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: object.type.rawValue.capitalized, dot: nil)
         }

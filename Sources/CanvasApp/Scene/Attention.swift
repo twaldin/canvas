@@ -1,10 +1,10 @@
 import AppKit
 import CanvasCore
 
-/// An agent's "look here" on one object: a pulsing ring around it and a message bubble above.
+/// An agent's "look here" on one object: a pulsing ring around it and a message bubble beside it.
 /// Lives in window space above the canvas (`AttentionLayer`) and is re-placed on every pan and
 /// pinch step, so it keeps its on-screen size at any zoom and follows the zoom smoothly while
-/// everything on the canvas scales. Only the bubble takes clicks (which dismiss it).
+/// everything on the canvas scales. Only the bubble takes clicks (which acknowledge it).
 @MainActor
 final class AttentionMarker: NSView {
     static let inset: CGFloat = 10
@@ -15,20 +15,21 @@ final class AttentionMarker: NSView {
     let objectID: ObjectID
     var message: String? {
         didSet {
-            bubbleWidth = Self.bubbleWidth(message)
+            naturalWidth = Self.naturalWidth(message)
             needsDisplay = true
         }
     }
     var onClick: (() -> Void)?
-    /// The ring and bubble in this view's coordinates, from `place(around:)`.
+    /// The ring and bubble in this view's coordinates, from `place(around:bubble:)`.
     private var ringRect = NSRect.zero
     private var bubbleRect = NSRect.zero
-    private var bubbleWidth: CGFloat
+    /// The bubble's width with its whole message; `PillLayout.bubbleWidth` caps it.
+    private(set) var naturalWidth: CGFloat
 
     init(objectID: ObjectID, message: String?) {
         self.objectID = objectID
         self.message = message
-        bubbleWidth = Self.bubbleWidth(message)
+        naturalWidth = Self.naturalWidth(message)
         super.init(frame: .zero)
         wantsLayer = true
         // The pulse runs in the render server; the drawn ring below is what snapshots capture.
@@ -46,25 +47,31 @@ final class AttentionMarker: NSView {
 
     nonisolated override var isFlipped: Bool { true }
 
-    private static let bubbleAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white]
+    private static let bubbleAttributes: [NSAttributedString.Key: Any] = {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        return [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
+    }()
     private static func text(_ message: String?) -> NSString { (message?.isEmpty == false ? message! : "Look here") as NSString }
-    private static func bubbleWidth(_ message: String?) -> CGFloat { text(message).size(withAttributes: bubbleAttributes).width + 24 }
+    private static func naturalWidth(_ message: String?) -> CGFloat { (text(message).size(withAttributes: bubbleAttributes).width + 24).rounded(.up) }
 
-    /// Places the marker around `target`, the object's rect in the superview's coordinates: the
-    /// ring hugs it at a fixed on-screen inset and the bubble sits above its top-left corner, kept
-    /// inside `clear` (the part of the view the toolbar and tray leave uncovered, same
-    /// coordinates) so it stays readable when the object's top is under the chrome or offscreen.
-    /// Panning only moves the view; a zoom step resizes the ring and redraws it.
-    func place(around target: NSRect, clear: NSRect) {
+    /// Places the marker: the ring hugs `target` (the object's rect in the superview's
+    /// coordinates) at a fixed on-screen inset, and the bubble goes where `PillLayout` put it
+    /// (`bubble`, same coordinates). Panning only moves the view; a zoom step resizes the ring
+    /// and redraws it.
+    func place(around target: NSRect, bubble: NSRect) {
         let ring = target.insetBy(dx: -Self.inset, dy: -Self.inset)
-        var bubble = NSRect(x: ring.minX, y: ring.minY - Self.gap - Self.bubbleHeight, width: bubbleWidth, height: Self.bubbleHeight)
-        bubble.origin.x = max(min(bubble.minX, clear.maxX - Self.inset - bubble.width), clear.minX + Self.inset)
-        bubble.origin.y = max(min(bubble.minY, clear.maxY - bubble.height), clear.minY)
         let frame = ring.union(bubble).insetBy(dx: -Self.stroke / 2, dy: -Self.stroke / 2)
         let ringRect = ring.offsetBy(dx: -frame.minX, dy: -frame.minY)
-        if ringRect != self.ringRect || frame.size != self.frame.size { needsDisplay = true }
+        let bubbleRect = bubble.offsetBy(dx: -frame.minX, dy: -frame.minY)
+        if ringRect != self.ringRect || bubbleRect != self.bubbleRect || frame.size != self.frame.size { needsDisplay = true }
+        if bubbleRect != self.bubbleRect {
+            // A truncated message reads whole in the bubble's tooltip.
+            removeAllToolTips()
+            if bubble.width < naturalWidth { addToolTip(bubbleRect, owner: Self.text(message), userData: nil) }
+        }
         self.ringRect = ringRect
-        bubbleRect = bubble.offsetBy(dx: -frame.minX, dy: -frame.minY)
+        self.bubbleRect = bubbleRect
         if self.frame != frame { self.frame = frame }
     }
 
@@ -107,8 +114,9 @@ final class AttentionLayer: NSView {
     }
 }
 
-/// Window-space chevrons at the canvas edge for attention markers whose object is offscreen.
-/// Clicking one scrolls to its object; nothing else here takes clicks.
+/// Window-space pills at the rim of the clear area for offscreen objects that need the user
+/// (attention markers, blocked agents), each pointing at its object. Clicking one scrolls to its
+/// object; nothing else here takes clicks.
 @MainActor
 final class AttentionEdgeView: NSView {
     struct Pointer {
@@ -116,6 +124,8 @@ final class AttentionEdgeView: NSView {
         var message: String?
         /// Target center in this view's coordinates (outside the bounds).
         var target: NSPoint
+        /// Where `PillLayout` put the pill, same coordinates.
+        var frame: NSRect = .zero
     }
 
     var onReveal: ((ObjectID) -> Void)?
@@ -128,31 +138,24 @@ final class AttentionEdgeView: NSView {
         return chevrons.first { $0.frame.contains(local) }
     }
 
-    /// `clear`: the part of the view the toolbar and tray leave uncovered (this view's
-    /// coordinates); pills sit at its edges, never under the chrome.
-    func show(_ pointers: [Pointer], clear: NSRect) {
+    /// A pill's size for a message.
+    static func size(for message: String?) -> NSSize { EdgeChevron.size(for: message) }
+
+    func show(_ pointers: [Pointer]) {
         while chevrons.count > pointers.count { chevrons.removeLast().removeFromSuperview() }
         while chevrons.count < pointers.count {
             let chevron = EdgeChevron()
             addSubview(chevron)
             chevrons.append(chevron)
         }
-        let center = NSPoint(x: clear.midX, y: clear.midY)
-        let margin: CGFloat = 16
         for (chevron, pointer) in zip(chevrons, pointers) {
             chevron.objectID = pointer.id
             chevron.message = pointer.message
+            let tip = EdgeChevron.text(pointer.message) as String
+            if chevron.toolTip != tip { chevron.toolTip = tip }
             chevron.onClick = { [weak self] in self?.onReveal?(pointer.id) }
-            let dx = pointer.target.x - center.x, dy = pointer.target.y - center.y
-            chevron.angle = atan2(dy, dx)
-            // Where the ray from the clear area's center to the target leaves it (inset).
-            let halfW = clear.width / 2 - margin, halfH = clear.height / 2 - margin
-            let t = min(dx == 0 ? .infinity : halfW / abs(dx), dy == 0 ? .infinity : halfH / abs(dy))
-            let edge = NSPoint(x: center.x + dx * t, y: center.y + dy * t)
-            let size = chevron.fittingSize
-            let origin = NSPoint(x: min(max(edge.x - size.width / 2, clear.minX + margin), clear.maxX - margin - size.width),
-                                 y: min(max(edge.y - size.height / 2, clear.minY), clear.maxY - size.height))
-            chevron.frame = NSRect(origin: origin, size: size)
+            chevron.angle = atan2(pointer.target.y - pointer.frame.midY, pointer.target.x - pointer.frame.midX)
+            chevron.frame = pointer.frame
             chevron.needsDisplay = true
         }
     }
@@ -166,14 +169,19 @@ private final class EdgeChevron: NSView {
     var angle: CGFloat = 0
     var onClick: (() -> Void)?
 
-    private static let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white]
-    private var text: NSString { ((message?.isEmpty == false ? message! : "Attention") as NSString) }
+    private static let attributes: [NSAttributedString.Key: Any] = {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        return [.font: NSFont.systemFont(ofSize: 12, weight: .semibold), .foregroundColor: NSColor.white, .paragraphStyle: paragraph]
+    }()
+    static func text(_ message: String?) -> NSString { (message?.isEmpty == false ? message! : "Attention") as NSString }
+    private var text: NSString { Self.text(message) }
 
     nonisolated override var isFlipped: Bool { true }
 
-    override var fittingSize: NSSize {
-        let width = min(text.size(withAttributes: Self.attributes).width, 240)
-        return NSSize(width: 44 + width + 12, height: 32)
+    static func size(for message: String?) -> NSSize {
+        let width = min(text(message).size(withAttributes: attributes).width, 240)
+        return NSSize(width: (44 + width + 12).rounded(.up), height: 32)
     }
 
     override func draw(_ dirtyRect: NSRect) {

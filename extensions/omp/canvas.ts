@@ -12,10 +12,13 @@ import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-omp";
 const IDLE_DEBOUNCE_MS = 250;
+// Marks our wrapper of omp's UI select with the function it wraps (process-wide, across reloads).
+const OMP_SELECT = Symbol.for("canvas-omp.select");
 
 type Staged = { prompt: string; ids: string[]; context: string; delivered: boolean };
 type ToolCall = { name: string; args: Record<string, unknown> | undefined };
 type Details = Record<string, any>;
+type Select = (this: unknown, title: unknown, ...rest: unknown[]) => Promise<unknown>;
 
 export default function canvas(pi: ExtensionAPI): void {
   const tile = process.env.CANVAS_TILE_ID;
@@ -33,6 +36,7 @@ export default function canvas(pi: ExtensionAPI): void {
   let reporting = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   const blockers = new Map<string, string>();
+  let approvals = 0;
   const calls = new Map<string, ToolCall>();
   let staged: Staged | undefined;
 
@@ -60,11 +64,40 @@ export default function canvas(pi: ExtensionAPI): void {
     staged = undefined;
   }
 
+  // omp asks for every tool approval through its UI's select dialog, titled `Allow tool: <name>`.
+  // Its tool_approval_requested event comes only from its registered-tool wrapper: eval preludes
+  // (the `browser` and `computer` globals inside eval) prompt without any event.
+  // So the tile's UI context is watched instead: each approval dialog blocks the tile until the
+  // user answers it (approve, deny, or interrupt). `ctx.ui` is a per-handler proxy (trapping only
+  // `get`) over the one UI context omp's tools and preludes prompt with, so property descriptors
+  // read and defined through it are that object's. A reload rewraps omp's own select, so only the
+  // live extension instance reports.
+  function watchApprovals(ui: object): void {
+    const current = Object.getOwnPropertyDescriptor(ui, "select");
+    if (typeof current?.value !== "function") return;
+    const base: Select = current.value[OMP_SELECT] ?? current.value;
+    const select = async function (this: unknown, title: unknown, ...rest: unknown[]): Promise<unknown> {
+      const tool = typeof title === "string" ? /^Allow tool: (.+)$/.exec(title.split("\n", 1)[0])?.[1] : undefined;
+      if (!tool) return base.call(this, title, ...rest);
+      const key = `approval:${++approvals}`;
+      blockers.set(key, `approve ${tool}?`);
+      publish();
+      try {
+        return await base.call(this, title, ...rest);
+      } finally {
+        blockers.delete(key);
+        publish();
+      }
+    };
+    Object.defineProperty(ui, "select", { ...current, value: Object.assign(select, { [OMP_SELECT]: base }) });
+  }
+
   pi.on("session_start", (_event, ctx) => {
     reporting = ctx.hasUI;
     active = !ctx.isIdle();
     blockers.clear();
     staged = undefined;
+    if (reporting) watchApprovals(ctx.ui);
     reportSession(ctx);
     publish();
   });
@@ -90,16 +123,6 @@ export default function canvas(pi: ExtensionAPI): void {
   // continuation, or background jobs whose results will resume it), so this is not a settle.
   pi.on("agent_end", (event) => {
     active = event.willContinue === true;
-    publish();
-  });
-
-  pi.on("tool_approval_requested", (event) => {
-    blockers.set(`approval:${event.toolCallId}`, `approve ${event.toolName}?`);
-    publish();
-  });
-
-  pi.on("tool_approval_resolved", (event) => {
-    blockers.delete(`approval:${event.toolCallId}`);
     publish();
   });
 

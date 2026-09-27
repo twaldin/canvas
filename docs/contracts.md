@@ -291,7 +291,7 @@ All git in the app runs through `GitRunner.shared` (CanvasCore), which caps conc
 
 ## Lifecycle authority
 
-- The omp extension is authoritative for omp tiles (`source: "canvas-omp"`).
+- The omp extension is authoritative for omp tiles (`source: "canvas-omp"`). It reports `blocked` while omp waits on its user: an approval dialog (`approve <tool>?`) or the `ask` tool (its first question). omp's `tool_approval_requested` event comes only from its registered-tool wrapper; eval preludes (the `browser` and `computer` globals inside `eval`) ask for approval with no event, so the extension wraps `select` on the session's UI context (the object behind `ctx.ui`, which tools and preludes prompt with) and treats each dialog titled `Allow tool: <name>` as an approval until it settles. It depends on that title; an omp that renames it reports no approval blocking.
 - The Claude Code and Codex hooks ("Agent integrations") report with `source: "canvas-claude"` / `"canvas-codex"`.
 - A report with a lower `seq` than the last accepted one from the same source is ignored.
 - `done` is derived by the app: an `idle` report on a tile that has not been seen since it was last `working`.

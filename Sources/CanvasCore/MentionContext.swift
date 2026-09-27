@@ -1,5 +1,31 @@
 import Foundation
 
+/// The page elements under part of a browser or HTML tile (a shape drawn over it), as the page
+/// lays them out now: the outermost elements it mostly covers, else the smallest one it touches.
+public struct PageElements: Equatable, Sendable {
+    public struct Element: Equatable, Sendable {
+        /// As a DOM mention's selector (`WebMentions`).
+        public var selector: String
+        public var text: String
+
+        public init(selector: String, text: String) {
+            self.selector = selector
+            self.text = text
+        }
+    }
+
+    public var url: String
+    public var elements: [Element]
+    /// Elements under it past `elements`.
+    public var more: Int
+
+    public init(url: String, elements: [Element], more: Int = 0) {
+        self.url = url
+        self.elements = elements
+        self.more = more
+    }
+}
+
 /// Turns staged mentions into the `<canvas-mentions>` prompt block (docs/contracts.md).
 @MainActor
 public enum MentionContext {
@@ -67,7 +93,9 @@ public enum MentionContext {
         case .group(let objects, let name):
             lines.append("[\(index)] group \(name.map { "\"\($0)\" " } ?? "")of \(objects.count) objects\(edited)")
             for id in objects {
-                if let object = board.objects[id] { lines.append("    - \(describe(object, on: board, caller: caller))") }
+                guard let object = board.objects[id] else { continue }
+                lines.append("    - \(describe(object, on: board, caller: caller))")
+                lines.append(contentsOf: await pageLines(under: object, on: board, indent: "      "))
             }
         case .object(let id):
             if let object = board.objects[id] {
@@ -75,6 +103,7 @@ public enum MentionContext {
                 if object.type == .note, let markdown = object.props["markdown"]?.string {
                     lines.append(contentsOf: markdown.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
                 }
+                lines.append(contentsOf: await pageLines(under: object, on: board, indent: "    "))
             } else {
                 lines.append("[\(index)] object \(id) (deleted)")
             }
@@ -92,12 +121,58 @@ public enum MentionContext {
         return out.joined(separator: "\n")
     }
 
+    /// What a Hyper-click on a drawn object mentions: the whole selection when the object is
+    /// part of a selection of several; else every drawing of its group when the group holds only
+    /// drawings (a sketch made of strokes, a box and its note); else the object alone.
+    public static func drawingTarget(_ id: ObjectID, selection: Set<ObjectID>, on board: Board) -> MentionTarget {
+        if selection.contains(id), selection.count > 1 { return .group(objects: selection.sorted(), name: nil) }
+        let drawings = board.objects.values
+            .filter { $0.type == .group }
+            .compactMap { group in GroupSpec(group.props).map { (group: group, spec: $0) } }
+            .filter { $0.spec.members.contains(id) && $0.spec.members.count > 1 }
+            .filter { $0.spec.members.allSatisfy { [.shape, .arrow].contains(board.objects[$0]?.type) } }
+            .min { $0.group.frame.w * $0.group.frame.h < $1.group.frame.w * $1.group.frame.h }
+        if let drawings { return .group(objects: drawings.spec.members, name: drawings.spec.title.flatMap { $0.isEmpty ? nil : $0 }) }
+        return .object(id)
+    }
+
+    /// What a drawn shape lies on: the topmost object under it that contains it, else the
+    /// topmost one holding more than half of it (`partly`), with the part over it (canvas
+    /// coordinates).
+    static func host(of object: CanvasObject, on board: Board) -> (host: CanvasObject, region: CGRect, partly: Bool)? {
+        guard object.type == .shape else { return nil }
+        let region = object.frame.rect
+        let under = board.objects.values.filter { $0.type != .arrow && $0.type != .group && $0.id != object.id && $0.z < object.z }
+        if let host = under.filter({ $0.frame.rect.contains(region) }).max(by: { $0.z < $1.z }) { return (host, region, false) }
+        let area = region.width * region.height
+        guard area > 0 else { return nil }
+        let partial = under.filter { candidate in
+            let part = candidate.frame.rect.intersection(region)
+            return !part.isNull && part.width * part.height > area / 2
+        }.max { $0.z < $1.z }
+        return partial.map { ($0, $0.frame.rect.intersection(region), true) }
+    }
+
+    /// The page elements under a shape drawn on a browser or HTML tile, from the page as it is
+    /// now (`Board.pageElements`): nothing when the page can't answer quickly.
+    static func pageLines(under object: CanvasObject, on board: Board, indent: String) async -> [String] {
+        guard let (host, region, _) = host(of: object, on: board), host.type == .browser || host.type == .html,
+              let query = board.pageElements, let page = await query(host.id, region), !page.elements.isEmpty else { return [] }
+        var lines = ["\(indent)page elements under it (\(page.url)):"]
+        for element in page.elements {
+            lines.append("\(indent)  \(element.selector)\(element.text.isEmpty ? "" : " \"\(clip(element.text, 80))\"")")
+        }
+        if page.more > 0 { lines.append("\(indent)  … \(page.more) more") }
+        return lines
+    }
+
     /// One-line description with spatial relations: what a shape encloses, what it's drawn on, and its arrows.
     static func describe(_ object: CanvasObject, on board: Board, caller: ObjectID? = nil) -> String {
         let author = object.createdBy == .user ? "drawn by user" : "by agent"
         var parts = ["\(object.type.rawValue) \(object.id)"]
         let title = title(of: object)
-        if !title.isEmpty { parts.append("\"\(clip(title, 60))\"") }
+        // A shape's text is the user's note to the agent: all of it.
+        if !title.isEmpty { parts.append("\"\(object.type == .shape ? title.replacingOccurrences(of: "\n", with: "\\n") : clip(title, 60))\"") }
         if object.type == .terminal, object.id == caller { parts.append("(your terminal)") }
         if object.type == .shape { parts.append("(\(author))") }
         if object.type == .shape {
@@ -107,16 +182,16 @@ public enum MentionContext {
                 let relation = spec.relation.map { " (\($0))" } ?? ""
                 parts.append("· inner arrow \(endName(spec.from)) → \(endName(spec.to))\(relation)")
             }
-            // A box drawn on top of something (a tile region, a bigger box) points at part of it:
-            // name the topmost object underneath that contains it, and where, in its local units
-            // (a tile's own points, starting below its title bar, where its content does).
-            let region = object.frame.rect
-            if let host = board.objects.values.filter({ $0.type != .arrow && $0.type != .group && $0.z < object.z && $0.frame.rect.contains(region) }).max(by: { $0.z < $1.z }) {
+            // A shape drawn on top of something (a tile region, a bigger box) points at part of
+            // it: name the topmost object underneath that contains it (or most of it), and where,
+            // in its local units (a tile's own points, starting below its title bar, where its
+            // content does).
+            if let (host, region, partly) = host(of: object, on: board) {
                 let scale = host.scale
                 let title = RenderMath.isTile(host.type) ? RenderMath.tileTitleHeight : 0
                 let local = CGRect(x: (region.minX - host.frame.x) / scale, y: (region.minY - host.frame.y) / scale - title,
                                    width: region.width / scale, height: region.height / scale)
-                parts.append(String(format: "· over %@ %@ at (%.0f, %.0f) %.0f×%.0f", host.type.rawValue, host.id,
+                parts.append(String(format: "· %@over %@ %@ at (%.0f, %.0f) %.0f×%.0f", partly ? "partly " : "", host.type.rawValue, host.id,
                                     Double(local.minX), Double(local.minY), Double(local.width), Double(local.height)))
             }
         }

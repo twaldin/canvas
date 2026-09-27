@@ -115,6 +115,9 @@ public final class Board {
     /// deleting what it points at keeps its end exactly where the user saw it and its reported
     /// frame is what is drawn. Without it, routes come from object frames.
     public var arrowPath: ((ObjectID) -> [CGPoint]?)?
+    /// The page elements under a canvas rect of a browser or HTML tile, for mentions of shapes
+    /// drawn on it; nil when the page can't answer quickly (not loaded, not live). Set by the app.
+    public var pageElements: (@MainActor (ObjectID, CGRect) async -> PageElements?)?
     /// Terminal tiles that left the board for good, once the step that removed them is over:
     /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create). A terminal a failed
     /// batch deleted and put back never counts. The app ends their sessions.

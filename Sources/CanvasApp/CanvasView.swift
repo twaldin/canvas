@@ -115,6 +115,8 @@ final class CanvasView: NSScrollView {
     let overlay = SceneOverlay(frame: NSRect(x: 0, y: 0, width: CanvasDocumentView.extent, height: CanvasDocumentView.extent))
     private let attention = AttentionLayer()
     private let edges = AttentionEdgeView()
+    /// Selected tiles' resize handles, above the markers.
+    private let handles = TileHandles()
     private let grid = CanvasGrid()
     private(set) var tiles: [ObjectID: TileFrameView] = [:]
     private var groups: [ObjectID: GroupView] = [:]
@@ -200,6 +202,7 @@ final class CanvasView: NSScrollView {
         addSubview(grid, positioned: .below, relativeTo: contentView)
         addSubview(attention)
         addSubview(edges)
+        addSubview(handles)
         edges.onReveal = { [weak self] id in self?.jumpToAttention(id) }
         contentView.postsBoundsChangedNotifications = true
         let center = NotificationCenter.default
@@ -213,6 +216,8 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
         // Placement aims at what the user can see: the viewport clear of the toolbar and tray.
         board.viewport = { [weak self] in self?.clearViewport }
+        // A mention of a shape drawn on a page lists the elements under it.
+        board.pageElements = { [weak self] id, rect in await self?.pageElements(id, canvasRect: rect) }
         for object in board.snapshot.objects { add(object) }
         // Markers the user hadn't seen when the board was last open.
         for marker in board.attention.values { showMarker(marker.object, message: marker.message) }
@@ -227,6 +232,7 @@ final class CanvasView: NSScrollView {
         super.tile()
         attention.frame = bounds
         edges.frame = bounds
+        handles.frame = bounds
         grid.frame = bounds
         updateGrid()
     }
@@ -458,6 +464,14 @@ final class CanvasView: NSScrollView {
             guard groups[id] == nil, let rect = docFrame(id) else { return nil }
             return SceneOverlay.Ring(rect: rect, dashed: tiles[id] == nil)
         }
+        placeHandles()
+    }
+
+    /// Selected tiles' resize handles, where their corners are on screen now.
+    private func placeHandles() {
+        let visible = documentVisibleRect
+        handles.corners = selection.sorted().compactMap { tiles[$0] }.filter { $0.frame.intersects(visible) }
+            .map { handles.convert(NSPoint(x: $0.frame.maxX, y: $0.frame.maxY), from: document) }
     }
 
     /// A press on an object's handle (title bar, drawn stroke, group label): a plain press on an
@@ -1207,13 +1221,14 @@ final class CanvasView: NSScrollView {
                 continue
             }
             let shown = attention.convert(rect, from: document)
-            let titleBar: CGFloat = if let tile = tiles[view.objectID] { TileFrameView.titleHeight * tile.scale * zoom }
+            // Title bar plus the content's own controls strip (a browser's address bar), live or card.
+            let header: CGFloat = if let tile = tiles[view.objectID] { (TileFrameView.titleHeight + tile.content.headerHeight) * tile.scale * zoom }
                 else if groups[view.objectID] != nil { CGFloat(GroupSpec.titleHeight) * zoom } else { 0 }
             let ringWidth = shown.width + 2 * AttentionMarker.inset
             shownRects[ObjectIdentifier(view)] = shown
             shownMarkers.append(.init(id: view.objectID, target: shown, ringInset: AttentionMarker.inset,
                                       size: CGSize(width: PillLayout.bubbleWidth(natural: view.naturalWidth, ringWidth: ringWidth), height: AttentionMarker.bubbleHeight),
-                                      titleBar: titleBar, blocked: view.style == .blocked))
+                                      header: header, blocked: view.style == .blocked))
         }
         let onScreen = tiles.values.filter { $0.frame.intersects(visible) }.map { (id: $0.objectID, rect: attention.convert($0.frame, from: document)) }
         let clear = clearArea
@@ -1327,6 +1342,7 @@ final class CanvasView: NSScrollView {
         // Every pan and pinch step, not coalesced: the grid is one layer move, markers a few.
         updateGrid()
         layoutPills()
+        if !selection.isEmpty { placeHandles() }
         board.activity.viewportChanged(viewport, actor: viewportMover, rev: board.revision)
         scheduleActivitySettle()
         scheduleLiveness()
@@ -1438,8 +1454,37 @@ final class CanvasView: NSScrollView {
         overlay.outline = docRect.map { overlay.convert($0, from: document) }
     }
 
-
     func shape(atWindowPoint point: NSPoint) -> ObjectID? {
         shapeHitTest?(document.convert(point, from: nil))
+    }
+
+    /// How long a mention waits for a page to list the elements under a shape drawn on it.
+    static let pageElementsLimit: Duration = .milliseconds(400)
+
+    /// `Board.pageElements`: asks the tile's page, giving up after `pageElementsLimit` (the
+    /// query runs on; its late answer is dropped).
+    private func pageElements(_ id: ObjectID, canvasRect: CGRect) async -> PageElements? {
+        guard let tile = tiles[id] else { return nil }
+        let rect = tile.content.convert(Self.docRect(Frame(canvasRect)), from: document)
+        let answer = FirstAnswer<PageElements>()
+        return await withCheckedContinuation { continuation in
+            answer.continuation = continuation
+            Task { @MainActor in answer.give(await tile.content.pageElements(in: rect)) }
+            Task { @MainActor in
+                try? await Task.sleep(for: Self.pageElementsLimit)
+                answer.give(nil)
+            }
+        }
+    }
+}
+
+/// Resumes its continuation with the first answer given; later ones are dropped.
+@MainActor
+private final class FirstAnswer<Value: Sendable> {
+    var continuation: CheckedContinuation<Value?, Never>?
+
+    func give(_ value: Value?) {
+        continuation?.resume(returning: value)
+        continuation = nil
     }
 }

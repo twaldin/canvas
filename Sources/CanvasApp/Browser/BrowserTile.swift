@@ -537,6 +537,20 @@ final class BrowserTile: NSView, TileContent {
         return mention(element)
     }
 
+    func pageElements(in rect: NSRect) async -> PageElements? {
+        guard let webView, webView.superview === self else { return nil }
+        var local = webView.convert(rect, from: self).intersection(webView.bounds)
+        guard !local.isNull, local.width > 0, local.height > 0 else { return nil }
+        if !webView.isFlipped { local.origin.y = webView.bounds.height - local.maxY }
+        let zoom = webView.pageZoom * webView.magnification
+        let page = CGRect(x: local.minX / zoom, y: local.minY / zoom, width: local.width / zoom, height: local.height / zoom)
+        guard let found = await WebMentions.elements(in: page, in: webView) else { return nil }
+        let url = webView.url?.absoluteString ?? object.props["url"]?.string ?? ""
+        return PageElements(url: url, elements: found.elements.map { .init(selector: $0.selector, text: $0.text) }, more: found.more)
+    }
+
+    var headerHeight: CGFloat { Self.chromeHeight }
+
     func outline(for target: MentionTarget) -> NSRect? {
         guard case .dom(_, _, let selector, _) = target, let hover, hover.element.selector == selector else { return nil }
         return viewRect(hover.element.rect)

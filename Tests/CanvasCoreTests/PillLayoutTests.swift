@@ -4,14 +4,15 @@ import Testing
 import CanvasCore
 
 /// Attention pills: bubbles beside marked objects and edge pills for offscreen ones never cover
-/// each other, stay between the toolbar and the tray, and cover other tiles only when they must.
+/// each other, stay between the toolbar and the tray, sit outside their object where there's
+/// room, never on its header, and cover other tiles only when they must.
 struct PillLayoutTests {
     /// A 1400×900 window whose toolbar and tray leave y 72…842 clear.
     let clear = CGRect(x: 0, y: 72, width: 1400, height: 770)
     let bubble = CGSize(width: 300, height: 28)
 
-    func marker(_ id: String, _ target: CGRect, width: CGFloat = 300, titleBar: CGFloat = 26) -> PillLayout.Marker {
-        .init(id: id, target: target, ringInset: 10, size: CGSize(width: width, height: 28), titleBar: titleBar)
+    func marker(_ id: String, _ target: CGRect, width: CGFloat = 300, header: CGFloat = 26) -> PillLayout.Marker {
+        .init(id: id, target: target, ringInset: 10, size: CGSize(width: width, height: 28), header: header)
     }
 
     func assertApart(_ rects: [CGRect], sourceLocation: SourceLocation = #_sourceLocation) {
@@ -28,16 +29,29 @@ struct PillLayoutTests {
         #expect(placed.bubbles["a"] == CGRect(x: 190, y: 256, width: 300, height: 28), "above the ring, left-aligned with it")
     }
 
-    @Test func aBubbleMovesOntoItsOwnTitleBarRatherThanCoverTheTileAboveIt() {
+    @Test func aBubbleGoesBesideItsObjectRatherThanCoverTheTileAboveIt() {
         // Zoomed out: two tiles stacked 12 pt apart on screen; a bubble above the lower one would
         // sit on the upper one's last rows.
         let upper = CGRect(x: 200, y: 100, width: 400, height: 300)
         let lower = CGRect(x: 200, y: 412, width: 400, height: 300)
-        let placed = PillLayout.place(markers: [marker("lower", lower, titleBar: 9)], edges: [], tiles: [("upper", upper), ("lower", lower)], clear: clear)
-        let rect = try! #require(placed.bubbles["lower"])
-        #expect(!rect.intersects(upper))
-        #expect(rect.minY == lower.minY, "on the tile's own top edge, its title bar")
-        #expect(lower.contains(rect))
+        let placed = PillLayout.place(markers: [marker("lower", lower, header: 9)], edges: [], tiles: [("upper", upper), ("lower", lower)], clear: clear)
+        #expect(placed.bubbles["lower"] == CGRect(x: 616, y: 402, width: 300, height: 28), "right of the ring, level with its top")
+    }
+
+    @Test func aBubbleNeverCoversItsTilesTitleOrAddressBar() {
+        // Designer study F7: a browser tile at the top of the view (title bar and address bar
+        // 58 pt), reaching under the tray, with a terminal beside it. No room above, left, or
+        // below; right of it is the terminal.
+        let browser = CGRect(x: 60, y: 90, width: 420, height: 800)
+        let terminal = CGRect(x: 500, y: 90, width: 850, height: 560)
+        let header = CGRect(x: browser.minX, y: browser.minY, width: browser.width, height: 58)
+        let placed = PillLayout.place(markers: [marker("b", browser, header: 58)], edges: [], tiles: [("b", browser), ("t", terminal)], clear: clear)
+        let rect = try! #require(placed.bubbles["b"])
+        #expect(!rect.intersects(header), "\(rect) covers the tile's controls")
+        #expect(clear.contains(rect))
+
+        let alone = PillLayout.place(markers: [marker("b", browser, header: 58)], edges: [], tiles: [("b", browser)], clear: clear)
+        #expect(alone.bubbles["b"] == CGRect(x: 496, y: 80, width: 300, height: 28), "with room beside it, outside the tile")
     }
 
     @Test func bubblesOfNeighbouringObjectsNeverOverlap() {
@@ -78,18 +92,17 @@ struct PillLayoutTests {
         }
     }
 
-    @Test func aBubbleStaysAtItsObjectRatherThanStrayToSpareASliverOfANeighbour() {
+    @Test func aBubbleGoesBelowItsObjectWhenAboveAndBesideAreTaken() {
         // Zoomed to ~48%: a terminal just above the marked tile and a neighbour 10 pt to its
-        // right, so neither spot is clean; a marked note far right leaves free room beside its
-        // bubble that the first tile's bubble must not jump to.
+        // right; a marked note far right leaves free room beside its bubble that the first
+        // tile's bubble must not jump to.
         let terminal = CGRect(x: 100, y: 137, width: 475, height: 295)
         let tile = CGRect(x: 100, y: 470, width: 304, height: 212)
         let neighbour = CGRect(x: 414, y: 470, width: 238, height: 212)
         let note = CGRect(x: 1002, y: 327, width: 133, height: 43)
         let tiles = [("t", terminal), ("tile", tile), ("n", neighbour), ("note", note)].map { (id: $0.0, rect: $0.1) }
-        let placed = PillLayout.place(markers: [marker("tile", tile, width: 324, titleBar: 12), marker("note", note, width: 160)], edges: [], tiles: tiles, clear: clear)
-        let rect = try! #require(placed.bubbles["tile"])
-        #expect(rect.minX < tile.midX && rect.minY == tile.minY, "\(rect): on the tile's title bar, hiding a sliver of its neighbour")
+        let placed = PillLayout.place(markers: [marker("tile", tile, width: 324, header: 12), marker("note", note, width: 160)], edges: [], tiles: tiles, clear: clear)
+        #expect(placed.bubbles["tile"] == CGRect(x: 90, y: 698, width: 324, height: 28), "below the ring, left-aligned with it")
     }
 
     @Test func noBubbleCoversABlockedTerminalButItsOwn() {
@@ -100,7 +113,7 @@ struct PillLayoutTests {
         let note = CGRect(x: 100, y: 512, width: 133, height: 43)
         let neighbour = CGRect(x: 240, y: 512, width: 460, height: 300)
         let tiles = [("t", terminal), ("note", note), ("n", neighbour)].map { (id: $0.0, rect: $0.1) }
-        let noteMarker = marker("note", note, width: 300, titleBar: 12)
+        let noteMarker = marker("note", note, width: 300, header: 12)
 
         let unblocked = PillLayout.place(markers: [noteMarker], edges: [], tiles: tiles, clear: clear)
         #expect(try! #require(unblocked.bubbles["note"]).intersects(terminal), "an ordinary tile: a sliver of it is the cheapest to hide")

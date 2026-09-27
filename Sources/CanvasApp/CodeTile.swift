@@ -743,6 +743,8 @@ extension CodeTile {
 
     var takesKeyboardFocus: Bool { false }
 
+    var headerHeight: CGFloat { header.height }
+
     // MARK: Offscreen drawing
 
     /// The body (header, caption, history, rows) for renders and cards. Rows are drawn from the

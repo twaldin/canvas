@@ -424,6 +424,53 @@ struct BoardTests {
         #expect(onScaled.contains("\(mark.id) \"ellipse\" (drawn by user) · over browser \(scaled.id) at (240, 200) 125×120"))
     }
 
+    @Test func drawingMentionsCarryTheWholeNoteWhatTheyAreOnAndThePageUnderThem() async throws {
+        let board = makeBoard()
+        let page = board.create(type: .browser, props: .object(["url": .string("http://localhost/gui")]), frame: Frame(x: 0, y: 0, w: 400, h: 900))
+        let note = "dots dangle at line ends: keep link + dot together, one per line on phone?\nand the footer"
+        // Two thirds of the note lies on the page.
+        let text = board.create(type: .shape, props: ShapeSpec(kind: .text, text: note).props, frame: Frame(x: -100, y: 300, w: 300, h: 60))
+        try board.stage(.object(text.id))
+        let context = await board.drain().context
+        #expect(context.contains("\"dots dangle at line ends: keep link + dot together, one per line on phone?\\nand the footer\" (drawn by user)"), "all of the note")
+        #expect(context.contains("· partly over browser \(page.id) at (0, 274) 200×60"), "the part on the page, in the page tile's units")
+
+        var asked: (ObjectID, CGRect)?
+        board.pageElements = { id, rect in
+            asked = (id, rect)
+            return PageElements(url: "http://localhost/gui", elements: [.init(selector: "ul > li:nth-of-type(1) > a", text: "resume (pdf)"), .init(selector: "ul > li:nth-of-type(2) > a", text: "")], more: 3)
+        }
+        let box = board.create(type: .shape, props: .object(["kind": .string("rect")]), frame: Frame(x: 20, y: 600, w: 200, h: 100))
+        try board.stage(.object(box.id))
+        let listed = await board.drain().context
+        #expect(asked?.0 == page.id && asked?.1 == CGRect(x: 20, y: 600, width: 200, height: 100), "the page is asked about the box's region")
+        #expect(listed.contains("""
+                                    page elements under it (http://localhost/gui):
+                                      ul > li:nth-of-type(1) > a "resume (pdf)"
+                                      ul > li:nth-of-type(2) > a
+                                      … 3 more
+                                """))
+    }
+
+    @Test func hyperClickingADrawingTakesItsSelectionOrItsDrawingGroup() throws {
+        let board = makeBoard()
+        let tile = board.create(type: .note, props: .object(["markdown": .string("n")]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
+        func ink(_ x: Double) -> CanvasObject {
+            board.create(type: .shape, props: ShapeSpec(kind: .ink, points: [InkPoint(x: 0, y: 0), InkPoint(x: 40, y: 2)]).props, frame: Frame(x: x, y: 300, w: 40, h: 4))
+        }
+        let first = ink(0), second = ink(60), lone = ink(120)
+        let arrow = board.create(type: .arrow, props: ArrowSpec(from: .object(first.id), to: .object(tile.id)).props)
+        _ = board.create(type: .group, props: .object(["members": .array([first.id, second.id, arrow.id].map(JSONValue.string)), "title": .string("underline")]))
+        _ = board.create(type: .group, props: .object(["members": .array([lone.id, tile.id].map(JSONValue.string))]))
+
+        #expect(MentionContext.drawingTarget(first.id, selection: [], on: board) == .group(objects: [first.id, second.id, arrow.id], name: "underline"),
+                "a stroke of a group of drawings: the whole sketch")
+        #expect(MentionContext.drawingTarget(lone.id, selection: [], on: board) == .object(lone.id), "a group with a tile in it isn't a sketch")
+        #expect(MentionContext.drawingTarget(lone.id, selection: [lone.id, second.id], on: board) == .group(objects: [lone.id, second.id].sorted(), name: nil),
+                "part of a selection of several: all of it")
+        #expect(MentionContext.drawingTarget(lone.id, selection: [second.id, first.id], on: board) == .object(lone.id), "a selection it isn't part of doesn't count")
+    }
+
     @Test func boardsSavedBeforeFormat2GrowTileFramesByTheTitleBarOnce() throws {
         // Format 1 stored a tile's body; its 26 pt title bar drew above it. Shapes were exact.
         let legacy = """

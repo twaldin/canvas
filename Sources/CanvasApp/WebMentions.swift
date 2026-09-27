@@ -33,6 +33,18 @@ enum WebMentions {
         return decode(result)
     }
 
+    /// The elements under a rect (web view coordinates, top-left origin): the outermost ones it
+    /// mostly covers that show something (text, an image, a control), in document order, else
+    /// the smallest such element it touches within a line (an underline, a margin note). At
+    /// most `limit`, plus how many more there are.
+    static func elements(in rect: CGRect, in webView: WKWebView, limit: Int = 8) async -> (elements: [Element], more: Int)? {
+        let result = try? await webView.callAsyncJavaScript("return window.__canvasMentions?.within(x, y, w, h, limit) ?? null",
+                                                            arguments: ["x": rect.minX, "y": rect.minY, "w": rect.width, "h": rect.height, "limit": limit],
+                                                            contentWorld: world)
+        guard let object = result as? [String: Any], let list = object["elements"] as? [Any] else { return nil }
+        return (list.compactMap(decode), (object["more"] as? NSNumber)?.intValue ?? 0)
+    }
+
     private static func decode(_ value: Any?) -> Element? {
         guard let object = value as? [String: Any], let selector = object["selector"] as? String,
               let x = object["x"] as? Double, let y = object["y"] as? Double,
@@ -82,9 +94,47 @@ enum WebMentions {
         try { over = document.elementFromPoint(x, y); } finally { document.adoptedStyleSheets = sheets; }
         return over && over !== normal && !over.contains(normal) && (over.innerText || '').trim() ? over : normal;
       }
+      // Shown things: text, or content without text of its own.
+      const media = new Set(['IMG', 'SVG', 'svg', 'VIDEO', 'CANVAS', 'INPUT', 'BUTTON', 'SELECT', 'TEXTAREA', 'IFRAME']);
+      const shows = (el) => {
+        if (!(el.innerText || '').trim() && !el.getAttribute('aria-label') && !media.has(el.tagName)) return false;
+        const style = getComputedStyle(el);
+        return style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0';
+      };
+      const overlap = (r, left, top, right, bottom) =>
+        Math.max(0, Math.min(r.right, right) - Math.max(r.left, left)) * Math.max(0, Math.min(r.bottom, bottom) - Math.max(r.top, top));
+      function within(x, y, w, h, limit) {
+        const right = x + w, bottom = y + h;
+        const all = document.body ? [...document.body.querySelectorAll('*')] : [];
+        const found = [];
+        // The elements it mostly covers. Document order: an ancestor comes before what it
+        // contains, so only the outermost stays.
+        for (const el of all) {
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0 || overlap(r, x, y, right, bottom) < 0.6 * r.width * r.height) continue;
+          if (found.some((outer) => outer.contains(el)) || !shows(el)) continue;
+          found.push(el);
+        }
+        if (!found.length) {
+          // A stroke or note beside the content (an underline, a margin note): the smallest
+          // element showing something that it touches, give or take a line.
+          const pad = 12;
+          let best = null, bestArea = Infinity;
+          for (const el of all) {
+            const r = el.getBoundingClientRect();
+            const area = r.width * r.height;
+            if (area <= 0 || area >= bestArea || !overlap(r, x - pad, y - pad, right + pad, bottom + pad) || !shows(el)) continue;
+            best = el;
+            bestArea = area;
+          }
+          if (best) found.push(best);
+        }
+        return { elements: found.slice(0, limit).map(describe), more: Math.max(0, found.length - limit) };
+      }
       window.__canvasMentions = {
         at(x, y) { const el = hit(x, y); return el ? describe(el) : null; },
         find(sel) { try { const el = document.querySelector(sel); return el ? describe(el) : null; } catch { return null; } },
+        within,
       };
     })();
     """#

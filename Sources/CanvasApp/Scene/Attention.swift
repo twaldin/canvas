@@ -40,6 +40,8 @@ final class AttentionMarker: NSView {
             guard message != oldValue else { return }
             naturalWidth = Self.naturalWidth(message, style: style)
             needsDisplay = true
+            // New news: draw the eye again.
+            ring.pulse()
         }
     }
     var onClick: (() -> Void)?
@@ -48,23 +50,19 @@ final class AttentionMarker: NSView {
     private var bubbleRect = NSRect.zero
     /// The bubble's width with its whole message; `PillLayout.bubbleWidth` caps it.
     private(set) var naturalWidth: CGFloat
+    /// The ring, in its own view so it can pulse while the bubble's text stays fully opaque.
+    private let ring: MarkerRing
 
     init(objectID: ObjectID, message: String?, style: AttentionStyle = .marker) {
         self.objectID = objectID
         self.message = message
         self.style = style
         naturalWidth = Self.naturalWidth(message, style: style)
+        ring = MarkerRing(color: style.color)
         super.init(frame: .zero)
         wantsLayer = true
-        // The pulse runs in the render server; the drawn ring below is what snapshots capture.
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1
-        pulse.toValue = 0.45
-        pulse.duration = 0.9
-        pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer?.add(pulse, forKey: "pulse")
+        addSubview(ring)
+        ring.pulse()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -98,6 +96,8 @@ final class AttentionMarker: NSView {
         self.ringRect = ringRect
         self.bubbleRect = bubbleRect
         if self.frame != frame { self.frame = frame }
+        self.ring.frame = bounds
+        self.ring.rect = ringRect
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -108,10 +108,6 @@ final class AttentionMarker: NSView {
     override func draw(_ dirtyRect: NSRect) {
         let perfStart = DevPerf.mark()
         defer { DevPerf.record("draw.AttentionMarker", since: perfStart) }
-        let path = NSBezierPath(roundedRect: ringRect, xRadius: 12, yRadius: 12)
-        path.lineWidth = Self.stroke
-        style.color.setStroke()
-        path.stroke()
         let pill = NSBezierPath(roundedRect: bubbleRect, xRadius: bubbleRect.height / 2, yRadius: bubbleRect.height / 2)
         style.color.setFill()
         pill.fill()
@@ -128,6 +124,46 @@ final class AttentionMarker: NSView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onClick?() }
+}
+
+/// A marker's ring. It pulses a few times when the marker appears or its message changes, then
+/// stays solid; the pulse runs in the render server, and snapshots capture the drawn ring.
+@MainActor
+private final class MarkerRing: NSView {
+    static let pulses: Float = 3
+    private let color: NSColor
+    var rect = NSRect.zero {
+        didSet { if rect != oldValue { needsDisplay = true } }
+    }
+
+    init(color: NSColor) {
+        self.color = color
+        super.init(frame: .zero)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    nonisolated override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func pulse() {
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1
+        pulse.toValue = 0.35
+        pulse.duration = 0.9
+        pulse.autoreverses = true
+        pulse.repeatCount = Self.pulses
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer?.add(pulse, forKey: "pulse")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: rect, xRadius: 12, yRadius: 12)
+        path.lineWidth = AttentionMarker.stroke
+        color.setStroke()
+        path.stroke()
+    }
 }
 
 /// Window-space layer over the canvas holding the attention markers; only their bubbles take

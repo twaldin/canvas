@@ -223,10 +223,11 @@ A code tile shows the whole current file, scrolled so `range` sits a few rows be
 ### Changes tiles
 
 To show the user what you changed, create a changes tile instead of an HTML diff: `canvas object.create --type changes --json '{"props":{},"size":"fit"}'`.
-Props: `base` (default `HEAD`: uncommitted work, staged or not; also `merge-base` or a commit), optional `paths` (board-relative files/dirs) and `title`.
-It lists changed files with unified hunks; the user stages or reverts per hunk or file (each one ⌘Z), clicks a line to open a code tile, and Hyper-clicks a line to mention it.
-Read what they kept with `object.get`: `changes.files[]` (path, status, added/removed, `hunks[]` with header, old/new ranges and `status` unstaged|staged|committed) as git has it now,
-and `props.reviewed[]` (what the user staged or reverted). Editing `reviewed` does nothing to git.
+Props: `base` (default `HEAD`: uncommitted work, staged or not; also `merge-base` or a commit), optional `root` (another worktree of the board's repo, e.g. `"../wt-agent"`: review your worktree on the board where your terminal is), `paths` (files/dirs in it) and `title`.
+Creating it again with the same `root`/`base`/`paths` returns your existing tile (`reused: true`); a fitted tile grows as hunks are added.
+The user stages or discards per file, hunk, or selected lines (each one ⌘Z), marks files Viewed, clicks a line to open a code tile, and Hyper-clicks a line to mention it (the mention says its side, added/removed/context, and the hunk's state).
+Read what they kept with `object.get`: `changes.files[]` (path, status, added/removed, `viewed`, `hunks[]` with a stable `id`, header, old/new ranges, `status` unstaged|partial|staged|committed, and `lines`, the unified text, at most 200) as git has it now, so no render is needed;
+`partial` means staged, then changed again. `props.reviewed[]` lists what the user staged or discarded (`action` stage|revert, `scope` file|hunk|lines, `hunk`, `patch` applied, reversed for a discard). Editing `reviewed` does nothing to git.
 
 ### HTML explainers
 

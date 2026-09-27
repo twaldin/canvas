@@ -80,7 +80,7 @@ export type CodeProps = {
     range?: LineRange;
     action: "read" | "edit" | "write" | "lsp" | "search";
   })[];
-  /** a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: "pinned at <sha>"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so */
+  /** a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: "pinned at <sha>"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so, and a create or update that needs its text (`size: fit`, a symbol) fails with `not_found`. A path in another worktree of the repository (absolute) is read in that worktree */
   pinnedCommit?: string;
   scale?: Scale;
 };
@@ -821,7 +821,7 @@ export interface CanvasApi {
     read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {
-    /** Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root and the terminal's cwd, scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file. */
+    /** Report a file location an agent just read, edited, or wrote; re-aims that terminal's follow tile, creating it in a free spot near the terminal (unless the user is working in it, which holds re-aims for ~10 s). Ignored while the terminal's `props.follow` is false, and for files outside the board root, the terminal's cwd, and the other worktrees of their repositories (a worktree file keeps its absolute path and its own gutter), scratch files in the temp directory, missing files, images, PDFs, archives, and other binaries: the tile keeps its last real file. */
     report(params: FollowReportParams): Promise<FollowReportResult>;
   };
   view: {

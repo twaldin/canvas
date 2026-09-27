@@ -58,6 +58,8 @@ final class TrayBar: NSVisualEffectView {
         // DOM labels lead with what a person recognizes and end with the CSS path; code
         // locations keep both the file name's start and its line.
         if case .dom = mention.target { label.lineBreakMode = .byTruncatingTail } else { label.lineBreakMode = .byTruncatingMiddle }
+        // A file outside the board root has a short label (`PathLabel`); the tooltip has its path.
+        if case .code(_, let path, _, _, _, _) = mention.target, PathLabel.short(path) != path { label.toolTip = path }
         let remove = NSButton(title: "✕", target: self, action: #selector(removeClicked(_:)))
         remove.isBordered = false
         remove.identifier = NSUserInterfaceItemIdentifier(mention.id)

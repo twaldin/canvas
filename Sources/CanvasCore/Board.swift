@@ -563,8 +563,10 @@ public final class Board {
     /// Re-aim the terminal's follow tile at `path`/`range`, creating the tile on first use, and
     /// record the location at the front of the tile's history. Ignored (returns nil) while the
     /// terminal doesn't follow (`props.follow` false) and for files `FollowFilter` rejects:
-    /// outside the board root and the terminal's cwd, scratch files in the temp directory,
-    /// missing files, images, and other binaries. The tile keeps its last real file.
+    /// outside the board root, the terminal's cwd, and every other worktree of their
+    /// repositories, scratch files in the temp directory, missing files, images, and other
+    /// binaries. The tile keeps its last real file. A file outside the root keeps its absolute
+    /// path, so the tile diffs it in its own worktree.
     @discardableResult
     public func follow(tile: ObjectID, path: String, range: LineRange?, action: String) throws -> CanvasObject? {
         let terminal = try object(tile)

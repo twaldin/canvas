@@ -149,8 +149,9 @@ final class CodeHeaderBar: NSView {
     private var controlsStale = true
     private var occlusionObserver: NSObjectProtocol?
 
+    /// The strips' height: while presenting, without the first row.
     var height: CGFloat {
-        CodeMetrics.chromeHeight(caption: captionText != nil, history: !history.isEmpty) - CodeMetrics.titleHeight
+        CodeMetrics.chromeHeight(caption: captionText != nil, history: !history.isEmpty) - CodeMetrics.titleHeight - (presenting ? CodeMetrics.headerHeight : 0)
     }
 
     /// `diffBase` is the prop (`merge-base`, `head`, or a commit), named in the picker with
@@ -328,13 +329,13 @@ final class CodeHeaderBar: NSView {
         NSColor.windowBackgroundColor.setFill()
         bounds.intersection(dirtyRect).fill()
         NSColor.separatorColor.setFill()
-        NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+        NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
     }
 
-    /// The status's first part ("no changes"), dimmed.
+    /// The status's first part ("no changes"), muted like line numbers (4.5:1, `CodeTheme.lineNumber`).
     private static func quietLine(_ status: String) -> NSAttributedString {
         let head = status.components(separatedBy: " · ").first ?? status
-        return NSAttributedString(string: head, attributes: [.foregroundColor: NSColor.tertiaryLabelColor, .font: NSFont.systemFont(ofSize: 11)])
+        return NSAttributedString(string: head, attributes: [.foregroundColor: CodeTheme.lineNumber, .font: NSFont.systemFont(ofSize: 11)])
     }
 
     override func updateTrackingAreas() {
@@ -367,29 +368,16 @@ final class CodeHeaderBar: NSView {
 
     // MARK: Presenting
 
-    /// Hidden canvas chrome (View › Hide Canvas Chrome): the first row's controls (diff base,
-    /// change arrows, status, Pin, the Outline button) sit under a plain band of the header's
-    /// color that takes their clicks; the caption and history strips stay. The row keeps its
-    /// height, so rows and the arrows bound to them don't move.
+    /// Hidden canvas chrome (View › Hide Canvas Chrome): the first row (diff base, change
+    /// arrows, status, Pin, the Outline button) leaves the header, scrolled out above its bounds
+    /// where nothing draws or takes clicks, and `height` drops it, so the code tile moves its rows
+    /// up (arrows bound to lines follow them); the caption and history strips stay.
     var presenting = false {
         didSet {
             guard presenting != oldValue else { return }
-            if presenting {
-                curtain.frame = NSRect(x: 0, y: 0, width: bounds.width, height: CodeMetrics.headerHeight - 1)
-                curtain.autoresizingMask = [.width]
-                addSubview(curtain, positioned: .above, relativeTo: nil)
-            } else {
-                curtain.removeFromSuperview()
-            }
+            setBoundsOrigin(NSPoint(x: 0, y: presenting ? CodeMetrics.headerHeight : 0))
+            needsDisplay = true
         }
-    }
-
-    private let curtain = HeaderCurtain()
-
-    override func didAddSubview(_ subview: NSView) {
-        super.didAddSubview(subview)
-        // Anything added while presenting (the Outline button) goes under the curtain.
-        if presenting, subview !== curtain { addSubview(curtain, positioned: .above, relativeTo: nil) }
     }
 
     @objc private func baseChanged(_ sender: NSPopUpButton) {
@@ -407,18 +395,4 @@ final class CodeHeaderBar: NSView {
         guard history.indices.contains(sender.tag) else { return }
         onLocation?(history[sender.tag])
     }
-}
-
-/// The band over a code header's first row while presenting: the header's color, taking the
-/// clicks meant for the controls under it.
-@MainActor
-private final class HeaderCurtain: NSView {
-    nonisolated override var isFlipped: Bool { true }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
-        bounds.intersection(dirtyRect).fill()
-    }
-
-    override func mouseDown(with event: NSEvent) {}
 }

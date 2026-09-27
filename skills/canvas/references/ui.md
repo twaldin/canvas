@@ -13,7 +13,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 - **⌘P** finds a tile by title or caption.
 - **Links**: a `path:line` link in a note or page, Go to, a definition and a terminal ⌘-click go to the code tile already showing those lines (exactly, or a captioned tile whose range holds them) wherever it is, else open them beside the source.
 - **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
-- **View › Hide Canvas Chrome** (⌥⌘T; also a button in Canvas Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
+- **View › Hide Canvas Chrome** (⌥⌘T; also a button in Canvas Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
   Esc on the canvas or the item again brings them back.
 
 ## Agents

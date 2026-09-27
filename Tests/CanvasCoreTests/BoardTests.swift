@@ -46,6 +46,35 @@ struct BoardTests {
         #expect(await reloaded.drain().context.contains("keep me staged"))
     }
 
+    @Test func unseenMarkersSurviveSaveAndReloadWithTheirTurn() throws {
+        let store = BoardStore(directory: root.appendingPathComponent("boards"))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let board = store.load(root: root)
+        let agent = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
+        let old = board.create(type: .note, props: .object(["markdown": .string("old")]))
+        let seen = board.create(type: .note, props: .object(["markdown": .string("seen")]))
+        let gone = board.create(type: .note, props: .object(["markdown": .string("gone")]))
+        try board.reportLifecycle(tile: agent.id, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        for id in [old.id, seen.id, gone.id] { try board.raiseAttention(id, message: "look at \(id)", caller: agent.id) }
+        board.clearAttention(seen.id)
+        try board.delete(gone.id)
+        try board.reportLifecycle(tile: agent.id, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp")
+        try board.reportLifecycle(tile: agent.id, kind: "omp", state: .working, message: nil, seq: 3, source: "canvas-omp")
+        store.save(board)
+
+        let reloaded = store.load(root: root)
+        #expect(Array(reloaded.attention.keys) == [old.id], "seen and deleted objects' markers are gone")
+        #expect(reloaded.attention[old.id]?.message == "look at \(old.id)")
+        // Still a marker from an earlier turn after the restart: the agent's next one replaces it.
+        let fresh = reloaded.create(type: .note, props: .object(["markdown": .string("new")]))
+        #expect(try reloaded.raiseAttention(fresh.id, message: nil, caller: agent.id).cleared == [old.id])
+
+        // A stored marker whose object isn't on the board is dropped on load.
+        var snapshot = reloaded.snapshot
+        snapshot.attention = [Attention(object: "obj_missing", message: nil, raisedBy: nil, raisedAt: Date())]
+        #expect(Board(snapshot: snapshot).attention.isEmpty)
+    }
+
     @Test func deletingAnObjectRemovesItsMentions() throws {
         let board = makeBoard()
         let a = board.create(type: .shape, props: .object(["kind": .string("rect")]))

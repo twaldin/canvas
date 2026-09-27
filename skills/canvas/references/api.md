@@ -84,7 +84,8 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
 ## Events
 
 Long-running helpers can stream changes instead of polling: `events.subscribe` (TS: `subscribe(onEvent, {events: ["object.updated"]})`)
-turns a dedicated connection into a stream of `object.created`, `object.updated`, `object.deleted`, `tray.changed`, `agent.lifecycle`, `follow.updated`.
+turns a dedicated connection into a stream of `object.created`, `object.updated`, `object.deleted`, `tray.changed`, `agent.lifecycle`, `follow.updated`,
+and `attention.changed` (`{id, active, message?, raisedBy?}`: a marker raised, or gone because the user saw it, someone cleared it, or its object was deleted).
 
 ## Agents
 

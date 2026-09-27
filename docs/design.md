@@ -101,6 +101,7 @@ Getting lost on a big board must always have a one-step way back.
 - Lifecycle per terminal tile: `working`, `blocked`, `idle`, `done` (idle, not yet seen), `unknown`. Sources: our omp extension (authoritative); our own hook scripts for Claude Code and Codex (modeled on how herdr does it). No screen scraping in v0.
 - "Seen" means the tile was focused, or visible at readable zoom in the frontmost window for a few seconds.
 - Session memory: each tile records agent kind and session id for resume.
+- Attention markers belong to a turn: an agent's new marker clears the ones it raised before its lifecycle last went to `working` (the user's latest prompt), while markers from the same answer stay together. Unseen markers are stored with the board, so they survive restarts.
 - Agent-to-agent: `canvas agent list|prompt|wait|read`, across all canvases in the app. A wait is a read, so the clients re-send it when an app restart cuts it off, with the time it has left.
 - Notifications: tile badges, lifecycle color on zoomed-out cards, macOS notifications when the app is not frontmost.
 
@@ -129,7 +130,7 @@ Getting lost on a big board must always have a one-step way back.
 ### Persistence
 
 - Terminals: zmx sessions.
-- Boards: `~/Library/Application Support/Canvas/boards/`, keyed by the repo's shared git directory plus branch/worktree. Boards survive worktree deletion as archived boards; "export to repo" commits one on request.
+- Boards: `~/Library/Application Support/Canvas/boards/`, keyed by the repo's shared git directory plus branch/worktree; a board file holds its objects, the staged tray, and unseen attention markers. Boards survive worktree deletion as archived boards; "export to repo" commits one on request.
 
 ## Performance
 

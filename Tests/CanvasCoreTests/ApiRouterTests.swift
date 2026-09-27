@@ -259,6 +259,54 @@ final class ApiRouterTests {
         #expect(ended == [deleted, kept, other])
     }
 
+    @Test func anAgentsNewMarkerClearsItsMarkersFromEarlierTurnsOnly() async throws {
+        let agent = terminal(), other = terminal()
+        let a = board.create(type: .note, props: .object(["markdown": .string("a")]))
+        let b = board.create(type: .note, props: .object(["markdown": .string("b")]))
+        let c = board.create(type: .note, props: .object(["markdown": .string("c")]))
+        let d = board.create(type: .note, props: .object(["markdown": .string("d")]))
+        let client = try connect()
+        func raise(_ id: ObjectID, by caller: ObjectID?) async throws -> JSONValue {
+            var params: [String: JSONValue] = ["id": .string(id), "message": .string("look")]
+            if let caller { params["caller"] = .string(caller) }
+            let reply = try await call(client, "view.attention", params)
+            #expect(reply["result"]?["active"] == .bool(true), "\(reply)")
+            return reply["result"] ?? .null
+        }
+        var seq = 0
+        func report(_ tile: ObjectID, _ state: LifecycleState) throws {
+            seq += 1
+            try board.reportLifecycle(tile: tile, kind: "omp", state: state, message: nil, seq: seq, source: "canvas-omp")
+        }
+
+        try report(agent, .working)
+        _ = try await raise(a.id, by: agent)
+        _ = try await raise(b.id, by: agent)
+        #expect(Set(board.attention.keys) == [a.id, b.id], "one answer may point at several things")
+        try report(other, .working)
+        _ = try await raise(c.id, by: other)
+        _ = try await raise(d.id, by: nil)
+
+        // Repeated working reports within the turn don't start a new one.
+        try report(agent, .working)
+        #expect(try await raise(a.id, by: agent)["cleared"] == nil)
+        #expect(Set(board.attention.keys) == [a.id, b.id, c.id, d.id])
+
+        // The user's next prompt: idle, then working again.
+        try report(agent, .idle)
+        try report(agent, .working)
+        try report(other, .idle)
+        try report(other, .working)
+        let next = try await raise(d.id, by: agent)
+        #expect(next["cleared"] == .array([a.id, b.id].sorted().map(JSONValue.string)))
+        #expect(Set(board.attention.keys) == [c.id, d.id], "another agent's marker and the new one stay")
+        #expect(board.attention[d.id]?.raisedBy == agent, "raising on a marked object takes it over")
+
+        // Clearing and deleting remove markers; the user seeing an object is the board's clear.
+        #expect(try await call(client, "view.attention", ["id": .string(c.id), "clear": .bool(true)])["result"]?["active"] == .bool(false))
+        try board.delete(d.id)
+        #expect(board.attention.isEmpty)
+    }
 }
 
 /// Minimal blocking NDJSON client; reads happen off the main actor so the server can answer.

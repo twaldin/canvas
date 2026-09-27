@@ -391,10 +391,10 @@ class ViewApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def attention(self, *, id: "Id", message: str | None = None, clear: bool | None = None) -> dict[str, Any]:
-        """Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. The user seeing the object also clears it. Never moves the user's viewport."""
-        params = {"id": id, "message": message, "clear": clear}
-        return self._call("view.attention", params, [])
+    def attention(self, *, id: "Id", message: str | None = None, clear: bool | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. A marker belongs to the caller's turn: raising one clears the markers the same caller raised in earlier turns (before its lifecycle last went to working); markers from this turn stay. The user seeing the object also clears it. Unseen markers are stored with the board and survive app restarts; deleting the object removes its marker. Never moves the user's viewport."""
+        params = {"id": id, "message": message, "clear": clear, "caller": caller}
+        return self._call("view.attention", params, ["caller"])
 
     def get(self, *, board: "Id" | None = None) -> dict[str, Any]:
         """What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, and whether the window is visible on screen."""
@@ -417,7 +417,7 @@ class EventsApi:
         self._call = call
 
     def subscribe(self, *, board: "Id" | None = None, events: list[str] | None = None) -> dict[str, Any]:
-        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated."""
+        """Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?})."""
         params = {"board": board, "events": events}
         return self._call("events.subscribe", params, ["board"])
 

@@ -652,12 +652,16 @@ export type ViewAttentionParams = {
   message?: string;
   /** remove this object's marker instead of raising it */
   clear?: boolean;
+  /** the raising agent's terminal; clients fill from CANVAS_TILE_ID */
+  caller?: Id;
 };
 export type ViewAttentionResult = {
   /** the marked object (markers are keyed by object) */
   id: Id;
   /** a marker is showing after this call */
   active: boolean;
+  /** present when raising cleared the caller's markers from earlier turns: their objects */
+  cleared?: Id[];
 };
 
 export type ViewGetParams = {
@@ -815,7 +819,7 @@ export interface CanvasApi {
     report(params: FollowReportParams): Promise<FollowReportResult>;
   };
   view: {
-    /** Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. The user seeing the object also clears it. Never moves the user's viewport. */
+    /** Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. A marker belongs to the caller's turn: raising one clears the markers the same caller raised in earlier turns (before its lifecycle last went to working); markers from this turn stay. The user seeing the object also clears it. Unseen markers are stored with the board and survive app restarts; deleting the object removes its marker. Never moves the user's viewport. */
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
     /** What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, and whether the window is visible on screen. */
     get(params?: ViewGetParams): Promise<ViewGetResult>;
@@ -825,7 +829,7 @@ export interface CanvasApi {
     snapshot(params?: ViewSnapshotParams): Promise<ViewSnapshotResult>;
   };
   events: {
-    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated. */
+    /** Turn this connection into an event stream. Events: object.created, object.updated, object.deleted, tray.changed, agent.lifecycle, follow.updated, attention.changed ({id, active, message?, raisedBy?}). */
     subscribe(params?: EventsSubscribeParams): Promise<EventsSubscribeResult>;
   };
 }
@@ -881,7 +885,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       report: (params: FollowReportParams) => call("follow.report", params ?? {}, []) as Promise<FollowReportResult>,
     },
     view: {
-      attention: (params: ViewAttentionParams) => call("view.attention", params ?? {}, []) as Promise<ViewAttentionResult>,
+      attention: (params: ViewAttentionParams) => call("view.attention", params ?? {}, ["caller"]) as Promise<ViewAttentionResult>,
       get: (params?: ViewGetParams) => call("view.get", params ?? {}, ["board"]) as Promise<ViewGetResult>,
       render: (params: ViewRenderParams) => call("view.render", params ?? {}, ["board"]) as Promise<ViewRenderResult>,
       snapshot: (params?: ViewSnapshotParams) => call("view.snapshot", params ?? {}, ["board"]) as Promise<ViewSnapshotResult>,

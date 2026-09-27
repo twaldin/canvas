@@ -81,9 +81,6 @@ public final class ApiRouter {
     }
 
     public let registry: BoardRegistry
-    public var raiseAttention: ((Board, ObjectID, String?) -> Void)?
-    /// Removes an object's attention marker; false when it had none.
-    public var clearAttention: ((Board, ObjectID) -> Bool)?
     /// Types text into a terminal tile (bracketed paste) and presses Enter; false when the surface isn't attached.
     public var submitToTerminal: ((Board, ObjectID, String) -> Bool)?
     /// The board's window as currently shown, encoded in `format`, with the viewport it shows.
@@ -598,13 +595,14 @@ public final class ApiRouter {
         case "view.attention":
             let id = try string(p, "id")
             let board = try board(forObject: id)
-            guard let raiseAttention, let clearAttention else { throw Failure("unsupported", "attention markers need the app UI") }
             if p["clear"]?.bool == true {
-                _ = clearAttention(board, id)
+                board.clearAttention(id)
                 return .object(["id": .string(id), "active": .bool(false)])
             }
-            raiseAttention(board, id, p["message"]?.string)
-            return .object(["id": .string(id), "active": .bool(true)])
+            let raised = try board.raiseAttention(id, message: p["message"]?.string, caller: caller(p, on: board))
+            var result: [String: JSONValue] = ["id": .string(id), "active": .bool(true)]
+            if !raised.cleared.isEmpty { result["cleared"] = .array(raised.cleared.map(JSONValue.string)) }
+            return .object(result)
 
         case "view.get":
             let board = try board(p)

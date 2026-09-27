@@ -13,6 +13,8 @@ public enum BoardEvent: Sendable {
     case trayChanged([Mention])
     case agentLifecycle(tile: ObjectID, lifecycle: JSONValue)
     case followUpdated(tile: ObjectID, follow: ObjectID)
+    /// A marker raised or replaced (`attention`), or removed (nil).
+    case attentionChanged(object: ObjectID, attention: Attention?)
 
     public var name: String {
         switch self {
@@ -22,6 +24,7 @@ public enum BoardEvent: Sendable {
         case .trayChanged: "tray.changed"
         case .agentLifecycle: "agent.lifecycle"
         case .followUpdated: "follow.updated"
+        case .attentionChanged: "attention.changed"
         }
     }
 
@@ -37,6 +40,8 @@ public enum BoardEvent: Sendable {
             .object(["tile": .string(tile), "lifecycle": lifecycle])
         case .followUpdated(let tile, let follow):
             .object(["tile": .string(tile), "follow": .string(follow)])
+        case .attentionChanged(let id, let attention):
+            attention?.json ?? .object(["id": .string(id), "active": .bool(false)])
         }
     }
 }
@@ -52,6 +57,8 @@ public struct BoardSnapshot: Codable, Sendable {
     public var objects: [CanvasObject]
     /// Staged mentions survive quit and rebuild; optional so older board files still load.
     public var tray: [Mention]?
+    /// Attention markers the user hasn't seen yet; optional so older board files still load.
+    public var attention: [Attention]?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -63,6 +70,8 @@ public final class Board {
     public private(set) var objects: [ObjectID: CanvasObject] = [:]
     public private(set) var revision = 0
     public private(set) var tray: [Mention] = []
+    /// Unseen attention markers by object (see Attention.swift).
+    public internal(set) var attention: [ObjectID: Attention] = [:]
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -146,10 +155,12 @@ public final class Board {
             if !changed { break }
         }
         tray = (snapshot.tray ?? []).filter { $0.target.objectIDs.allSatisfy { objects[$0] != nil } }
+        for marker in snapshot.attention ?? [] where objects[marker.object] != nil { attention[marker.object] = marker }
     }
 
     public var snapshot: BoardSnapshot {
-        BoardSnapshot(format: Self.format, id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray)
+        BoardSnapshot(format: Self.format, id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray,
+                      attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object })
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -235,9 +246,11 @@ public final class Board {
         log(.deleted, removed, actor: actor, "deleted \(ActivityLog.describe(removed))")
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
+        let marked = attention.removeValue(forKey: id) != nil
         onChange?()
         onEvent?(.objectDeleted(id))
         if tray.count != before { trayChanged() }
+        if marked { onEvent?(.attentionChanged(object: id, attention: nil)) }
         refitGroups(containing: id, actor: actor, caller: caller)
         guard !history.replaying else { return }
         if removed.type == .terminal {
@@ -497,7 +510,11 @@ public final class Board {
             if let last = lifecycleSeq[key], seq <= last { return }
             lifecycleSeq[key] = seq
         }
-        if state == .working { seenSinceWorking.remove(tile) }
+        if state == .working {
+            seenSinceWorking.remove(tile)
+            // Going to working is the user's next prompt reaching the agent: a new turn.
+            if terminal.props["lifecycle"]?["state"]?.string != LifecycleState.working.rawValue { agentStartedTurn(tile) }
+        }
         let effective: LifecycleState = state == .idle && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message { lifecycle["message"] = .string(message) }

@@ -64,12 +64,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return try await canvas.render(request, format: format)
         }
         router.viewState = { [weak self] board in self?.controllers[board.id]?.canvas.viewState }
-        router.raiseAttention = { [weak self] board, id, message in
-            self?.controllers[board.id]?.canvas.raiseAttention(id, message: message)
-        }
-        router.clearAttention = { [weak self] board, id in
-            self?.controllers[board.id]?.canvas.clearAttention(id) ?? false
-        }
         router.openBoard = { [weak self, registry] root, select in
             self?.open(root: root, select: select) ?? registry.open(root: root)
         }

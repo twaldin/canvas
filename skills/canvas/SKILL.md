@@ -32,8 +32,8 @@ Read these before you build anything; each one cost earlier agents a round trip.
 - **Line-bound arrows pin when their line is out of view.** An arrow end bound to `lines` of a code tile attaches at that row only while the tile shows it;
   scrolled out, the end pins to the top of the code or the bottom of the tile.
   Keep bound lines inside the rows the tile shows (fit the range, or bind to lines near its top).
-- **Attention markers stay until the user looks.** A marker clears when the user looks at the object in the active window, or when you `--clear` it.
-  Clear your earlier markers when you raise a new one; one marker per answer is plenty.
+- **Attention markers stay until the user looks, across app restarts.** A marker clears when the user looks at the object in the active window, or when you `--clear` it.
+  Your markers belong to your turn: the first one you raise after the user's next prompt clears the ones from your earlier turns (you don't need to), while markers raised in the same turn stay together.
 
 ## Pick a client
 
@@ -310,6 +310,8 @@ canvas view.attention --id obj_… --clear                         # take it bac
 ```
 
 Markers are keyed by the object (raising again replaces the message); the user selecting or looking at the object clears it too.
+Raise one marker per thing your answer points at; they stay together until the user looks, even across app restarts.
+Your next marker after the user's next prompt clears your earlier turns' markers (the result lists them in `cleared`), so don't clear old ones yourself.
 
 ## Whose objects are whose
 

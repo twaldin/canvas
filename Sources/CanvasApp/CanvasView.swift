@@ -203,6 +203,8 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
         board.viewport = { [weak self] in self?.viewport.rect }
         for object in board.snapshot.objects { add(object) }
+        // Markers the user hadn't seen when the board was last open.
+        for marker in board.attention.values { showMarker(marker.object, message: marker.message) }
         restack()
         refreshGroups()
         DispatchQueue.main.async { [weak self] in self?.centerOnContent() }
@@ -290,10 +292,12 @@ final class CanvasView: NSScrollView {
             tiles.removeValue(forKey: id)?.removeFromSuperview()
             groups.removeValue(forKey: id)?.removeFromSuperview()
             if enteredGroup == id { exitGroup() }
-            clearAttention(id)
+            hideMarker(id)
             seenLocally.remove(id)
             if selection.contains(id) { setSelection(selection.subtracting([id])) }
             scheduleGeometry()
+        case .attentionChanged(let id, let marker):
+            if let marker { showMarker(id, message: marker.message) } else { hideMarker(id) }
         default: break
         }
     }
@@ -407,7 +411,7 @@ final class CanvasView: NSScrollView {
         scheduleActivitySettle()
         refreshRings()
         // Selecting a marked object is the user acknowledging it.
-        for id in added where markers[id] != nil { clearAttention(id) }
+        for id in added where markers[id] != nil { board.clearAttention(id) }
         onSelectionChange?()
     }
 
@@ -955,7 +959,7 @@ final class CanvasView: NSScrollView {
     func jumpToAttention(_ id: ObjectID) {
         guard let rect = docFrame(id) else { return }
         fit(rect, readable: true)
-        clearAttention(id)
+        board.clearAttention(id)
     }
 
     /// The least pan that shows an object the user just opened (a code tile from an HTML link),
@@ -968,16 +972,17 @@ final class CanvasView: NSScrollView {
 
     // MARK: Attention
 
-    /// An agent's marker on an object: a pulsing ring and message, plus an edge chevron while the
-    /// object is offscreen. Cleared by selecting it, focusing it, or looking at it for a while.
-    func raiseAttention(_ id: ObjectID, message: String?) {
+    /// Shows the board's marker on an object (`Board.attention`): a pulsing ring and message,
+    /// plus an edge chevron while the object is offscreen. The user acknowledges it (the board
+    /// clears it) by selecting it, focusing it, clicking it, or looking at it for a while.
+    private func showMarker(_ id: ObjectID, message: String?) {
         guard board.objects[id] != nil else { return }
         if let marker = markers[id] {
             marker.message = message
         } else {
             let marker = AttentionMarker(objectID: id, message: message)
             marker.onClick = { [weak self] in
-                self?.clearAttention(id)
+                self?.board.clearAttention(id)
                 self?.select(id, extend: false)
             }
             attention.addSubview(marker)
@@ -987,12 +992,10 @@ final class CanvasView: NSScrollView {
         scheduleLiveness()
     }
 
-    @discardableResult
-    func clearAttention(_ id: ObjectID) -> Bool {
-        guard let marker = markers.removeValue(forKey: id) else { return false }
+    private func hideMarker(_ id: ObjectID) {
+        guard let marker = markers.removeValue(forKey: id) else { return }
         marker.removeFromSuperview()
         scheduleLiveness()
-        return true
     }
 
     /// Markers live in window space: re-placed on every pan and pinch step (`boundsChanged`) and
@@ -1043,7 +1046,7 @@ final class CanvasView: NSScrollView {
     /// Keyboard focus in a terminal counts as seeing it (the controller also marks the board).
     func terminalFocused(_ id: ObjectID) {
         seenLocally.insert(id)
-        clearAttention(id)
+        board.clearAttention(id)
         scheduleLiveness()
     }
 
@@ -1061,7 +1064,7 @@ final class CanvasView: NSScrollView {
             seenLocally.insert(id)
             board.markSeen(id)
         }
-        clearAttention(id)
+        board.clearAttention(id)
     }
 
     /// What the user can actually look at now: the key window of the active app, at readable zoom,

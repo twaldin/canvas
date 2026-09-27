@@ -14,6 +14,8 @@ final class BasicsPanel: NSVisualEffectView {
     private let scroll = NSScrollView()
     private weak var previousResponder: NSResponder?
     var isOpen: Bool { !isHidden }
+    /// The panel's Hide Canvas Chrome button (the View menu's item, for presenting).
+    var onHideChrome: (() -> Void)?
 
     init() {
         super.init(frame: .zero)
@@ -34,6 +36,11 @@ final class BasicsPanel: NSVisualEffectView {
         close.isBordered = false
         close.contentTintColor = .secondaryLabelColor
         close.toolTip = "Close (Esc)"
+        let hide = NSButton(title: "Hide Canvas Chrome", target: self, action: #selector(hideChromeClicked))
+        hide.controlSize = .small
+        hide.bezelStyle = .push
+        hide.font = .systemFont(ofSize: 11)
+        hide.toolTip = "For presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers. Esc brings them back (View › Hide Canvas Chrome)."
         text.isEditable = false
         text.isSelectable = true
         text.drawsBackground = false
@@ -51,7 +58,7 @@ final class BasicsPanel: NSVisualEffectView {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
-        for view in [title, close, scroll] {
+        for view in [title, hide, close, scroll] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -60,6 +67,8 @@ final class BasicsPanel: NSVisualEffectView {
             title.topAnchor.constraint(equalTo: topAnchor, constant: 12),
             close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             close.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            hide.trailingAnchor.constraint(equalTo: close.leadingAnchor, constant: -8),
+            hide.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -91,6 +100,7 @@ final class BasicsPanel: NSVisualEffectView {
     }
 
     @objc private func closeClicked() { close() }
+    @objc private func hideChromeClicked() { onHideChrome?() }
 
     private static func legend() -> NSAttributedString {
         let result = NSMutableAttributedString()

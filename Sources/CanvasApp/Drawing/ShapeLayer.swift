@@ -512,9 +512,10 @@ final class ShapeLayer: NSView {
     let handleSize: CGFloat = 12
 
     /// Selected rect/ellipse shapes get corner handles for resizing, text shapes for scaling
-    /// (the scene draws the selection).
+    /// (the scene draws the selection); none while the canvas chrome is hidden (presenting).
     private var resizable: [DrawnItem] {
-        canvas.selection.compactMap { items[$0] }.filter { [.rect, .ellipse, .text].contains($0.shape?.kind) }
+        guard !canvas.chromeHidden else { return [] }
+        return canvas.selection.compactMap { items[$0] }.filter { [.rect, .ellipse, .text].contains($0.shape?.kind) }
     }
 
     /// Handles are a fixed size on screen, so in document points they grow as the canvas zooms out.

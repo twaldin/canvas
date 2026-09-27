@@ -2,8 +2,9 @@ import AppKit
 import CanvasCore
 
 /// Navigate Back/Forward (⌘[ / ⌘]) and Go to's Recent section: every user navigation (Go to, a
-/// definition, a ⌘-clicked reference, a changes tile's line, a page's code link, Open All, ⌘J,
-/// ⌘9, ⌘0) is recorded with the view before and after it and the code tile it re-aimed.
+/// definition, a ⌘-clicked reference, a changes tile's line, a page's or note's code link, Open
+/// All, ⌘J, ⌘9, ⌘0, Review Changes, an edge pill, an ⌥⌘-arrow step) is recorded with the view
+/// before and after it, the code tile it re-aimed, and a step's selection.
 extension CanvasView {
     /// Runs one user navigation: `body` moves the view and returns the code tile it re-aimed,
     /// if any; `landing` is the code location it went to, for Go to's Recent section. A
@@ -42,6 +43,15 @@ extension CanvasView {
     private func perform(_ move: NavigationHistory.Move) {
         if let reaim = move.reaim { board.restoreAim(reaim) }
         show(move.viewport)
+        if let selected = move.selection, board.objects[selected] != nil { setSelection([selected]) }
+    }
+
+    /// A code tile a link, Go to or ⌘-click found already showing the lines, wherever it is:
+    /// selected and shown whole like a stop stepped to (`Layout.present`: centered when it isn't
+    /// in view with a margin). Call inside `navigating`.
+    func goToShown(_ id: ObjectID) {
+        present(id)
+        setSelection([id])
     }
 
     /// Go to's Recent rows (with nothing typed, before "All content"): where navigation landed

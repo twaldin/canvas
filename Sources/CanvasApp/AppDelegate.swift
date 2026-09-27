@@ -266,6 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
     @objc func toggleNavigator(_ sender: Any?) { keyController?.toggleNavigator(sender) }
     @objc func toggleBasics(_ sender: Any?) { keyController?.toggleBasics(sender) }
+    @objc func toggleCanvasChrome(_ sender: Any?) { keyController?.toggleCanvasChrome(sender) }
     @objc func toggleLassoSelection(_ sender: Any?) { keyController?.toggleLassoSelection(sender) }
     @objc func exitGroup(_ sender: Any?) { keyController?.exitGroup(sender) }
     @objc func undoCanvas(_ sender: Any?) { keyController?.undoCanvas(sender) }
@@ -436,6 +437,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Clear Attention Markers", #selector(clearAttentionMarkers(_:)), ""),
             // ⌥⌘I as in Safari's Develop menu: the focused or selected browser tile's page.
             item("Show Web Inspector", #selector(showWebInspector(_:)), "i", [.option, .command]),
+            // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
+            item("Hide Canvas Chrome", #selector(toggleCanvasChrome(_:)), ""),
             lasso,
             item("Exit Group", #selector(exitGroup(_:)), ""),
         ])

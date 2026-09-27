@@ -50,12 +50,21 @@ public struct CodeReaim: Equatable, Sendable {
     public var inverted: CodeReaim { CodeReaim(tile: tile, before: after, after: before) }
 }
 
-/// What a navigation to code did: the tile that shows it, whether it is new, and the re-aim of
-/// an existing tile when there was one.
+/// What a navigation to code did: the tile that shows it, whether it is new, the re-aim of an
+/// existing tile when there was one, and whether the tile already showed the lines (`existing`:
+/// nothing changed, the navigation goes to it wherever it is).
 public struct CodeOpened: Equatable, Sendable {
     public var id: ObjectID
     public var created: Bool
     public var reaim: CodeReaim?
+    public var existing: Bool
+
+    public init(id: ObjectID, created: Bool, reaim: CodeReaim?, existing: Bool = false) {
+        self.id = id
+        self.created = created
+        self.reaim = reaim
+        self.existing = existing
+    }
 }
 
 extension Board {
@@ -71,9 +80,43 @@ extension Board {
         return !objects.values.contains { $0.type == .group && GroupSpec($0.props)?.members.contains(id) == true }
     }
 
-    /// Opens code the user navigated to (Go to, a definition, a changes tile's line, a page's
-    /// link) near where the user is, never re-aiming someone else's tile and never far away:
-    /// - a code tile in view already showing `aim` at its lines is the answer as it is;
+    /// The code tile already showing `aim`, which navigating there goes to wherever it is on the
+    /// board: a tile showing exactly its path and lines (the path alone for an aim without lines),
+    /// else a captioned tile of that path whose range contains the lines (a walkthrough's stop).
+    /// Follow tiles never count: they belong to their agent and move on as it reads. Among
+    /// several, one in view first, then the nearest `center` (the viewport's center without
+    /// one), then the topmost.
+    public func tileShowing(_ aim: CodeAim, near center: Frame?) -> ObjectID? {
+        let view = viewport()
+        let center = center ?? view
+        func rank(_ object: CanvasObject, exact: Bool) -> (Int, Int, Double, Double) {
+            var distance = 0.0
+            if let center {
+                let dx = object.frame.x + object.frame.w / 2 - (center.x + center.w / 2)
+                let dy = object.frame.y + object.frame.h / 2 - (center.y + center.h / 2)
+                distance = hypot(dx, dy)
+            }
+            let away = view.map { $0.intersects(object.frame) ? 0 : 1 } ?? 0
+            return (exact ? 0 : 1, away, distance, -object.z)
+        }
+        var best: (id: ObjectID, rank: (Int, Int, Double, Double))?
+        for object in objects.values where object.type == .code && object.props["followOf"] == nil {
+            guard let shown = CodeAim(object), shown.path == aim.path else { continue }
+            let exact = shown.range == aim.range
+            if !exact {
+                guard let lines = aim.range, let range = shown.range, range.start <= lines.start, lines.end <= range.end,
+                      let caption = object.props["caption"]?.string, !caption.isEmpty else { continue }
+            }
+            let key = rank(object, exact: exact)
+            if best == nil || key < best!.rank || (key == best!.rank && object.id < best!.id) { best = (object.id, key) }
+        }
+        return best?.id
+    }
+
+    /// Opens code the user navigated to (Go to, a definition, a changes tile's line, a page's or
+    /// note's link) near where the user is, never re-aiming someone else's tile and never far away:
+    /// - a code tile already showing `aim` (`tileShowing`), anywhere on the board, is the answer
+    ///   as it is (`existing`: the caller goes to it);
     /// - `preview` (a changes tile): the tile this source last created, while nobody changed it
     ///   since and it is still plain navigation surface (`isNavigationSurface`), is re-aimed,
     ///   even at another file, like a terminal's ⌘-click preview;
@@ -87,10 +130,10 @@ extension Board {
     public func openForNavigation(_ aim: CodeAim, from source: ObjectID?, preview: Bool = false, extra: [String: JSONValue] = [:]) -> CodeOpened {
         let view = viewport()
         func inView(_ object: CanvasObject) -> Bool { view.map { $0.intersects(object.frame) } ?? true }
-        let codes = objects.values.filter { $0.type == .code && inView($0) }
-        if let range = aim.range, let shown = codes.filter({ CodeAim($0).map { $0.path == aim.path && $0.range == range } ?? false }).max(by: { $0.z < $1.z }) {
-            return CodeOpened(id: shown.id, created: false, reaim: nil)
+        if let shown = tileShowing(aim, near: source.flatMap { objects[$0]?.frame }) {
+            return CodeOpened(id: shown, created: false, reaim: nil, existing: true)
         }
+        let codes = objects.values.filter { $0.type == .code && inView($0) }
         if preview, let source, let previous = codePreviews[source], let object = objects[previous.tile], object.rev == previous.rev,
            isNavigationSurface(object.id), let reaim = reaimForNavigation(object.id, to: aim) {
             codePreviews[source] = (object.id, objects[object.id]?.rev ?? 0)

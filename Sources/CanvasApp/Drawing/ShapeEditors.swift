@@ -265,7 +265,7 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
 /// Double-click an arrow: its caption and its semantic relation (e.g. `calls`, `hypothesis_about`).
 @MainActor
 final class ArrowLabelEditor: NSView, ShapeEditing, NSTextFieldDelegate, NSComboBoxDelegate {
-    static let relations = ["calls", "depends_on", "hypothesis_about", "explains", "blocks", "relates_to"]
+    static let relations = ["next_step", "calls", "depends_on", "hypothesis_about", "explains", "blocks", "relates_to"]
 
     unowned let shapeLayer: ShapeLayer
     let editing: ObjectID?

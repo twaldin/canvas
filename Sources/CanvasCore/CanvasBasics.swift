@@ -31,6 +31,16 @@ public enum CanvasBasics {
     public static let blockedBubble = "This agent is waiting for you. Click to answer in its terminal."
 
     public static let sections: [Section] = [
+        Section(title: "Reading a board", items: [
+            Item(term: "Scroll · pinch", text: "scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%."),
+            Item(term: "Groups and arrows", text: "a tinted, titled region holds tiles that belong together; an arrow's label says how two things relate, and one into a code tile points at its lines."),
+            Item(term: "Captions", text: "the line under a code tile's header says why those lines matter."),
+            Item(term: "⌥⌘→ · ⌥⌘←", text: "step to the next or previous stop: along the board's next-step arrows when the selected tile has one, else to the nearest tile that way. A stop not in view is centered; \"Last step\" ends the walk."),
+            Item(term: "⌘P", text: "find a tile by its title or caption."),
+            Item(term: "Links", text: "a path:line link, Go to or ⌘-click goes to the tile already showing those lines, else opens them beside you. Return enters a code tile to scroll it."),
+            Item(term: "⌘[ · ⌘]", text: "back and forward through where you went: steps, links, Go to, definitions, ⌘J, Review Changes."),
+            Item(term: "Hide Canvas Chrome", text: "View menu, for presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers (a blocked agent still shows). Esc brings them back."),
+        ]),
         Section(title: "Agents", items: [
             Item(term: "Blue dot", text: "working: the agent is busy."),
             Item(term: "Orange dot, ring and ✋ bubble", text: "blocked: it waits for you to approve or answer. Click the bubble to answer in its terminal."),
@@ -63,8 +73,6 @@ public enum CanvasBasics {
             Item(term: "⌘P", text: "go to a tile, file or symbol."),
             Item(term: "⌘T", text: "new terminal; then run omp, claude, codex, gemini or opencode."),
             Item(term: "Return · Esc", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas. In a terminal Esc goes to the program: ⌘Esc leaves any tile."),
-            Item(term: "⌘[ · ⌘]", text: "back and forward through where you went (Go to, definitions, ⌘-clicks, ⌘J)."),
-            Item(term: "⌥⌘-arrows", text: "move to the nearest tile that way."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
         ]),
     ]

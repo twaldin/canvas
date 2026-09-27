@@ -207,4 +207,46 @@ struct PillLayoutTests {
         #expect(!pill.intersects(titleBar), "\(pill) covers the title bar")
         #expect(abs(pill.midY - 454) < 60, "\(pill) strays from where its object is")
     }
+
+    @Test func anEdgePillSlidesToAStretchOfItsEdgeWithNothingUnderIt() {
+        // Presenter P9: the follow tile fills the right edge from y 180 to 640; the pill for the
+        // walkthrough off to the right sat on its code rows 11–12.
+        let follow = CGRect(x: 1080, y: 180, width: 400, height: 460)
+        let placed = PillLayout.place(markers: [], edges: [.init(id: "start", target: CGPoint(x: 4000, y: 480), size: CGSize(width: 150, height: 24))],
+                                      tiles: [.init(id: "follow", rect: follow, header: 26)], clear: clear)
+        let pill = try! #require(placed.edges["start"])
+        #expect(pill.maxX == clear.maxX - PillLayout.edgeMargin, "still on the right edge")
+        #expect(!pill.intersects(follow), "\(pill) covers the follow tile")
+        #expect(clear.contains(pill))
+    }
+
+    @Test func anEdgePillFindsTheGapBetweenTilesAlongTheBottom() {
+        // Confirm5 R2: the pill for a note below the view sat on the changes tile's Stage and
+        // Discard buttons; a terminal and the changes tile fill the bottom edge but for a gap.
+        let terminal = CGRect(x: 0, y: 400, width: 700, height: 600)
+        let changes = CGRect(x: 740, y: 300, width: 700, height: 700)
+        let placed = PillLayout.place(markers: [], edges: [.init(id: "note", target: CGPoint(x: 900, y: 3000), size: CGSize(width: 28, height: 24))],
+                                      tiles: [.init(id: "t", rect: terminal, header: 26), .init(id: "c", rect: changes, header: 26)], clear: clear)
+        let pill = try! #require(placed.edges["note"])
+        #expect(pill.maxY > clear.maxY - PillLayout.edgeMargin, "\(pill) left the bottom edge")
+        #expect(pill.minX >= terminal.maxX && pill.maxX <= changes.minX, "\(pill) is not in the gap")
+    }
+
+    @Test func anEdgePillWithNoClearStretchGoesToTheChromeBand() {
+        // A terminal filling the right edge of the view: the pill becomes a chip in the toolbar
+        // row, right of the toolbar, rather than sit on the terminal's text.
+        let terminal = CGRect(x: 700, y: 60, width: 800, height: 900)
+        let bands = [CGRect(x: 16, y: 20, width: 460, height: 34), CGRect(x: 924, y: 20, width: 460, height: 34)]
+        let edge = PillLayout.Edge(id: "off", target: CGPoint(x: 5000, y: 500), size: CGSize(width: 150, height: 24))
+        let placed = PillLayout.place(markers: [], edges: [edge], tiles: [.init(id: "t", rect: terminal, header: 26)], clear: clear, bands: bands)
+        let chip = try! #require(placed.edges["off"])
+        #expect(bands[1].contains(chip), "\(chip) is not in the band nearest its object")
+
+        let two = PillLayout.place(markers: [], edges: [edge, .init(id: "off2", target: CGPoint(x: 5000, y: 520), size: CGSize(width: 150, height: 24))],
+                                   tiles: [.init(id: "t", rect: terminal, header: 26)], clear: clear, bands: bands)
+        assertApart(Array(two.edges.values))
+
+        let without = PillLayout.place(markers: [], edges: [edge], tiles: [.init(id: "t", rect: terminal, header: 26)], clear: clear)
+        #expect(try! #require(without.edges["off"]).maxX == clear.maxX - PillLayout.edgeMargin, "no band: on the edge as before")
+    }
 }

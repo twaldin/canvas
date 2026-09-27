@@ -10,9 +10,11 @@ import CoreGraphics
 /// to a free stretch, or as near to one of those or to the top of the object's body as the
 /// other pills allow, weighing what it hides (other tiles' title bars count most). It never
 /// covers the object's own header (a tile's title bar, a browser's address bar), whose controls
-/// stay clickable. Edge pills are compact and slide along their edge off pills, blocked and
-/// focused terminals, and tiles' title bars. Everything stays inside `clear` (between the
-/// toolbar and the tray), so no pill sits under the chrome.
+/// stay clickable. Edge pills are compact and cover no tile: each slides along its edge to a
+/// stretch with nothing under it, else goes to the window chrome's band (`bands`: the free
+/// parts of the toolbar row) as a chip, and only when neither has room sits on the edge off
+/// pills, blocked and focused terminals and title bars. Bubbles and edge pills stay inside
+/// `clear` (between the toolbar and the tray), so no pill sits under the chrome.
 public enum PillLayout {
     /// Room kept between two pills, and between a bubble and the ring around its object.
     public static let spacing: CGFloat = 6
@@ -99,8 +101,10 @@ public enum PillLayout {
     /// `focused`: the tile with the keyboard, which no pill covers when there is any other place,
     /// and `caret` the row being typed in there (a terminal's cursor line), which no pill covers
     /// unless pills fill the view. Blocked terminals' bubbles are placed first, then markers'
-    /// (each group top to bottom), then edge pills, which also keep clear of them.
-    public static func place(markers: [Marker], edges: [Edge], tiles: [Tile], focused: String? = nil, caret: CGRect? = nil, clear: CGRect) -> Placement {
+    /// (each group top to bottom), then edge pills, which also keep clear of them. `bands`: the
+    /// window chrome's free stretches (in the toolbar row), where an edge pill with no clear
+    /// stretch of its edge goes.
+    public static func place(markers: [Marker], edges: [Edge], tiles: [Tile], focused: String? = nil, caret: CGRect? = nil, clear: CGRect, bands: [CGRect] = []) -> Placement {
         var placed: [CGRect] = caret.map { [$0] } ?? []
         var bubbles: [String: CGRect] = [:]
         var blocked: [String: CGRect] = [:]
@@ -119,8 +123,9 @@ public enum PillLayout {
         var pills: [String: CGRect] = [:]
         let onScreenPrompts = prompts.map(\.rect)
         let headers = tiles.map(\.headerRect).filter { !$0.isEmpty && $0.intersects(clear) }
+        let bodies = tiles.map(\.rect)
         for edge in edges.sorted(by: { $0.id < $1.id }) {
-            let rect = edgePill(edge, placed: placed, keepOff: onScreenPrompts, headers: headers, clear: clear)
+            let rect = edgePill(edge, placed: placed, keepOff: onScreenPrompts, tiles: bodies, headers: headers, bands: bands, clear: clear)
             pills[edge.id] = rect
             placed.append(rect)
         }
@@ -212,22 +217,53 @@ public enum PillLayout {
         return best?.rect ?? inside
     }
 
-    /// `keepOff`: blocked terminals and the focused tile on screen, and `headers` tiles' title
-    /// bars, which an edge pill slides off along its edge when the edge has room (it never leaves
-    /// the edge for them).
-    private static func edgePill(_ edge: Edge, placed: [CGRect], keepOff: [CGRect], headers: [CGRect], clear: CGRect) -> CGRect {
+    /// An edge pill: where the ray from the clear area's center to its object leaves the area
+    /// (inset), when nothing is under it; else slid along that edge to the nearest stretch where
+    /// nothing is (no tile, pill, blocked or focused terminal); else a chip in the chrome band
+    /// nearest that spot, off other chips; else, when neither has room, the old compromise: on
+    /// the edge, off pills, then blocked and focused terminals (`keepOff`), then title bars
+    /// (`headers`), stepping inward only when the edge is full of pills.
+    private static func edgePill(_ edge: Edge, placed: [CGRect], keepOff: [CGRect], tiles: [CGRect], headers: [CGRect], bands: [CGRect], clear: CGRect) -> CGRect {
         let size = edge.size
         let center = CGPoint(x: clear.midX, y: clear.midY)
         let dx = edge.target.x - center.x, dy = edge.target.y - center.y
         // Where the ray from the clear area's center to the target leaves it (inset).
         let halfW = clear.width / 2 - edgeMargin, halfH = clear.height / 2 - edgeMargin
-        let t = min(dx == 0 ? .infinity : halfW / abs(dx), dy == 0 ? .infinity : halfH / abs(dy))
+        let tx: CGFloat = dx == 0 ? .infinity : halfW / abs(dx), ty: CGFloat = dy == 0 ? .infinity : halfH / abs(dy)
+        let t = min(tx, ty)
         let point = t.isFinite ? CGPoint(x: center.x + dx * t, y: center.y + dy * t) : center
         let ideal = clamp(CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height), into: clear, margin: edgeMargin)
+        // On the top or bottom edge (the ray leaves through it): it slides sideways.
+        let horizontal = ty <= tx
+        func distance(_ rect: CGRect) -> CGFloat { hypot(rect.midX - ideal.midX, rect.midY - ideal.midY) }
+        // A clear stretch of its edge: nothing under it.
+        let solid = placed + keepOff + tiles
+        let along = horizontal
+            ? escapes(ideal.minX, length: size.width, placed: solid, axis: \.minX, far: \.maxX).map { CGRect(x: $0, y: ideal.minY, width: size.width, height: size.height) }
+            : escapes(ideal.minY, length: size.height, placed: solid, axis: \.minY, far: \.maxY).map { CGRect(x: ideal.minX, y: $0, width: size.width, height: size.height) }
+        if let free = along.map({ clamp($0, into: clear, margin: edgeMargin) }).filter({ !overlapsPill($0, solid) }).min(by: { distance($0) < distance($1) }) {
+            return free
+        }
+        // A chip in the chrome's band, off the chips already there, over as little of the tiles
+        // scrolled under the toolbar row as it can, then nearest the ideal spot.
+        var chips: [CGRect] = []
+        for band in bands where band.width >= size.width && band.height >= size.height {
+            let y = band.midY - size.height / 2
+            let row = CGRect(x: band.minX, y: y, width: band.width, height: size.height)
+            let xs = escapes(ideal.midX - size.width / 2, length: size.width, placed: placed, axis: \.minX, far: \.maxX)
+                + slides(length: size.width, around: tiles, axis: \.minX, far: \.maxX, crossing: row) + [band.minX, band.maxX - size.width]
+            chips += xs.map { CGRect(x: min(max($0, band.minX), band.maxX - size.width), y: y, width: size.width, height: size.height) }
+        }
+        func covered(_ rect: CGRect) -> CGFloat {
+            tiles.reduce(0) { total, tile in
+                let part = tile.intersection(rect)
+                return total + (part.isNull ? 0 : part.width * part.height)
+            }
+        }
+        if let chip = chips.filter({ !overlapsPill($0, placed) }).min(by: { (covered($0).rounded(), distance($0)) < (covered($1).rounded(), distance($1)) }) { return chip }
         guard overlapsPill(ideal, placed) || overlapsPill(ideal, keepOff) || overlapsPill(ideal, headers) else { return ideal }
         // Along the edge it sits on first, off blocked and focused terminals, then off title bars
         // where the edge allows; stepping inward only when the edge is full of pills.
-        let horizontal = ideal.minY <= clear.minY + 0.5 || ideal.maxY >= clear.maxY - 0.5
         let obstacles = placed + keepOff + headers
         let xs = escapes(ideal.minX, length: size.width, placed: horizontal ? obstacles : placed, axis: \.minX, far: \.maxX)
         let ys = escapes(ideal.minY, length: size.height, placed: horizontal ? placed : obstacles, axis: \.minY, far: \.maxY)

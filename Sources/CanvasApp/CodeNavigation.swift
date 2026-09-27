@@ -437,25 +437,31 @@ final class CodeNavigation: NSObject {
     }
 
     /// A definition, near this tile and never re-aiming someone else's (`Board.openForNavigation`):
-    /// this tile when it is plain navigation surface and the definition is in its file, else a
-    /// plain tile in view showing that file, else a new tile beside this one, shown with the
-    /// least pan that keeps this one in view. `newTile` (⌥⌘) always opens a new tile. One step of
-    /// Navigate Back.
+    /// a tile already showing it (exactly, or a captioned stop whose range holds it) anywhere,
+    /// gone to (this tile scrolls to it when that's this one); else this tile when it is plain
+    /// navigation surface and the definition is in its file, else a plain tile in view showing
+    /// that file, else a new tile beside this one, shown with the least pan that keeps this one
+    /// in view. `newTile` (⌥⌘) always opens a new tile. One step of Navigate Back.
     private func open(_ location: LSPLocation, newTile: Bool) {
         let aim = CodeAim(path: boardPath(location.url), range: location.range.lines)
         let board = board, tile = tile
         let go = { [weak self] () -> CodeReaim? in
-            var opened = (id: tile, reaim: CodeReaim?.none)
+            var opened = CodeOpened(id: tile, created: false, reaim: nil)
             if newTile {
                 let lines = location.range.lines
                 let range = JSONValue.object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
                 let size = Board.defaultSize(.code)
                 opened.id = board.create(type: .code, props: .object(["path": .string(aim.path), "range": range]), frame: board.place(width: size.w, height: size.h, near: tile)).id
             } else {
-                let found = board.openForNavigation(aim, from: tile)
-                opened = (found.id, found.reaim)
+                opened = board.openForNavigation(aim, from: tile)
             }
-            if opened.id != tile { self?.canvas?.reveal(opened.id, keeping: tile) }
+            if opened.existing, opened.id == tile {
+                self?.host?.reveal(line: location.range.lines.start)
+            } else if opened.existing {
+                self?.canvas?.goToShown(opened.id)
+            } else if opened.id != tile {
+                self?.canvas?.reveal(opened.id, keeping: tile)
+            }
             return opened.reaim
         }
         guard let canvas else {

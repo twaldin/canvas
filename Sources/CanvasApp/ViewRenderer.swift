@@ -140,7 +140,7 @@ extension CanvasView {
     }
 
     /// Canvas-space outline: a tile's frame, a drawn object's painted bounds, a group's region.
-    private func outline(of id: ObjectID) -> Frame? {
+    func outline(of id: ObjectID) -> Frame? {
         guard let object = board.objects[id] else { return nil }
         let origin = CanvasDocumentView.origin
         let doc: NSRect?

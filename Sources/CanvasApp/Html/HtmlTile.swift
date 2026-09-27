@@ -31,9 +31,9 @@ final class HtmlTile: NSView, TileContent {
     private var queuedHover: NSPoint?
     /// Bounds the native work a page can have outstanding; cancelled when the web view goes away.
     private let work = HtmlWorkQueue()
-    /// A code tile the user opened from this page (`<canvas-link>`, `<canvas-code>`); the canvas
-    /// pans it into view.
-    var onOpenedCode: ((ObjectID) -> Void)?
+    /// A code tile the user opened from this page (`<canvas-link>`, `<canvas-code>`), or one
+    /// that already showed the lines (`existing`); the canvas shows it.
+    var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
 
     /// `live: false` builds no web view (a page measured offscreen, `measure`).
     init(object: CanvasObject, board: Board, live: Bool = true) {
@@ -162,7 +162,7 @@ final class HtmlTile: NSView, TileContent {
             pageSettled()
         }
         let result = try await work.perform { [object, board] in try await HtmlChannel.handle(message, tile: object.id, board: board) }
-        if case .openCode = message, let opened = result["tile"]?.string { onOpenedCode?(opened) }
+        if case .openCode = message, let opened = result["tile"]?.string { onOpenedCode?(opened, result["existing"] == .bool(true)) }
         return result
     }
 

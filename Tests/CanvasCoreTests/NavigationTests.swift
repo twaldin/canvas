@@ -82,6 +82,44 @@ struct NavigationTargetTests {
         #expect(away.created, "the only core.py tile in reach is out of view")
     }
 
+    @Test func aStopAlreadyShowingTheLinesIsGoneToWhereverItIs() throws {
+        // Presenter P1: a walkthrough's overview links to its own stops, far out of view.
+        let agent = board.create(type: .terminal, props: .object([:]), frame: Frame(x: 0, y: 0, w: 600, h: 400))
+        var props: [String: JSONValue] = ["path": .string("src/broker.ts"), "range": .object(["start": .number(3399), "end": .number(3428)]),
+                                          "caption": .string("5 · Promotion")]
+        let stop = board.create(type: .code, props: .object(props), frame: Frame(x: 9000, y: 0, w: 900, h: 600), caller: agent.id)
+        let overview = board.create(type: .html, props: .object(["html": .string("<p>")]), frame: Frame(x: 0, y: 500, w: 1200, h: 600))
+        let count = board.objects.count
+
+        let exact = board.openForNavigation(CodeAim(path: "src/broker.ts", range: LineRange(start: 3399, end: 3428)), from: overview.id)
+        #expect(exact == CodeOpened(id: stop.id, created: false, reaim: nil, existing: true))
+        let inside = board.openForNavigation(CodeAim(path: "src/broker.ts", range: LineRange(start: 3426, end: 3426)), from: overview.id)
+        #expect(inside.id == stop.id && inside.existing, "a captioned stop whose range holds the line shows it")
+        #expect(board.objects.count == count, "no duplicate tile")
+        #expect(try range(stop.id) == 3399)
+
+        let past = board.openForNavigation(CodeAim(path: "src/broker.ts", range: LineRange(start: 3420, end: 3440)), from: overview.id)
+        #expect(past.created, "lines running past the stop's range open beside the source")
+
+        props["caption"] = nil
+        let plain = board.create(type: .code, props: .object(props.merging(["range": .object(["start": .number(10), "end": .number(90)])]) { $1 }),
+                                 frame: Frame(x: 9000, y: 900, w: 900, h: 600))
+        let uncaptioned = board.openForNavigation(CodeAim(path: "src/broker.ts", range: LineRange(start: 50, end: 50)), from: overview.id)
+        #expect(uncaptioned.id != plain.id, "an uncaptioned tile holding the line elsewhere is not a stop")
+    }
+
+    @Test func anExactMatchInViewWinsAndFollowTilesNeverCount() throws {
+        let far = code("a.py", 7, at: Frame(x: 20_000, y: 0, w: 640, h: 446))
+        #expect(board.tileShowing(CodeAim(path: "a.py", range: LineRange(start: 7, end: 7)), near: nil) == far.id)
+        let near = code("a.py", 7, at: Frame(x: 100, y: 100, w: 640, h: 446))
+        #expect(board.tileShowing(CodeAim(path: "a.py", range: LineRange(start: 7, end: 7)), near: nil) == near.id)
+
+        let terminal = board.create(type: .terminal, props: .object([:]), frame: Frame(x: 900, y: 0, w: 600, h: 400))
+        board.create(type: .code, props: .object(["path": .string("b.py"), "range": .object(["start": .number(3), "end": .number(3)]),
+                                                  "followOf": .string(terminal.id)]), frame: Frame(x: 0, y: 0, w: 640, h: 446))
+        #expect(board.tileShowing(CodeAim(path: "b.py", range: LineRange(start: 3, end: 3)), near: nil) == nil)
+    }
+
     @Test func aChangesTileReusesItsPreviewUntilTheUserKeepsIt() throws {
         let changes = board.create(type: .changes, props: .object(["base": .string("HEAD")]), frame: Frame(x: 0, y: 0, w: 820, h: 620))
         let first = board.openForNavigation(CodeAim(path: "a.py", range: LineRange(start: 3, end: 3)), from: changes.id, preview: true, extra: ["diffBase": .string("HEAD")])
@@ -156,6 +194,16 @@ struct NavigationHistoryTests {
         #expect(!history.canGoBack)
         history.record(.init(from: view(0), to: view(0), reaim: reaim))
         #expect(history.canGoBack, "a re-aim in place is a step")
+    }
+
+    @Test func aStepIsABackEntryThatSelectsTheStopItCameFrom() {
+        var history = NavigationHistory()
+        history.record(.init(from: view(0), to: view(0), reaim: nil, selectedBefore: "obj_1", selectedAfter: "obj_2"))
+        history.record(.init(from: view(0), to: view(900), reaim: nil, selectedBefore: "obj_2", selectedAfter: "obj_3"))
+        let back = history.goBack()
+        #expect(back?.viewport == view(0) && back?.selection == "obj_2")
+        #expect(history.goBack()?.selection == "obj_1", "a stop already in view is still a step")
+        #expect(history.goForward()?.selection == "obj_2")
     }
 
     @Test func theOldestStepsGoPastTheLimit() {
@@ -311,5 +359,71 @@ struct RevealKeepingTests {
         let moved = Layout.reveal(code, keeping: changes, from: jump, clear: clear, padding: 20)
         let shown = CGRect(origin: moved.origin, size: clear.size)
         #expect(shown.contains(changes) && shown.contains(code))
+    }
+}
+
+struct PresentTests {
+    let clear = CGRect(x: 0, y: 60, width: 1280, height: 700)
+    let jump = Layout.Jump(zoom: 1, origin: CGPoint(x: 0, y: 0))
+
+    func shown(_ jump: Layout.Jump) -> CGRect {
+        CGRect(x: jump.origin.x + clear.minX / jump.zoom, y: jump.origin.y + clear.minY / jump.zoom, width: clear.width / jump.zoom, height: clear.height / jump.zoom)
+    }
+
+    /// Presenter P2: the next stop is centered like a slide, not pulled flush to the edge.
+    @Test func aStopOutOfViewIsCenteredAndOneInViewStays() {
+        let inView = CGRect(x: 100, y: 200, width: 600, height: 400)
+        #expect(Layout.present(inView, from: jump, clear: clear, padding: 20, zoom: 0.1...1) == jump)
+
+        let next = CGRect(x: 1100, y: 200, width: 800, height: 500)
+        let moved = Layout.present(next, from: jump, clear: clear, padding: 20, zoom: 0.1...1)
+        #expect(moved.zoom == 1)
+        #expect(abs(shown(moved).midX - next.midX) < 0.5 && abs(shown(moved).midY - next.midY) < 0.5)
+    }
+
+    @Test func aStopLargerThanTheViewIsFittedNeverZoomedIn() {
+        let big = CGRect(x: 3000, y: 0, width: 2400, height: 900)
+        let moved = Layout.present(big, from: jump, clear: clear, padding: 20, zoom: 0.1...1)
+        #expect(moved.zoom < 1 && shown(moved).contains(big))
+
+        let out = Layout.Jump(zoom: 0.25, origin: .zero)
+        let small = CGRect(x: 9000, y: 0, width: 300, height: 200)
+        #expect(Layout.present(small, from: out, clear: clear, padding: 20, zoom: 0.1...1).zoom == 0.25, "the zoom the presenter chose stays")
+    }
+}
+
+@MainActor
+struct StepOrderTests {
+    let board = Board(id: "brd_test", root: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+    func tile(_ x: Double, _ y: Double = 0) -> ObjectID {
+        board.create(type: .note, props: .object(["markdown": .string("stop")]), frame: Frame(x: x, y: y, w: 300, h: 200)).id
+    }
+
+    func arrow(_ from: ObjectID, _ to: ObjectID, _ relation: String = "next_step") {
+        board.create(type: .arrow, props: .object(["from": .object(["object": .string(from)]), "to": .object(["object": .string(to)]), "relation": .string(relation)]))
+    }
+
+    /// Presenter P3: the authored order wins over the layout (stop 2 sits left of stop 1).
+    @Test func stepsFollowNextStepArrowsAndSayWhereTheSequenceEnds() {
+        let one = tile(1000), two = tile(0, 800), three = tile(2000), loose = tile(3000)
+        arrow(one, two)
+        arrow(two, three)
+        arrow(three, loose, "calls")
+        #expect(StepOrder.step(from: one, forward: true, in: board.objects) == .to(two))
+        #expect(StepOrder.step(from: two, forward: true, in: board.objects) == .to(three))
+        #expect(StepOrder.step(from: three, forward: false, in: board.objects) == .to(two))
+        #expect(StepOrder.step(from: three, forward: true, in: board.objects) == .end)
+        #expect(StepOrder.step(from: one, forward: false, in: board.objects) == .end)
+        #expect(StepOrder.step(from: loose, forward: true, in: board.objects) == .none, "other relations are geometry's")
+    }
+
+    @Test func aBranchGoesToTheStopFirstInReadingOrder() throws {
+        let start = tile(0), lower = tile(400, 600), upper = tile(800, 0)
+        arrow(start, lower)
+        arrow(start, upper)
+        #expect(StepOrder.step(from: start, forward: true, in: board.objects) == .to(upper))
+        try board.delete(upper)
+        #expect(StepOrder.step(from: start, forward: true, in: board.objects) == .to(lower), "a deleted stop drops out")
     }
 }

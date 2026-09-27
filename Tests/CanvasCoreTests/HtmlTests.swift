@@ -342,7 +342,7 @@ struct HtmlChannelTests {
         #expect(code.createdBy == .user)
 
         let second = try await HtmlChannel.handle(.openCode(path: "./src/Store.swift", lines: LineRange(start: 15, end: 15), symbol: nil), tile: html.id, board: board)
-        #expect(second == .object(["tile": .string(id), "created": .bool(false)]))
+        #expect(second == .object(["tile": .string(id), "created": .bool(false), "existing": .bool(false)]))
         #expect(try board.object(id).props["range"] == .object(["start": .number(15), "end": .number(15)]))
         #expect(try board.object(id).props["symbol"] == nil)
 

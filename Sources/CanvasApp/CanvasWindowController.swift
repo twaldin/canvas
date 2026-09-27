@@ -67,6 +67,20 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             let bottom = tray.map { $0.isHidden ? 0 : $0.frame.maxY } ?? 0
             return NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
         }
+        // Edge pills with no clear stretch of the view's edge go to the toolbar row beside the
+        // toolbar (`PillLayout`), which only the chrome uses.
+        canvas.chromeBands = { [weak container, weak drawing] in
+            guard let container, let toolbar = drawing?.toolbar, !toolbar.isHidden else { return [] }
+            let bar = toolbar.frame, margin: CGFloat = 16
+            return [NSRect(x: margin, y: bar.minY, width: bar.minX - 2 * margin, height: bar.height),
+                    NSRect(x: bar.maxX + margin, y: bar.minY, width: container.bounds.maxX - bar.maxX - 2 * margin, height: bar.height)]
+                .filter { $0.width > 0 }.map { container.convert($0, to: nil) }
+        }
+        canvas.onChromeHiddenChange = { [weak self] in
+            guard let self else { return }
+            self.drawing?.toolbar?.isHidden = self.canvas.chromeHidden
+            self.tray.isHidden = self.canvas.chromeHidden
+        }
         // Above the toolbar and tray, so the navigator is never covered.
         for view in [nothingHere, undoHUD, basics, navigator] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -105,6 +119,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
         navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? NavigatorPanel.SymbolAnswer(rows: []) }
         nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
+        basics.onHideChrome = { [weak self] in self?.toggleCanvasChrome(nil) }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
@@ -344,6 +359,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             navigator.open(rows: canvas.navigatorRows(), files: files.index)
             files.refresh { [weak self] index in self?.navigator.update(files: index) }
         }
+    }
+
+    /// View › Hide Canvas Chrome (also in Canvas Basics): toggles presenting (`CanvasView.chromeHidden`);
+    /// Esc on the canvas shows the chrome again.
+    @objc func toggleCanvasChrome(_ sender: Any?) {
+        canvas.chromeHidden.toggle()
+        if canvas.chromeHidden { basics.close() }
     }
 
     /// Help › Canvas Basics opens (or closes) the legend over this board.
@@ -671,6 +693,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return !selection.isEmpty
         case #selector(toggleBasics(_:)):
             item.state = basics.isOpen ? .on : .off
+            return true
+        case #selector(toggleCanvasChrome(_:)):
+            item.state = canvas.chromeHidden ? .on : .off
             return true
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty

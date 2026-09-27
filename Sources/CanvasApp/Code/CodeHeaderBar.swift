@@ -357,6 +357,33 @@ final class CodeHeaderBar: NSView {
         layoutSubtreeIfNeeded()
     }
 
+    // MARK: Presenting
+
+    /// Hidden canvas chrome (View › Hide Canvas Chrome): the first row's controls (diff base,
+    /// change arrows, status, Pin, the Outline button) sit under a plain band of the header's
+    /// color that takes their clicks; the caption and history strips stay. The row keeps its
+    /// height, so rows and the arrows bound to them don't move.
+    var presenting = false {
+        didSet {
+            guard presenting != oldValue else { return }
+            if presenting {
+                curtain.frame = NSRect(x: 0, y: 0, width: bounds.width, height: CodeMetrics.headerHeight - 1)
+                curtain.autoresizingMask = [.width]
+                addSubview(curtain, positioned: .above, relativeTo: nil)
+            } else {
+                curtain.removeFromSuperview()
+            }
+        }
+    }
+
+    private let curtain = HeaderCurtain()
+
+    override func didAddSubview(_ subview: NSView) {
+        super.didAddSubview(subview)
+        // Anything added while presenting (the Outline button) goes under the curtain.
+        if presenting, subview !== curtain { addSubview(curtain, positioned: .above, relativeTo: nil) }
+    }
+
     @objc private func baseChanged(_ sender: NSPopUpButton) {
         onBase?(sender.indexOfSelectedItem == 0 ? "merge-base" : sender.indexOfSelectedItem == 1 ? "head" : sender.titleOfSelectedItem ?? "merge-base")
     }
@@ -370,4 +397,18 @@ final class CodeHeaderBar: NSView {
         guard history.indices.contains(sender.tag) else { return }
         onLocation?(history[sender.tag])
     }
+}
+
+/// The band over a code header's first row while presenting: the header's color, taking the
+/// clicks meant for the controls under it.
+@MainActor
+private final class HeaderCurtain: NSView {
+    nonisolated override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        bounds.intersection(dirtyRect).fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {}
 }

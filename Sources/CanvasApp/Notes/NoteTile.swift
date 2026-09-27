@@ -119,6 +119,9 @@ final class NoteTile: NSView, TileContent {
     }
 
     var markdown: String { object.props["markdown"]?.string ?? "" }
+    /// A code link the user clicked opened this code tile, or found one already showing the
+    /// lines (`existing`); the canvas shows it.
+    var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
     /// Where the note's relative paths resolve (`Board.linkRoot`).
     private var linkRoot: URL { board.linkRoot(of: object) }
 
@@ -365,14 +368,14 @@ final class NoteTile: NSView, TileContent {
         return found
     }
 
-    /// Links open beside the note: repo paths as code tiles, web URLs as browser tiles.
+    /// Links open beside the note: repo paths as code (`Board.openForNavigation`: the tile
+    /// already showing those lines anywhere, else a plain tile in view re-aimed, else a new one
+    /// beside the note), web URLs as browser tiles.
     private func open(_ link: NoteLink) {
         switch link {
         case .code(let path, let lines):
-            var props: [String: JSONValue] = ["path": .string(board.boardPath(path, linkRoot: linkRoot))]
-            if let lines { props["range"] = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))]) }
-            let size = Board.defaultSize(.code)
-            board.create(type: .code, props: .object(props), frame: board.place(width: size.w, height: size.h, near: object.id))
+            let opened = board.openForNavigation(CodeAim(path: board.boardPath(path, linkRoot: linkRoot), range: lines), from: object.id)
+            onOpenedCode?(opened.id, opened.existing)
         case .web(let url) where url.scheme == "http" || url.scheme == "https":
             let size = Board.defaultSize(.browser)
             board.create(type: .browser, props: .object(["url": .string(url.absoluteString)]), frame: board.place(width: size.w, height: size.h, near: object.id))

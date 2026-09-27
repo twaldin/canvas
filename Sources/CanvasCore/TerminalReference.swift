@@ -316,8 +316,9 @@ extension Board {
     /// board-relative when it lives under the root. Like an editor's preview tab, the terminal
     /// has one preview tile that each ⌘-click re-aims, so clicking down a list of hits doesn't
     /// pile up tiles:
-    /// - a code tile already showing `path` at `lines` is selected (follow tiles excluded: they
-    ///   belong to their agent);
+    /// - a code tile already showing `path` at `lines` (`tileShowing`: exactly, or a captioned
+    ///   tile whose range holds them; follow tiles excluded, they belong to their agent) is the
+    ///   answer anywhere on the board (`existing`: the canvas goes to it);
     /// - else the tile the terminal's last ⌘-click opened is re-aimed, while nobody has changed
     ///   it since (moved, resized, re-based, re-aimed: its `rev`) and the user hasn't kept it
     ///   (`keepCode`: scrolled, clicked or selected in it, opened it in an editor);
@@ -325,26 +326,24 @@ extension Board {
     ///   `followMinimumSize` to land wholly in view) and becomes the terminal's preview.
     /// `newTile` (⌥⌘-click) always opens a new tile, which the user keeps.
     @discardableResult
-    public func openCode(path: String, lines: LineRange, beside tile: ObjectID, newTile: Bool = false) -> (id: ObjectID, created: Bool) {
+    public func openCode(path: String, lines: LineRange, beside tile: ObjectID, newTile: Bool = false) -> CodeOpened {
         let stored = relativePath(path)
         let range: JSONValue = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))])
         if !newTile {
-            if let existing = objects.values
-                .filter({ $0.type == .code && $0.props["followOf"] == nil && $0.props["path"]?.string == stored && $0.props["range"] == range })
-                .max(by: { $0.z < $1.z }) {
-                return (existing.id, false)
+            if let existing = tileShowing(CodeAim(path: stored, range: lines), near: objects[tile]?.frame) {
+                return CodeOpened(id: existing, created: false, reaim: nil, existing: true)
             }
             if let preview = codePreviews[tile], let object = objects[preview.tile], object.rev == preview.rev,
                let aimed = try? update(object.id, props: .object(["path": .string(stored), "range": range, "symbol": .null])) {
                 codePreviews[tile] = (aimed.id, aimed.rev)
-                return (aimed.id, false)
+                return CodeOpened(id: aimed.id, created: false, reaim: nil)
             }
         }
         let size = Board.defaultSize(.code)
         let created = create(type: .code, props: .object(["path": .string(stored), "range": range]),
                              frame: place(width: size.w, height: size.h, near: tile, shrinkingTo: Self.followMinimumSize))
         if !newTile { codePreviews[tile] = (created.id, created.rev) }
-        return (created.id, true)
+        return CodeOpened(id: created.id, created: true, reaim: nil)
     }
 
     /// The user kept code tile `id` (scrolled, clicked or selected in it, opened it in an

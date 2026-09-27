@@ -17,6 +17,8 @@ The full rules behind SKILL.md's summary.
     It follows the tile's scroll, and a line scrolled out of view pins the end to the top of the code or the bottom of the tile.
     On other tiles `lines` binds the whole tile.
   - `relation` is the machine-readable edge (`calls`, `depends_on`, `hypothesis_about`, …); `label` is what the user reads.
+    `relation: "next_step"` makes an order the user can step through: ⌥⌘→ on the selected tile follows its outgoing next_step arrow (⌥⌘← its incoming one) before geometry, centering each stop, and says "Last step" at the end.
+    Join a walkthrough's stops with next_step arrows and lay them out however reads best; the order no longer depends on the layout.
     Without a label the arrow shows its relation in a secondary color; `label: ""` shows no caption.
   - `route`: `straight` (default), `orthogonal`, or `avoid` (goes around tiles in the way).
     Arrows between the same two objects are drawn apart automatically, both directions.

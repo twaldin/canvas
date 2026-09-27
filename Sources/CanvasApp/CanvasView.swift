@@ -116,9 +116,10 @@ final class CanvasView: NSScrollView {
     private(set) var tiles: [ObjectID: TileFrameView] = [:]
     private var groups: [ObjectID: GroupView] = [:]
     private var markers: [ObjectID: AttentionMarker] = [:]
-    /// Terminals whose agent is blocked (waiting on the user), with their lifecycle message: an
-    /// edge pill points at each while it is offscreen, like a marker's.
-    private var blocked: [ObjectID: String] = [:]
+    /// Terminals whose agent is blocked (waiting on the user), each with a ring and a bubble of
+    /// its lifecycle message while on screen and an edge pill while offscreen, like a marker's
+    /// but in the blocked style (`AttentionStyle`).
+    private var blocked: [ObjectID: AttentionMarker] = [:]
     private(set) var selection: Set<ObjectID> = []
     /// The group being worked in: zoomed to, everything else dimmed.
     private(set) var enteredGroup: ObjectID?
@@ -300,7 +301,10 @@ final class CanvasView: NSScrollView {
             groups.removeValue(forKey: id)?.removeFromSuperview()
             if enteredGroup == id { exitGroup() }
             hideMarker(id)
-            if blocked.removeValue(forKey: id) != nil { layoutPills() }
+            if let view = blocked.removeValue(forKey: id) {
+                view.removeFromSuperview()
+                layoutPills()
+            }
             seenLocally.remove(id)
             if selection.contains(id) { setSelection(selection.subtracting([id])) }
             scheduleGeometry()
@@ -1149,49 +1153,50 @@ final class CanvasView: NSScrollView {
         scheduleLiveness()
     }
 
-    /// Markers and edge pills live in window space: re-placed on every pan and pinch step
-    /// (`boundsChanged`), whenever objects move, and on every scene pass, around their objects'
-    /// rects as they are on screen now. `PillLayout` keeps them off each other, a bubble off
-    /// other tiles where it can, and all of them in the area the chrome leaves clear
-    /// (`clearArea`, what jumps aim at). An object in view shows its marker's bubble; one out of
-    /// view (marked, or a blocked agent's terminal) gets an edge pill instead.
+    /// Markers, blocked terminals' bubbles, and edge pills live in window space: re-placed on
+    /// every pan and pinch step (`boundsChanged`), whenever objects move, and on every scene
+    /// pass, around their objects' rects as they are on screen now. `PillLayout` keeps them off
+    /// each other and off blocked terminals, a bubble off other tiles where it can, and all of
+    /// them in the area the chrome leaves clear (`clearArea`, what jumps aim at). An object in
+    /// view shows its bubble; one out of view gets an edge pill instead (a blocked terminal's
+    /// says why it is blocked, even when it is also marked).
     private func layoutPills() {
         guard !markers.isEmpty || !blocked.isEmpty || !edges.subviews.isEmpty else { return }
         let visible = documentVisibleRect
         let zoom = magnification
         var shownMarkers: [PillLayout.Marker] = []
-        var shownRects: [ObjectID: NSRect] = [:]
         var pointers: [ObjectID: AttentionEdgeView.Pointer] = [:]
         func point(_ rect: NSRect) -> NSPoint { edges.convert(NSPoint(x: rect.midX, y: rect.midY), from: document) }
-        for marker in markers.values {
-            guard let rect = docFrame(marker.objectID) else {
-                marker.isHidden = true
+        let views = Array(markers.values) + Array(blocked.values)
+        var shownRects: [ObjectIdentifier: NSRect] = [:]
+        for view in views {
+            guard let rect = docFrame(view.objectID) else {
+                view.isHidden = true
                 continue
             }
-            marker.isHidden = !rect.intersects(visible)
-            if marker.isHidden {
-                pointers[marker.objectID] = .init(id: marker.objectID, message: marker.message, target: point(rect))
+            view.isHidden = !rect.intersects(visible)
+            if view.isHidden {
+                if view.style == .blocked || pointers[view.objectID] == nil {
+                    pointers[view.objectID] = .init(id: view.objectID, message: view.message, style: view.style, target: point(rect))
+                }
                 continue
             }
             let shown = attention.convert(rect, from: document)
-            let titleBar: CGFloat = if let tile = tiles[marker.objectID] { TileFrameView.titleHeight * tile.scale * zoom }
-                else if groups[marker.objectID] != nil { CGFloat(GroupSpec.titleHeight) * zoom } else { 0 }
+            let titleBar: CGFloat = if let tile = tiles[view.objectID] { TileFrameView.titleHeight * tile.scale * zoom }
+                else if groups[view.objectID] != nil { CGFloat(GroupSpec.titleHeight) * zoom } else { 0 }
             let ringWidth = shown.width + 2 * AttentionMarker.inset
-            shownRects[marker.objectID] = shown
-            shownMarkers.append(.init(id: marker.objectID, target: shown, ringInset: AttentionMarker.inset,
-                                      size: CGSize(width: PillLayout.bubbleWidth(natural: marker.naturalWidth, ringWidth: ringWidth), height: AttentionMarker.bubbleHeight),
-                                      titleBar: titleBar))
-        }
-        for (id, message) in blocked where pointers[id] == nil {
-            guard let rect = docFrame(id), !rect.intersects(visible) else { continue }
-            pointers[id] = .init(id: id, message: message.isEmpty ? "Needs you" : message, target: point(rect))
+            shownRects[ObjectIdentifier(view)] = shown
+            shownMarkers.append(.init(id: view.objectID, target: shown, ringInset: AttentionMarker.inset,
+                                      size: CGSize(width: PillLayout.bubbleWidth(natural: view.naturalWidth, ringWidth: ringWidth), height: AttentionMarker.bubbleHeight),
+                                      titleBar: titleBar, blocked: view.style == .blocked))
         }
         let onScreen = tiles.values.filter { $0.frame.intersects(visible) }.map { (id: $0.objectID, rect: attention.convert($0.frame, from: document)) }
         let clear = clearArea
-        let placement = PillLayout.place(markers: shownMarkers, edges: pointers.values.map { .init(id: $0.id, target: $0.target, size: AttentionEdgeView.size(for: $0.message)) },
+        let placement = PillLayout.place(markers: shownMarkers, edges: pointers.values.map { .init(id: $0.id, target: $0.target, size: AttentionEdgeView.size(for: $0.message, style: $0.style)) },
                                          tiles: onScreen, clear: clear)
-        for (id, bubble) in placement.bubbles {
-            if let marker = markers[id], let shown = shownRects[id] { marker.place(around: shown, bubble: bubble) }
+        for view in views {
+            let bubble = view.style == .blocked ? placement.blocked[view.objectID] : placement.bubbles[view.objectID]
+            if let bubble, let shown = shownRects[ObjectIdentifier(view)] { view.place(around: shown, bubble: bubble) }
         }
         edges.show(pointers.values.sorted { $0.id < $1.id }.map { pointer in
             var pointer = pointer
@@ -1237,11 +1242,27 @@ final class CanvasView: NSScrollView {
         if lifecycle?["state"]?.string == LifecycleState.working.rawValue, lifecycle?["seen"]?.bool != true {
             seenLocally.remove(terminal.id)
         }
-        // The scene pass re-lays out the pills.
+        // A blocked terminal's ring and bubble come and go with the state, the moment it changes.
         if lifecycle?["state"]?.string == LifecycleState.blocked.rawValue {
-            blocked[terminal.id] = lifecycle?["message"]?.string ?? ""
-        } else {
-            blocked.removeValue(forKey: terminal.id)
+            let message = lifecycle?["message"]?.string
+            if let view = blocked[terminal.id] {
+                guard view.message != message else { return scheduleLiveness() }
+                view.message = message
+            } else {
+                let id = terminal.id
+                let view = AttentionMarker(objectID: id, message: message, style: .blocked)
+                // Answering is what it needs: clicking the bubble puts the keyboard in the terminal.
+                view.onClick = { [weak self] in
+                    self?.select(id, extend: false)
+                    self?.takeKeyboard(id)
+                }
+                attention.addSubview(view)
+                blocked[id] = view
+            }
+            layoutPills()
+        } else if let view = blocked.removeValue(forKey: terminal.id) {
+            view.removeFromSuperview()
+            layoutPills()
         }
         scheduleLiveness()
     }

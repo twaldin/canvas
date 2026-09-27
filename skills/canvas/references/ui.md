@@ -40,9 +40,11 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
 ## Agents' tiles
 
-- **Follow tile**: each agent terminal's code tile that follows the file and line the agent last read or edited (on by default; it appears on the first file read).
-  The strip under its header lists recent places, newest first; a pencil marks an edit.
-  "N new ▸" catches up after the user scrolled; Pin keeps the current view as its own tile; right-click the terminal › Follow Files turns it off.
+- **Follow tile**: each agent terminal's code tile that follows the file and line the agent last read or edited (on by default; it appears on the first file read) and flashes the lines each edit changed.
+  Files in another worktree of the board's repository count too (shown by absolute path, with that worktree's changes); images, PDFs and other binaries, files under the temp dir, and files that no longer exist never re-aim it.
+  It may be narrower than 640 pt so it fits in the user's view. Closing the terminal closes its follow tile.
+  The strip under its header lists recent places, newest first; a pencil marks an edit (kept longer than reads).
+  While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed; "N new ▸" catches up. Pin keeps the current view as its own tile; right-click the terminal › Follow Files (or Object › Follow Files) turns it off.
 - **Where your objects land**: next to your terminal, clear of other tiles, inside the user's view when there's room within ~600 pt of it; they show "by <your terminal's name>" in their title bar.
   The view never moves for you: when the view is full, what you made may be off screen; raise a marker, or tell the user ⌘9 (Zoom to Fit).
 - **Undo**: ⌘Z undoes the last change, the user's or an agent's (an agent's batch is one step, and a notice names the agent; undoing a changes tile's Stage, Unstage, or Discard names it too); ⇧⌘Z redoes. While a terminal has the keyboard, ⌘Z goes to the terminal, never the canvas.
@@ -50,7 +52,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
 ## Reviewing work
 
-- **Review Changes** (⇧⌘R, or right-click the canvas) opens a changes tile: each changed file with its changes (hunks), green added, red removed. Its summary is a picker: Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed); a code tile's base picker uses the same words, the exact base (merge-base, sha) in its tooltip.
+- **Review Changes** (File › Review Changes ⇧⌘R, or right-click the canvas) opens a changes tile, or goes to the one already there for the same root and base; File › Review Branch reviews everything the branch changed. Each changed file shows its changes (hunks), green added, red removed. Its summary is a picker: Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed); a code tile's base picker uses the same words, the exact base (merge-base, sha) in its tooltip.
 - **Stage** marks a change ready for the next commit, **Unstage** takes the mark off; neither changes files. **Discard** throws an uncommitted change away from the files: it asks first (the button turns into "Discard?" for a few seconds, or `r` twice), then a notice names what went with "⌘Z undoes". Committed hunks have no Discard.
 - **committed**: already in the branch's history (a branch review); **Viewed** folds a file until it changes. The tile's keys work once Return (or a click) gives it the keyboard; while it is only selected they say so.
 
@@ -70,13 +72,15 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
   Below about 30% (terminals 15%) tiles show as cards; zooming in brings them back live.
 - **Bigger text**: zoom stops at 100%, so the user makes a tile bigger instead: ⌃⌘= / ⌃⌘- step the selected tile (else the one with the keyboard) through 50–200% and ⌃⌘0 puts it back (Object › Scale, also Bigger/Smaller/Actual Size in its right-click menu); ⌥-drag a corner scales freely.
   A tile scaled up grows up or left, or moves to the nearest free spot, rather than cover its neighbours; the view follows a tile the user scaled.
-- ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; ⌘P again selects the query, Esc closes; an agent's terminal is framed with its follow tile when both fit); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
+- ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; `core.py:120` opens at a line; ⌘P again selects the query, Esc closes; an agent's terminal is framed with its follow tile when both fit); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
+- Right-click empty canvas for New Terminal Here, New Note Here and New Browser Here; File › New … puts them in the view.
+- ⌘-click a `path:line` in terminal output opens it in that terminal's preview tile; ⌥⌘-click opens a separate tile the user keeps.
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
   In a terminal or a web page Esc belongs to the program or page: ⌘Esc (View › Leave Tile) leaves any tile.
-- Code tiles' hover, Go to Definition, Find References and Outline use the language's server (sourcekit-lsp, pyright-langserver, typescript-language-server, gopls, rust-analyzer), found through the login shell: `CANVAS_LSP_<LANGUAGE>` (e.g. `CANVAS_LSP_RUST`) if set, else PATH, else nvim's mason bin, `~/go/bin`, `rustup which rust-analyzer`; without one they answer by text search, labelled so.
+- Code › Go to Definition ⌃⌘J (Open Definition in New Tile ⌃⌥⌘J), Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter), and code tiles' hover use the language's server (sourcekit-lsp, pyright-langserver, typescript-language-server, gopls, rust-analyzer), found through the login shell: `CANVAS_LSP_<LANGUAGE>` (e.g. `CANVAS_LSP_RUST`) if set, else PATH, else nvim's mason bin, `~/go/bin`, `rustup which rust-analyzer`; without one they answer by text search, labelled so, and the panel says where Canvas looked.
 - A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.
 - A note's menu has Copy as Markdown and Save as Markdown…: its markdown as written (links, fences), for a doc or a chat.
-- Save as PNG…, Save as HTML…, Save as Markdown… and Export Selection (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.
+- Save as PNG…, Save as HTML…, Save as Markdown… and File › Export Selection as PNG… (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.
   Export Selection keeps the titles and borders of groups whose tiles are all selected; a marquee around groups selects them and the arrows between what it selects.
   Its picture is at most 8000 px on its longest side, named after the one tile or group selected, and drawn without canvas chrome (no author marks, × buttons, dot grid or selection), as View › Hide Canvas Chrome shows it; Copy as Image too.
 - A browser tile's menu has Snapshot to Image: the page as it shows now becomes an image tile beside it ("<page title> · <time>", its address as the caption), kept with the board.

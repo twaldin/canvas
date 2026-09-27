@@ -11,7 +11,7 @@ The full rules behind SKILL.md's summary.
     A rect/ellipse `text` is an 18 pt label centered in the frame, wrapping at `w − 16`.
     Arrow labels are 15 pt, wrapping at 240 pt, centered on the shaft.
 - `arrow`: `{"from": {"object": "obj_…"}, "to": {"object": "obj_…", "lines": {"start": 41, "end": 48}}, "relation": "calls", "label": "…", "route": "avoid"}`.
-  - Endpoints bind to objects (optionally a line range or a DOM `selector`) or to a `{"point": [x, y]}`.
+  - Endpoints bind to objects (optionally a line range or a DOM `selector`) or to a `{"point": [x, y]}`. Arrows the user draws bind to the tile or shape their end was released on or near, like `{object}` ends from the API.
   - An end bound to `lines` of a code tile attaches to the tile's left or right edge at the row of `lines.start`
     (the right edge unless the other end lies wholly to the left), so call-site → callee arrows point at the lines.
     It follows the tile's scroll, and a line scrolled out of view pins the end to the top of the code or the bottom of the tile.

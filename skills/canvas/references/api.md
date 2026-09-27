@@ -8,15 +8,30 @@ This page covers the conventions the catalog doesn't spell out.
 | | Python SDK | CLI |
 | --- | --- | --- |
 | Call | `canvas.agent.read(target="obj_…", lines=50)` | `canvas agent.read --target obj_… --lines 50` |
-| camelCase params | snake_case keywords: `timeout_ms`, `session_id` | as in the schema: `--timeoutMs` |
+| camelCase params | snake_case keywords: `timeout_ms`, `session_id`; reserved words take a trailing underscore: `as_="graph"` | as in the schema: `--timeoutMs` |
 | Nested params | dicts: `props={"range": {"start": 1, "end": 9}}` | `--props.range.start 1`, `--json '{"props":{…}}'`, or `--json @params.json` (`@-`: stdin) |
 | Result | the `result` object as a dict | pretty JSON on stdout; `object.create`/`update` print prop values over 1 KB elided (`--full` prints them) |
-| Error | raises `CanvasError` (`.code`) | `code: message` on stderr, exit 1 |
+| Error | raises `CanvasError` (`.code`); without a socket it raises `unavailable` saying so, never guessing one | `code: message` on stderr, exit 1 |
 | Props per type | `help(canvas.object.create)`; the schema's `CodeProps`, `NoteProps`, … | `canvas methods CodeProps` |
+
+TypeScript/Bun: `new CanvasClient({ socketPath?, tile?, board? })` from `clients/ts/src/index.ts`, methods under `client.api.<ns>.<method>({…})`.
+`caller` and `board` default to the client's tile and board (explicit, else `CANVAS_TILE_ID`/`CANVAS_BOARD_ID`).
+
+Results are objects, never bare values:
+
+| Call | Returns |
+| --- | --- |
+| `object.create`, `object.update`, `object.get` | `{object}` (the new id is `result["object"]["id"]`); `object.get --as graph` adds `graph`; create/update add `warnings` for unknown prop keys |
+| `object.batch` | `{results, revision}`: each op's result in order (`results[0]["object"]["id"]`) |
+| `layout.place`/`stack`/`translate` | `{frames: {id: frame}}`; `layout.grid` adds `columns` and `rows` |
+| `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, overflow, scrolls, truncated}` |
+| `view.render`, `view.snapshot` | `{path, width, height, scale, objects}` plus `canvasRect` (render) or `viewport` (snapshot) |
+| `agent.prompt` | `{agent, waitable, submittedAt}`; `agent.wait` → `{agent}`; `agent.read` → `{agent, text, lines}` (`truncated` with `since`) |
 
 Error codes: `not_found` (no such object/agent/board; a code tile's file or `pinnedCommit` that isn't there), `conflict` (stale `rev`: re-read, re-apply, retry),
 `invalid_params`, `unavailable` (e.g. a terminal without a running session, or the app isn't running), `unsupported`, `timeout` (`agent.wait`).
 A param the method doesn't take, or a required one missing, is `invalid_params` naming every param it takes (`unknown param delta; missing dx, dy; layout.translate takes ids (required), dx (required), dy (required), caller`); the same for each `object.batch` op.
+If the app restarts, the next call reconnects on its own (waiting up to 15 s). `unavailable` with "may or may not have applied" means your request was sent but its reply was lost: re-read (`board.get`) before retrying.
 
 ## Reading the board
 
@@ -24,13 +39,15 @@ A param the method doesn't take, or a required one missing, is `invalid_params` 
 - Poll cheaply: keep `revision` from one `board.get` and pass it as `since` next time; `changed` lists ids created or changed after it.
 - `object.get --as graph` gives `encloses`, `enclosedBy`, `overlaps`, `arrowsOut`, `arrowsIn`. To look at an object use `view.render` (`canvas render <id> --out file.png`).
 - `object.get` on a note adds `fences`: per anchored fence its `info`, `markdownLines`, `path`, `symbol`, `propose`, and `state` (`live`, `relocated`, `stale`, `applied`, `missing`) with the resolved `range`, the `written` range when relocated, and the stale `reason`, resolved against disk now; on a code tile showing a range, `rangeStatus` (the same fields). Check these instead of rendering to see whether excerpts are still true.
+  Symbol anchors survive edits (`symbol=Class.method` finds methods deep in long classes and defs with multi-line signatures); line anchors are re-found by content and go stale when lost.
 - `object.get` on a browser tile adds `page`: what the page reported since it loaded (`errors`, `warnings`, the latest 100 `entries`: console messages, uncaught errors and rejections, failed requests, each with `level`, `text`, `source` `url:line:column`, `time`), `vitals` (null when not measured, never zeros; `unsupported` names what WebKit can't measure), and a `cursor`.
   Pass `--since <cursor>` next time for only what came after (after a reload: all of the new page, `reloaded: true`). `loaded: false`: the tile has no page now; `canvas render <id>` loads it.
   `visibility`: `visible` (on screen), `hidden` (nobody sees it: no rAF, throttled timers), `driven` (kept running for an agent, rAF irregular and slower) or `released`. A page Canvas released keeps its last log in `previous` (with `releasedAt`), and `cursor` carries on across the release.
   A Hyper-click on a page's `<canvas>`, `<video>` or `<img>` mentions the element with `pixel (x, y) of W×H`: the click in its own pixels (drawing buffer, video frame, natural image size).
 - `tray.list` shows what the user has staged but not yet sent. Don't drain the tray yourself; your harness attaches it to the user's next prompt.
   The tray's mentions are for the terminal it shows (`view.get` `promptTarget`): `tray.drain` from any other terminal returns none (`held` says how many wait) and leaves them staged.
-  A drawn shape's mention quotes its whole text, says `over <type> <id>` (or `partly over`, for a shape mostly on a tile) with the region in that tile's units, and for a shape on a browser or HTML tile lists the page elements under it (`<selector> "<text>"`, as the page is laid out when the prompt is sent). A Hyper-click on a drawing mentions the whole selection or drawing group it belongs to.
+  A drawn shape's mention quotes its whole text, says `over <type> <id>` (or `partly over`, for a shape mostly on a tile) with the region in that tile's units (a browser page starts 32 pt below the title bar), and for a shape on a browser or HTML tile lists the page elements under it (`<selector> "<text>"`, as the page is laid out when the prompt is sent). A Hyper-click on a drawing mentions the whole selection or drawing group it belongs to.
+  A code mention names a `(symbol …)` only when its whole range sits inside one declaration. An `(edited)` mention changed after it was staged; a move, a scale, or another file staged in the same tile doesn't count.
   A Hyper-click in a note's body mentions the block under it (`kind: note`: the paragraph, list item with its sub-items, quote, table row, fence, or a heading with its section; `headings` is its section path). The prompt gets that path and the block's text from the note as it reads when sent, with `changed since it was mentioned` or `no longer in the note` when an edit changed or removed it. Its title bar mentions the whole note (up to 80 lines).
 - `view.get` says what the user sees, including `appearance` (`dark` or `light`): tiles and renders draw in it, so style charts and pages to match
   (dark: a transparent or dark background with light text, e.g. matplotlib `plt.style.use("dark_background")` and `savefig(…, transparent=True)`).
@@ -58,9 +75,14 @@ A param the method doesn't take, or a required one missing, is `invalid_params` 
   `object.get` adds `changes`: `files` (`path`, board-relative or absolute outside the board root; `status` added/modified/deleted/renamed; `added`/`removed`; `viewed`; `hunks` with a stable `id`, `header`, `old`/`new` `{start, count}`, `status` unstaged/partial/staged/committed, and `lines`: the unified text, at most 200 with `truncated`) as git has them now, so hunks the user discarded are gone and staged ones say so (`partial`: staged, then changed again);
   `props.reviewed` lists what they staged, unstaged, or discarded (`action` stage/unstage/revert, `path`, `scope` file/hunk/lines, `hunk` id, `header`, `patch`: the patch applied, reversed for a discard). The tile writes `reviewed` and `viewed`; changing them yourself does nothing to git.
   A mention of a diff line says what it is: `… diff vs HEAD 1a2b3c4, new side (working tree) · added line · unstaged hunk`.
+- Code tiles (`type: code`, `CodeProps`): `path` (board-relative, or outside the board root: another repo or worktree, whose own git the tile reads, `pinnedCommit` included), `range`, `symbol`, `caption`, `diffBase`, `pinnedCommit`.
+  The gutter shows changes against `diffBase` like gitsigns (green bar added, blue bar modified, red wedge where lines were deleted; the user clicks a sign to see the old lines). A repo with no commits or no default branch, or a diff too large to compute, shows plain source with a header warning; a deleted file shows its base version.
+  With a `range`, `size: "fit"` sizes the range even when `symbol` is set; `symbol` alone fits the declaration but the tile still shows the file from the top, so pass the range.
+  `pinnedCommit` shows the file as of that commit, read-only: no gutter signs, working-tree edits don't change it, the header says "pinned at <sha>", and mentions quote the lines at that commit. For a PR head you haven't checked out: `git fetch origin pull/<n>/head`, then pin to `git rev-parse FETCH_HEAD`.
 - Image tiles (`type: image`, `ImageProps`): `{"path": "out/fig.png", "caption": "…"}` (board-relative or absolute; png, jpg, gif, webp, heic, tiff, bmp, svg, a pdf's first page).
   This is where a chart goes: save the figure to a file and create the tile, no base64 in HTML. Without a frame (or `frame` of just x, y, w) it fits its picture: one point per pixel, at most `w` (default 960) wide.
   It reloads when the file changes on disk, so re-save the chart to the same path to update it (no `object.update` needed). A Hyper-click on it mentions `image <path> · pixel (x, y) of W×H`.
+  Its title defaults to its file name: set `title` only when the name doesn't say what it shows. Keep images that must last outside `$TMPDIR`.
 - Images elsewhere: a note shows `![alt](out/fig.png)` (relative to its root, below, or an absolute path inside it or the temp directory), scaled to its width;
   an HTML tile loads `<img src="out/fig.png">` the same way (relative to its root, or `/tmp/…`); `file://` URLs and paths anywhere else never load in a page.
 - Link roots: a note's paths (`path:line` and markdown links, excerpt fences, images) and an HTML tile's (`<canvas-link>`, `<canvas-code>`, `<img>`) resolve against its `root` prop (absolute or board-relative: the board's checkout or another worktree of its repository; anything else is `invalid_params`), else the board root.
@@ -124,6 +146,12 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
 - Colors (`color` on shapes, arrows, groups): `black`, `grey`, `blue`, `green`, `orange`, `red`, `violet`, or `#rrggbb`.
   Shapes: `fill: none|semi|solid` (only filled shapes block clicks and arrow routes).
 
+## Attention markers
+
+`view.attention` raises a marker keyed by the object (raising again replaces the message). It clears when the user selects or looks at the object in the active window or clicks the marker, when you `clear` it, or when the user clears every marker (View › Clear Attention Markers, or right-click the canvas); markers aren't undo history.
+Your first marker after the user's next prompt clears your markers from earlier turns and lists them in `cleared`.
+A terminal's OSC 9/777 notification or bell at its shell prompt raises a marker there unless the user is looking at it (from a program in the foreground it is that program's lifecycle, see Agents); terminals whose agent reports a lifecycle (omp, Claude Code, Codex, Gemini CLI, opencode) show done and blocked themselves, so their notifications raise nothing.
+
 ## Events
 
 Long-running helpers can stream changes instead of polling: `events.subscribe` (TS: `subscribe(onEvent, {events: ["object.updated"]})`)
@@ -135,7 +163,7 @@ and `attention.changed` (`{id, active, message?, raisedBy?}`: a marker raised, o
 `agent.list` lists every terminal tile in the app; each entry names its `board` and that board's `root` directory, so you can tell which repo or worktree an agent works in. `lifecycle.state` is `working`, `blocked` (waiting for its user: an approval or a question),
 `idle`, `done` (idle with results the user hasn't looked at yet), or `unknown` (no integration reporting: a shell, a CLI without Canvas hooks; its `kind` is `unknown` too).
 An agent without an integration that says when it waits (aider through Canvas's `aider` wrapper, any CLI's terminal notification or bell) has its program as `kind` and `lifecycle.via: "notifications"`: `done` when it last said it waits, `unknown` from a prompt until it says so again, never `working` or `blocked` (read its screen for a y/n question).
-`kind` is the integrated agent (`omp`, `claude`, `codex`, `gemini`, `opencode`); `program` is what runs in the terminal's foreground (`gemini`, `cargo test`; absent at a shell prompt) and `title` the title that program set (e.g. Gemini CLI's "✋ Action Required (glow)"), for any terminal.
+`kind` is the integrated agent (`omp`, `claude`, `codex`, `gemini` before 0.60, `opencode`); `program` is what runs in the terminal's foreground (`gemini`, `cargo test`; absent at a shell prompt) and `title` the title that program set (e.g. Gemini CLI's "✋ Action Required (glow)"), for any terminal.
 `agent.read` returns up to 2000 lines of the terminal's text, trailing blank lines removed; `since="prompt"` returns only what followed your last `agent.prompt` to it (`truncated` when there was more). Rows the terminal soft-wrapped read as one line (on the live screen by the terminal's own wrap flags; above it separator rows padded to the width, pytest's `====`, and rows starting with the same word, pytest's `FAILED …`, stay their own). `block="last"` (or `block=-1`) returns only the output of the last command the shell finished, `block=-2` the one before, and so on back to the first Canvas saw finish, with `command` (`{command, exit, durationMs}`), from Ghostty's prompt marks (`unavailable` without them or once its rows are gone: cleared, trimmed, reflowed). A command-block mention names the `--block -N` that reads it whole. `agent.list` and `object.get` give a terminal's `lastCommand` (`{command, exit, durationMs, finishedAt}`) once its shell finished one, so `exit` says whether the user's last `go test` passed without reading the screen. A terminal mention (`kind: terminal`) has `part`: `selection`, `rows` (the screen rows around a Hyper-click, the clicked one marked `> `) or `command` (one command's output, with `command`).
 `final=True` returns just the agent's last answer (the final message of its last finished turn, reported by omp, Codex, Claude Code and Gemini CLI; not opencode) instead of its screen; it fails with `unavailable` while the agent is still in its turn and when no answer is known (interrupted turn, no integration, app restarted): then read `since="prompt"`.
 `agent.prompt` returns `waitable`: then `agent.wait` right after it waits for that prompt's turn (it ignores the state from before the prompt), so wait for `done` directly.
@@ -150,7 +178,7 @@ reply = canvas.agent.read(target="fees", final=True)["text"]
 CLI: `canvas agent.prompt --target fees --text "…" --mentions '[{"object":"obj_…"}]'`, then `canvas agent.read --target fees --final`.
 On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` gives it 15 s to report (an agent you just launched there) and then fails with `unavailable`; for a shell or a CLI without integration, poll `agent.read(since="prompt")` instead.
 An agent reporting by notification is `waitable`: `agent.wait` returns at its next notification (none comes after a prompt that needs no model reply, like aider's `/add`: pass `timeout_ms`). `mentions` can't go to it (nothing drains them): name the objects in the text.
-`agent.prompt` to a `blocked` agent fails with `conflict` naming what it waits on (an approval or a question on its screen would take your text): tell the user, or `agent.wait` for it to move on.
+`agent.prompt` to a `blocked` agent fails with `conflict` naming what it waits on (an approval or a question on its screen would take your text): tell the user, or `agent.wait` for it to move on. omp reports every approval prompt as blocked, nested ones included.
 So does a target whose foreground program isn't its agent (`agent.list` `program` nvim or less while `kind` is omp): the text would go to that program. In tmux it goes to the active pane: fine while that pane runs the agent, a `conflict` naming what runs there otherwise. Tell the user; `force=True` sends it anyway.
 `force=True` sends anyway, e.g. to a Claude Code or Gemini CLI agent that stays `blocked` after the user pressed Esc on or denied an approval. It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to another agent's approval.
 `agent.wait` survives an app restart: the SDKs and CLI ask again once the app is back, with `timeoutMs` reduced by the time already waited.

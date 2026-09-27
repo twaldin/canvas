@@ -370,8 +370,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Ungroup", #selector(ungroupSelection(_:)), "G", [.command, .shift]),
             item("Enter Group", #selector(enterGroup(_:)), ""),
             .separator(),
-            item("Bring to Front", #selector(bringToFront(_:)), "]", [.command, .shift]),
-            item("Send to Back", #selector(sendToBack(_:)), "[", [.command, .shift]),
+            // "}" and "{": ⇧⌘] and ⇧⌘[ as the key produces them. "]" and "[" with a Shift mask
+            // matched the plain ⌘] and ⌘[ (Forward and Back) and never the shifted chords.
+            item("Bring to Front", #selector(bringToFront(_:)), "}", [.command, .shift]),
+            item("Send to Back", #selector(sendToBack(_:)), "{", [.command, .shift]),
             scale,
             .separator(),
             // The focused terminal's, else the selected one's (the context menu's toggle).

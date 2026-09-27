@@ -78,6 +78,10 @@ extension TileRenderRequest {
 protocol TileContent: NSView {
     /// Live = visible at readable zoom. Not live = release heavy resources and show the card.
     func setLive(_ live: Bool)
+    /// The lowest zoom at which the tile shows its live view; below it, its card. Terminals go
+    /// lower than the rest: Ghostty's layer just scales with the canvas, so zooming out a little
+    /// never swaps a terminal for a redraw in another font, frozen until zooming back in.
+    var liveZoom: CGFloat { get }
     /// Offscreen image of the content for `view.render`, independent of liveness, window, Space,
     /// and viewport. Draws from the tile's model, not by capturing live views (which may be
     /// detached, hidden, or drawn outside AppKit), and may await loading; the renderer applies
@@ -114,6 +118,8 @@ extension TileContent {
     }
 
     func showSnapshot(_ show: Bool) {}
+
+    var liveZoom: CGFloat { CanvasView.liveThreshold }
 
     func cardSnapshot(_ deliver: @escaping @MainActor (NSImage?) -> Void) {
         let request = TileRenderRequest(size: bounds.size, scale: TileFrameView.cardPixelsPerPoint, full: false,

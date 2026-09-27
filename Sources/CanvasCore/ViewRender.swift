@@ -135,6 +135,19 @@ public enum RenderMath {
         ![.shape, .arrow, .group].contains(type)
     }
 
+    /// The background dot grid at `scale` screen points per canvas unit. Dots sit on multiples of
+    /// `spacing` (40 · 2ⁿ units, the first at least 16 points apart on screen); the next finer
+    /// level's dots (the midpoints) show at opacity `fade`, which rises from 0 to 1 as their own
+    /// spacing grows from 8 to 16 points. So zooming never makes dots pop: at each doubling the
+    /// finer dots are fully shown just as they become the coarse level.
+    public static func gridLevel(scale: Double) -> (spacing: Double, fade: Double) {
+        var spacing = 40.0
+        while spacing * scale < 16 { spacing *= 2 }
+        guard spacing > 40 else { return (spacing, 0) }
+        let t = min(1, max(0, (spacing / 2 * scale - 8) / 8))
+        return (spacing, t * t * (3 - 2 * t))
+    }
+
     /// A tile's frame grown to show `content` (body coordinates) when drawing full content
     /// (never shrunk).
     public static func extended(_ frame: Frame, body: CGSize, content: CGSize) -> Frame {

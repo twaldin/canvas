@@ -146,35 +146,60 @@ final class TileFrameView: NSView {
     /// (a full 2× capture would be ~11× the memory, held for every card on the board).
     static let cardPixelsPerPoint: CGFloat = 0.6
 
-    /// Zoomed-out or offscreen: freeze to a card and let the content release its resources.
+    /// Zoomed-out or offscreen: freeze to a card and let the content release its resources. The
+    /// live content stays up until its card has arrived, so a swap never shows a blank or
+    /// title-only tile.
     func setLive(_ live: Bool) {
         guard live != isLive else { return }
         isLive = live
         cardRequest += 1
-        if !live {
-            card.isHidden = true
-            cardTitle.isHidden = false
-            let request = cardRequest
-            content.cardSnapshot { [weak self] image in
-                guard let self, !self.isLive, self.cardRequest == request else { return }
-                self.card.image = image.map { Self.cardImage($0, size: self.bounds.size) }
-                self.card.isHidden = self.card.image == nil
-                self.cardTitle.isHidden = self.card.image != nil
-            }
-        } else {
+        if live {
             card.image = nil
             card.isHidden = true
             cardTitle.isHidden = true
+            showContent(true)
+        } else {
+            let request = cardRequest
+            content.cardSnapshot { [weak self] image in
+                guard let self, !self.isLive, self.cardRequest == request else { return }
+                self.card.image = image.map { self.cardImage($0) }
+                self.card.isHidden = self.card.image == nil
+                self.cardTitle.isHidden = self.card.image != nil
+                self.showContent(false)
+            }
+            // A card that never comes (a page that won't load) mustn't keep the content's
+            // resources: after a second the tile goes to its title card.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self, !self.isLive, self.cardRequest == request, self.contentLive else { return }
+                self.cardTitle.isHidden = false
+                self.showContent(false)
+            }
         }
-        content.isHidden = !live
-        content.setLive(live)
         updateTint()
     }
 
-    private var cardRequest = 0
+    /// Below the readable zoom: the tile is one handle (click selects, drag moves) and shows its
+    /// agent's lifecycle wash, whether it shows a card or lives zoomed out.
+    var zoomedOut = false {
+        didSet { if zoomedOut != oldValue { updateTint() } }
+    }
 
-    private static func cardImage(_ image: NSImage, size: NSSize) -> NSImage {
-        let width = max(1, Int(size.width * cardPixelsPerPoint)), height = max(1, Int(size.height * cardPixelsPerPoint))
+    private var cardRequest = 0
+    private var contentLive = true
+
+    private func showContent(_ live: Bool) {
+        guard live != contentLive else { return }
+        contentLive = live
+        content.isHidden = !live
+        content.setLive(live)
+    }
+
+    /// The card at the body's size and card resolution (content renders at that resolution
+    /// already; web snapshots arrive larger and are scaled down so every card costs the same).
+    private func cardImage(_ image: NSImage) -> NSImage {
+        let size = card.frame.size
+        let width = max(1, Int(size.width * Self.cardPixelsPerPoint)), height = max(1, Int(size.height * Self.cardPixelsPerPoint))
+        if let rep = image.representations.first, rep.pixelsWide <= width + 1, rep.pixelsHigh <= height + 1 { return image }
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
                                          hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: rep) else { return image }
@@ -193,7 +218,7 @@ final class TileFrameView: NSView {
     private func updateTint() {
         let color = Self.badgeColor(lifecycleState)
         cardTint.color = color
-        cardTint.isHidden = isLive || color == .clear
+        cardTint.isHidden = (isLive && !zoomedOut) || color == .clear
     }
 
     @objc private func closeClicked() {
@@ -208,7 +233,7 @@ final class TileFrameView: NSView {
         let local = convert(point, from: superview)
         if resizeGrip.contains(local) { return self }
         // A zoomed-out card is one handle: click selects, drag moves, double-click focuses.
-        if !isLive, bounds.contains(local) { return self }
+        if !isLive || zoomedOut, bounds.contains(local) { return self }
         return super.hitTest(point)
     }
 

@@ -15,7 +15,7 @@ final class NoteTile: NSView, TileContent {
     private(set) var object: CanvasObject
     private let board: Board
     private let displayScroll = NSScrollView()
-    private let display = NSTextView(usingTextLayoutManager: true)
+    private let display = NoteDisplayView(usingTextLayoutManager: true)
     private let layoutDelegate = NoteLayoutDelegate()
     private let editorScroll = NSScrollView()
     private let editor = NoteEditor(usingTextLayoutManager: true)
@@ -567,6 +567,19 @@ final class NoteTile: NSView, TileContent {
     }
 
     var takesKeyboardFocus: Bool { isEditing }
+}
+
+/// The rendered note. TextKit 2 lays out only a viewport around what's visible, and on the canvas
+/// "visible" follows every pan and pinch step (the canvas clips too), so each step re-laid out
+/// every note on screen and resized it to a new height estimate, sometimes never converging: a
+/// seconds-long beachball while zooming a board of notes, once an AppKit layout-loop exception.
+/// A note is short; lay all of it out once per content change instead. NSTextView implements
+/// this viewport delegate method without exposing it to Swift, hence the selector.
+final class NoteDisplayView: NSTextView {
+    @objc(viewportBoundsForTextViewportLayoutController:)
+    func wholeTextViewport(_ controller: NSTextViewportLayoutController) -> CGRect {
+        bounds
+    }
 }
 
 /// The raw-markdown editor: ⌘↩ commits, Esc cancels, losing focus commits.

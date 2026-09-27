@@ -113,13 +113,20 @@ extension CanvasView {
         }
         NSGraphicsContext.restoreGraphicsState()
 
-        let encoded: Data?
-        switch format {
-        case .png: encoded = rep.representation(using: .png, properties: [:])
-        case .jpeg: encoded = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
-        }
+        // Encoding a large image takes hundreds of milliseconds; the finished pixels are immutable,
+        // so it runs off the main thread and the canvas keeps responding meanwhile.
+        guard let image = rep.cgImage else { throw ApiRouter.Failure("internal", "image encoding failed") }
+        let encoded = await offPool { Self.encode(image, format: format) }
         guard let encoded else { throw ApiRouter.Failure("internal", "image encoding failed") }
         return RenderOutput(image: encoded, format: format, width: size.width, height: size.height, canvasRect: region, scale: scale, objects: drawn)
+    }
+
+    private nonisolated static func encode(_ image: CGImage, format: ImageFormat) -> Data? {
+        let rep = NSBitmapImageRep(cgImage: image)
+        switch format {
+        case .png: return rep.representation(using: .png, properties: [:])
+        case .jpeg: return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
+        }
     }
 
     /// Canvas-space outline: a tile's frame, a drawn object's painted bounds, a group's region.

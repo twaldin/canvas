@@ -61,7 +61,7 @@ flowchart TB
 - Our own shape layer, not tldraw (source-available license, web-only): arrows bound to objects, notes, text, rectangle/ellipse, freehand ink. Hand-drawn feel from MIT/OFL parts (perfect-freehand, rough.js ideas, Shantell Sans). No tldraw code or assets.
 - One object type for user and agent. Every object records creator and edit history. Agents may edit and move your objects when you're collaborating (guided by the shipped skill); every agent change is undoable with ⌘Z. Agents never move your viewport unless you ask; they can raise an attention marker instead.
 - Agent-created objects spawn near the agent's terminal. Automatic spawns are limited to the agent's follow tile and its browser.
-- **Zoom**: capped at 100%. Below that the compositor shrinks live tiles; below ~30% tiles become snapshot or title cards and live views detach (Ghostty occlusion, WebKit suspension). "Zoom in" means focusing a tile at 100%.
+- **Zoom**: capped at 100%. Below that the compositor shrinks live tiles; below ~30% (terminals ~15%) tiles become snapshot or title cards and live views detach (Ghostty occlusion, WebKit suspension). A card replaces the live view only once it has been drawn (never a blank or title-only flash), code cards draw exactly what the live tile shows (header, caption, rows at its scroll), and flips have hysteresis (cards below 90% of the live zoom; offscreen past 600 pt, live again within 300 pt). Below 30% every tile is one handle (click selects, drag moves) with its agent's lifecycle wash. The dot grid is a Core Animation layer behind the document that follows every pan and pinch step: dots stay 2 pt on screen and the next finer level fades in and out (`RenderMath.gridLevel`), so zooming never pops them. "Zoom in" means focusing a tile at 100%.
 - One canvas per directory (repo or worktree); tiles may override the root.
 
 ### Tiles
@@ -117,8 +117,10 @@ flowchart TB
 ## Performance
 
 - Git: one invocation per canvas root for all visible files, merge-base resolved once and re-resolved on HEAD/branch change, triggered by debounced FSEvents, only for live tiles, cached by (base SHA, content hash), at most two concurrent git processes app-wide.
-- Terminals: a surface renders only while its tile is live and its window visible; offscreen, zoomed-out, covered, minimized, and other-Space windows all stop Ghostty drawing, and the zmx session keeps running. Browsers: detach and snapshot when not visible, with a capped snapshot pixel budget; a page an agent is driving stays visible to WebKit for 60 s after its last command.
-- Cards (below 30% zoom) are 0.6 px/pt bitmaps, dropped as soon as the tile is live again; terminal cards read `zmx history` on GCD, not the main thread.
+- Terminals: a surface renders only while its tile is live and its window visible; offscreen, zoomed out below 15%, covered, minimized, and other-Space windows all stop Ghostty drawing, and the zmx session keeps running. Between 15% and 30% a terminal stays live, still updating, instead of swapping to a redraw in another font. Browsers: detach and snapshot when not visible, with a capped snapshot pixel budget; a page an agent is driving stays visible to WebKit for 60 s after its last command.
+- Cards are 0.6 px/pt bitmaps, dropped as soon as the tile is live again; terminal cards read `zmx history` on GCD, not the main thread.
+- Notes lay out their whole text once per content change (`NoteDisplayView`). TextKit 2 otherwise lays out a viewport around what's visible, and on the canvas that followed every pan and pinch step: each step re-laid out and resized every note on screen, sometimes never converging. One note on the astra replica stalled a pinch for 2 s (the "application not responding" beachball) and once raised AppKit's layout-loop exception.
+- `view.render` encodes its image off the main thread (a full-board PNG took ~300 ms of the canvas's main thread).
 - Blocking work (subprocess pipes, `waitUntilExit`, file reads) never runs inside a Swift task: parked cooperative threads starve the socket servers' request tasks. Use GCD plus a continuation.
 - Language servers: lazy start, idle shutdown.
 

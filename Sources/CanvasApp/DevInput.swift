@@ -186,19 +186,34 @@ enum DevInput {
                   let hit = content.hitTest(frame.convert(at, from: nil)) else { return }
             hit.scrollWheel(with: event)
         case "magnify":
-            // A trackpad pinch step: NSEvent can't make gesture events, so drive the scroll view the
-            // way its own magnify(with:) does (live-magnify notifications around the steps).
+            // A trackpad pinch step as a real gesture event: CG type 29 (gesture) with HID type 8
+            // (zoom) becomes an NSEvent of type .magnify, so NSScrollView runs its own live
+            // magnification (scaled layers mid-gesture, a redraw at the end) exactly as for a pinch.
+            guard let cg = CGEvent(source: nil), let type = CGEventType(rawValue: 29),
+                  let hidType = CGEventField(rawValue: 110), let zoom = CGEventField(rawValue: 113),
+                  let gesturePhase = CGEventField(rawValue: 132) else { return }
+            cg.type = type
+            cg.setIntegerValueField(hidType, value: 8)
+            cg.setDoubleValueField(zoom, value: Double(number("amount")))
+            let phases: [String: Int64] = ["began": 1, "changed": 2, "ended": 4]
+            cg.setIntegerValueField(gesturePhase, value: phases[fields["phase"] ?? ""] ?? 2)
             let at = point("x", "y")
-            guard let frame = content.superview, var view = content.hitTest(frame.convert(at, from: nil)) else { return }
-            while !(view is NSScrollView), let parent = view.superview { view = parent }
-            guard let scroll = view as? NSScrollView, scroll.allowsMagnification else { return }
-            let phase = fields["phase"]
-            if phase == nil || phase == "began" {
-                NotificationCenter.default.post(name: NSScrollView.willStartLiveMagnifyNotification, object: scroll)
-            }
-            scroll.setMagnification(scroll.magnification * (1 + number("amount")), centeredAt: scroll.contentView.convert(at, from: nil))
-            if phase == nil || phase == "ended" {
-                NotificationCenter.default.post(name: NSScrollView.didEndLiveMagnifyNotification, object: scroll)
+            // A window-less event's locationInWindow is its Cocoa screen location; make that the
+            // replayed point, or the scroll view ignores a pinch that seems to be outside it.
+            cg.location = CGPoint(x: at.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - at.y)
+            guard let event = NSEvent(cgEvent: cg), event.type == .magnify, let frame = content.superview,
+                  let hit = content.hitTest(frame.convert(at, from: nil)) else { return }
+            var view: NSView? = hit
+            while let current = view, !(current is NSScrollView) { view = current.superview }
+            // Live magnification anchors at the real pointer (wherever the user's mouse is), so put
+            // the document point that was under the replayed point back under it after each step.
+            let clip = (view as? NSScrollView)?.contentView
+            let anchor = clip?.convert(at, from: nil)
+            hit.magnify(with: event)
+            if let clip, let anchor, let scroll = view as? NSScrollView {
+                let drift = clip.convert(at, from: nil)
+                clip.scroll(to: NSPoint(x: clip.bounds.minX + anchor.x - drift.x, y: clip.bounds.minY + anchor.y - drift.y))
+                scroll.reflectScrolledClipView(clip)
             }
         default:
             NSLog("DevInput: unknown kind \(fields["kind"] ?? "nil")")

@@ -17,43 +17,54 @@ final class CanvasDocumentView: NSView {
     /// Canvas gestures work on the first click into an inactive window, like any canvas app.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    override func draw(_ dirtyRect: NSRect) {
-        Self.drawBackground(in: dirtyRect, pointsPerUnit: max(convert(NSSize(width: 1, height: 0), to: nil).width, 0.01),
-                            pixelsPerPoint: window?.backingScaleFactor ?? 2)
-    }
-
     /// The canvas background at `scale` screen points (or render pixels, with `pixelsPerPoint` 1)
-    /// per document unit. Dot grid: 2-point dots at least 16 points apart on screen, whatever the
-    /// zoom, drawn as one tiled image. A rect fill per dot left ~100k display-list entries at 10%
-    /// zoom, and one path of all dots made Core Animation union every rect on each frame of a pan.
+    /// per document unit, for offscreen renders; on screen, `CanvasGrid` draws the same grid
+    /// behind the document (which draws nothing itself). One tiled image (RenderMath.gridLevel):
+    /// a rect fill per dot left ~100k display-list entries at 10% zoom, and one path of all dots
+    /// made Core Animation union every rect on each frame of a pan.
     static func drawBackground(in dirtyRect: NSRect, pointsPerUnit scale: CGFloat, pixelsPerPoint backing: CGFloat) {
         NSColor.underPageBackgroundColor.setFill()
         dirtyRect.fill()
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        var spacing: CGFloat = 40
-        while spacing * scale < 16 { spacing *= 2 }
-        let color = NSColor.tertiaryLabelColor.withAlphaComponent(0.35).cgColor
-        guard let tile = Self.dotTile(pixels: Int((spacing * scale * backing).rounded()), dot: 2 * backing, color: color) else { return }
+        let (spacing, fade) = RenderMath.gridLevel(scale: Double(scale))
+        let period = CGFloat(spacing)
+        guard let tile = gridTile(pixels: gridPixels(period * scale * backing), dot: 2 * backing, color: dotColor.cgColor, fade: CGFloat(fade)) else { return }
         context.saveGState()
         context.clip(to: dirtyRect)
-        context.draw(tile, in: CGRect(x: -spacing / 2, y: -spacing / 2, width: spacing, height: spacing), byTiling: true)
+        context.draw(tile, in: CGRect(x: -period / 2, y: -period / 2, width: period, height: period), byTiling: true)
         context.restoreGState()
     }
 
-    private static var dotTileCache: (key: String, image: CGImage)?
+    static var dotColor: NSColor { NSColor.tertiaryLabelColor.withAlphaComponent(0.35) }
 
-    /// A transparent square tile with one dot in its center (the last one is reused while zoom and
-    /// appearance stay put).
-    private static func dotTile(pixels: Int, dot: CGFloat, color: CGColor) -> CGImage? {
-        let key = "\(pixels) \(dot) \(color.components ?? [])"
-        if let cached = dotTileCache, cached.key == key { return cached.image }
-        guard pixels > 0, let bitmap = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
-                                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        let center = CGFloat(pixels) / 2
+    /// An even pixel count, so the tile's center and edge midpoints fall on pixel boundaries.
+    static func gridPixels(_ exact: CGFloat) -> Int { max(2, 2 * Int((exact / 2).rounded())) }
+
+    private static var gridTileCache: (key: String, image: CGImage)?
+
+    /// One grid period: the coarse dot in the center, the finer level's three midpoint dots (at
+    /// opacity `fade`) on the edges and corners, split across them so tiling reassembles them.
+    /// Symmetric, so flipped and unflipped contexts draw the same lattice.
+    static func gridTile(pixels: Int, dot: CGFloat, color: CGColor, fade: CGFloat) -> CGImage? {
+        let fade = (fade * 32).rounded() / 32
+        let key = "\(pixels) \(dot) \(fade) \(color.components ?? [])"
+        if let cached = gridTileCache, cached.key == key { return cached.image }
+        guard let bitmap = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0,
+                                     space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let size = CGFloat(pixels), half = size / 2
+        func mark(_ x: CGFloat, _ y: CGFloat) { bitmap.fill(CGRect(x: x - dot / 2, y: y - dot / 2, width: dot, height: dot)) }
         bitmap.setFillColor(color)
-        bitmap.fill(CGRect(x: center - dot / 2, y: center - dot / 2, width: dot, height: dot))
+        mark(half, half)
+        if fade > 0, let faded = color.copy(alpha: color.alpha * fade) {
+            bitmap.setFillColor(faded)
+            for (x, y) in [(0, half), (half, 0), (0, 0)] as [(CGFloat, CGFloat)] {
+                for dx in [0, size] where x == 0 || dx == 0 {
+                    for dy in [0, size] where y == 0 || dy == 0 { mark(x + dx, y + dy) }
+                }
+            }
+        }
         guard let image = bitmap.makeImage() else { return nil }
-        dotTileCache = (key, image)
+        gridTileCache = (key, image)
         return image
     }
 
@@ -83,6 +94,11 @@ final class CanvasDocumentView: NSView {
 @MainActor
 final class CanvasView: NSScrollView {
     static let liveThreshold: CGFloat = 0.3
+    /// Live tiles turn to cards only below this share of their live zoom, and offscreen only past
+    /// `cardMargin`: a zoom or pan resting near an edge must not flip tiles back and forth.
+    static let cardHysteresis: CGFloat = 0.9
+    static let liveMargin: CGFloat = 300
+    static let cardMargin: CGFloat = 600
     static let lassoDefaultsKey = "canvas.lassoSelection"
 
     /// Marquee drags draw a freehand lasso instead of a box (View menu, persisted).
@@ -95,6 +111,7 @@ final class CanvasView: NSScrollView {
     let document = CanvasDocumentView(frame: NSRect(x: 0, y: 0, width: CanvasDocumentView.extent, height: CanvasDocumentView.extent))
     let overlay = SceneOverlay(frame: NSRect(x: 0, y: 0, width: CanvasDocumentView.extent, height: CanvasDocumentView.extent))
     private let edges = AttentionEdgeView()
+    private let grid = CanvasGrid()
     private(set) var tiles: [ObjectID: TileFrameView] = [:]
     private var groups: [ObjectID: GroupView] = [:]
     private var markers: [ObjectID: AttentionMarker] = [:]
@@ -170,6 +187,7 @@ final class CanvasView: NSScrollView {
         minMagnification = 0.1
         maxMagnification = 1.0
         drawsBackground = false
+        addSubview(grid, positioned: .below, relativeTo: contentView)
         addSubview(edges)
         edges.onReveal = { [weak self] id in self?.reveal(id) }
         contentView.postsBoundsChangedNotifications = true
@@ -194,6 +212,12 @@ final class CanvasView: NSScrollView {
     override func tile() {
         super.tile()
         edges.frame = bounds
+        grid.frame = bounds
+        updateGrid()
+    }
+
+    private func updateGrid() {
+        grid.update(origin: grid.convert(NSPoint.zero, from: document), scale: magnification)
     }
 
     override func viewDidMoveToWindow() {
@@ -295,6 +319,7 @@ final class CanvasView: NSScrollView {
         tile.onMenu = { [weak self] in self?.objectMenu(for: id) }
         document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
         tiles[id] = tile
+        tile.zoomedOut = appliedScale > 0 && appliedScale < Self.liveThreshold
         if object.type == .terminal { lifecycleChanged(object) }
         scheduleLiveness()
     }
@@ -923,6 +948,8 @@ final class CanvasView: NSScrollView {
     // MARK: Scene pass (zoom LOD, offscreen culling, chrome scale, chevrons, seen)
 
     @objc private func boundsChanged() {
+        // Every pan and pinch step, not coalesced: the grid is one layer move.
+        updateGrid()
         board.activity.viewportChanged(viewport, actor: viewportMover, rev: board.revision)
         scheduleActivitySettle()
         scheduleLiveness()
@@ -990,15 +1017,15 @@ final class CanvasView: NSScrollView {
         // Mid-pinch, LOD flips and chrome rescaling wait for the gesture to end.
         if !magnifying {
             let scale = magnification
-            let readable = scale >= Self.liveThreshold
-            let visible = documentVisibleRect.insetBy(dx: -300, dy: -300)
+            let near = documentVisibleRect.insetBy(dx: -Self.liveMargin, dy: -Self.liveMargin)
+            let far = documentVisibleRect.insetBy(dx: -Self.cardMargin, dy: -Self.cardMargin)
             for tile in tiles.values {
-                tile.setLive(readable && tile.frame.intersects(visible))
+                let readable = scale >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
+                tile.setLive(readable && tile.frame.intersects(tile.isLive ? far : near))
             }
             if scale != appliedScale {
                 appliedScale = scale
-                // Grid spacing and dot size depend on the zoom.
-                document.needsDisplay = true
+                for tile in tiles.values { tile.zoomedOut = scale < Self.liveThreshold }
                 overlay.scale = scale
                 for group in groups.values { group.scale = scale }
                 for marker in markers.values { marker.scale = scale }

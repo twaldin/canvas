@@ -8,6 +8,38 @@ struct RenderMathTests {
         CanvasObject(id: "obj_x", type: type, frame: frame, z: 1, createdBy: .user, createdAt: Date(), props: .object([:]))
     }
 
+    /// Screen positions (points) of the visible dots (opacity above 1%) along one axis, from
+    /// canvas 0 up to `extent` units, with their opacity.
+    func dots(scale: Double, extent: Double = 640) -> [Double: Double] {
+        let (spacing, fade) = RenderMath.gridLevel(scale: scale)
+        var dots: [Double: Double] = [:]
+        for step in stride(from: 0, through: extent, by: spacing / 2) {
+            let coarse = step.truncatingRemainder(dividingBy: spacing) == 0
+            if coarse || fade > 0.01 { dots[(step * scale * 1000).rounded() / 1000] = coarse ? 1 : fade }
+        }
+        return dots
+    }
+
+    @Test func zoomingAcrossAGridDoublingKeepsTheSameDots() {
+        // Just above 0.4 the 40-unit grid is coarse; just below, the 80-unit grid is coarse and
+        // the 40-unit midpoints must be (all but) fully shown, so the same dots stay on screen.
+        for (above, below) in [(0.4001, 0.3999), (0.2001, 0.1999)] {
+            let before = dots(scale: above), after = dots(scale: below)
+            #expect(before.count == after.count)
+            #expect(after.values.allSatisfy { $0 > 0.99 })
+            for (position, _) in before { #expect(after.keys.contains { abs($0 - position * below / above) < 0.01 }) }
+        }
+    }
+
+    @Test func finerDotsFadeOutGraduallyAsTheGridShrinks() {
+        // Between doublings the midpoints fade from shown to gone, never jumping.
+        let fades = stride(from: 0.399, through: 0.2, by: -0.01).map { RenderMath.gridLevel(scale: $0) }
+        #expect(fades.allSatisfy { $0.spacing == 80 })
+        #expect(zip(fades, fades.dropFirst()).allSatisfy { $0.fade >= $1.fade && $0.fade - $1.fade < 0.1 })
+        #expect(fades.first!.fade > 0.99 && fades.last!.fade < 0.01)
+        #expect(RenderMath.gridLevel(scale: 1).fade == 0 && RenderMath.gridLevel(scale: 1).spacing == 40)
+    }
+
     @Test func pixelRectsScaleFromTheCanvasRectOrigin() {
         let canvas = Frame(x: 100, y: 200, w: 400, h: 300)
         let size = RenderMath.pixelSize(canvas, scale: 2)

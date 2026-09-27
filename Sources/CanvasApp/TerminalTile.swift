@@ -168,6 +168,10 @@ final class TerminalTile: NSView, TileContent {
         updateSurfaceVisibility()
     }
 
+    /// Below this a terminal is a smudge, and Ghostty at ~0.1 zoom held ~235 MB of GPU memory
+    /// that a card doesn't.
+    var liveZoom: CGFloat { 0.15 }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         occlusionObserver.map(NotificationCenter.default.removeObserver)

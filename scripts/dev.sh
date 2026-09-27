@@ -11,10 +11,13 @@
 #   scripts/dev.sh move [space]     move the window to a Space (default: the testing Space) and maximize it
 #   scripts/dev.sh input <args…>    replay input (scripts/dev-input.swift) into this instance
 #   scripts/dev.sh sessions         list this instance's zmx sessions
+#
+# More instances of one checkout (parallel agents, user studies): CANVAS_DEV_HOME picks another
+# home, and CANVAS_DEV_APP launches a prebuilt bundle (a frozen copy) instead of rebuilding.
 set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-home="$repo/.canvas-home"
-app="$repo/.build/Canvas.app"
+home="${CANVAS_DEV_HOME:-$repo/.canvas-home}"
+app="${CANVAS_DEV_APP:-$repo/.build/Canvas.app}"
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
 # The testing Space: CANVAS_DEV_SPACE, else the first Space of the BetterDisplay virtual screen
 # named CANVAS_DEV_DISPLAY (default "CanvasTest"; a headless monitor, so the window renders while
@@ -66,7 +69,7 @@ sessions() {
 
 launch() {
   root="${1:-$repo}"
-  "$repo/scripts/bundle.sh" >/dev/null
+  [ -n "${CANVAS_DEV_APP:-}" ] || "$repo/scripts/bundle.sh" >/dev/null
   mkdir -p "$home"
   rm -f "$CANVAS_SOCKET"
   # yabai can't place a new window on another display's Space (it lands on the Space being
@@ -84,7 +87,8 @@ launch() {
   i=0
   while [ ! -S "$CANVAS_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
   [ -S "$CANVAS_SOCKET" ] || { echo "Canvas did not open its socket; see $home/app.log" >&2; exit 1; }
-  pgrep -n -f "$app/Contents/MacOS/Canvas" > "$home/pid"
+  # The socket's owner, not the newest process of this bundle: parallel launches of one bundle race.
+  lsof -t "$CANVAS_SOCKET" | head -n 1 > "$home/pid"
   target="$(test_space)"
   if [ -x "$yabai" ] && [ "$target" != 7 ]; then
     i=0

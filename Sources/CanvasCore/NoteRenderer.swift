@@ -130,12 +130,22 @@ public final class NoteRenderer {
             append(marker + "\t", attributes.merging([.foregroundColor: NSColor.secondaryLabelColor]) { $1 })
             context.marker = nil
         }
-        inlines(markup, attributes, into: out)
+        prose(markup, attributes, into: out)
         append("\n", attributes)
         out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: start, length: out.length - start))
     }
 
     // MARK: Inlines
+
+    /// A paragraph's, heading's or table cell's inlines with their `path:line` references
+    /// linked, found in the text as it reads: markdown splits `src/_compat.py:3` into several
+    /// text runs, and a reference may be prose, inline code, or both.
+    private func prose(_ markup: Markup, _ attributes: [NSAttributedString.Key: Any], into target: NSMutableAttributedString) {
+        let start = target.length
+        inlines(markup, attributes, into: target)
+        let range = NSRange(location: start, length: target.length - start)
+        linkReferences(in: (target.string as NSString).substring(with: range), at: start, of: target)
+    }
 
     private func inlines(_ markup: Markup, _ attributes: [NSAttributedString.Key: Any], into target: NSMutableAttributedString) {
         for child in markup.children { inline(child, attributes, into: target) }
@@ -159,9 +169,7 @@ public final class NoteRenderer {
         case let code as InlineCode:
             attributes[.font] = NSFont.monospacedSystemFont(ofSize: font.pointSize * 0.9, weight: .regular)
             attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(0.25)
-            let start = target.length
             target.append(NSAttributedString(string: code.code, attributes: attributes))
-            linkReferences(in: code.code, at: start, of: target)
         case let link as Markdown.Link:
             if let destination = link.destination, let parsed = NoteLink(encoded: destination) {
                 attributes[.noteLink] = parsed.encoded
@@ -202,10 +210,19 @@ public final class NoteRenderer {
         NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(font.fontDescriptor.symbolicTraits.union(trait)), size: font.pointSize) ?? font
     }
 
-    /// `path:line` references in authored text open a code tile.
+    /// `path:line` references in authored text open a code tile. Text that is already a
+    /// markdown link's keeps its destination.
     private func linkReferences(in text: String, at offset: Int, of target: NSMutableAttributedString) {
         for reference in NoteReferences.find(in: text) {
             let range = NSRange(location: offset + reference.range.location, length: reference.range.length)
+            var linked = false
+            target.enumerateAttribute(.noteLink, in: range) { value, _, stop in
+                if value != nil {
+                    linked = true
+                    stop.pointee = true
+                }
+            }
+            guard !linked else { continue }
             target.addAttributes([
                 .noteLink: NoteLink.code(path: reference.path, lines: reference.lines).encoded,
                 .foregroundColor: NSColor.linkColor,
@@ -225,7 +242,7 @@ public final class NoteRenderer {
         let rendered = rows.enumerated().map { index, cells in
             cells.map { cell -> NSAttributedString in
                 let text = NSMutableAttributedString()
-                inlines(cell, [.font: index == 0 ? bold : Self.bodyFont, .foregroundColor: NSColor.labelColor], into: text)
+                prose(cell, [.font: index == 0 ? bold : Self.bodyFont, .foregroundColor: NSColor.labelColor], into: text)
                 return text
             }
         }

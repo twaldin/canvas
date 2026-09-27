@@ -76,14 +76,20 @@ public struct RenderRequest: Sendable {
     public var exclude: RenderExclusion
     public var padding: Double
     public var timeout: Duration
+    /// False for a picture that leaves the app (Export Selection as PNG, Copy as Image): drawn
+    /// like View › Hide Canvas Chrome, without author marks, close buttons or the dot grid.
+    /// `view.render` keeps them: agents see the board as the user does.
+    public var chrome: Bool
 
-    public init(target: RenderTarget, scale: Double = 1, full: Bool = false, exclude: RenderExclusion = RenderExclusion(), padding: Double = 0, timeout: Duration = .seconds(8)) {
+    public init(target: RenderTarget, scale: Double = 1, full: Bool = false, exclude: RenderExclusion = RenderExclusion(), padding: Double = 0,
+                timeout: Duration = .seconds(8), chrome: Bool = true) {
         self.target = target
         self.scale = scale
         self.full = full
         self.exclude = exclude
         self.padding = padding
         self.timeout = timeout
+        self.chrome = chrome
     }
 }
 

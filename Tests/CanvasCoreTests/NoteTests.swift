@@ -69,6 +69,40 @@ struct NoteFenceTests {
     }
 }
 
+@MainActor
+struct NoteLinkTests {
+    /// Each linked run of the rendered note: its text and where it goes.
+    func links(_ markdown: String) -> [String: NoteLink] {
+        let text = NoteRenderer(excerpts: [:]).render(NoteMarkdown.parse(markdown), placeholder: "")
+        var found: [String: NoteLink] = [:]
+        text.enumerateAttribute(.noteLink, in: NSRange(location: 0, length: text.length)) { value, range, _ in
+            guard let encoded = value as? String else { return }
+            found[(text.string as NSString).substring(with: range)] = NoteLink(encoded: encoded)
+        }
+        return found
+    }
+
+    @Test func pathLineReferencesLinkInTableCellsAndProse() {
+        let found = links("""
+        | # | frame | at |
+        |---|---|---|
+        | 1 | `Command.main` | src/click/_compat.py:12 |
+
+        Fails in core.py:1587, see `tests/test_x.py:3-9`.
+        """)
+        // Markdown splits `_compat` into its own text run; the whole path still links.
+        #expect(found["src/click/_compat.py:12"] == .code(path: "src/click/_compat.py", lines: LineRange(start: 12, end: 12)))
+        #expect(found["core.py:1587"] == .code(path: "core.py", lines: LineRange(start: 1587, end: 1587)))
+        #expect(found["tests/test_x.py:3-9"] == .code(path: "tests/test_x.py", lines: LineRange(start: 3, end: 9)))
+        #expect(found.count == 3)
+    }
+
+    @Test func aMarkdownLinksTextKeepsItsDestination() {
+        let found = links("[core.py:10](https://example.com/blame)")
+        #expect(found == ["core.py:10": .web(URL(string: "https://example.com/blame")!)])
+    }
+}
+
 struct NoteAnchorTests {
     let source = [
         "import x",          // 1
@@ -283,6 +317,34 @@ struct NoteEditSessionTests {
         #expect(try session.commit("mine", confirmed: false, on: board) == .saved)
         #expect(!session.conflicted)
         #expect(try session.commit("mine", confirmed: false, on: board) == .unchanged)
+    }
+
+    @Test func keepingTheirsLeavesYoursOneUndoAway() throws {
+        let note = board.create(type: .note, props: .object(["markdown": .string("base")]))
+        let session = NoteEditSession(note)
+        board.onEvent = { event in if case .objectUpdated(let object) = event { session.observe(object) } }
+        try board.update(note.id, props: .object(["markdown": .string("theirs")]), caller: "obj_agent")
+        #expect(try session.commit("base, mine", confirmed: false, on: board) == .conflict)
+
+        #expect(session.keepTheirs(discarding: "base, mine", on: board))
+        #expect(markdown(note.id) == "theirs")
+        #expect(board.undo())
+        #expect(markdown(note.id) == "base, mine")
+        #expect(board.redo())
+        #expect(markdown(note.id) == "theirs")
+        // Under it, the agent's own change is still a step of its own.
+        #expect(board.undo() && board.undo())
+        #expect(markdown(note.id) == "base")
+    }
+
+    @Test func keepingTheirsOverAnUnchangedEditRecordsNothing() throws {
+        let note = board.create(type: .note, props: .object(["markdown": .string("base")]))
+        let session = NoteEditSession(note)
+        try board.update(note.id, props: .object(["markdown": .string("theirs")]), caller: "obj_agent")
+        let steps = board.history.undoSteps.count
+        #expect(!session.keepTheirs(discarding: "base", on: board))
+        #expect(!session.keepTheirs(discarding: "theirs", on: board))
+        #expect(board.history.undoSteps.count == steps)
     }
 }
 

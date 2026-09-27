@@ -112,6 +112,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             switch target {
             case .allContent: self?.canvas.zoomToFit()
             case .object(let id): self?.canvas.go(to: id)
+            case .heading(let id, let line): self?.canvas.go(to: id, heading: line)
             case .file(let path, let lines):
                 self?.open(path: path, lines: lines)
             case .status: break
@@ -642,11 +643,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// browser tile's page.
     @objc func showWebInspector(_ sender: Any?) { inspectableBrowser?.showInspector() }
 
+    /// File ▸ Snapshot Page to Image: the focused, else the one selected, browser tile's page.
+    @objc func snapshotPage(_ sender: Any?) { keyboardBrowser.map { canvas.snapshotPage($0.id) } }
+
     private var inspectableBrowser: BrowserTile? {
+        keyboardBrowser.flatMap { $0.tile.canShowInspector ? $0.tile : nil }
+    }
+
+    /// The focused, else the one selected, browser tile.
+    private var keyboardBrowser: (id: ObjectID, tile: BrowserTile)? {
         let selection = canvas.selection
         guard let id = canvas.focusedTile ?? (selection.count == 1 ? selection.first : nil),
-              let browser = canvas.tiles[id]?.content as? BrowserTile, browser.canShowInspector else { return nil }
-        return browser
+              let browser = canvas.tiles[id]?.content as? BrowserTile else { return nil }
+        return (id, browser)
     }
 
     /// The one selected object, when it is an HTML tile (Save as HTML, Open in Browser).
@@ -707,6 +716,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
         case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selectedHTMLTile != nil
         case #selector(showWebInspector(_:)): return inspectableBrowser != nil
+        case #selector(snapshotPage(_:)): return keyboardBrowser != nil
         case #selector(toggleFollowFiles(_:)):
             guard let terminal = canvas.followTerminal else {
                 item.state = .off

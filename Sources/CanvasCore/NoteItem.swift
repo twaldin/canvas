@@ -62,7 +62,7 @@ public struct NoteItem: Equatable, Sendable {
             container = child
         }
         guard let leaf = chain.last else { return nil }
-        let headings = sections(of: document)
+        let headings = NoteMarkdown.headings(in: document)
         let kind: Kind
         let range: ClosedRange<Int>
         if let block = chain.first(where: { $0 is CodeBlock || $0 is HTMLBlock }), let span = span(of: block) {
@@ -154,16 +154,8 @@ public struct NoteItem: Equatable, Sendable {
         return range.lowerBound.line...max(range.lowerBound.line, range.upperBound.line)
     }
 
-    /// Top-level headings in order, with their lines.
-    private static func sections(of document: Document) -> [(line: Int, level: Int, title: String)] {
-        document.children.compactMap { child in
-            guard let heading = child as? Heading, let line = heading.range?.lowerBound.line else { return nil }
-            return (line, heading.level, heading.plainText)
-        }
-    }
-
     /// The headings whose sections hold `line`, outermost first. Levels may skip (`#` then `###`).
-    private static func path(to line: Int, in headings: [(line: Int, level: Int, title: String)]) -> [String] {
+    private static func path(to line: Int, in headings: [NoteMarkdown.Heading]) -> [String] {
         var stack: [(level: Int, title: String)] = []
         for heading in headings where heading.line < line {
             while let top = stack.last, top.level >= heading.level { stack.removeLast() }

@@ -82,13 +82,18 @@ extension CanvasView {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
         appearance.performAsCurrentDrawingAppearance {
-            CanvasDocumentView.drawBackground(in: docRegion, pointsPerUnit: scale, pixelsPerPoint: 1)
+            if request.chrome {
+                CanvasDocumentView.drawBackground(in: docRegion, pointsPerUnit: scale, pixelsPerPoint: 1)
+            } else {
+                NSColor.underPageBackgroundColor.setFill()
+                docRegion.fill()
+            }
 
             for group in board.objects.values.filter({ $0.type == .group && !excluded.hides($0) }).sorted(by: { $0.z < $1.z }) {
                 guard let rect = groupRegion(group), rect.intersects(docRegion) else { continue }
                 guard let view = GroupView(object: group) else { continue }
                 view.show(region: rect)
-                view.author = authorName(of: group)
+                view.author = request.chrome ? authorName(of: group) : nil
                 cg.saveGState()
                 cg.translateBy(x: rect.minX, y: rect.minY)
                 view.draw(view.bounds)
@@ -108,7 +113,7 @@ extension CanvasView {
                 cg.saveGState()
                 cg.translateBy(x: frame.x + origin.x, y: frame.y + origin.y)
                 cg.scaleBy(x: tileScale, y: tileScale)
-                drawTile(object, render: render, in: NSRect(x: 0, y: 0, width: frame.w / tileScale, height: frame.h / tileScale))
+                drawTile(object, render: render, in: NSRect(x: 0, y: 0, width: frame.w / tileScale, height: frame.h / tileScale), chrome: request.chrome)
                 cg.restoreGState()
                 record(object, frame, render)
             }
@@ -131,7 +136,8 @@ extension CanvasView {
         return RenderOutput(image: encoded, format: format, width: size.width, height: size.height, canvasRect: region, scale: scale, objects: drawn)
     }
 
-    private nonisolated static func encode(_ image: CGImage, format: ImageFormat) -> Data? {
+    /// Encodes finished pixels; call off the main thread (a large PNG takes hundreds of ms).
+    nonisolated static func encode(_ image: CGImage, format: ImageFormat) -> Data? {
         let rep = NSBitmapImageRep(cgImage: image)
         switch format {
         case .png: return rep.representation(using: .png, properties: [:])
@@ -193,7 +199,8 @@ extension CanvasView {
 
     /// Tile chrome as `TileFrameView` draws it live (rounded card, title bar, lifecycle badge,
     /// close glyph, border) around the content image, or a labelled stand-in without one.
-    private func drawTile(_ object: CanvasObject, render: TileRender, in rect: NSRect) {
+    /// Without `chrome`, as Hide Canvas Chrome shows it: no author mark or close glyph.
+    private func drawTile(_ object: CanvasObject, render: TileRender, in rect: NSRect, chrome: Bool) {
         let title = TileFrameView.titleHeight
         let card = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
         NSGraphicsContext.saveGraphicsState()
@@ -213,7 +220,7 @@ extension CanvasView {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingMiddle
         let name = tiles[object.id]?.title ?? TileFrameView.title(for: object)
-        let author = tiles[object.id]?.author
+        let author = chrome ? tiles[object.id]?.author : nil
         let frames = TileFrameView.titleFrames(width: rect.width, title: name, author: author)
         (name as NSString).draw(in: frames.title.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
             .font: TileFrameView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
@@ -227,7 +234,9 @@ extension CanvasView {
                 .font: TileFrameView.authorFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: tail,
             ])
         }
-        ("✕" as NSString).draw(at: NSPoint(x: rect.maxX - 22, y: rect.minY + 5), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
+        if chrome {
+            ("✕" as NSString).draw(at: NSPoint(x: rect.maxX - 22, y: rect.minY + 5), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
+        }
         let body = NSRect(x: rect.minX, y: rect.minY + title, width: rect.width, height: rect.height - title)
         if let image = render.image {
             image.drawUpright(in: NSRect(origin: body.origin, size: CGSize(width: min(body.width, image.size.width), height: min(body.height, image.size.height))))

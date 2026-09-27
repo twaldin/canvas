@@ -252,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     @objc func openCodeTile(_ sender: Any?) { keyController?.openCodeTile(sender) }
-    /// An empty note in view; it shows a double-click-to-edit placeholder.
+    /// An empty note in view, editing (`CanvasView.openForUser`).
     @objc func newNote(_ sender: Any?) {
         keyController?.canvas.openForUser(.note, props: .object(["markdown": .string("")]))
     }
@@ -299,6 +299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func saveHTMLTile(_ sender: Any?) { keyController?.saveHTMLTile(sender) }
     @objc func openHTMLTileInBrowser(_ sender: Any?) { keyController?.openHTMLTileInBrowser(sender) }
     @objc func showWebInspector(_ sender: Any?) { keyController?.showWebInspector(sender) }
+    @objc func snapshotPage(_ sender: Any?) { keyController?.snapshotPage(sender) }
 
     /// The tab bar's + button: open another board as a tab.
     @objc func newWindowForTab(_ sender: Any?) { openBoard(sender) }
@@ -354,6 +355,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Export Selection as PNG…", #selector(saveAsPNG(_:)), "E", [.command, .shift]),
             item("Save HTML Tile as HTML…", #selector(saveHTMLTile(_:)), ""),
             item("Open HTML Tile in Browser", #selector(openHTMLTileInBrowser(_:)), ""),
+            // The focused or selected browser tile's page, frozen as an image tile beside it.
+            item("Snapshot Page to Image", #selector(snapshotPage(_:)), ""),
             .separator(),
             // The board window takes ⌘W first to close the selection or the focused terminal
             // (CanvasWindowController.handleKeyEquivalent); with neither, the tab or window closes.

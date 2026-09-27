@@ -1184,6 +1184,19 @@ extension BrowserTile {
     }
 
     var canShowInspector: Bool { webView?.url != nil }
+
+    /// Snapshot to Image: the page as it shows now (without the address bar), at the screen's
+    /// pixels; a page released from its web view gives its last capture. Nil with neither.
+    func pageImage() async -> NSImage? {
+        if let webView, webView.window != nil, webView.url != nil, webView.bounds.width > 0, webView.bounds.height > 0,
+           let page = try? await webView.takeSnapshot(configuration: WKSnapshotConfiguration()) {
+            return page
+        }
+        return cachedImage
+    }
+
+    /// The address the page shows (a released page's `props.url`).
+    var pageURL: String? { webView?.url?.absoluteString ?? object.props["url"]?.string }
 }
 
 /// The script message handler for the page's error count (`PageCapture`, in the page's world).

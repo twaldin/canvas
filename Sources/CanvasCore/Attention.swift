@@ -9,7 +9,7 @@ public struct Attention: Codable, Equatable, Sendable {
     /// The agent terminal that raised it (the call's `caller`); nil for a call without one.
     public var raisedBy: ObjectID?
     public var raisedAt: Date
-    /// Its agent has started a later turn since (its lifecycle went to `working`), so the
+    /// Its agent has started a later turn since (its lifecycle went to `working` from idle, done, or no state), so the
     /// agent's next marker replaces it. Absent while the turn that raised it is current.
     public var earlierTurn: Bool?
 
@@ -32,7 +32,8 @@ public struct Attention: Codable, Equatable, Sendable {
 extension Board {
     /// Raises (or re-raises, replacing the message) the marker on `id`. A marker belongs to its
     /// agent's turn: raising one clears the markers the same agent raised in earlier turns
-    /// (before its lifecycle last went to `working`), returned as `cleared`; markers from the
+    /// (before its lifecycle last went to `working` from idle, done, or no state; blocked → working
+    /// continues a turn), returned as `cleared`; markers from the
     /// current turn stay, since one answer may point at several things.
     @discardableResult
     public func raiseAttention(_ id: ObjectID, message: String?, caller: ObjectID?) throws -> (marker: Attention, cleared: [ObjectID]) {

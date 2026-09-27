@@ -33,7 +33,7 @@ Read these before you build anything; each one cost earlier agents a round trip.
   scrolled out, the end pins to the top of the code or the bottom of the tile.
   Keep bound lines inside the rows the tile shows (fit the range, or bind to lines near its top).
 - **Attention markers stay until the user looks, across app restarts.** A marker clears when the user looks at the object in the active window, or when you `--clear` it.
-  Your markers belong to your turn: the first one you raise after the user's next prompt clears the ones from your earlier turns (you don't need to), while markers raised in the same turn stay together.
+  Your markers belong to your turn: the first one you raise after the user's next prompt clears the ones from your earlier turns (you don't need to), while markers raised in the same turn (approvals included) stay together.
 
 ## Pick a client
 

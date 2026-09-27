@@ -287,9 +287,12 @@ final class ApiRouterTests {
         _ = try await raise(c.id, by: other)
         _ = try await raise(d.id, by: nil)
 
-        // Repeated working reports within the turn don't start a new one.
+        // Repeated working reports, and an approval answered (blocked → working), continue the turn.
         try report(agent, .working)
         #expect(try await raise(a.id, by: agent)["cleared"] == nil)
+        try report(agent, .blocked)
+        try report(agent, .working)
+        #expect(try await raise(b.id, by: agent)["cleared"] == nil, "markers from before the approval belong to the same answer")
         #expect(Set(board.attention.keys) == [a.id, b.id, c.id, d.id])
 
         // The user's next prompt: idle, then working again.

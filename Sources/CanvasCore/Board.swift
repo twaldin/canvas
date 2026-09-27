@@ -512,8 +512,10 @@ public final class Board {
         }
         if state == .working {
             seenSinceWorking.remove(tile)
-            // Going to working is the user's next prompt reaching the agent: a new turn.
-            if terminal.props["lifecycle"]?["state"]?.string != LifecycleState.working.rawValue { agentStartedTurn(tile) }
+            // Going to working from idle, done, or no state is the user's next prompt reaching the
+            // agent: a new turn. From blocked (an approval answered) it continues the same answer.
+            let previous = terminal.props["lifecycle"]?["state"]?.string
+            if previous != LifecycleState.working.rawValue, previous != LifecycleState.blocked.rawValue { agentStartedTurn(tile) }
         }
         let effective: LifecycleState = state == .idle && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]

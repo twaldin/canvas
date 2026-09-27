@@ -393,7 +393,7 @@ class ViewApi:
         self._call = call
 
     def attention(self, *, id: "Id", message: str | None = None, clear: bool | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. A marker belongs to the caller's turn: raising one clears the markers the same caller raised in earlier turns (before its lifecycle last went to working); markers from this turn stay. The user seeing the object also clears it. Unseen markers are stored with the board and survive app restarts; deleting the object removes its marker. Never moves the user's viewport."""
+        """Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. A marker belongs to the caller's turn: raising one clears the markers the same caller raised in earlier turns (a turn starts when its lifecycle goes to working from idle, done, or no state; answering an approval, blocked → working, continues the turn); markers from this turn stay. The user seeing the object also clears it. Unseen markers are stored with the board and survive app restarts; deleting the object removes its marker. Never moves the user's viewport."""
         params = {"id": id, "message": message, "clear": clear, "caller": caller}
         return self._call("view.attention", params, ["caller"])
 

@@ -51,6 +51,8 @@ let package = Package(
             dependencies: [
                 "CanvasCore",
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                // The C API: validating the user's Ghostty config, reading a terminal's text.
+                .product(name: "GhosttyKit", package: "libghostty-spm"),
                 .product(name: "Markdown", package: "swift-markdown"),
             ]
         ),

@@ -309,6 +309,12 @@ final class CanvasView: NSScrollView {
         let content = TileFactory.make(object, board: board)
         if let terminal = content as? TerminalTile {
             terminal.onTitle = { [weak self] title in self?.tiles[id]?.setTitle(title) }
+            // A ⌘-clicked reference: user navigation, so the tile is panned into view; one
+            // already on the board is selected (keyboard focus stays in the terminal).
+            terminal.onOpenedCode = { [weak self] opened, created in
+                if !created { self?.setSelection([opened]) }
+                self?.reveal(opened)
+            }
         }
         (content as? HtmlTile)?.onOpenedCode = { [weak self] opened in self?.reveal(opened) }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))

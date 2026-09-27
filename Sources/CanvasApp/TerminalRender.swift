@@ -3,41 +3,13 @@ import CanvasCore
 
 /// Draws a terminal's screen from `zmx history --vt` text for renders, cards, and
 /// `view.snapshot` covers (Ghostty draws through Metal, which AppKit can't capture): the
-/// tile's own grid, the terminal theme's colors, and a Nerd Font so prompt glyphs render.
+/// tile's own grid, and the colors, font, and padding the live tile runs with (`TerminalConfig`).
 @MainActor
 enum TerminalRender {
-    /// Ghostty's defaults for the embedded surface (TerminalController.shared): 14 pt, 2 pt padding.
-    static let defaultFontSize: CGFloat = 14
-    static let padding: CGFloat = 2
-
-    struct Theme {
-        var background: NSColor
-        var foreground: NSColor
-        var palette: [NSColor]
-    }
-
-    private static func hex(_ value: UInt32) -> NSColor {
-        NSColor(srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255, blue: CGFloat(value & 0xFF) / 255, alpha: 1)
-    }
-
-    /// The tile's theme: libghostty's default Afterglow (dark) / Alabaster (light).
-    static func theme(for appearance: NSAppearance) -> Theme {
-        if appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua {
-            return Theme(background: hex(0x212121), foreground: hex(0xD0D0D0), palette: [
-                0x151515, 0xAC4142, 0x7E8E50, 0xE4B567, 0x6C99BB, 0x9F4E86, 0x7DD5CF, 0xD0D0D0,
-                0x505050, 0xAC4142, 0x7E8E50, 0xE4B567, 0x6C99BB, 0x9F4E86, 0x7DD5CF, 0xF5F5F5,
-            ].map(hex))
-        }
-        return Theme(background: hex(0xF7F7F7), foreground: hex(0x000000), palette: [
-            0x000000, 0xAA3731, 0x448C27, 0xCB8800, 0x325CC0, 0x7A3E9D, 0x0083B2, 0xF7F7F7,
-            0x777777, 0xF03E31, 0x60CB00, 0xFFBC5D, 0x007ACC, 0xE64CE6, 0x00AACB, 0xF7F7F7,
-        ].map(hex))
-    }
-
-    static func color(_ color: TerminalColor, theme: Theme, foreground: Bool) -> NSColor {
+    static func color(_ color: TerminalColor, style: TerminalConfig.Style, foreground: Bool) -> NSColor {
         switch color {
-        case .standard: return foreground ? theme.foreground : theme.background
-        case .indexed(let index) where index < 16: return theme.palette[Int(index)]
+        case .standard: return foreground ? style.foreground : style.background
+        case .indexed(let index) where index < 16: return style.palette[Int(index)]
         case .indexed(let index):
             let rgb = TerminalColor.xterm(index) ?? (0, 0, 0)
             return NSColor(srgbRed: CGFloat(rgb.0) / 255, green: CGFloat(rgb.1) / 255, blue: CGFloat(rgb.2) / 255, alpha: 1)
@@ -54,7 +26,7 @@ enum TerminalRender {
     static let families: [String] = {
         let installed = NSFontManager.shared.availableFontFamilies
         var wanted: [String] = []
-        for configured in ghosttyFontFamilies() {
+        for configured in TerminalConfig.shared.fontFamilies {
             if installed.contains(configured) { wanted.append(configured) }
             let tokens = configured.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
             let matches = installed.filter { family in
@@ -68,24 +40,6 @@ enum TerminalRender {
         var seen: Set<String> = []
         return wanted.filter { seen.insert($0).inserted }
     }()
-
-    /// `font-family` values from the user's Ghostty config files, in order.
-    static func ghosttyFontFamilies() -> [String] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".config")
-        let files = [xdg.appendingPathComponent("ghostty/config"), home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config")]
-        var families: [String] = []
-        for file in files {
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            for line in text.split(whereSeparator: \.isNewline) {
-                let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-                guard parts.count == 2, parts[0] == "font-family" else { continue }
-                let value = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                if !value.isEmpty { families.append(value) }
-            }
-        }
-        return families
-    }
 
     struct Fonts {
         var regular: NSFont
@@ -106,12 +60,12 @@ enum TerminalRender {
         }
     }
 
-    /// Fonts at a size whose advance fills `cellWidth` when the grid is known.
-    static func fonts(cellWidth: CGFloat?) -> Fonts {
-        let base = families.lazy.compactMap { NSFont(name: $0, size: defaultFontSize) ?? NSFontManager.shared.font(withFamily: $0, traits: [], weight: 5, size: defaultFontSize) }.first
-            ?? NSFont.monospacedSystemFont(ofSize: defaultFontSize, weight: .regular)
+    /// Fonts at the tile's font size, or at the size whose advance fills `cellWidth` when the grid is known.
+    static func fonts(size fontSize: CGFloat, cellWidth: CGFloat?) -> Fonts {
+        let base = families.lazy.compactMap { NSFont(name: $0, size: fontSize) ?? NSFontManager.shared.font(withFamily: $0, traits: [], weight: 5, size: fontSize) }.first
+            ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         let advance = base.maximumAdvancement.width > 0 ? base.maximumAdvancement.width : base.advancement(forGlyph: base.glyph(withName: "M")).width
-        let size = cellWidth.map { defaultFontSize * $0 / max(advance, 1) } ?? defaultFontSize
+        let size = cellWidth.map { fontSize * $0 / max(advance, 1) } ?? fontSize
         let symbols = families.first { $0.contains("Nerd Font") }
         func variant(_ traits: NSFontTraitMask) -> NSFont {
             var font = NSFontManager.shared.convert(base, toSize: size)
@@ -133,17 +87,17 @@ enum TerminalRender {
     // MARK: Drawing
 
     /// The grid as the tile shows it: from Ghostty's metrics (points) when known, else from the
-    /// default font filling the body.
+    /// configured font filling the body.
     struct Grid {
         var columns: Int
         var rows: Int
         var cell: CGSize
     }
 
-    static func grid(for size: CGSize, known: Grid?) -> Grid {
+    static func grid(for size: CGSize, known: Grid?, style: TerminalConfig.Style) -> Grid {
         if let known { return known }
-        let cell = fonts(cellWidth: nil).cell
-        return Grid(columns: max(1, Int((size.width - 2 * padding) / cell.width)), rows: max(1, Int((size.height - 2 * padding) / cell.height)), cell: cell)
+        let cell = fonts(size: style.fontSize, cellWidth: nil).cell
+        return Grid(columns: max(1, Int((size.width - 2 * style.padding.width) / cell.width)), rows: max(1, Int((size.height - 2 * style.padding.height) / cell.height)), cell: cell)
     }
 
     /// What the screen shows: the output ends on the cursor's row, and rows below it are blank.
@@ -153,20 +107,20 @@ enum TerminalRender {
     }
 
     static func draw(_ lines: [TerminalLine], grid: Grid, in bounds: CGRect, appearance: NSAppearance) {
-        let theme = theme(for: appearance)
-        theme.background.setFill()
+        let style = TerminalConfig.shared.style(for: appearance)
+        style.background.setFill()
         bounds.fill()
-        let fonts = fonts(cellWidth: grid.cell.width)
+        let fonts = fonts(size: style.fontSize, cellWidth: grid.cell.width)
         let cell = grid.cell
         for (row, line) in lines.enumerated() {
-            let y = padding + CGFloat(row) * cell.height
+            let y = style.padding.height + CGFloat(row) * cell.height
             guard y < bounds.maxY else { break }
             var column = 0
             for run in line.runs {
-                var foreground = color(run.style.foreground, theme: theme, foreground: true)
-                var background = run.style.background == .standard ? nil : color(run.style.background, theme: theme, foreground: false)
+                var foreground = color(run.style.foreground, style: style, foreground: true)
+                var background = run.style.background == .standard ? nil : color(run.style.background, style: style, foreground: false)
                 if run.style.inverse {
-                    let swapped = background ?? theme.background
+                    let swapped = background ?? style.background
                     background = foreground
                     foreground = swapped
                 }
@@ -178,7 +132,7 @@ enum TerminalRender {
                 for character in run.text {
                     let width = TerminalStyledTail.cellWidth(character)
                     guard width > 0 else { continue }
-                    let x = padding + CGFloat(column) * cell.width
+                    let x = style.padding.width + CGFloat(column) * cell.width
                     if let background {
                         background.setFill()
                         CGRect(x: x, y: y, width: cell.width * CGFloat(width), height: cell.height).fill()

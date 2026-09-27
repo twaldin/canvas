@@ -931,8 +931,4 @@ extension CodeTile: CodeNavigationHost {
         guard showsCurrent, let rows = rowsView.painter?.rows else { return }
         scroll(toRow: rows.index(ofLine: line))
     }
-
-    func aim(at lines: LineRange) {
-        userAim(Aim(path: displayed.path, range: lines))
-    }
 }

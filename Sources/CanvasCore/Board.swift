@@ -205,7 +205,7 @@ public final class Board {
             object.frame = place(width: size.w, height: size.h, near: caller, stacking: true)
         }
         commit(object)
-        history.record(.created(object))
+        history.record(.created(object), by: object.createdBy)
         log(.created, object, actor: ActivityActor(caller: caller), "created \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
         onEvent?(.objectCreated(object))
         return object
@@ -256,7 +256,7 @@ public final class Board {
         history.begin()
         defer { endStep() }
         commit(object)
-        history.record(.updated(before: before, after: object))
+        history.record(.updated(before: before, after: object), by: Actor(caller: caller))
         if let changes = ActivityLog.changes(from: before, to: object) {
             log(.updated, object, actor: credited, "\(ActivityLog.describe(object)): \(changes)", cause: cause, before: before)
         }
@@ -280,7 +280,7 @@ public final class Board {
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
         bumpRevision()
-        history.record(.deleted(removed))
+        history.record(.deleted(removed), by: Actor(caller: caller))
         if removed.type == .terminal { removedTerminals.append(id) }
         log(.deleted, removed, actor: actor, "deleted \(ActivityLog.describe(removed))")
         let before = tray.count

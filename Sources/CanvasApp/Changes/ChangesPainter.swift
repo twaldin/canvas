@@ -28,23 +28,6 @@ enum ChangesHit: Equatable {
     case line(file: Int, hunk: Int, line: Int)
 }
 
-extension CodeTheme {
-    /// Syntax colors for diff lines: red and green mean removed and added there, so strings,
-    /// keywords, and numbers take other hues.
-    static func diffColor(_ style: SyntaxStyle) -> NSColor {
-        switch style {
-        case .keyword: .systemPurple
-        case .string: .systemBlue
-        case .number, .builtin: .systemIndigo
-        case .type, .tag: .systemTeal
-        case .function: .systemCyan
-        case .property: .systemBrown
-        case .comment, .punctuation: .secondaryLabelColor
-        case .variable: .labelColor
-        }
-    }
-}
-
 /// Laid-out diff rows on screen, keyed by what they show; each draw keeps only what it drew.
 @MainActor
 final class ChangesLineCache {
@@ -84,7 +67,7 @@ final class ChangesLineCache {
 /// Draws a changes tile's body in a flipped context: the header strip (summary, keys, the filter
 /// box), then the rows scrolled by `scroll`: the file list, file headers with Viewed, Stage and
 /// Discard, hunk headers with theirs, and unified-diff lines highlighted with a diff palette
-/// (`CodeTheme.diffColor`), soft-wrapped at the tile's width; the header of the file being read
+/// (`CodeTheme.color`), soft-wrapped at the tile's width; the header of the file being read
 /// stays pinned at the top. The live view, cards, and `view.render` all draw through this.
 @MainActor
 struct ChangesPainter {
@@ -542,7 +525,7 @@ struct ChangesPainter {
             guard lower < upper else { continue }
             let from = row.display(ofOffset: lower), to = row.display(ofOffset: upper)
             guard from < to else { continue }
-            string.addAttribute(.foregroundColor, value: CodeTheme.diffColor(run.style).cgColor, range: NSRange(location: from, length: to - from))
+            string.addAttribute(.foregroundColor, value: CodeTheme.color(run.style).cgColor, range: NSRange(location: from, length: to - from))
         }
         return CTLineCreateWithAttributedString(string)
     }

@@ -265,6 +265,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
     @objc func pasteMentions(_ sender: Any?) { keyController?.pasteMentions(sender) }
     @objc func goToNextNeedsYou(_ sender: Any?) { keyController?.goToNextNeedsYou(sender) }
+    @objc func navigateBack(_ sender: Any?) { keyController?.navigateBack(sender) }
+    @objc func navigateForward(_ sender: Any?) { keyController?.navigateForward(sender) }
     @objc func reviewChanges(_ sender: Any?) { keyController?.reviewChanges(sender) }
     @objc func clearAttentionMarkers(_ sender: Any?) { keyController?.clearAttentionMarkers(sender) }
     @objc func toggleFollowFiles(_ sender: Any?) { keyController?.toggleFollowFiles(sender) }
@@ -369,8 +371,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Ungroup", #selector(ungroupSelection(_:)), "G", [.command, .shift]),
             item("Enter Group", #selector(enterGroup(_:)), ""),
             .separator(),
-            item("Bring to Front", #selector(bringToFront(_:)), "]", [.command, .shift]),
-            item("Send to Back", #selector(sendToBack(_:)), "[", [.command, .shift]),
+            // "}" and "{": ⇧⌘] and ⇧⌘[ as the key produces them. "]" and "[" with a Shift mask
+            // matched the plain ⌘] and ⌘[ (Forward and Back) and never the shifted chords.
+            item("Bring to Front", #selector(bringToFront(_:)), "}", [.command, .shift]),
+            item("Send to Back", #selector(sendToBack(_:)), "{", [.command, .shift]),
             scale,
             .separator(),
             // The focused terminal's, else the selected one's (the context menu's toggle).
@@ -398,6 +402,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // ⌘Esc: Esc belongs to a terminal's program, so this is the way out of one (and of
             // any tile); the board window takes it before Ghostty's keybinds. No shell sees ⌘.
             item("Leave Tile", #selector(leaveTile(_:)), "\u{1b}"),
+            // ⌘[ / ⌘] as in Xcode, PyCharm and Safari: the board window takes them ahead of a
+            // terminal (Ghostty's go to split has no splits here); a page with the keyboard goes
+            // back itself. Send to Back and Bring to Front are ⇧⌘[ / ⇧⌘].
+            item("Back", #selector(navigateBack(_:)), "["),
+            item("Forward", #selector(navigateForward(_:)), "]"),
             .separator(),
             item("Actual Size", #selector(zoomToActual(_:)), "0"),
             item("Zoom In", #selector(zoomIn(_:)), "="),

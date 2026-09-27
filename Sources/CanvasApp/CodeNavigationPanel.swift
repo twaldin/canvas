@@ -133,9 +133,10 @@ final class NavigationPanel: NSView {
     /// for it: Outline, Find References, several definitions) and gives it back when the panel
     /// goes: typing narrows the rows to titles containing the text, ↑/↓ move the highlight,
     /// Return picks it, Esc closes. `headerAction` adds a button at the title's trailing end (the
-    /// references list's Open All), which ⌘↩ also presses.
-    static func filterList(title: String, rows: [Row], headerAction: (title: String, run: @MainActor () -> Void)? = nil) -> NavigationPanel {
-        let content = FilterList(title: title, rows: rows, headerAction: headerAction)
+    /// references list's Open All), which ⌘↩ also presses. `note` is one line under the title
+    /// (why the list is a text search: the language server's unavailable hint), whole in its tooltip.
+    static func filterList(title: String, rows: [Row], headerAction: (title: String, run: @MainActor () -> Void)? = nil, note: String? = nil) -> NavigationPanel {
+        let content = FilterList(title: title, rows: rows, headerAction: headerAction, note: note)
         return NavigationPanel(kind: .list, content: content, contentSize: content.frame.size)
     }
 
@@ -225,7 +226,7 @@ private final class FilterList: NSView, NSTextFieldDelegate {
     private var current = 0
     private weak var previousResponder: NSResponder?
 
-    init(title: String, rows: [NavigationPanel.Row], headerAction: (title: String, run: @MainActor () -> Void)?) {
+    init(title: String, rows: [NavigationPanel.Row], headerAction: (title: String, run: @MainActor () -> Void)?, note: String?) {
         buttons = rows.map(PanelRow.init)
         self.headerAction = headerAction?.run
         let header = NSTextField(labelWithString: title)
@@ -234,10 +235,21 @@ private final class FilterList: NSView, NSTextFieldDelegate {
         let action = headerAction.map { PanelAction(title: $0.title, run: $0.run) }
         let headerWidth = header.fittingSize.width + (action.map { $0.fittingSize.width + 16 } ?? 0)
         let width = min(max(buttons.map(\.fittingSize.width).max() ?? 0, headerWidth, 240), NavigationPanel.maxSize.width)
-        let listHeight = min(CGFloat(rows.count) * Self.rowHeight, NavigationPanel.maxSize.height - Self.headerHeight - Self.fieldHeight - 6)
-        super.init(frame: NSRect(x: 0, y: 0, width: width, height: Self.headerHeight + Self.fieldHeight + 6 + listHeight))
+        let noteHeight: CGFloat = note == nil ? 0 : 16
+        let top = Self.headerHeight + noteHeight
+        let listHeight = min(CGFloat(rows.count) * Self.rowHeight, NavigationPanel.maxSize.height - top - Self.fieldHeight - 6)
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: top + Self.fieldHeight + 6 + listHeight))
         header.frame = NSRect(x: 4, y: 0, width: width - 8 - (action.map { $0.fittingSize.width + 8 } ?? 0), height: 16)
         addSubview(header)
+        if let note {
+            let line = NSTextField(labelWithString: note)
+            line.font = .systemFont(ofSize: 10.5)
+            line.textColor = .tertiaryLabelColor
+            line.lineBreakMode = .byTruncatingTail
+            line.toolTip = note
+            line.frame = NSRect(x: 4, y: Self.headerHeight - 2, width: width - 8, height: 14)
+            addSubview(line)
+        }
         if let action {
             let size = action.fittingSize
             action.frame = NSRect(x: width - size.width - 2, y: 0, width: size.width, height: 16)
@@ -248,9 +260,9 @@ private final class FilterList: NSView, NSTextFieldDelegate {
         field.bezelStyle = .roundedBezel
         field.focusRingType = .none
         field.delegate = self
-        field.frame = NSRect(x: 0, y: Self.headerHeight, width: width, height: Self.fieldHeight)
+        field.frame = NSRect(x: 0, y: top, width: width, height: Self.fieldHeight)
         addSubview(field)
-        scroll.frame = NSRect(x: 0, y: Self.headerHeight + Self.fieldHeight + 6, width: width, height: listHeight)
+        scroll.frame = NSRect(x: 0, y: top + Self.fieldHeight + 6, width: width, height: listHeight)
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true

@@ -54,6 +54,19 @@ public struct SyntaxSpan: Sendable, Equatable {
 public struct SyntaxSymbol: Sendable, Equatable {
     public var name: String
     public var lines: ClosedRange<Int>
+    /// What it declares, from its node: class, function, method, interface, enum, struct, …
+    public var kind: String = "symbol"
+
+    /// The kind a declaration node makes (`class_declaration` is a class).
+    static func kind(ofNode type: String?) -> String {
+        guard let type else { return "symbol" }
+        for (part, kind) in [("protocol_function", "method"), ("method", "method"), ("deinit", "deinitializer"), ("init", "initializer"), ("protocol", "protocol"), ("interface", "interface"),
+                             ("class", "class"), ("enum", "enum"), ("struct", "struct"), ("trait", "trait"), ("impl", "impl"), ("mod", "module"),
+                             ("type_spec", "type"), ("variable_declarator", "function"), ("function", "function")] where type.contains(part) {
+            return kind
+        }
+        return "symbol"
+    }
 }
 
 public struct SyntaxAnalysis: Sendable {
@@ -126,12 +139,12 @@ public enum Syntax {
 
     private static func symbols(_ root: Node, tree: MutableTree, grammar: Grammar, source: NSString) -> [SyntaxSymbol] {
         guard let query = grammar.symbols else { return [] }
-        var found: [(name: String, range: NSRange, lines: ClosedRange<Int>)] = []
+        var found: [(name: String, range: NSRange, lines: ClosedRange<Int>, kind: String)] = []
         for match in query.execute(node: root, in: tree) {
             guard let declaration = match.captures.first(where: { $0.name == "symbol" })?.node,
                   let name = match.captures.first(where: { $0.name == "name" }).map({ source.substring(with: $0.node.range) }) else { continue }
             let lines = Int(declaration.pointRange.lowerBound.row) + 1...Int(declaration.pointRange.upperBound.row) + 1
-            found.append((name, declaration.range, lines))
+            found.append((name, declaration.range, lines, SyntaxSymbol.kind(ofNode: declaration.nodeType)))
         }
         found.sort { $0.range.location != $1.range.location ? $0.range.location < $1.range.location : $0.range.length > $1.range.length }
         // Qualify each name with the declarations enclosing it.
@@ -140,7 +153,7 @@ public enum Syntax {
             while let last = stack.last, last.end <= symbol.range.location { stack.removeLast() }
             let qualified = (stack.map(\.name) + [symbol.name]).joined(separator: ".")
             stack.append((symbol.name, symbol.range.location + symbol.range.length))
-            return SyntaxSymbol(name: qualified, lines: symbol.lines)
+            return SyntaxSymbol(name: qualified, lines: symbol.lines, kind: symbol.kind)
         }
     }
 

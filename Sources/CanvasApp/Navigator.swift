@@ -38,9 +38,10 @@ struct NavigatorRow {
 
 extension CanvasView {
     /// Tiles that need the user first (blocked agents, marked tiles, then done agents not seen
-    /// yet: `NeedsYouItem`, flagged, and found by "blocked", "marked", "done", "needs"), then
-    /// "All content", then groups, then the other tiles, each in reading order (top to bottom,
-    /// then left to right). Drawn objects (shapes, arrows) aren't listed.
+    /// yet: `NeedsYouItem`, flagged, and found by "blocked", "marked", "done", "needs"), then the
+    /// Recent locations navigation landed on (`recentNavigatorRows`), then "All content", then
+    /// groups, then the other tiles, each in reading order (top to bottom, then left to right).
+    /// Drawn objects (shapes, arrows) aren't listed.
     func navigatorRows() -> [NavigatorRow] {
         var groups: [(NSRect, NavigatorRow)] = []
         var tiles: [(NSRect, NavigatorRow)] = []
@@ -81,7 +82,7 @@ extension CanvasView {
             first.append((rank, row))
         }
         let all = NavigatorRow(target: .allContent, title: "All content", kind: "Zoom to Fit", dot: nil)
-        return first.sorted { $0.0 < $1.0 }.map(\.1) + [all] + groups.sorted(by: readingOrder).map(\.1) + rest.sorted(by: readingOrder).map(\.1)
+        return first.sorted { $0.0 < $1.0 }.map(\.1) + recentNavigatorRows() + [all] + groups.sorted(by: readingOrder).map(\.1) + rest.sorted(by: readingOrder).map(\.1)
     }
 
     private static func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }

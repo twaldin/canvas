@@ -33,13 +33,21 @@ public final class UndoHistory {
         }
     }
 
-    public private(set) var undoSteps: [[Change]] = []
-    public private(set) var redoSteps: [[Change]] = []
+    /// One undo step: its changes, oldest first, and who made it (an agent when one made any
+    /// of it, else the user), so undoing someone else's work can say so.
+    public struct Step: Sendable {
+        public var changes: [Change]
+        public var author: Actor
+    }
+
+    public private(set) var undoSteps: [Step] = []
+    public private(set) var redoSteps: [Step] = []
     public var canUndo: Bool { !undoSteps.isEmpty }
     public var canRedo: Bool { !redoSteps.isEmpty }
     public let limit: Int
     private var depth = 0
     private var open: [Change] = []
+    private var openAuthor: Actor = .user
     /// Where in `open` each object's update sits, so another update of it in the same step (a
     /// group re-fit once per member change, an arrow freed at both ends) amends it instead of
     /// adding a change. Only changes at or after `mergeFloor` amend, so `discard(from:)` of a
@@ -55,8 +63,9 @@ public final class UndoHistory {
         self.limit = limit
     }
 
-    func record(_ change: Change) {
+    func record(_ change: Change, by author: Actor = .user) {
         guard !replaying, muted == 0 else { return }
+        if author != .user { openAuthor = author }
         switch change {
         case .updated(let before, let after):
             if Self.content(before) == Self.content(after) { return }
@@ -103,17 +112,19 @@ public final class UndoHistory {
     private func close() {
         openUpdates = [:]
         mergeFloor = 0
+        let author = openAuthor
+        openAuthor = .user
         guard !open.isEmpty else { return }
-        undoSteps.append(open)
+        undoSteps.append(Step(changes: open, author: author))
         open = []
         if undoSteps.count > limit { undoSteps.removeFirst(undoSteps.count - limit) }
         redoSteps.removeAll()
     }
 
-    func popUndo() -> [Change]? { undoSteps.popLast() }
-    func popRedo() -> [Change]? { redoSteps.popLast() }
-    func pushRedo(_ step: [Change]) { redoSteps.append(step) }
-    func pushUndo(_ step: [Change]) { undoSteps.append(step) }
+    func popUndo() -> Step? { undoSteps.popLast() }
+    func popRedo() -> Step? { redoSteps.popLast() }
+    func pushRedo(_ step: Step) { redoSteps.append(step) }
+    func pushUndo(_ step: Step) { undoSteps.append(step) }
 
     /// What an undo compares and restores: everything the user can see change, minus bookkeeping.
     struct Content: Equatable {
@@ -186,7 +197,7 @@ extension Board {
         guard let step = history.popUndo() else { return false }
         replayVerb = "undo"
         defer { replayVerb = nil }
-        history.pushRedo(revert(step))
+        history.pushRedo(UndoHistory.Step(changes: revert(step.changes), author: step.author))
         return true
     }
 
@@ -222,7 +233,7 @@ extension Board {
         defer { replayVerb = nil }
         var replayed: [UndoHistory.Change] = []
         replay {
-            for change in step {
+            for change in step.changes {
                 switch change {
                 case .created(let object):
                     put(object)
@@ -238,7 +249,7 @@ extension Board {
                 }
             }
         }
-        history.pushUndo(replayed)
+        history.pushUndo(UndoHistory.Step(changes: replayed, author: step.author))
         return true
     }
 

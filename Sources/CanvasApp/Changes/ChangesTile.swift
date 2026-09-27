@@ -733,11 +733,22 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         openCode(file: file, line: target)
     }
 
+    /// The line in a code tile beside this one: this tile's preview, re-aimed while the user
+    /// hasn't kept it, else a plain code tile in view showing the file, else a new one
+    /// (`Board.openForNavigation`); one step of Navigate Back.
     private func openCode(file: Int, line: Int) {
         guard let set else { return }
-        let path = set.files[file].boardPath
-        guard let opened = try? board.showCode(path: path, range: LineRange(start: line, end: line), beside: object.id, extra: ["diffBase": .string(spec.baseProp)]) else { return }
-        onOpenedCode?(opened.id, opened.created)
+        let aim = CodeAim(path: set.files[file].boardPath, range: LineRange(start: line, end: line))
+        let open = { [self] () -> CodeReaim? in
+            let opened = board.openForNavigation(aim, from: object.id, preview: true, extra: ["diffBase": .string(spec.baseProp)])
+            onOpenedCode?(opened.id, opened.created)
+            return opened.reaim
+        }
+        guard let canvas = enclosingScrollView as? CanvasView else {
+            _ = open()
+            return
+        }
+        canvas.navigating(landing: aim, open)
     }
 
     /// Marks a file Viewed for its current diff (folding it) or unmarks it (unfolding it):

@@ -41,12 +41,12 @@ public enum CanvasBasics {
         Section(title: "Needs you", items: [
             Item(term: "Pink ring and bubble", text: "an attention marker: an agent (or a bell) says \"look here\". It clears when you select or look at the tile."),
             Item(term: "Pill at the edge", text: "something that needs you is off screen that way. Click it to go there."),
-            Item(term: "⌘J", text: "go to the next thing that needs you: blocked agents first, then markers."),
+            Item(term: "⌘J", text: "go to the next thing that needs you: blocked agents first, then markers, then agents that finished while you looked elsewhere."),
         ]),
         Section(title: "Agents' tiles", items: [
             Item(term: "Follow tile", text: "each agent's code tile follows the file and line it last read or edited; the strip under it lists recent places (a pencil marks an edit). Pin keeps a view; turn it off with right-click › Follow Files."),
-            Item(term: "Where new tiles land", text: "next to the agent's terminal, clear of other tiles, inside your view when there's room. The view never moves by itself: look for a marker, or press ⌘9."),
-            Item(term: "Undo", text: "⌘Z undoes the last change, yours or an agent's; ⇧⌘Z redoes it."),
+            Item(term: "Where new tiles land", text: "next to the agent's terminal, clear of other tiles, inside your view when there's room nearby. The view never moves by itself: look for a marker, or press ⌘9. \"by name\" in a title bar says which agent made the tile."),
+            Item(term: "Undo", text: "⌘Z undoes the last change, yours or an agent's, and says so when it was an agent's; ⇧⌘Z redoes it."),
         ]),
         Section(title: "Pointing your agent at things", items: [
             Item(term: "Hyper-click", text: "⌃⌥⇧⌘-click (Caps Lock as Hyper) a code line, page element, drawing or tile to stage it as a mention in the tray at the bottom."),
@@ -61,7 +61,8 @@ public enum CanvasBasics {
         Section(title: "Keyboard", items: [
             Item(term: "⌘P", text: "go to a tile, file or symbol."),
             Item(term: "⌘T", text: "new terminal; then run omp, claude, codex, gemini or opencode."),
-            Item(term: "Return · Esc", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas. In a terminal, click the empty canvas to leave."),
+            Item(term: "Return · Esc", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas. In a terminal Esc goes to the program: ⌘Esc leaves any tile."),
+            Item(term: "⌘[ · ⌘]", text: "back and forward through where you went (Go to, definitions, ⌘-clicks, ⌘J)."),
             Item(term: "⌥⌘-arrows", text: "move to the nearest tile that way."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
         ]),

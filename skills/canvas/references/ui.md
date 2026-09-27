@@ -19,17 +19,17 @@ Point the user at Help › Canvas Basics for the same text in the app.
   It clears when the user selects the tile, types in it, or looks at it for a few seconds; View › Clear Attention Markers clears them all.
   Bubbles sit beside their tile, off other tiles' title bars and never over the terminal the user is typing in.
 - **Edge pill** (arrow + the start of the message; the whole message in its tooltip): something that needs the user is off screen that way; clicking it goes there.
-- **⌘J**: the next thing that needs the user, blocked agents first, then markers.
+- **⌘J**: the next thing that needs the user, blocked agents first, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
 
 ## Agents' tiles
 
 - **Follow tile**: each agent terminal's code tile that follows the file and line the agent last read or edited (on by default; it appears on the first file read).
   The strip under its header lists recent places, newest first; a pencil marks an edit.
   "N new ▸" catches up after the user scrolled; Pin keeps the current view as its own tile; right-click the terminal › Follow Files turns it off.
-- **Where your objects land**: next to your terminal, clear of other tiles, inside the user's view when there's room.
+- **Where your objects land**: next to your terminal, clear of other tiles, inside the user's view when there's room within ~600 pt of it; they show "by <your terminal's name>" in their title bar.
   The view never moves for you: when the view is full, what you made may be off screen; raise a marker, or tell the user ⌘9 (Zoom to Fit).
-- **Undo**: ⌘Z undoes the last change, the user's or an agent's (an agent's batch is one step); ⇧⌘Z redoes.
-  Bookkeeping nobody chose (a follow tile re-aiming) isn't an undo step.
+- **Undo**: ⌘Z undoes the last change, the user's or an agent's (an agent's batch is one step, and a notice names the agent); ⇧⌘Z redoes.
+  Navigation and bookkeeping nobody chose (a follow tile re-aiming) aren't undo steps; ⌘[ / ⌘] go back and forward through the user's navigation.
 
 ## Pointing an agent at things
 
@@ -46,7 +46,7 @@ Point the user at Help › Canvas Basics for the same text in the app.
   Below about 30% (terminals 15%) tiles show as cards; zooming in brings them back live. ⌥-drag a corner scales a tile.
 - ⌘P Go to (tiles, files, `@symbols`); ⌘T new terminal; ⌘W close the selection; ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows move to the nearest tile that way.
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
-  In a terminal Esc belongs to the program: clicking the empty canvas leaves it.
+  In a terminal Esc belongs to the program: ⌘Esc (View › Leave Tile) leaves any tile.
 - A code tile without changes shows a quiet "no changes"; its diff-base picker appears when the pointer is over the header.
 - Save as PNG…, Save as HTML… and Export Selection (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.
   Export Selection keeps the titles and borders of groups whose tiles are all selected; a marquee around groups selects them and the arrows between what it selects.

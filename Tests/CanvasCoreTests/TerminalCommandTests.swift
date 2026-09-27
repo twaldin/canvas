@@ -65,12 +65,17 @@ struct TerminalCommandTests {
         let last = TerminalCommand(command: "go test ./...", exit: 1, durationMs: 900)
         // Output ending two rows above the cursor (a two-line prompt), under its own command line.
         #expect(TerminalBlocks.command(promptRow: "❯ go test ./...", outputEnd: 18, cursorRow: 20, atPrompt: true, last: last) == last)
-        // An older block: just its command line as shown.
-        #expect(TerminalBlocks.command(promptRow: "❯ go vet", outputEnd: 8, cursorRow: 20, atPrompt: true, last: last) == TerminalCommand(command: "❯ go vet"))
+        // An older block: just its command line as shown, without the prompt's symbol.
+        #expect(TerminalBlocks.command(promptRow: "❯ go vet", outputEnd: 8, cursorRow: 20, atPrompt: true, last: last) == TerminalCommand(command: "go vet"))
         // The same place, but its prompt row ran something else (the last command printed nothing).
-        #expect(TerminalBlocks.command(promptRow: "❯ go vet", outputEnd: 18, cursorRow: 20, atPrompt: true, last: last) == TerminalCommand(command: "❯ go vet"))
+        #expect(TerminalBlocks.command(promptRow: "❯ go vet", outputEnd: 18, cursorRow: 20, atPrompt: true, last: last) == TerminalCommand(command: "go vet"))
         // Still running: the shell's last command is an earlier one.
-        #expect(TerminalBlocks.command(promptRow: "❯ go test ./...", outputEnd: 18, cursorRow: 19, atPrompt: false, last: last) == TerminalCommand(command: "❯ go test ./..."))
+        #expect(TerminalBlocks.command(promptRow: "❯ go test ./...", outputEnd: 18, cursorRow: 19, atPrompt: false, last: last) == TerminalCommand(command: "go test ./..."))
+        #expect(TerminalBlocks.commandLine("$ ls -la") == "ls -la")
+        #expect(TerminalBlocks.commandLine("% ./run.sh") == "./run.sh")
+        #expect(TerminalBlocks.commandLine("./run.sh --fast") == "./run.sh --fast")
+        #expect(TerminalBlocks.commandLine("~/dev ❯ make") == "~/dev ❯ make")
+        #expect(TerminalBlocks.commandLine("git status") == "git status")
         #expect(TerminalBlocks.rows(of: "12345\n\n1234567890123", columns: 10) == 4)
     }
 

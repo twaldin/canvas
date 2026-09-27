@@ -194,9 +194,9 @@ public enum TerminalBlocks {
     /// What a block's output ending on screen row `outputEnd` ran: the shell's `last` command
     /// when this is its block (the shell is back at its prompt, `cursorRow` just below the output,
     /// and the prompt row above the output ends with that command), else just the command line
-    /// shown in `promptRow`, without exit status or duration.
+    /// shown in `promptRow` (`commandLine`), without exit status or duration.
     public static func command(promptRow: String?, outputEnd: Int, cursorRow: Int?, atPrompt: Bool, last: TerminalCommand?) -> TerminalCommand? {
-        let shown = promptRow.map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+        let shown = promptRow.map(commandLine).flatMap { $0.isEmpty ? nil : $0 }
         if let last, atPrompt, let cursorRow, cursorRow > outputEnd, cursorRow - outputEnd <= promptRows {
             let matches = last.command.map { command in shown.map { $0.hasSuffix(command) } ?? true } ?? true
             if matches {
@@ -206,6 +206,17 @@ public enum TerminalBlocks {
             }
         }
         return shown.map { TerminalCommand(command: $0) }
+    }
+
+    /// The command on a prompt row: the row without the prompt's own leading symbol (`❯ `, `$ `,
+    /// `% `, `➜ `: up to three characters that aren't ASCII letters, digits or a path's start,
+    /// then a space). A prompt that shows more than a symbol on that row stays in.
+    public static func commandLine(_ row: String) -> String {
+        let trimmed = row.trimmingCharacters(in: .whitespaces)
+        guard let space = trimmed.firstIndex(where: \.isWhitespace) else { return trimmed }
+        let head = trimmed[..<space]
+        let prompt = head.count <= 3 && head.allSatisfy { !($0.isASCII && ($0.isLetter || $0.isNumber)) && !"./~([!-\"'`".contains($0) }
+        return prompt ? trimmed[space...].trimmingCharacters(in: .whitespaces) : trimmed
     }
 }
 

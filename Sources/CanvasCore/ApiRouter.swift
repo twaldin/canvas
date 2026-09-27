@@ -90,12 +90,16 @@ public final class ApiRouter {
     public var renderView: ((Board, RenderRequest, ImageFormat) async throws -> RenderOutput)?
     /// What the board's window shows; nil when it has none.
     public var viewState: ((Board) -> ViewState?)?
-    /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`), read and
-    /// trimmed off the main actor; nil when the session doesn't exist.
+    /// The last `lines` lines of a terminal tile's session text (a `TerminalTail`, soft-wrapped
+    /// rows joined when the tile knows its width), read and trimmed off the main actor; nil when
+    /// the session doesn't exist.
     public var readTerminal: ((Board, ObjectID, _ lines: Int) async -> TerminalTail.Tail?)?
-    /// A terminal tile's live title (OSC 0/2) and foreground program (`TerminalName.program`), as
-    /// its tile knows them now; nil without the app UI.
-    public var terminalStatus: ((Board, ObjectID) -> (title: String?, program: String?))?
+    /// A terminal tile's last command block (`agent.read` `block: "last"`): what ran and its
+    /// output, from Ghostty's prompt marks; throws `Failure` when there's none to read.
+    public var readTerminalBlock: ((Board, ObjectID) async throws -> (command: TerminalCommand, output: String))?
+    /// A terminal tile's live title (OSC 0/2), foreground program (`TerminalName.program`) and
+    /// last finished command, as its tile knows them now; nil without the app UI.
+    public var terminalStatus: ((Board, ObjectID) -> TerminalStatus)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
@@ -327,19 +331,25 @@ public final class ApiRouter {
             "program": status?.program.map(JSONValue.string) ?? .null,
             "sessionId": agent?["sessionId"] ?? .null,
             "lifecycle": terminal.props["lifecycle"] ?? .object(["state": .string(LifecycleState.unknown.rawValue)]),
+            "lastCommand": status?.lastCommand.map { $0.command.json(finishedAt: $0.finishedAt) } ?? .null,
         ]
         return .object(entry.filter { $0.value != .null })
     }
 
     /// `agent.read`: the tail of the session text, or with `since: "prompt"` what the terminal
-    /// printed after the last `agent.prompt` to it. The read runs off the main actor (it spawns
+    /// printed after the last `agent.prompt` to it, or with `block: "last"` the output of the
+    /// last command its shell finished. The read runs off the main actor (it spawns
     /// `zmx history`), and the reply stays in order because each connection is served serially.
     private func read(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"))
         let since = p["since"]?.string
         guard since == nil || since == "prompt" else { throw Failure("invalid_params", "since must be \"prompt\"") }
-        let requested = p["lines"]?.int ?? (since == nil ? Self.readLinesDefault : Self.readLinesMax)
+        let block = p["block"]?.string
+        guard block == nil || block == "last" else { throw Failure("invalid_params", "block must be \"last\"") }
+        guard block == nil || since == nil else { throw Failure("invalid_params", "since and block don't combine: block reads the last command's output, since the reply to the last agent.prompt") }
+        let requested = p["lines"]?.int ?? (since == nil && block == nil ? Self.readLinesDefault : Self.readLinesMax)
         guard requested >= 1 else { throw Failure("invalid_params", "lines must be at least 1") }
+        if block != nil { return try await readBlock(board, terminal, lines: min(requested, Self.readLinesMax)) }
         guard let readTerminal else { throw Failure("unsupported", "reading terminals needs the app UI") }
         var mark: TerminalTail.Tail?
         if since != nil {
@@ -365,6 +375,23 @@ public final class ApiRouter {
         result["agent"] = agentEntry(current, on: board)
         result["text"] = .string(shown.text)
         result["lines"] = .number(Double(shown.lines))
+        return .object(result)
+    }
+
+    /// `agent.read` `block: "last"`: the last finished command's output (its last `lines` lines)
+    /// with what ran, its exit status and duration.
+    private func readBlock(_ board: Board, _ terminal: CanvasObject, lines limit: Int) async throws -> JSONValue {
+        guard let readTerminalBlock else { throw Failure("unsupported", "reading terminals needs the app UI") }
+        let block = try await readTerminalBlock(board, terminal.id)
+        let output = TerminalExcerpt.lines(block.output)
+        let shown = output.suffix(limit)
+        var result: [String: JSONValue] = [
+            "text": .string(shown.joined(separator: "\n")),
+            "lines": .number(Double(shown.count)),
+            "command": block.command.json(),
+        ]
+        if shown.count < output.count { result["truncated"] = .bool(true) }
+        result["agent"] = agentEntry(board.objects[terminal.id] ?? terminal, on: board)
         return .object(result)
     }
 
@@ -789,10 +816,15 @@ public final class ApiRouter {
     }
 
     /// `object.get`; a changes tile's result adds `changes`: its files and hunks as git has them
-    /// now (`ChangeSet.json`), next to the actions the user took in `props.reviewed`.
+    /// now (`ChangeSet.json`), next to the actions the user took in `props.reviewed`; a terminal's
+    /// adds `lastCommand`, the last command its shell finished (not a prop: it changes no `rev`).
     private func get(_ p: JSONValue) async throws -> JSONValue {
         let result = try dispatch("object.get", p)
-        guard let id = p["id"]?.string, let board = registry.board(containing: id), let object = board.objects[id], object.type == .changes else { return result }
+        guard let id = p["id"]?.string, let board = registry.board(containing: id), let object = board.objects[id] else { return result }
+        if object.type == .terminal, let last = terminalStatus?(board, id).lastCommand {
+            return result.merging(.object(["lastCommand": last.command.json(finishedAt: last.finishedAt)]))
+        }
+        guard object.type == .changes else { return result }
         let set = await ChangeSet.load(root: board.root, spec: ChangesSpec(object.props), highlight: false)
         return result.merging(.object(["changes": set.json(viewed: object.props["viewed"])]))
     }

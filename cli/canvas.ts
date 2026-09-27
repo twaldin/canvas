@@ -96,32 +96,58 @@ function jsonParams(value: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-/** `--key value` (JSON when it parses), `--json '{...}'`/`@file`/`@-`, and bare `--flag` (true). */
-function parseArgs(args: string[]): Record<string, unknown> {
-  let params: Record<string, unknown> = {};
+/** The schema at `path` (`frame.x`) under `schema`, following `$ref`s; undefined past what it declares. */
+function schemaAt(schema: Schema | undefined, path: string[]): Schema | undefined {
+  let node = schema;
+  for (const key of path) {
+    while (node?.$ref) node = definitions[node.$ref.replace("#/definitions/", "")];
+    node = node?.properties?.[key];
+  }
+  while (node?.$ref) node = definitions[node.$ref.replace("#/definitions/", "")];
+  return node;
+}
+
+/** Whether a param declared by `schema` only ever holds a string (`--text 1` stays "1"). */
+function takesOnlyStrings(schema: Schema | undefined): boolean {
+  if (!schema) return false;
+  if (schema.const !== undefined) return typeof schema.const === "string";
+  if (schema.enum) return schema.enum.every((value) => typeof value === "string");
+  if (schema.oneOf) return schema.oneOf.every(takesOnlyStrings);
+  const types = Array.isArray(schema.type) ? schema.type : schema.type ? [schema.type] : [];
+  return types.length > 0 && types.every((type) => type === "string" || type === "null");
+}
+
+/**
+ * `--key value` (JSON when it parses, except for params the method declares as strings, which
+ * keep the text as typed), `--json '{...}'`/`@file`/`@-`, and bare `--flag` (true).
+ */
+function parseArgs(args: string[], params?: Schema): Record<string, unknown> {
+  let result: Record<string, unknown> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg.startsWith("--")) usage();
     const value = args[i + 1];
     if (value === undefined || value.startsWith("--")) {
       if (arg === "--json") usage();
-      setPath(params, arg.slice(2), true);
+      setPath(result, arg.slice(2), true);
       continue;
     }
     i++;
     if (arg === "--json") {
-      params = { ...params, ...jsonParams(value) };
+      result = { ...result, ...jsonParams(value) };
       continue;
     }
     let parsed: unknown = value;
-    try {
-      parsed = JSON.parse(value);
-    } catch {
-      // plain string
+    if (!takesOnlyStrings(schemaAt(params, arg.slice(2).split(".")))) {
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        // plain string
+      }
     }
-    setPath(params, arg.slice(2), parsed);
+    setPath(result, arg.slice(2), parsed);
   }
-  return params;
+  return result;
 }
 
 /** Compact type text; records every referenced definition in `refs`. */
@@ -228,7 +254,7 @@ if (!spec) {
 
 let client: CanvasClient | undefined;
 try {
-  const params = parseArgs(rest);
+  const params = parseArgs(rest, spec.params);
   if (target !== undefined) params.target = target;
   if (method === "object.get" && params.as === "image") {
     throw new CanvasError("invalid_params", "`get --as image` was removed; use `canvas render <id>` (view.render)");

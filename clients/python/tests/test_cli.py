@@ -52,6 +52,16 @@ class CliParamsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.sent(), {"target": "b", "lines": 5})
 
+    def test_string_params_keep_the_text_as_typed(self) -> None:
+        # Answering Codex's "1. Trust and continue": text is a string param; lines stays a number.
+        result = self.run_cli("agent.prompt", "--target", "codex", "--text", "1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.sent(), {"target": "codex", "text": "1"})
+        self.app.requests.clear()
+        result = self.run_cli("agent.read", "--target", "2", "--lines", "40")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.sent(), {"target": "2", "lines": 40})
+
     def test_unreadable_or_invalid_files_fail_before_sending(self) -> None:
         (self.dir / "bad.json").write_text("{not json")
         (self.dir / "list.json").write_text("[1, 2]")

@@ -266,6 +266,10 @@ export type MentionTarget = {
   kind: "terminal";
   object: Id;
   text: string;
+  /** what `text` is: the user's selection; the screen rows around a Hyper-click, the clicked row marked `> ` and the others indented two spaces; or one command's output (Hyper-click inside it, with Ghostty's shell integration) */
+  part?: "selection" | "rows" | "command";
+  /** with part command: what ran (exit and duration only for the shell's last command) */
+  command?: TerminalCommand;
 } | {
   kind: "group";
   objects: Id[];
@@ -317,6 +321,19 @@ export type Agent = {
   program?: string;
   sessionId?: string;
   lifecycle: Lifecycle;
+  /** the last command the terminal's shell finished (Ghostty's shell integration reports it); absent until one did */
+  lastCommand?: TerminalCommand;
+};
+
+export type TerminalCommand = {
+  /** the command line (its first line), as the shell integration titled the terminal while it ran; for an older block, the prompt row above its output */
+  command?: string;
+  /** exit status; null when the shell didn't report one */
+  exit?: unknown;
+  /** how long it ran */
+  durationMs?: number;
+  /** `lastCommand` only */
+  finishedAt?: string;
 };
 
 export type BoardInfo = {
@@ -457,6 +474,8 @@ export type ObjectGetParams = {
 export type ObjectGetResult = {
   object: CanvasObject;
   graph?: Record<string, unknown>;
+  /** terminals only: the last command the shell finished, as in `agent.list` */
+  lastCommand?: TerminalCommand;
   /** changes tiles only */
   changes?: {
     repository?: string;
@@ -786,14 +805,18 @@ export type AgentReadParams = {
   lines?: number;
   /** only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started */
   since?: "prompt";
+  /** the output of the last command the shell finished instead of the tail (its last `lines` lines, default 2000), for a shell at its prompt with the command's output on screen; `unavailable` when there is no such block (no shell integration, a command still running, the view scrolled back). Doesn't combine with `since` */
+  block?: "last";
 };
 export type AgentReadResult = {
   agent: Agent;
   text: string;
   /** number of lines returned */
   lines: number;
-  /** with `since`: the reply has more lines than returned */
+  /** with `since`: the reply has more lines than returned; with `block`: the output has */
   truncated?: boolean;
+  /** with `block`: the command whose output this is */
+  command?: TerminalCommand;
 };
 
 export type FollowReportParams = {
@@ -921,7 +944,7 @@ export interface CanvasApi {
     export(params?: BoardExportParams): Promise<BoardExportResult>;
   };
   object: {
-    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). To look at an object, `view.render` it. */
+    /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
@@ -971,7 +994,7 @@ export interface CanvasApi {
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
     /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
-    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. */
+    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line (a row that fills the terminal's width and ends in text joins the next). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block: "last"`: the output of the last command the terminal's shell finished (from Ghostty's shell-integration prompt marks), with `command` saying what ran. */
     read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {

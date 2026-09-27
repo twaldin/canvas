@@ -221,6 +221,9 @@ final class CanvasView: NSScrollView {
         board.viewport = { [weak self] in self?.clearViewport }
         // A mention of a shape drawn on a page lists the elements under it.
         board.pageElements = { [weak self] id, rect in await self?.pageElements(id, canvasRect: rect) }
+        // Mentions name a terminal as its header does, and one of a whole terminal carries its screen.
+        board.terminalLabel = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.label }
+        board.terminalScreen = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.screenText() }
         for object in board.snapshot.objects { add(object) }
         // Markers the user hadn't seen when the board was last open.
         for marker in board.attention.values { showMarker(marker.object, message: marker.message) }
@@ -336,6 +339,7 @@ final class CanvasView: NSScrollView {
                 self?.tiles[id]?.setTitle(title)
                 if self?.promptTarget == id { self?.onPromptTargetTitle?() }
             }
+            terminal.onStatus = { [weak self] status, failed, detail in self?.tiles[id]?.setStatus(status, failed: failed, detail: detail) }
             // A ⌘-clicked reference: user navigation. A tile already on the board (or the
             // re-aimed preview) is selected (keyboard focus stays in the terminal); the view pans
             // only when the tile is mostly out of view, never so far that the reference goes.

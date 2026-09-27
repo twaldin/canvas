@@ -29,6 +29,9 @@ final class TerminalConfig {
     /// Chords the user bound to Ghostty window, tab and split actions, which Canvas performs
     /// instead (`GhosttyConfig.remaps`; the keybinds themselves never reach the library).
     let remaps: [GhosttyConfig.KeyChord: GhosttyConfig.AppAction]
+    /// Ghostty's shell integration for tiles to load (`TerminalShellIntegration`): nil when the
+    /// user's config says `shell-integration = none`.
+    let shellIntegration: String?
 
     private init() {
         // Canvas's base: the library's defaults (14 pt, block cursor); without a user theme, its
@@ -66,6 +69,12 @@ final class TerminalConfig {
               loaded.isEmpty ? "(none)" : loaded.joined(separator: ", "), user.entries.count,
               user.lightTheme ?? "(default)", user.darkTheme ?? "(default)", fontFamilies.first ?? "(default)", Double(dark.fontSize))
         remaps = user.remaps
+        let integrationSetting = GhosttyConfig.value("shell-integration", in: user.entries)
+        shellIntegration = TerminalShellIntegration.directory(setting: integrationSetting, resources: GhosttyRuntimeResources.directoryURL) { path in
+            var directory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
+        }
+        NSLog("Canvas: shell integration %@", shellIntegration ?? (integrationSetting == "none" ? "off (shell-integration = none)" : "missing from the bundle"))
         for keybind in user.appKeybinds {
             if let action = keybind.action, keybind.chord != nil {
                 NSLog("Canvas: Ghostty keybind `%@` runs Canvas's %@", keybind.entry.value, action == .newTerminal ? "New Terminal" : "Close Terminal")

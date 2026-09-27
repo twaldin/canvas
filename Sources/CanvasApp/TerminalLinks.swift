@@ -12,6 +12,11 @@ final class CanvasTerminalView: TerminalView {
     var onHover: ((TerminalReferences.Hit?) -> Void)?
     /// A ⌘-clicked reference; `newTile` for ⌥⌘- or ⇧⌘-click (always a tile of its own).
     var onOpen: ((TerminalReferences.Hit, _ newTile: Bool) -> Void)?
+    /// A ⌘-click that found no file to open (`linkAt` was nil) at a point in this view's coordinates.
+    var onMissedLink: ((NSPoint, _ newTile: Bool) -> Void)?
+    /// Keyboard focus came or went: libghostty-spm has just told Ghostty the view is focused
+    /// or not, without asking whether its window is key in an active app.
+    var onFocusChange: (() -> Void)?
     /// Whether the terminal has scrollback to scroll (more rows than its screen).
     var hasScrollback: (() -> Bool)?
 
@@ -25,12 +30,15 @@ final class CanvasTerminalView: TerminalView {
 
     override func becomeFirstResponder() -> Bool {
         Self.refocusTarget = nil
-        return super.becomeFirstResponder()
+        let became = super.becomeFirstResponder()
+        onFocusChange?()
+        return became
     }
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
         if resigned, isHiddenOrHasHiddenAncestor { Self.refocusTarget = self }
+        onFocusChange?()
         return resigned
     }
 
@@ -50,13 +58,15 @@ final class CanvasTerminalView: TerminalView {
 
     override func mouseDown(with event: NSEvent) {
         let flags = event.modifierFlags
-        if flags.contains(.command), let hit = linkAt?(convert(event.locationInWindow, from: nil)) {
+        let point = convert(event.locationInWindow, from: nil)
+        if flags.contains(.command), let hit = linkAt?(point) {
             // Ghostty never sees this click, so it neither selects nor opens anything.
             swallowedMouseUp = true
             setHover(nil)
             onOpen?(hit, !flags.isDisjoint(with: [.option, .shift]))
             return
         }
+        if flags.contains(.command) { onMissedLink?(point, !flags.isDisjoint(with: [.option, .shift])) }
         super.mouseDown(with: event)
     }
 

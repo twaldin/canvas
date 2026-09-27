@@ -121,6 +121,12 @@ public final class Board {
     /// The page elements under a canvas rect of a browser or HTML tile, for mentions of shapes
     /// drawn on it; nil when the page can't answer quickly (not loaded, not live). Set by the app.
     public var pageElements: (@MainActor (ObjectID, CGRect) async -> PageElements?)?
+    /// A terminal tile's name as its header shows it (its `props.name`, else the program running
+    /// in it and the title that program set), for mentions; nil without a window. Set by the app.
+    public var terminalLabel: (@MainActor (ObjectID) -> String?)?
+    /// A terminal tile's current screen as text (soft-wrapped rows joined), for a mention of
+    /// the whole terminal; nil when its session isn't running. Set by the app.
+    public var terminalScreen: (@MainActor (ObjectID) async -> String?)?
     /// Terminal tiles that left the board for good, once the step that removed them is over:
     /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create). A terminal a failed
     /// batch deleted and put back never counts. The app ends their sessions.
@@ -557,10 +563,11 @@ public final class Board {
     /// Old-side and pinned code excerpts are read from git, hence async.
     public func drain(peek: Bool = false, caller: ObjectID? = nil) async -> (mentions: [MentionContext.Resolved], context: String) {
         var resolved: [MentionContext.Resolved] = []
-        for (index, mention) in tray.enumerated() {
+        let staged = tray
+        for (index, mention) in staged.enumerated() {
             resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self, caller: caller))
         }
-        let context = MentionContext.render(resolved, board: self)
+        let context = MentionContext.render(resolved, board: self, targets: staged.map(\.target))
         if !peek { commit(resolved.map(\.id)) }
         return (resolved, context)
     }

@@ -191,6 +191,13 @@ class Agent(TypedDict):
     program: NotRequired[str]
     sessionId: NotRequired[str]
     lifecycle: Required["Lifecycle"]
+    lastCommand: NotRequired["TerminalCommand"]
+
+class TerminalCommand(TypedDict):
+    command: NotRequired[str]
+    exit: NotRequired[Any]
+    durationMs: NotRequired[int]
+    finishedAt: NotRequired[str]
 
 class BoardInfo(TypedDict):
     board: Required["Id"]
@@ -274,7 +281,7 @@ class ObjectApi:
         self._call = call
 
     def get(self, *, id: "Id", as_: Literal["raw", "graph"] | None = None) -> dict[str, Any]:
-        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). To look at an object, `view.render` it."""
+        """Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. To look at an object, `view.render` it."""
         params = {"id": id, "as": as_}
         return self._call("object.get", params, [])
 
@@ -398,9 +405,9 @@ class AgentApi:
         params = {"target": target, "until": until, "timeoutMs": timeout_ms}
         return self._call("agent.wait", params, [])
 
-    def read(self, *, target: str, lines: int | None = None, since: Literal["prompt"] | None = None) -> dict[str, Any]:
-        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line."""
-        params = {"target": target, "lines": lines, "since": since}
+    def read(self, *, target: str, lines: int | None = None, since: Literal["prompt"] | None = None, block: Literal["last"] | None = None) -> dict[str, Any]:
+        """Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line (a row that fills the terminal's width and ends in text joins the next). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block: "last"`: the output of the last command the terminal's shell finished (from Ghostty's shell-integration prompt marks), with `command` saying what ran."""
+        params = {"target": target, "lines": lines, "since": since, "block": block}
         return self._call("agent.read", params, [])
 
 @_snake_case_hints

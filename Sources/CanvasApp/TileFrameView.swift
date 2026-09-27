@@ -12,6 +12,8 @@ final class TileFrameView: NSView {
     let content: any TileContent
     private let titleBar = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
+    /// A terminal's last command when it failed or ran long (`exit 1 · 42 s`), right-aligned.
+    private let statusLabel = NSTextField(labelWithString: "")
     private let badge = NSView()
     private let closeButton = TileCloseButton()
     private let card = NSImageView()
@@ -71,6 +73,10 @@ final class TileFrameView: NSView {
         closeButton.action = #selector(closeClicked)
         titleBar.addSubview(badge)
         titleBar.addSubview(titleLabel)
+        statusLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        statusLabel.alignment = .right
+        statusLabel.isHidden = true
+        titleBar.addSubview(statusLabel)
         titleBar.addSubview(closeButton)
         addSubview(titleBar)
         addSubview(content)
@@ -127,7 +133,9 @@ final class TileFrameView: NSView {
         titleBar.frame = NSRect(x: 0, y: 0, width: width, height: Self.titleHeight)
         badge.frame = NSRect(x: 10, y: (Self.titleHeight - 10) / 2, width: 10, height: 10)
         closeButton.frame = NSRect(x: width - 28, y: 3, width: 22, height: 20)
-        titleLabel.frame = NSRect(x: 26, y: 5, width: max(0, width - 60), height: 16)
+        let status = statusLabel.isHidden ? 0 : min(statusLabel.fittingSize.width, max(0, width / 3))
+        statusLabel.frame = NSRect(x: width - 32 - status, y: 6, width: status, height: 15)
+        titleLabel.frame = NSRect(x: 26, y: 5, width: max(0, width - 60 - (status > 0 ? status + 8 : 0)), height: 16)
         let body = NSRect(x: 0, y: Self.titleHeight, width: width, height: max(0, bounds.height - Self.titleHeight))
         if content.frame != body { content.frame = body }
         card.frame = body
@@ -161,6 +169,16 @@ final class TileFrameView: NSView {
         guard title != self.title else { return }
         self.title = title
         if window?.occlusionState.contains(.visible) == true { syncTitle() }
+    }
+
+    /// A terminal's last-command status (`TerminalCommand.status`), nil to hide it: quiet
+    /// secondary text, red only for a failure; `detail` is its tooltip.
+    func setStatus(_ status: String?, failed: Bool, detail: String?) {
+        statusLabel.stringValue = status ?? ""
+        statusLabel.textColor = failed ? .systemRed : .secondaryLabelColor
+        statusLabel.toolTip = detail
+        statusLabel.isHidden = status == nil
+        layoutParts()
     }
 
     /// Puts the title into the labels (also for `view.snapshot` of a window nobody sees).

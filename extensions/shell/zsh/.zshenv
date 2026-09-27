@@ -10,6 +10,12 @@
 # runs a command first (`zsh -l -c '<command>; exec zsh -l'`, e.g. resuming an agent) keeps this
 # integration for the command and the shell that follows it.
 #
+# Interactive shells also get Ghostty's shell integration (OSC 133 prompt marks: jump to prompt,
+# click to move the cursor, command exit status), which Ghostty injects only into shells it starts
+# itself: the app passes its directory in CANVAS_GHOSTTY_INTEGRATION unless the user's Ghostty
+# config says `shell-integration = none`. It loads after the user's files, so their prompt
+# framework's hooks run first, and not when they loaded one themselves.
+#
 # Quoted builtins: these files can run with the user's aliases defined.
 
 'builtin' 'typeset' -g _canvas_zdotdir="${${(%):-%x}:A:h}"
@@ -48,13 +54,17 @@ _canvas_report_cwd() {
   'builtin' 'printf' '\e]7;file://%s%s\a' "$HOST" "$_canvas_url"
 }
 
-# After the last startup file: Canvas's bin first on PATH; interactive shells restore ZDOTDIR and
-# report their directory before each prompt.
+# After the last startup file: Canvas's bin first on PATH; interactive shells restore ZDOTDIR,
+# report their directory before each prompt, and load Ghostty's shell integration.
 _canvas_finish() {
   'builtin' 'typeset' _canvas_bin="${_canvas_zdotdir:h:h:h}/bin"
   path=("$_canvas_bin" ${path:#$_canvas_bin})
   if [[ -o 'interactive' ]]; then
     precmd_functions=(${precmd_functions:#_canvas_report_cwd} _canvas_report_cwd)
+    if [[ -n "${CANVAS_GHOSTTY_INTEGRATION-}" ]] && (( ! ${+_ghostty_integration_loaded} && ! ${+_ghostty_state} )) \
+        && [[ -r "$CANVAS_GHOSTTY_INTEGRATION/zsh/ghostty-integration" ]]; then
+      'builtin' 'source' '--' "$CANVAS_GHOSTTY_INTEGRATION/zsh/ghostty-integration"
+    fi
     if [[ -n "${CANVAS_ZSH_ZDOTDIR+X}" ]]; then
       'builtin' 'export' ZDOTDIR="$CANVAS_ZSH_ZDOTDIR"
     else

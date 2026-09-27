@@ -11,8 +11,6 @@ enum AppPaths {
     }()
     private static let defaultSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Canvas", isDirectory: true)
-    /// The installed app's home, not a `CANVAS_HOME` elsewhere (its own browser profile, `BrowserProfile`).
-    static let isDefaultHome = support.standardizedFileURL.path == defaultSupport.standardizedFileURL.path
     static let apiSocket = support.appendingPathComponent("canvas.sock").path
     static let cmuxSocket = support.appendingPathComponent("cmux.sock").path
     /// Launching the app with CMUX_SOCKET_PASSWORD makes the cmux socket require it; terminal

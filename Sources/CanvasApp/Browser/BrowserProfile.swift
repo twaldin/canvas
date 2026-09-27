@@ -3,14 +3,17 @@ import CryptoKit
 import WebKit
 
 /// The one browser profile every browser tile shares: cookies and logins, local storage and
-/// databases, caches. The installed app (the default home) keeps WebKit's default store, so
-/// nothing moves for existing users; an instance with a `CANVAS_HOME` of its own (a development
-/// or study instance) gets a persistent store named by that home (`identifier`), so it never
-/// shares cookies or storage with the user's app or another instance, and keeps its own across
-/// restarts. HTML tiles never use it (their store is non-persistent, `HtmlTile`).
+/// databases, caches. The app keeps WebKit's default store whatever its `CANVAS_HOME` (a
+/// developer's everyday instance runs from a development home), so nothing moves for anyone. An
+/// instance launched with `CANVAS_BROWSER_PROFILE=own` (`scripts/dev.sh` sets it for a
+/// `CANVAS_DEV_HOME`: study and slice instances) gets a persistent store named by its home
+/// (`identifier`), so it never shares cookies or storage with the user's app or another
+/// instance, and keeps its own across restarts. HTML tiles never use it (their store is
+/// non-persistent, `HtmlTile`).
 @MainActor
 enum BrowserProfile {
-    static let store: WKWebsiteDataStore = AppPaths.isDefaultHome ? .default() : WKWebsiteDataStore(forIdentifier: identifier(home: AppPaths.support))
+    static let store: WKWebsiteDataStore = ProcessInfo.processInfo.environment["CANVAS_BROWSER_PROFILE"] == "own"
+        ? WKWebsiteDataStore(forIdentifier: identifier(home: AppPaths.support)) : .default()
 
     /// The same UUID for the same home directory on every launch (a name-based UUID, RFC 9562
     /// version 5 layout, from SHA-256 of the standardized path), a different one for another.

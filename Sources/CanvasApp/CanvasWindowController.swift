@@ -613,16 +613,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// Edit › Mention (⇧⌘M): stages what the user is on (`KeyboardMention`), as a Hyper-click on
-    /// it would (again unstages it); the keyboard stays where it is. Beeps with nothing to
-    /// mention.
+    /// it would (again unstages it); the keyboard stays where it is. With nothing to mention it
+    /// says so, like every other command with nothing to act on.
     @objc func mentionCurrent(_ sender: Any?) {
         let keyboardTile = canvas.focusedTile
         let selection = canvas.selection
         let content = (keyboardTile ?? (selection.count == 1 ? selection.first : nil)).flatMap { canvas.tiles[$0]?.content }
         let board = board
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
             let current = await content?.keyboardMention(hasKeyboard: keyboardTile != nil)
-            guard let target = KeyboardMention.target(keyboardTile: keyboardTile, selection: selection, current: current, on: board) else { return NSSound.beep() }
+            guard let target = KeyboardMention.target(keyboardTile: keyboardTile, selection: selection, current: current, on: board) else {
+                self?.canvas.showNotice("Nothing to mention: select a tile, or put the cursor on a line")
+                return
+            }
             HyperMonitor.toggle(target, on: board)
         }
     }

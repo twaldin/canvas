@@ -181,6 +181,11 @@ final class TerminalTile: NSView, TileContent {
         window?.makeFirstResponder(terminal)
     }
 
+    func enterKeyboard() -> Bool {
+        focus()
+        return true
+    }
+
     fileprivate func attached(_ surface: TerminalSurface?) {
         self.surface = surface
     }

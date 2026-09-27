@@ -13,7 +13,7 @@ final class TileFrameView: NSView {
     private let titleBar = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let badge = NSView()
-    private let closeButton = NSButton()
+    private let closeButton = TileCloseButton()
     private let card = NSImageView()
     private var cardTitle = NSTextField(labelWithString: "")
     private let cardTint = CardTint()
@@ -41,11 +41,16 @@ final class TileFrameView: NSView {
     private(set) var scale: CGFloat = 1
     private var moving = false
 
+    /// What the tile is, for accessibility ("terminal", "code", …).
+    private let roleDescription: String
+
     init(object: CanvasObject, content: any TileContent, frame: NSRect) {
         objectID = object.id
         self.content = content
         scale = CGFloat(object.scale)
+        roleDescription = object.type == .html ? "HTML" : object.type.rawValue
         super.init(frame: frame)
+        closeButton.tile = self
         wantsLayer = true
         layer?.cornerRadius = 8
         layer?.masksToBounds = true
@@ -86,6 +91,12 @@ final class TileFrameView: NSView {
 
     nonisolated override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // Each tile is one accessibility group named by its title (VoiceOver, Full Keyboard Access).
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    override func accessibilityRoleDescription() -> String? { roleDescription }
+    override func accessibilityLabel() -> String? { title }
 
     /// Layout happens in `applyScale`, once the bounds match the new frame.
     override func resizeSubviews(withOldSize oldSize: NSSize) {}
@@ -398,6 +409,14 @@ final class TileFrameView: NSView {
         addCursorRect(resizeGrip, cursor: .crosshair)
         addCursorRect(titleBar.frame, cursor: .openHand)
     }
+}
+
+/// A tile's close button, named for accessibility after the tile it closes ("Close notes.md").
+private final class TileCloseButton: NSButton {
+    weak var tile: TileFrameView?
+
+    override func accessibilityLabel() -> String? { "Close \(tile?.title ?? "tile")" }
+    override func accessibilityTitle() -> String? { accessibilityLabel() }
 }
 
 /// Lifecycle wash over a zoomed-out card, drawn (not a layer color) so snapshots include it.

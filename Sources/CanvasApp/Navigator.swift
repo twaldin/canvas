@@ -20,6 +20,8 @@ struct NavigatorRow {
     let kind: String
     /// A terminal's agent lifecycle color (`TileFrameView.badgeColor`).
     let dot: NSColor?
+    /// Why the row needs the user (a blocked agent, a marker): listed first, flagged.
+    var needs: NeedsYouItem.Reason? = nil
     /// Tells rows with the same title apart (terminals: name, command, or directory; code: caption
     /// or group title).
     var subtitle: String? = nil
@@ -34,11 +36,15 @@ struct NavigatorRow {
 }
 
 extension CanvasView {
-    /// "All content", then groups, then tiles, each in reading order (top to bottom, then left
-    /// to right). Drawn objects (shapes, arrows) aren't listed.
+    /// Tiles that need the user first (blocked agents, then marked tiles: `NeedsYouItem`,
+    /// flagged, and found by "blocked", "needs", "marked"), then "All content", then groups, then
+    /// the other tiles, each in reading order (top to bottom, then left to right). Drawn objects
+    /// (shapes, arrows) aren't listed.
     func navigatorRows() -> [NavigatorRow] {
         var groups: [(NSRect, NavigatorRow)] = []
         var tiles: [(NSRect, NavigatorRow)] = []
+        let needs = NeedsYouItem.all(board.objects, attention: board.attention)
+        let needed = Dictionary(needs.enumerated().map { ($0.element.id, ($0.offset, $0.element)) }, uniquingKeysWith: { first, _ in first })
         for object in board.objects.values {
             // Hidden groups (no members left) have no frame.
             guard let rect = docFrame(object.id) else { continue }
@@ -55,11 +61,22 @@ extension CanvasView {
             lhs.0.minY != rhs.0.minY ? lhs.0.minY < rhs.0.minY : lhs.0.minX < rhs.0.minX
         }
         let titleCounts = Dictionary(tiles.map { ($0.1.title, 1) }, uniquingKeysWith: +)
-        for index in tiles.indices where titleCounts[tiles[index].1.title, default: 0] > 1 {
-            if case .object(let id) = tiles[index].1.target { tiles[index].1.subtitle = distinguishing(id) }
+        var first: [(Int, NavigatorRow)] = []
+        var rest: [(NSRect, NavigatorRow)] = []
+        for (rect, var row) in tiles {
+            guard case .object(let id) = row.target else { continue }
+            if titleCounts[row.title, default: 0] > 1 { row.subtitle = distinguishing(id) }
+            guard let (rank, item) = needed[id] else {
+                rest.append((rect, row))
+                continue
+            }
+            row.needs = item.reason
+            if let message = item.message, !message.isEmpty { row.subtitle = message }
+            row.terms += item.reason == .blocked ? ["blocked", "needs you"] : ["marked", "needs you", "attention"]
+            first.append((rank, row))
         }
         let all = NavigatorRow(target: .allContent, title: "All content", kind: "Zoom to Fit", dot: nil)
-        return [all] + groups.sorted(by: readingOrder).map(\.1) + tiles.sorted(by: readingOrder).map(\.1)
+        return first.sorted { $0.0 < $1.0 }.map(\.1) + [all] + groups.sorted(by: readingOrder).map(\.1) + rest.sorted(by: readingOrder).map(\.1)
     }
 
     private static func nonEmpty(_ value: JSONValue?) -> String? { value?.string.flatMap { $0.isEmpty ? nil : $0 } }
@@ -245,10 +262,13 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         }
     }
 
-    /// Hides the panel and gives the keyboard back to whoever had it before (unless something
-    /// else took it meanwhile).
+    /// Hides the panel and gives the keyboard back to whoever had it before (a terminal through
+    /// its own focus path; `CanvasView.returnKeyboard`), unless something else took it meanwhile.
+    /// Whether the field had it is read before hiding: hiding the panel takes the focus from its
+    /// field, which left the terminal without the keyboard.
     func close() {
         guard isOpen else { return }
+        let hadKeyboard = (window?.firstResponder as? NSText)?.delegate === field
         isHidden = true
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
@@ -260,11 +280,7 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         pendingSymbols = nil
         symbolRows = nil
         table.reloadData()
-        guard let window else { return }
-        if let editor = window.firstResponder as? NSText, editor.delegate === field {
-            let previous = previousResponder as? NSView
-            window.makeFirstResponder(previous?.window === window ? previous : window.initialFirstResponder)
-        }
+        if hadKeyboard, let window { CanvasView.returnKeyboard(to: previousResponder, in: window) }
         previousResponder = nil
     }
 
@@ -400,15 +416,24 @@ private final class NavigatorCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("navigator.cell")
 
     private let dot = NSView()
+    /// "Blocked" (orange) or "Marked" (pink): the row needs the user (`NavigatorRow.needs`).
+    private let flag = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private let kind = NSTextField(labelWithString: "")
+    private var titleAfterFlag: NSLayoutConstraint!
 
     init() {
         super.init(frame: .zero)
         identifier = Self.identifier
         dot.wantsLayer = true
         dot.layer?.cornerRadius = 4
+        flag.font = .systemFont(ofSize: 10, weight: .bold)
+        flag.textColor = .white
+        flag.alignment = .center
+        flag.wantsLayer = true
+        flag.layer?.cornerRadius = 4
+        flag.setContentCompressionResistancePriority(.required, for: .horizontal)
         title.font = .systemFont(ofSize: 13)
         title.lineBreakMode = .byTruncatingMiddle
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -418,16 +443,19 @@ private final class NavigatorCell: NSTableCellView {
         kind.font = .systemFont(ofSize: 11)
         kind.alignment = .right
         kind.setContentCompressionResistancePriority(.required, for: .horizontal)
-        for view in [dot, title, detail, kind] {
+        for view in [dot, flag, title, detail, kind] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        titleAfterFlag = title.leadingAnchor.constraint(equalTo: flag.trailingAnchor, constant: 0)
         NSLayoutConstraint.activate([
             dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: 8),
             dot.heightAnchor.constraint(equalToConstant: 8),
-            title.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            flag.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            flag.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleAfterFlag,
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
             detail.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
             detail.firstBaselineAnchor.constraint(equalTo: title.firstBaselineAnchor),
@@ -452,6 +480,11 @@ private final class NavigatorCell: NSTableCellView {
         toolTip = row.toolTip
         kind.stringValue = row.kind
         dot.layer?.backgroundColor = (row.dot ?? .clear).cgColor
+        let style: AttentionStyle? = row.needs.map { $0 == .blocked ? .blocked : .marker }
+        flag.stringValue = row.needs.map { $0 == .blocked ? " Blocked " : " Marked " } ?? ""
+        flag.layer?.backgroundColor = style?.color.cgColor
+        flag.isHidden = style == nil
+        titleAfterFlag.constant = style == nil ? 0 : 6
     }
 
     override var backgroundStyle: NSView.BackgroundStyle {

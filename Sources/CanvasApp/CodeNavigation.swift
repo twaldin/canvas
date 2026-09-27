@@ -225,7 +225,7 @@ final class CodeNavigation: NSObject {
         goToDefinition(at: position, anchor: point, newTile: newTile)
     }
 
-    private func goToDefinition(at position: (line: Int, character: Int), anchor: NSPoint, newTile: Bool) {
+    func goToDefinition(at position: (line: Int, character: Int), anchor: NSPoint, newTile: Bool) {
         run(anchor: anchor) { [weak self] file, root in
             let locations = try await Self.languages.definition(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
             guard let self else { return }
@@ -244,17 +244,21 @@ final class CodeNavigation: NSObject {
         findReferences(at: position, anchor: point)
     }
 
-    private func findReferences(at position: (line: Int, character: Int), anchor: NSPoint) {
+    /// The references as a keyboard list (type to filter, ↑/↓, Return opens one, ⌘↩ Open All,
+    /// Esc closes), each line once: servers list a line twice (a re-export's two names).
+    func findReferences(at position: (line: Int, character: Int), anchor: NSPoint) {
         showMessage("Finding references…", anchor: anchor)
         run(anchor: anchor) { [weak self] file, root in
+            var seen = Set<String>()
             let locations = try await Self.languages.references(file: file, boardRoot: root, at: LSPPosition(line: position.line - 1, character: position.character))
+                .filter { seen.insert("\($0.url.resolvingSymlinksInPath().path):\($0.range.start.line)").inserted }
             guard let self else { return }
             guard !locations.isEmpty else { return await self.showEmpty("No references found", file: file, root: root, anchor: anchor) }
             let lines = await Self.languages.lineTexts(locations)
             let name = await offPool { Self.identifier(in: file, line: position.line, character: position.character) }
             let title = locations.count == 1 ? "1 reference" : "\(locations.count) references"
             self.showLocations(title, locations, lines: lines, anchor: anchor, newTile: false,
-                               openAll: ("Open All", { [weak self] in self?.openAll(locations, name: name) }))
+                               openAll: ("Open All ⌘↩", { [weak self] in self?.openAll(locations, name: name) }))
         }
     }
 
@@ -266,7 +270,10 @@ final class CodeNavigation: NSObject {
                 self?.open(location, newTile: newTile)
             }
         }
-        present(NavigationPanel.list(title: title, rows: rows, headerAction: openAll), anchor: anchor)
+        // The user asked for it: the list takes the keyboard until it closes.
+        let panel = NavigationPanel.filterList(title: title, rows: rows, headerAction: openAll)
+        present(panel, anchor: anchor)
+        panel.focusFilter()
     }
 
     /// Lines of context above and below each reference in an Open All layout.

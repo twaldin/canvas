@@ -57,8 +57,9 @@ public actor LanguageService {
 
     /// Workspace symbols matching `query` from the server of each project `files` fall in (one
     /// request per language and project root, started if needed), in the servers' order. A
-    /// project whose server is missing or fails adds nothing; only when every one failed is the
-    /// first error thrown.
+    /// project whose server is missing or fails adds nothing; when nothing was found and one
+    /// failed, the first error is thrown (Go to says a server isn't installed rather than that
+    /// there is no such symbol).
     public func workspaceSymbols(_ query: String, files: [URL], boardRoot: URL) async throws -> [LSPWorkspaceSymbol] {
         var seen: Set<Key> = []
         var projects: [URL] = []
@@ -68,19 +69,17 @@ public actor LanguageService {
         }
         var symbols: [LSPWorkspaceSymbol] = []
         var failure: Error?
-        var answered = false
         for file in projects {
             do {
                 let (server, _) = try await server(for: file, boardRoot: boardRoot)
                 symbols += try await server.workspaceSymbols(query)
-                answered = true
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
                 failure = failure ?? error
             }
         }
-        if !answered, let failure { throw failure }
+        if symbols.isEmpty, let failure { throw failure }
         return symbols
     }
 

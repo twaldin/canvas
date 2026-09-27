@@ -258,6 +258,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func bringToFront(_ sender: Any?) { keyController?.bringToFront(sender) }
     @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
     @objc func pasteMentions(_ sender: Any?) { keyController?.pasteMentions(sender) }
+    @objc func goToNextNeedsYou(_ sender: Any?) { keyController?.goToNextNeedsYou(sender) }
+    @objc func reviewChanges(_ sender: Any?) { keyController?.reviewChanges(sender) }
+    @objc func clearAttentionMarkers(_ sender: Any?) { keyController?.clearAttentionMarkers(sender) }
+    @objc func toggleFollowFiles(_ sender: Any?) { keyController?.toggleFollowFiles(sender) }
+    @objc func scaleSelection(_ sender: Any?) { keyController?.scaleSelection(sender) }
+    @objc func copyObjectIDs(_ sender: Any?) { keyController?.copyObjectIDs(sender) }
+    @objc func enterGroup(_ sender: Any?) { keyController?.enterGroup(sender) }
+    @objc func goToDefinition(_ sender: Any?) { keyController?.goToDefinition(sender) }
+    @objc func openDefinitionInNewTile(_ sender: Any?) { keyController?.openDefinitionInNewTile(sender) }
+    @objc func findReferences(_ sender: Any?) { keyController?.findReferences(sender) }
+    @objc func showOutline(_ sender: Any?) { keyController?.showOutline(sender) }
 
     /// The tab bar's + button: open another board as a tab.
     @objc func newWindowForTab(_ sender: Any?) { openBoard(sender) }
@@ -283,12 +294,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func makeMenu() -> NSMenu {
         let main = NSMenu()
-        func submenu(_ title: String, _ items: [NSMenuItem]) {
+        @discardableResult
+        func submenu(_ title: String, _ items: [NSMenuItem]) -> NSMenu {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             let menu = NSMenu(title: title)
             items.forEach(menu.addItem)
             item.submenu = menu
             main.addItem(item)
+            return menu
         }
         func item(_ title: String, _ action: Selector?, _ key: String, _ modifiers: NSEvent.ModifierFlags = .command) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
@@ -305,6 +318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Open File as Code Tile…", #selector(openCodeTile(_:)), "o"),
             item("Open Board…", #selector(openBoard(_:)), "O", [.command, .shift]),
             item("New HTML Tile", #selector(newHtmlTile(_:)), "H", [.command, .shift]),
+            item("Review Changes", #selector(reviewChanges(_:)), "R", [.command, .shift]),
             .separator(),
             // The board window takes ⌘W first to close the selection or the focused terminal
             // (CanvasWindowController.handleKeyEquivalent); with neither, the tab or window closes.
@@ -322,27 +336,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Hyper-V: no shell, TUI, or Ghostty default binding uses all four modifiers.
             item("Paste Mentions into Terminal", #selector(pasteMentions(_:)), "v", [.control, .option, .shift, .command]),
         ])
+        let scale = NSMenuItem(title: "Scale", action: nil, keyEquivalent: "")
+        scale.submenu = NSMenu(title: "Scale")
+        for preset in ObjectScale.presets {
+            let percent = Int((preset * 100).rounded())
+            let item = item("\(percent)%", #selector(scaleSelection(_:)), "")
+            item.tag = percent
+            scale.submenu?.addItem(item)
+        }
+        scale.submenu?.addItem(.separator())
+        let reset = item("Reset to 100%", #selector(scaleSelection(_:)), "")
+        reset.tag = 100
+        scale.submenu?.addItem(reset)
         submenu("Object", [
             item("Group", #selector(groupSelection(_:)), "g"),
             item("Ungroup", #selector(ungroupSelection(_:)), "G", [.command, .shift]),
+            item("Enter Group", #selector(enterGroup(_:)), ""),
             .separator(),
             item("Bring to Front", #selector(bringToFront(_:)), "]", [.command, .shift]),
             item("Send to Back", #selector(sendToBack(_:)), "[", [.command, .shift]),
+            scale,
+            .separator(),
+            // The focused terminal's, else the selected one's (the context menu's toggle).
+            item("Follow Files", #selector(toggleFollowFiles(_:)), ""),
+            item("Copy Object ID", #selector(copyObjectIDs(_:)), ""),
+            .separator(),
+            // ⌘W itself is File ▸ Close's (the board window takes it first for the selection).
+            item("Close Selection", #selector(deleteSelection(_:)), ""),
+        ])
+        // The focused code tile's, else the selected one's, at its selection or the first name on
+        // its first line (CodeTile.navigate). ⌃⌘ chords: no shell sees ⌘, and Ghostty binds none.
+        submenu("Code", [
+            item("Go to Definition", #selector(goToDefinition(_:)), "j", [.control, .command]),
+            item("Open Definition in New Tile", #selector(openDefinitionInNewTile(_:)), "j", [.control, .option, .command]),
+            item("Find References", #selector(findReferences(_:)), "r", [.control, .command]),
+            item("Outline", #selector(showOutline(_:)), "o", [.control, .command]),
         ])
         let lasso = item("Lasso Selection", #selector(toggleLassoSelection(_:)), "")
         lasso.state = CanvasView.lassoSelection ? .on : .off
         submenu("View", [
             // ⌘P, not ⌘K: Ghostty binds ⌘K (clear screen) and terminal tiles take it first.
             item("Go to…", #selector(toggleNavigator(_:)), "p"),
+            // ⌘J: no shell sees ⌘, and Ghostty binds nothing to it.
+            item("Go to Next Needs-You", #selector(goToNextNeedsYou(_:)), "j"),
             .separator(),
             item("Actual Size", #selector(zoomToActual(_:)), "0"),
             item("Zoom In", #selector(zoomIn(_:)), "="),
             item("Zoom Out", #selector(zoomOut(_:)), "-"),
             item("Zoom to Fit", #selector(zoomToFit(_:)), "9"),
             .separator(),
+            item("Clear Attention Markers", #selector(clearAttentionMarkers(_:)), ""),
             lasso,
             item("Exit Group", #selector(exitGroup(_:)), ""),
         ])
+        // AppKit lists the board windows and tabs here (and the tab commands) itself.
+        NSApp.windowsMenu = submenu("Window", [
+            item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
+            item("Zoom", #selector(NSWindow.performZoom(_:)), ""),
+            .separator(),
+            item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), ""),
+        ])
+        // The Help menu gets AppKit's menu search (⌘?), which finds every item above.
+        NSApp.helpMenu = submenu("Help", [])
         return main
+    }
+}
+
+extension AppDelegate: NSMenuItemValidation {
+    /// Menu items that don't apply now are disabled (the board window decides).
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        keyController?.validate(item) ?? false
     }
 }

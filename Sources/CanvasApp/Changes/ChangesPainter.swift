@@ -66,7 +66,7 @@ struct ChangesPainter {
     var gutterWidth: CGFloat { ChangesMetrics.gutterWidth(digits: digits) }
     var contentHeight: CGFloat { ChangesMetrics.headerHeight + rows.height + ChangesMetrics.bottomPadding }
 
-    static let keysHint = "j/k hunks · ↩ open · s stage · r revert"
+    static let keysHint = "j/k hunks · ↩ open · s stage · r revert · esc done"
 
     // MARK: Geometry
 
@@ -126,7 +126,7 @@ struct ChangesPainter {
         NSColor.separatorColor.setFill()
         CGRect(x: 0, y: strip.maxY - 0.5, width: width, height: 0.5).fill()
         let small = NSFont.systemFont(ofSize: 11)
-        let hint = focused ? Self.keysHint : "click in to use keys"
+        let hint = focused ? Self.keysHint : "↩ or click to use keys"
         let hintAttributes: [NSAttributedString.Key: Any] = [.font: small, .foregroundColor: focused ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor]
         let hintSize = (hint as NSString).size(withAttributes: hintAttributes)
         let showsHint = width > hintSize.width + 260

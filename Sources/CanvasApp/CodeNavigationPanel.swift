@@ -122,46 +122,13 @@ final class NavigationPanel: NSView {
         var action: @MainActor () -> Void
     }
 
-    /// A list of rows under a title; `headerAction` adds a button at the title's trailing end
-    /// (the references list's Open All).
-    static func list(title: String, rows: [Row], headerAction: (title: String, run: @MainActor () -> Void)? = nil) -> NavigationPanel {
-        let rowHeight: CGFloat = 20
-        let header = NSTextField(labelWithString: title)
-        header.font = .systemFont(ofSize: 11, weight: .semibold)
-        header.textColor = .secondaryLabelColor
-        let document = FlippedView()
-        let action = headerAction.map { PanelAction(title: $0.title, run: $0.run) }
-        var width = header.fittingSize.width + (action.map { $0.fittingSize.width + 16 } ?? 0)
-        var buttons: [NSButton] = []
-        for row in rows {
-            let button = PanelRow(row: row)
-            width = max(width, button.fittingSize.width)
-            buttons.append(button)
-        }
-        width = min(max(width, 200), maxSize.width)
-        // Sized before its subviews go in, so their autoresizing starts from the real width.
-        document.frame = NSRect(x: 0, y: 0, width: width, height: 20 + CGFloat(rows.count) * rowHeight)
-        header.frame = NSRect(x: 4, y: 0, width: width - (action.map { $0.fittingSize.width + 8 } ?? 0), height: 16)
-        document.addSubview(header)
-        if let action {
-            let size = action.fittingSize
-            action.frame = NSRect(x: width - size.width - 2, y: 0, width: size.width, height: 16)
-            action.autoresizingMask = [.minXMargin]
-            document.addSubview(action)
-        }
-        for (index, button) in buttons.enumerated() {
-            button.frame = NSRect(x: 0, y: 20 + CGFloat(index) * rowHeight, width: width, height: rowHeight)
-            button.autoresizingMask = [.width]
-            document.addSubview(button)
-        }
-        return NavigationPanel(kind: .list, content: document, contentSize: NSSize(width: width, height: 20 + CGFloat(rows.count) * rowHeight))
-    }
-
-    /// A list with a filter field that takes the keyboard while the panel is up (the user
-    /// asked for it: Outline) and gives it back when the panel goes: typing narrows the rows to
-    /// titles containing the text, ↑/↓ move the highlight, Return picks it, Esc closes.
-    static func filterList(title: String, rows: [Row]) -> NavigationPanel {
-        let content = FilterList(title: title, rows: rows)
+    /// A list with a filter field that takes the keyboard while the panel is up (the user asked
+    /// for it: Outline, Find References, several definitions) and gives it back when the panel
+    /// goes: typing narrows the rows to titles containing the text, ↑/↓ move the highlight,
+    /// Return picks it, Esc closes. `headerAction` adds a button at the title's trailing end (the
+    /// references list's Open All), which ⌘↩ also presses.
+    static func filterList(title: String, rows: [Row], headerAction: (title: String, run: @MainActor () -> Void)? = nil) -> NavigationPanel {
+        let content = FilterList(title: title, rows: rows, headerAction: headerAction)
         return NavigationPanel(kind: .list, content: content, contentSize: content.frame.size)
     }
 
@@ -246,20 +213,29 @@ private final class FilterList: NSView, NSTextFieldDelegate {
     private let scroll = NSScrollView()
     private let document = FlippedView()
     private let buttons: [PanelRow]
+    private let headerAction: (@MainActor () -> Void)?
     private var shown: [PanelRow] = []
     private var current = 0
     private weak var previousResponder: NSResponder?
 
-    init(title: String, rows: [NavigationPanel.Row]) {
+    init(title: String, rows: [NavigationPanel.Row], headerAction: (title: String, run: @MainActor () -> Void)?) {
         buttons = rows.map(PanelRow.init)
+        self.headerAction = headerAction?.run
         let header = NSTextField(labelWithString: title)
         header.font = .systemFont(ofSize: 11, weight: .semibold)
         header.textColor = .secondaryLabelColor
-        let width = min(max(buttons.map(\.fittingSize.width).max() ?? 0, header.fittingSize.width, 240), NavigationPanel.maxSize.width)
+        let action = headerAction.map { PanelAction(title: $0.title, run: $0.run) }
+        let headerWidth = header.fittingSize.width + (action.map { $0.fittingSize.width + 16 } ?? 0)
+        let width = min(max(buttons.map(\.fittingSize.width).max() ?? 0, headerWidth, 240), NavigationPanel.maxSize.width)
         let listHeight = min(CGFloat(rows.count) * Self.rowHeight, NavigationPanel.maxSize.height - Self.headerHeight - Self.fieldHeight - 6)
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: Self.headerHeight + Self.fieldHeight + 6 + listHeight))
-        header.frame = NSRect(x: 4, y: 0, width: width - 8, height: 16)
+        header.frame = NSRect(x: 4, y: 0, width: width - 8 - (action.map { $0.fittingSize.width + 8 } ?? 0), height: 16)
         addSubview(header)
+        if let action {
+            let size = action.fittingSize
+            action.frame = NSRect(x: width - size.width - 2, y: 0, width: size.width, height: 16)
+            addSubview(action)
+        }
         field.placeholderString = "Filter"
         field.font = .systemFont(ofSize: 12)
         field.bezelStyle = .roundedBezel
@@ -286,11 +262,11 @@ private final class FilterList: NSView, NSTextFieldDelegate {
         window.makeFirstResponder(field)
     }
 
-    /// The panel is going: the keyboard goes back to whoever had it, unless something else took it.
+    /// The panel is going: the keyboard goes back to whoever had it (a terminal through its own
+    /// focus path), unless something else took it.
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if newWindow == nil, let window, let editor = window.firstResponder as? NSText, editor.delegate === field {
-            let previous = previousResponder as? NSView
-            window.makeFirstResponder(previous?.window === window ? previous : nil)
+            CanvasView.returnKeyboard(to: previousResponder, in: window)
         }
         super.viewWillMove(toWindow: newWindow)
     }
@@ -328,6 +304,15 @@ private final class FilterList: NSView, NSTextFieldDelegate {
         case #selector(NSResponder.cancelOperation(_:)): (superview as? NavigationPanel)?.dismiss()
         default: return false
         }
+        return true
+    }
+
+    /// ⌘↩ presses the header action (the references list's Open All) while the filter types.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard let headerAction, event.type == .keyDown, event.keyCode == 36 || event.keyCode == 76,
+              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+              let editor = window?.firstResponder as? NSText, editor.delegate === field else { return super.performKeyEquivalent(with: event) }
+        headerAction()
         return true
     }
 }

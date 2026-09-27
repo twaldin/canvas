@@ -377,7 +377,7 @@ public final class Board {
     /// Room kept between a placed object and its neighbours.
     public static let placementGap = 24.0
     /// The smallest a follow tile gets so that it lands wholly in view beside its terminal.
-    public static let followMinimumSize = (w: 160.0, h: 200.0)
+    public static let followMinimumSize = (w: 400.0, h: 300.0)
 
     /// Where a new object goes when nobody gave it a frame: the free slot nearest the caller's
     /// tile, touching it at `placementGap` when there's room (right first, then below, left,

@@ -302,17 +302,22 @@ struct BoardTests {
     }
 
     @Test func aFollowTileBesideATerminalOnScreenLandsWhollyInViewShrunkWhenItMustBe() throws {
-        // The codex2 study: a default 1000×620 terminal in the middle of the study window's
-        // 1492-pt view leaves 198 pt beside it; a 640-pt follow tile there was half off-screen.
+        // The codex2 study: a default 1000×620 terminal in the middle of a wide view left room for
+        // only part of a 640-pt follow tile; it landed half off-screen.
         let board = makeBoard()
         try "x\n".write(to: root.appendingPathComponent("a.ts"), atomically: true, encoding: .utf8)
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: -500, y: -310, w: 1000, h: 620))
-        let view = Frame(x: -746, y: -435, w: 1492, h: 870)
+        let view = Frame(x: -988, y: -435, w: 1976, h: 870)
         board.viewport = { view }
         let follow = try #require(try board.follow(tile: terminal.id, path: "a.ts", range: nil, action: "read"))
-        #expect(follow.frame == Frame(x: 524, y: -310, w: 198, h: 446), "right of the terminal, as wide as the view leaves, full height")
+        #expect(follow.frame == Frame(x: 524, y: -310, w: 440, h: 446), "right of the terminal, as wide as the view leaves, full height")
         #expect(Frame(x: view.x + Board.placementGap, y: view.y + Board.placementGap, w: view.w - 2 * Board.placementGap, h: view.h - 2 * Board.placementGap).contains(follow.frame))
         #expect(board.objects[follow.id]?.frame == follow.frame)
+
+        // A sliver too narrow to read code in (198 pt in a 1492-pt view) is not worth it: full size beside the terminal.
+        let narrow = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: -500, y: 2000, w: 1000, h: 620))
+        board.viewport = { Frame(x: -746, y: 1875, w: 1492, h: 870) }
+        #expect(try board.follow(tile: narrow.id, path: "a.ts", range: nil, action: "read")?.frame == Frame(x: 524, y: 2000, w: 640, h: 446))
 
         // With room in view, the full size; with the terminal offscreen, full size beside it.
         let wide = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]), frame: Frame(x: 3000, y: 0, w: 1000, h: 620))

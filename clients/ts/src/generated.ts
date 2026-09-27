@@ -95,6 +95,8 @@ export type NoteProps = {
   markdown: string;
   /** shown in the tile's title bar (default "Note") and Go to */
   title?: string;
+  /** the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params */
+  root?: string;
   scale?: Scale;
 };
 
@@ -102,6 +104,8 @@ export type HtmlProps = {
   /** page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded */
   html: string;
   title?: string;
+  /** the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root */
+  root?: string;
   allowNetwork?: string[];
   /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
   state?: Record<string, unknown>;
@@ -279,6 +283,16 @@ export type MentionTarget = {
   x: number;
   /** from its top edge */
   y: number;
+} | {
+  kind: "note";
+  object: Id;
+  block: "paragraph" | "item" | "heading" | "quote" | "code" | "row" | "html";
+  /** the headings of the sections it sits in, outermost first */
+  headings: string[];
+  /** its lines in the note's markdown when staged */
+  lines: LineRange;
+  /** its markdown when staged (indentation removed), at most 40 lines and 2000 characters */
+  text: string;
 };
 
 export type Mention = {
@@ -300,6 +314,19 @@ export type ResolvedMention = {
   summary: string;
   /** structured view: contents, encloses, overlaps, arrows */
   graph?: Record<string, unknown>;
+};
+
+/** A board object `agent.prompt` attaches for the receiving agent, as a Hyper-click would mention it: a code tile's lines, an image tile's pixel, else the whole object */
+export type PromptMention = {
+  /** an object on the target terminal's board */
+  object: Id;
+  /** code tiles only: these lines of its file (at its pinned commit, if any). Without it a code tile showing a range mentions that range */
+  lines?: LineRange;
+  /** image tiles only: a pixel of the picture, in the image's own pixels from its top-left */
+  point?: {
+    x: number;
+    y: number;
+  };
 };
 
 export type Agent = {
@@ -527,6 +554,8 @@ export type ObjectCreateResult = {
   reused?: true;
   /** present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway */
   warnings?: string[];
+  /** `size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids */
+  overlaps?: Id[];
 };
 
 export type ObjectUpdateParams = {
@@ -543,6 +572,8 @@ export type ObjectUpdateResult = {
   object: CanvasObject;
   /** present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway */
   warnings?: string[];
+  /** `size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids */
+  overlaps?: Id[];
 };
 
 export type ObjectDeleteParams = {
@@ -666,6 +697,10 @@ export type LayoutCheckResult = {
   }[];
   labelOverlaps: {
     arrow: Id;
+    /** the caption as drawn */
+    label: string;
+    /** where the label chip is drawn (an arrow's own frame leaves it out) */
+    frame: Frame;
     /** objects under the label; an arrow id means that arrow's label */
     overlaps: Id[];
   }[];
@@ -709,7 +744,7 @@ export type TrayDrainParams = {
 };
 export type TrayDrainResult = {
   mentions: ResolvedMention[];
-  /** ready-to-inject prompt context block; empty string when the tray was empty or its mentions are for another terminal */
+  /** ready-to-inject prompt context: the tray's block, then one block per agent that attached mentions for the caller; empty string when there is nothing for the caller */
   context: string;
   /** present when the caller isn't the terminal the tray shows: the mentions left staged for it */
   held?: number;
@@ -732,6 +767,8 @@ export type AgentReportParams = {
   source?: string;
   /** identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input) */
   call?: string;
+  /** only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts) */
+  final?: string;
 };
 export type AgentReportResult = Record<string, unknown>;
 
@@ -759,6 +796,10 @@ export type AgentPromptParams = {
   /** agent name or tile id */
   target: string;
   text: string;
+  /** objects on the target's board to attach, e.g. [{"object": "obj_…"}, {"object": "obj_…", "lines": {"start": 41, "end": 48}}] */
+  mentions?: PromptMention[];
+  /** the prompting terminal, named to the receiver with the mentions; clients fill from CANVAS_TILE_ID */
+  caller?: Id;
   /** send even though the target is `blocked` (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval */
   force?: boolean;
 };
@@ -768,6 +809,8 @@ export type AgentPromptResult = {
   submittedAt: string;
   /** the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: "prompt"` */
   waitable: boolean;
+  /** present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice) */
+  mentions?: Mention[];
 };
 
 export type AgentWaitParams = {
@@ -786,6 +829,8 @@ export type AgentReadParams = {
   lines?: number;
   /** only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started */
   since?: "prompt";
+  /** the last answer instead of the screen; takes no `lines` or `since` */
+  final?: boolean;
 };
 export type AgentReadResult = {
   agent: Agent;
@@ -847,8 +892,8 @@ export type ViewRenderParams = {
   scale?: number;
   /** id targets: render the whole content, not just the part inside the frame */
   full?: boolean;
-  /** object types to leave out (e.g. ["terminal"]) */
-  exclude?: ObjectType[];
+  /** object types and/or object ids to leave out (e.g. ["terminal", "obj_…"]); a group id takes its members with it; targets are always drawn */
+  exclude?: unknown[];
   /** canvas points added around the target */
   padding?: number;
   /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/canvas-renders/ (out of the repo) */
@@ -923,9 +968,9 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
-    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
+    /** Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
-    /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w: after changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
+    /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
@@ -953,7 +998,7 @@ export interface CanvasApi {
     stage(params: TrayStageParams): Promise<TrayStageResult>;
     /** Remove one staged mention. */
     unstage(params: TrayUnstageParams): Promise<TrayUnstageResult>;
-    /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets no mentions and an empty context, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title). */
+    /** Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets none of them, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. A `caller` also gets the mentions other agents attached for it with `agent.prompt` `mentions` (never shown in the tray), after the tray's, in a block per sending terminal (`<canvas-mentions … from="obj_…">` and a line naming it); `tray.commit` of their ids removes them too. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title). */
     drain(params?: TrayDrainParams): Promise<TrayDrainResult>;
     /** Remove exactly these mentions from the tray after their context was delivered (second half of a `peek` drain). Unknown ids are ignored. */
     commit(params: TrayCommitParams): Promise<TrayCommitResult>;
@@ -967,11 +1012,11 @@ export interface CanvasApi {
     release(params: AgentReleaseParams): Promise<AgentReleaseResult>;
     /** Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, aider, a CLI without Canvas hooks) has kind and lifecycle `unknown`. */
     list(params?: AgentListParams): Promise<AgentListResult>;
-    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. */
+    /** Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: "prompt"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`. */
     prompt(params: AgentPromptParams): Promise<AgentPromptResult>;
     /** Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited. */
     wait(params: AgentWaitParams): Promise<AgentWaitResult>;
-    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. */
+    /** Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory). */
     read(params: AgentReadParams): Promise<AgentReadResult>;
   };
   follow: {
@@ -1037,7 +1082,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
       report_session: (params: AgentReportSessionParams) => call("agent.report_session", params ?? {}, []) as Promise<AgentReportSessionResult>,
       release: (params: AgentReleaseParams) => call("agent.release", params ?? {}, []) as Promise<AgentReleaseResult>,
       list: (params?: AgentListParams) => call("agent.list", params ?? {}, []) as Promise<AgentListResult>,
-      prompt: (params: AgentPromptParams) => call("agent.prompt", params ?? {}, []) as Promise<AgentPromptResult>,
+      prompt: (params: AgentPromptParams) => call("agent.prompt", params ?? {}, ["caller"]) as Promise<AgentPromptResult>,
       wait: (params: AgentWaitParams) => call("agent.wait", params ?? {}, []) as Promise<AgentWaitResult>,
       read: (params: AgentReadParams) => call("agent.read", params ?? {}, []) as Promise<AgentReadResult>,
     },

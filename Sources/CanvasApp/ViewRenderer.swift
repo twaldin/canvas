@@ -48,7 +48,7 @@ extension CanvasView {
 
         // Everything else under the region.
         let others = board.objects.values.filter { object in
-            TileFactory.hasTile(object.type) && renders[object.id] == nil && !excluded.contains(object.type)
+            TileFactory.hasTile(object.type) && renders[object.id] == nil && !excluded.hides(object)
                 && object.frame.intersects(region)
         }
         let otherRenders = await renderTiles(others.compactMap { tileJob($0.id, scale: scale, full: false, appearance: appearance) }, deadline: deadline)
@@ -84,17 +84,16 @@ extension CanvasView {
         appearance.performAsCurrentDrawingAppearance {
             CanvasDocumentView.drawBackground(in: docRegion, pointsPerUnit: scale, pixelsPerPoint: 1)
 
-            if !excluded.contains(.group) {
-                for group in board.objects.values.filter({ $0.type == .group }).sorted(by: { $0.z < $1.z }) {
-                    guard let rect = groupRegion(group), rect.intersects(docRegion) else { continue }
-                    guard let view = GroupView(object: group) else { continue }
-                    view.show(region: rect)
-                    cg.saveGState()
-                    cg.translateBy(x: rect.minX, y: rect.minY)
-                    view.draw(view.bounds)
-                    cg.restoreGState()
-                    record(group, Frame(x: rect.minX - origin.x, y: rect.minY - origin.y, w: rect.width, h: rect.height))
-                }
+            for group in board.objects.values.filter({ $0.type == .group && !excluded.hides($0) }).sorted(by: { $0.z < $1.z }) {
+                guard let rect = groupRegion(group), rect.intersects(docRegion) else { continue }
+                guard let view = GroupView(object: group) else { continue }
+                view.show(region: rect)
+                view.author = authorName(of: group)
+                cg.saveGState()
+                cg.translateBy(x: rect.minX, y: rect.minY)
+                view.draw(view.bounds)
+                cg.restoreGState()
+                record(group, Frame(x: rect.minX - origin.x, y: rect.minY - origin.y, w: rect.width, h: rect.height))
             }
 
             // `full` targets extend past their frames over whatever lies there, so they paint last,
@@ -214,9 +213,20 @@ extension CanvasView {
         let style = NSMutableParagraphStyle()
         style.lineBreakMode = .byTruncatingMiddle
         let name = tiles[object.id]?.title ?? TileFrameView.title(for: object)
-        (name as NSString).draw(in: NSRect(x: rect.minX + 28, y: rect.minY + 5, width: max(0, rect.width - 60), height: 16), withAttributes: [
-            .font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
+        let author = tiles[object.id]?.author
+        let frames = TileFrameView.titleFrames(width: rect.width, title: name, author: author)
+        (name as NSString).draw(in: frames.title.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
+            .font: TileFrameView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
         ])
+        if let author, let mark = frames.author {
+            let tail = NSMutableParagraphStyle()
+            tail.lineBreakMode = .byTruncatingTail
+            tail.alignment = .right
+            // Inset like a label cell's text.
+            (AuthorMark.label(author) as NSString).draw(in: mark.offsetBy(dx: rect.minX, dy: rect.minY).insetBy(dx: 2, dy: 0), withAttributes: [
+                .font: TileFrameView.authorFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: tail,
+            ])
+        }
         ("✕" as NSString).draw(at: NSPoint(x: rect.maxX - 22, y: rect.minY + 5), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
         let body = NSRect(x: rect.minX, y: rect.minY + title, width: rect.width, height: rect.height - title)
         if let image = render.image {

@@ -14,6 +14,9 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private let board: Board
     /// A click on a line opened (`created`) or re-aimed this code tile.
     var onOpenedCode: ((ObjectID, _ created: Bool) -> Void)?
+    /// With every listing of the board's own checkout: the branch checked out there (nil when
+    /// detached), which the title names.
+    var onBranch: ((String?) -> Void)?
 
     private var set: ChangeSet?
     private var painter: ChangesPainter?
@@ -183,6 +186,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         let current = generation, root = board.root, spec = spec
         loadTask = Task { [weak self] in
             let set = await ChangeSet.load(root: root, spec: spec)
+            let branch = spec.root == nil ? await Self.branch(in: root) : nil
             await MainTurns.next()
             guard let self, current == self.generation, self.isLive else { return }
             self.loadTask = nil
@@ -190,7 +194,15 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             self.install(set)
             self.watch(set.repository)
             self.growIfFitted(from: previous, to: set)
+            if spec.root == nil { self.onBranch?(branch) }
         }
+    }
+
+    /// The branch checked out in `directory`'s worktree; nil when detached or outside git.
+    private static func branch(in directory: URL) async -> String? {
+        guard let output = try? await GitRunner.shared.run(["symbolic-ref", "--short", "-q", "HEAD"], in: directory, allowedStatus: [0, 1]) else { return nil }
+        let name = String(decoding: output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
     }
 
     /// A new listing: the current hunk stays the same file and position (the next one when it

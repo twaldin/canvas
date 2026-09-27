@@ -28,16 +28,56 @@ public enum RenderTarget: Equatable, Sendable {
     case rect(Frame)
 }
 
+/// What `view.render` leaves out of the picture (targets are always drawn): every object of
+/// `types`, and the objects `ids` (a group's id takes its members, nested groups included, with it).
+public struct RenderExclusion: Equatable, Sendable {
+    public var types: Set<ObjectType>
+    public var ids: Set<ObjectID>
+
+    public init(types: Set<ObjectType> = [], ids: Set<ObjectID> = []) {
+        self.types = types
+        self.ids = ids
+    }
+
+    /// `exclude`'s entries, each an object type or the id of an object in `objects`; a group's id
+    /// expands to its members. Throws `invalid_params` for anything else, naming it.
+    public init(_ entries: [JSONValue], objects: [ObjectID: CanvasObject]) throws {
+        var types: Set<ObjectType> = [], ids: Set<ObjectID> = []
+        for entry in entries {
+            if let type = entry.string.flatMap(ObjectType.init(rawValue:)) {
+                types.insert(type)
+            } else if let id = entry.string, let object = objects[id] {
+                ids.insert(id)
+                guard object.type == .group else { continue }
+                var queue = [id]
+                while let next = queue.popLast() {
+                    for member in GroupSpec(objects[next]?.props ?? .null)?.members ?? [] where objects[member] != nil && ids.insert(member).inserted {
+                        queue.append(member)
+                    }
+                }
+            } else {
+                let named = entry.string.map { "\"\($0)\"" } ?? "\(entry)"
+                throw ApiRouter.Failure("invalid_params", "exclude takes object types or ids of objects on this board, not \(named)")
+            }
+        }
+        self.init(types: types, ids: ids)
+    }
+
+    public func hides(_ object: CanvasObject) -> Bool {
+        types.contains(object.type) || ids.contains(object.id)
+    }
+}
+
 public struct RenderRequest: Sendable {
     public var target: RenderTarget
     /// Pixels per canvas point, as asked.
     public var scale: Double
     public var full: Bool
-    public var exclude: Set<ObjectType>
+    public var exclude: RenderExclusion
     public var padding: Double
     public var timeout: Duration
 
-    public init(target: RenderTarget, scale: Double = 1, full: Bool = false, exclude: Set<ObjectType> = [], padding: Double = 0, timeout: Duration = .seconds(8)) {
+    public init(target: RenderTarget, scale: Double = 1, full: Bool = false, exclude: RenderExclusion = RenderExclusion(), padding: Double = 0, timeout: Duration = .seconds(8)) {
         self.target = target
         self.scale = scale
         self.full = full

@@ -142,11 +142,11 @@ public struct NeedsYou: Equatable, Sendable {
 }
 
 /// One thing on a board that needs the user, for Go to Next Needs-You (⌘J) and the top of Go to:
-/// a blocked agent's terminal (waiting on an approval or answer), or an object with an attention
-/// marker.
+/// a blocked agent's terminal (waiting on an approval or answer), an object with an attention
+/// marker, or a done agent's terminal (finished, its result not seen yet).
 public struct NeedsYouItem: Equatable, Sendable {
     public enum Reason: Int, Comparable, Sendable {
-        case blocked, marked
+        case blocked, marked, done
         public static func < (lhs: Reason, rhs: Reason) -> Bool { lhs.rawValue < rhs.rawValue }
     }
 
@@ -163,21 +163,24 @@ public struct NeedsYouItem: Equatable, Sendable {
         self.frame = frame
     }
 
-    /// Blocked terminals first, then marked objects, each in reading order (top to bottom, then
-    /// left to right).
+    /// Blocked terminals first, then marked objects, then done terminals, each in reading order
+    /// (top to bottom, then left to right).
     static func precedes(_ lhs: NeedsYouItem, _ rhs: NeedsYouItem) -> Bool {
         (lhs.reason.rawValue, lhs.frame.y, lhs.frame.x, lhs.id) < (rhs.reason.rawValue, rhs.frame.y, rhs.frame.x, rhs.id)
     }
 
-    /// What needs the user on a board, in visiting order; a blocked terminal with a marker is
-    /// listed once, as blocked.
+    /// What needs the user on a board, in visiting order; a terminal is listed once: blocked,
+    /// else marked, else done. A done agent stops being listed once seen (it turns `idle`).
     public static func all(_ objects: [ObjectID: CanvasObject], attention: [ObjectID: Attention]) -> [NeedsYouItem] {
         var items: [NeedsYouItem] = []
         for object in objects.values {
-            if object.type == .terminal, object.props["lifecycle"]?["state"]?.string == LifecycleState.blocked.rawValue {
+            let state = object.type == .terminal ? object.props["lifecycle"]?["state"]?.string : nil
+            if state == LifecycleState.blocked.rawValue {
                 items.append(NeedsYouItem(id: object.id, reason: .blocked, message: object.props["lifecycle"]?["message"]?.string, frame: object.frame))
             } else if let marker = attention[object.id] {
                 items.append(NeedsYouItem(id: object.id, reason: .marked, message: marker.message, frame: object.frame))
+            } else if state == LifecycleState.done.rawValue, object.props["lifecycle"]?["seen"]?.bool != true {
+                items.append(NeedsYouItem(id: object.id, reason: .done, message: object.props["lifecycle"]?["message"]?.string, frame: object.frame))
             }
         }
         return items.sorted(by: precedes)

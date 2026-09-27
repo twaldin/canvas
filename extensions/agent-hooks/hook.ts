@@ -5,7 +5,7 @@
 // plugin in extensions/claude; Codex: `-c hooks=…` from extensions/codex/config.ts; Gemini: a
 // system settings layer from extensions/gemini/settings.ts) and only inside a Canvas terminal
 // tile. Mirrors extensions/omp/canvas.ts:
-//  - lifecycle (working / blocked / idle) and session identity for resume
+//  - lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
 //  - the canvas-awareness block (extensions/guidance.ts) as session context
 //  - the selection tray drained into the prompt you submit, as hidden context
 //  - follow mode: files the agent reads, edits, and writes re-aim its follow tile
@@ -16,6 +16,7 @@ import { realpathSync } from "node:fs";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { canvasGuidance } from "../guidance";
 import { absolute, editLocation, type Location, patchLocation, readLocation } from "./follow";
+import { thread } from "./threads";
 
 type Kind = "claude" | "codex" | "gemini" | "opencode";
 type Json = Record<string, unknown>;
@@ -45,12 +46,16 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
   // Hooks are separate processes that can finish out of order (async ones especially); the
   // process start time orders their reports the way the agent fired them.
   const seq = Math.floor(performance.timeOrigin * 1000);
-  const report = (state: "working" | "blocked" | "idle", message?: string, call?: string) =>
-    quietly(client.api.agent.report({ tile, kind, state, message, seq, source, call }));
+  const report = (state: "working" | "blocked" | "idle", message?: string, call?: string, final?: string) =>
+    quietly(client.api.agent.report({ tile, kind, state, message, seq, source, call, final }));
   const context = (text: string) => JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
-  // Claude and Codex mark events from inside a subagent with its id.
-  const subagent = typeof input.agent_id === "string" && input.agent_id.length > 0;
-
+  // Only the tile's own session owns its lifecycle, session id and tray (./threads.ts). A
+  // subagent's approvals and finished calls still count (the tile waits on them); nothing of
+  // Codex's internal sessions does.
+  const from = thread(kind, input);
+  if (from === "internal") return undefined;
+  const subagent = from === "subagent";
+  if (subagent && event !== "PermissionRequest" && event !== "PostToolUse" && event !== "PostToolUseFailure" && event !== "Notification") return undefined;
   switch (event) {
     case "Launch": {
       // bin/codex, as Codex starts: it fires SessionStart only with the first prompt.
@@ -69,13 +74,14 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
     }
     case "UserPromptSubmit":
     case "BeforeAgent": {
-      // A subagent's task arrives as its prompt: the user's turn goes on, and the tray is theirs.
-      if (subagent) return undefined;
+      // A subagent's task arrives as its prompt (filtered above): the user's turn goes on, and
+      // the tray is theirs.
       const prompt = str(input.prompt)?.trim() ?? "";
       if (!prompt || /^[/!]/.test(prompt)) return undefined; // slash commands and shell escapes aren't prompts
       await report("working");
       // Peek, hand the context to the agent, then commit: a hook killed before its output
-      // reached the agent leaves the tray intact. Only the tray's prompt target gets mentions.
+      // reached the agent leaves the tray intact. Only the tray's prompt target gets the tray;
+      // mentions other agents attached for this tile (agent.prompt) come with any prompt.
       const drained = await client.api.tray.drain({ peek: true });
       if (!drained.context) return undefined;
       await Bun.write(Bun.stdout, context(drained.context));
@@ -122,8 +128,12 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       return undefined;
     }
     case "Stop":
-    case "Interrupt":
     case "AfterAgent":
+      // The turn's answer (agent.read final): Codex's and Claude Code's `last_assistant_message`,
+      // Gemini CLI's `prompt_response`.
+      await report("idle", undefined, undefined, str(input.last_assistant_message) ?? str(input.prompt_response));
+      return undefined;
+    case "Interrupt":
       await report("idle");
       return undefined;
     case "SessionEnd":

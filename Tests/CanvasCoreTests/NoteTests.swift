@@ -545,3 +545,201 @@ struct PinnedMentionTests {
         #expect(!context.contains("now 2"), "a pinned mention never drains today's file")
     }
 }
+
+struct NoteItemTests {
+    static let audit = """
+    # Audit log: trade-up-bot
+
+    Intro paragraph that
+    wraps onto two lines.
+
+    ## Leads
+
+    1. Session secret fallback
+    2. Unescaped og:image
+    3. JSON-LD not escaped
+    4. Rate limit keyed on IP
+       - behind a proxy: all one key
+       - see server/index.ts:117
+    5. CSP allows unsafe-inline
+
+    #### Rate limits
+
+    > Quoted finding
+    > continues
+
+    | Lead | Severity |
+    | --- | --- |
+    | rlKey | Low |
+    | seo | Med |
+
+    ```ts
+    const x = 1
+    ```
+
+    ## Fixed
+
+    Nothing yet.
+    """
+
+    func item(_ line: Int, in markdown: String = audit) throws -> NoteItem {
+        try #require(NoteItem.at(line: line, in: markdown))
+    }
+
+    @Test func paragraphIsItsLinesUnderItsHeading() throws {
+        let paragraph = try item(4)
+        #expect(paragraph.kind == .paragraph)
+        #expect(paragraph.lines == LineRange(start: 3, end: 4))
+        #expect(paragraph.headings == ["Audit log: trade-up-bot"])
+        #expect(paragraph.text == "Intro paragraph that\nwraps onto two lines.")
+    }
+
+    @Test func listItemCarriesItsNestedItems() throws {
+        let lead = try item(11)
+        #expect(lead.kind == .item)
+        #expect(lead.lines == LineRange(start: 11, end: 13))
+        #expect(lead.headings == ["Audit log: trade-up-bot", "Leads"])
+        #expect(lead.text == "4. Rate limit keyed on IP\n   - behind a proxy: all one key\n   - see server/index.ts:117")
+        #expect(lead.summary == "4. Rate limit keyed on IP")
+
+        let nested = try item(12)
+        #expect(nested.lines == LineRange(start: 12, end: 12))
+        #expect(nested.text == "- behind a proxy: all one key", "indentation of the nesting is dropped")
+        #expect(nested.summary == "behind a proxy: all one key")
+    }
+
+    @Test func headingIsItsSectionUpToTheNextOfTheSameLevel() throws {
+        let leads = try item(6)
+        #expect(leads.kind == .heading)
+        #expect(leads.lines == LineRange(start: 6, end: 28), "the deeper #### section is part of it; ## Fixed ends it")
+        #expect(leads.headings == ["Audit log: trade-up-bot"])
+        #expect(leads.summary == "Leads")
+        #expect(leads.text.hasPrefix("## Leads\n\n1. Session secret fallback"))
+    }
+
+    @Test func headingPathSkipsMissingLevels() throws {
+        let section = try item(16)
+        #expect(section.lines == LineRange(start: 16, end: 28))
+        #expect(section.headings == ["Audit log: trade-up-bot", "Leads"])
+        #expect(try item(19).headings == ["Audit log: trade-up-bot", "Leads", "Rate limits"])
+        #expect(try item(32).headings == ["Audit log: trade-up-bot", "Fixed"], "a later ## leaves the #### section")
+    }
+
+    @Test func quoteRowAndFence() throws {
+        let quote = try item(19)
+        #expect(quote.kind == .quote)
+        #expect(quote.lines == LineRange(start: 18, end: 19))
+
+        let row = try item(23)
+        #expect(row.kind == .row)
+        #expect(row.text == "| rlKey | Low |")
+        #expect(row.summary == "rlKey · Low")
+        #expect(try item(22).lines == LineRange(start: 21, end: 21), "the delimiter row stands for the header")
+
+        let fence = try item(27)
+        #expect(fence.kind == .code)
+        #expect(fence.lines == LineRange(start: 26, end: 28))
+        #expect(fence.summary == "const x = 1")
+    }
+
+    @Test func blankLinesAndRulesAreNoBlock() {
+        #expect(NoteItem.at(line: 2, in: Self.audit) == nil)
+        #expect(NoteItem.at(line: 99, in: Self.audit) == nil)
+        #expect(NoteItem.at(line: 2, in: "a\n\n---\n\nb") == nil)
+        #expect(NoteItem.at(line: 3, in: "a\n\n---\n\nb") == nil)
+    }
+
+    @Test func longBlocksAreCutToWholeLines() throws {
+        let markdown = "# Big\n\n" + (1...60).map { "- item \($0)" }.joined(separator: "\n")
+        let section = try item(1, in: markdown)
+        #expect(section.lines == LineRange(start: 1, end: 62))
+        #expect(NoteSource.lines(of: section.text).count == NoteItem.maxLines)
+        #expect(section.omittedLines == 62 - NoteItem.maxLines)
+
+        let wide = String(repeating: "word ", count: 1000)
+        let paragraph = try item(1, in: wide)
+        #expect(paragraph.text.count == NoteItem.maxCharacters)
+        #expect(paragraph.text.hasSuffix("…"))
+    }
+
+    @Test func refindsTheBlockAfterEdits() throws {
+        let lead = try item(11)
+        let moved = "Preface\n\n" + Self.audit
+        let found = try #require(NoteItem.find(lead.text, near: lead.lines.start, in: moved))
+        #expect(found.unchanged)
+        #expect(found.item.lines == LineRange(start: 13, end: 15))
+
+        let grown = Self.audit.replacingOccurrences(of: "   - see server/index.ts:117", with: "   - see server/index.ts:117\n   - fixed in 1a2b3c4")
+        let changed = try #require(NoteItem.find(lead.text, near: lead.lines.start, in: grown))
+        #expect(!changed.unchanged)
+        #expect(changed.item.text.hasSuffix("- fixed in 1a2b3c4"))
+
+        let reworded = Self.audit.replacingOccurrences(of: "4. Rate limit keyed on IP", with: "4. Rate limit keyed on the client IP")
+        #expect(NoteItem.find(lead.text, near: lead.lines.start, in: reworded) == nil)
+
+        // Twice in the note: the one nearest where it was.
+        let twice = Self.audit + "\n\n4. Rate limit keyed on IP\n   - behind a proxy: all one key\n   - see server/index.ts:117\n"
+        #expect(NoteItem.find(lead.text, near: lead.lines.start, in: twice)?.item.lines.start == 11)
+    }
+}
+
+@MainActor
+struct NoteMentionTests {
+    let board = Board(id: "brd_test", root: URL(fileURLWithPath: NSTemporaryDirectory()))
+
+    func stageLead() throws -> (note: CanvasObject, mention: Mention) {
+        let note = board.create(type: .note, props: .object(["markdown": .string(NoteItemTests.audit)]))
+        let item = try #require(NoteItem.at(line: 11, in: NoteItemTests.audit))
+        return (note, try board.stage(.note(object: note.id, item: item)))
+    }
+
+    @Test func chipNamesTheNoteAndTheItem() throws {
+        let (_, mention) = try stageLead()
+        #expect(mention.label == "note Audit log: tr… › 4. Rate limit keyed on …", "short enough for the chip to show whole")
+    }
+
+    @Test func contextGivesHeadingPathAndTheItemsText() async throws {
+        let (note, _) = try stageLead()
+        let context = await board.drain(peek: true).context
+        #expect(context.contains("[1] note \(note.id) \"Audit log: trade-up-bot\" · list item, markdown lines 11-13 · in Audit log: trade-up-bot › Leads\n"))
+        #expect(context.contains("\n    4. Rate limit keyed on IP\n       - behind a proxy: all one key\n       - see server/index.ts:117\n"))
+        #expect(!context.contains("CSP allows"), "only the item")
+    }
+
+    @Test func editedNoteRefindsTheItemOrSaysItChanged() async throws {
+        let (note, _) = try stageLead()
+        try board.update(note.id, props: .object(["markdown": .string("Preface\n\n" + NoteItemTests.audit)]))
+        let moved = await board.drain(peek: true).context
+        #expect(moved.contains("list item, markdown lines 13-15 · in Audit log: trade-up-bot › Leads (edited)"))
+        #expect(!moved.contains("changed since"))
+
+        try board.update(note.id, props: .object(["markdown": .string(NoteItemTests.audit.replacingOccurrences(of: "   - see server/index.ts:117", with: "   - fixed"))]))
+        let grown = await board.drain(peek: true).context
+        #expect(grown.contains("(changed since it was mentioned; as it reads now:)\n    4. Rate limit keyed on IP\n       - behind a proxy: all one key\n       - fixed"))
+
+        try board.update(note.id, props: .object(["markdown": .string("# Audit log: trade-up-bot\n\nAll fixed.")]))
+        let gone = await board.drain(peek: true).context
+        #expect(gone.contains("(no longer in the note; as it read when mentioned:)\n    4. Rate limit keyed on IP"))
+    }
+
+    @Test func noteMentionsKeepTheirBlockThroughTheBoardFile() throws {
+        let (_, mention) = try stageLead()
+        let json = try JSONValue.encode(mention.target)
+        #expect(json["kind"]?.string == "note")
+        #expect(json["block"]?.string == "item")
+        #expect(json["headings"] == .array([.string("Audit log: trade-up-bot"), .string("Leads")]))
+        #expect(try json.decode(MentionTarget.self) == mention.target)
+    }
+
+    @Test func wholeNoteMentionCarriesTheWholeNoteUpToACap() async throws {
+        let long = (1...100).map { "line \($0)" }.joined(separator: "\n")
+        let short = board.create(type: .note, props: .object(["markdown": .string(NoteItemTests.audit)]))
+        let big = board.create(type: .note, props: .object(["markdown": .string(long)]))
+        try board.stage(.object(short.id))
+        try board.stage(.object(big.id))
+        let context = await board.drain().context
+        #expect(context.contains("    Nothing yet."), "a note of 32 lines arrives whole")
+        #expect(context.contains("    line 80\n    … 20 more lines (canvas get \(big.id))"))
+        #expect(!context.contains("line 81"))
+    }
+}

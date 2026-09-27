@@ -20,7 +20,8 @@ struct NavigatorRow {
     let kind: String
     /// A terminal's agent lifecycle color (`TileFrameView.badgeColor`).
     let dot: NSColor?
-    /// Why the row needs the user (a blocked agent, a marker): listed first, flagged.
+    /// Why the row needs the user (a blocked agent, a marker, a done agent not seen yet): listed
+    /// first, flagged.
     var needs: NeedsYouItem.Reason? = nil
     /// Tells rows with the same title apart (terminals: name, command, or directory; code: caption
     /// or group title).
@@ -36,10 +37,10 @@ struct NavigatorRow {
 }
 
 extension CanvasView {
-    /// Tiles that need the user first (blocked agents, then marked tiles: `NeedsYouItem`,
-    /// flagged, and found by "blocked", "needs", "marked"), then "All content", then groups, then
-    /// the other tiles, each in reading order (top to bottom, then left to right). Drawn objects
-    /// (shapes, arrows) aren't listed.
+    /// Tiles that need the user first (blocked agents, marked tiles, then done agents not seen
+    /// yet: `NeedsYouItem`, flagged, and found by "blocked", "marked", "done", "needs"), then
+    /// "All content", then groups, then the other tiles, each in reading order (top to bottom,
+    /// then left to right). Drawn objects (shapes, arrows) aren't listed.
     func navigatorRows() -> [NavigatorRow] {
         var groups: [(NSRect, NavigatorRow)] = []
         var tiles: [(NSRect, NavigatorRow)] = []
@@ -72,7 +73,11 @@ extension CanvasView {
             }
             row.needs = item.reason
             if let message = item.message, !message.isEmpty { row.subtitle = message }
-            row.terms += item.reason == .blocked ? ["blocked", "needs you"] : ["marked", "needs you", "attention"]
+            switch item.reason {
+            case .blocked: row.terms += ["blocked", "needs you"]
+            case .marked: row.terms += ["marked", "needs you", "attention"]
+            case .done: row.terms += ["done", "finished", "needs you"]
+            }
             first.append((rank, row))
         }
         let all = NavigatorRow(target: .allContent, title: "All content", kind: "Zoom to Fit", dot: nil)
@@ -130,7 +135,8 @@ extension CanvasView {
         case .html:
             return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "HTML", dot: nil)
         case .changes:
-            return NavigatorRow(target: .object(object.id), title: TileFrameView.title(for: object), kind: "Changes", dot: nil)
+            // The board root's names its branch, known once listed (`Changes: main`).
+            return NavigatorRow(target: .object(object.id), title: shownTitle.isEmpty ? TileFrameView.title(for: object) : shownTitle, kind: "Changes", dot: nil)
         case .image:
             // Found by its file too; the caption says which chart it is.
             let path = nonEmpty(props["path"])
@@ -421,7 +427,8 @@ private final class NavigatorCell: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("navigator.cell")
 
     private let dot = NSView()
-    /// "Blocked" (orange) or "Marked" (pink): the row needs the user (`NavigatorRow.needs`).
+    /// "Blocked" (orange), "Marked" (pink), or "Done" (green): the row needs the user
+    /// (`NavigatorRow.needs`).
     private let flag = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
@@ -485,11 +492,23 @@ private final class NavigatorCell: NSTableCellView {
         toolTip = row.toolTip
         kind.stringValue = row.kind
         dot.layer?.backgroundColor = (row.dot ?? .clear).cgColor
-        let style: AttentionStyle? = row.needs.map { $0 == .blocked ? .blocked : .marker }
-        flag.stringValue = row.needs.map { $0 == .blocked ? " Blocked " : " Marked " } ?? ""
-        flag.layer?.backgroundColor = style?.color.cgColor
-        flag.isHidden = style == nil
-        titleAfterFlag.constant = style == nil ? 0 : 6
+        let color: NSColor? = row.needs.map { needs in
+            switch needs {
+            case .blocked: AttentionStyle.blocked.color
+            case .marked: AttentionStyle.marker.color
+            case .done: TileFrameView.badgeColor(LifecycleState.done.rawValue)
+            }
+        }
+        flag.stringValue = row.needs.map { needs in
+            switch needs {
+            case .blocked: " Blocked "
+            case .marked: " Marked "
+            case .done: " Done "
+            }
+        } ?? ""
+        flag.layer?.backgroundColor = color?.cgColor
+        flag.isHidden = color == nil
+        titleAfterFlag.constant = color == nil ? 0 : 6
     }
 
     override var backgroundStyle: NSView.BackgroundStyle {

@@ -279,6 +279,31 @@ struct BoardTests {
         #expect(board.place(width: 640, height: 446, near: terminal.id) == beside)
     }
 
+    @Test func anInViewSpotFarFromTheAuthorLosesToOneBesideItOutOfView() {
+        // The orchestrator study: the agent's terminal sat at the top of the view with the
+        // user's tiles left, right and below it; its note went to the only room in view,
+        // 1,600 pt away beside another agent's terminal.
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        board.create(type: .changes, props: .object([:]), frame: Frame(x: 1024, y: 0, w: 1000, h: 1300))
+        board.create(type: .changes, props: .object([:]), frame: Frame(x: -1024, y: 0, w: 1000, h: 1300))
+        board.create(type: .code, props: .object(["path": .string("a.ts")]), frame: Frame(x: 0, y: 644, w: 1000, h: 700))
+        board.viewport = { Frame(x: -2600, y: -50, w: 5000, h: 1400) }
+        let note = board.place(width: 640, height: 446, near: terminal.id)
+        #expect(note == Frame(x: 0, y: -470, w: 640, h: 446), "above the terminal, mostly out of view, not in view \(Int(Board.nearbyDistance))+ pt away")
+
+        // Within the cap the view still wins: with room in view 300 pt left of the terminal
+        // (the left tile gone), that beats the nearer slot above.
+        let close = makeBoard()
+        let agent = close.create(type: .terminal, props: .object(["cwd": .string("/")]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        close.create(type: .changes, props: .object([:]), frame: Frame(x: 1024, y: 0, w: 1000, h: 1300))
+        close.create(type: .code, props: .object(["path": .string("a.ts")]), frame: Frame(x: -300, y: 0, w: 276, h: 1344))
+        close.create(type: .code, props: .object(["path": .string("b.ts")]), frame: Frame(x: 0, y: 644, w: 1000, h: 700))
+        close.viewport = { Frame(x: -2600, y: -50, w: 5000, h: 1400) }
+        let inView = close.place(width: 640, height: 446, near: agent.id)
+        #expect(inView == Frame(x: -964, y: 0, w: 640, h: 446), "left of the tile beside the terminal, 324 pt from it, wholly in view")
+    }
+
     @Test func userObjectsWithoutAFrameLandWhollyInViewWhenThereIsRoom() {
         let board = makeBoard()
         // A terminal in the middle of the view; the nearest free spot to the view center is just

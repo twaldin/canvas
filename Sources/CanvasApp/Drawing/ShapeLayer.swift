@@ -74,6 +74,9 @@ final class ShapeLayer: NSView {
     private var avoiding: Set<ObjectID> = []
     /// A re-route of `avoiding` is due; it runs once per burst of changes (see `rerouteAvoiding`).
     private var avoidingStale = false
+    /// Tiles' and blocking shapes' frames as labels were last placed around them (document
+    /// coordinates), so a label moves when one comes over it and back when it leaves.
+    private var blockerFrames: [ObjectID: NSRect] = [:]
     /// Selection-drag preview from the scene: these drawn objects are painted offset.
     private var dragPreview: (ids: Set<ObjectID>, offset: NSSize) = ([], .zero)
 
@@ -119,7 +122,10 @@ final class ShapeLayer: NSView {
         self.canvas = canvas
         super.init(frame: canvas.document.bounds)
         layerContentsRedrawPolicy = .onSetNeedsDisplay
-        for object in board.snapshot.objects { refresh(object) }
+        for object in board.snapshot.objects {
+            refresh(object)
+            if BoardGeometry.blocksRoutes(object) { blockerFrames[object.id] = Self.docRect(object.frame) }
+        }
         // Tiles move live while dragged but commit their frame only on drop; follow them live.
         NotificationCenter.default.addObserver(self, selector: #selector(viewFrameChanged(_:)), name: NSView.frameDidChangeNotification, object: nil)
         // A code tile's rows scroll under arrows bound to its lines.
@@ -178,6 +184,7 @@ final class ShapeLayer: NSView {
             if object.type != .arrow, object.type != .group { rerouteAvoiding() }
             refresh(object)
             reroute(boundTo: object.id)
+            if object.type != .arrow, object.type != .group { relabel(around: object.id, object) }
         case .objectDeleted(let id):
             if let item = items.removeValue(forKey: id) {
                 invalidate(item)
@@ -189,6 +196,7 @@ final class ShapeLayer: NSView {
                 }
             }
             rerouteAvoiding()
+            relabel(around: id, nil)
             // Arrows bound to a deleted object keep their last route; undo re-binds them.
         default:
             break
@@ -263,6 +271,26 @@ final class ShapeLayer: NSView {
         guard avoidingStale else { return }
         avoidingStale = false
         for id in avoiding { reroute(arrow: id) }
+    }
+
+    /// A tile or blocking shape came, went, or changed frame (`object` nil: deleted): arrows
+    /// whose label could sit where it was or is now place their labels again, so a label never
+    /// stays on a tile that arrived later (what `layout.check` computes from frames alone).
+    /// `avoid` arrows re-route anyway; bound arrows already followed.
+    private func relabel(around id: ObjectID, _ object: CanvasObject?) {
+        let old = blockerFrames[id]
+        let new = object.flatMap { BoardGeometry.blocksRoutes($0) ? Self.docRect($0.frame) : nil }
+        blockerFrames[id] = new
+        guard old != new else { return }
+        let changed = [old, new].compactMap { $0 }
+        for (arrowID, item) in items {
+            guard let arrow = item.arrow, arrow.spec.route != .avoid, let label = item.labelRect else { continue }
+            let xs = arrow.path.map(\.x), ys = arrow.path.map(\.y)
+            let margin = DrawingGeometry.labelClearance + 2
+            let reach = NSRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+                .insetBy(dx: -(label.width + margin), dy: -(label.height + margin))
+            if changed.contains(where: { $0.intersects(reach) }) { reroute(arrow: arrowID) }
+        }
     }
 
     override func viewWillDraw() {
@@ -407,7 +435,7 @@ final class ShapeLayer: NSView {
     /// `view.render`: draws the committed drawn objects whose bounds meet `docRect` (document
     /// coordinates; the context maps them) in paint order, without handles, gestures, or drag
     /// previews, and returns what it drew.
-    func renderItems(in context: CGContext, docRect: NSRect, excluding excluded: Set<ObjectType>) -> [(object: CanvasObject, bounds: NSRect)] {
+    func renderItems(in context: CGContext, docRect: NSRect, excluding excluded: RenderExclusion) -> [(object: CanvasObject, bounds: NSRect)] {
         settleAvoiding()
         context.saveGState()
         defer { context.restoreGState() }
@@ -416,7 +444,7 @@ final class ShapeLayer: NSView {
         context.setLineWidth(DrawingGeometry.strokeWidth)
         var drawn: [(object: CanvasObject, bounds: NSRect)] = []
         for id in ordered {
-            guard let item = items[id], !excluded.contains(item.object.type), item.bounds.intersects(docRect) else { continue }
+            guard let item = items[id], !excluded.hides(item.object), item.bounds.intersects(docRect) else { continue }
             item.draw(in: context)
             drawn.append((item.object, item.bounds))
         }

@@ -160,10 +160,13 @@ public final class ApiRouter {
             case "object.create", "object.update":
                 let params = try await anchored(method, params)
                 if method == "object.create", let reused = try reusableChanges(params) {
-                    let update = try fitted("object.update", reused, size: try await fitSize("object.update", reused))
-                    return Self.ok(id, try dispatch("object.update", update).merging(.object(["reused": .bool(true)])))
+                    let size = try await fitSize("object.update", reused)
+                    let result = try dispatch("object.update", try fitted("object.update", reused, size: size)).merging(.object(["reused": .bool(true)]))
+                    return Self.ok(id, size == nil ? result : withOverlaps(result))
                 }
-                return Self.ok(id, try dispatch(method, try fitted(method, params, size: try await fitSize(method, params))))
+                let size = try await fitSize(method, params)
+                let result = try dispatch(method, try fitted(method, params, size: size))
+                return Self.ok(id, size == nil ? result : withOverlaps(result))
             default: break
             }
             return Self.ok(id, try dispatch(method, params))
@@ -332,10 +335,12 @@ public final class ApiRouter {
     }
 
     /// `agent.read`: the tail of the session text, or with `since: "prompt"` what the terminal
-    /// printed after the last `agent.prompt` to it. The read runs off the main actor (it spawns
+    /// printed after the last `agent.prompt` to it, or with `final` its agent's last answer as its
+    /// integration reported it. The read runs off the main actor (it spawns
     /// `zmx history`), and the reply stays in order because each connection is served serially.
     private func read(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"))
+        if p["final"]?.bool == true { return try finalAnswer(of: terminal, on: board, p) }
         let since = p["since"]?.string
         guard since == nil || since == "prompt" else { throw Failure("invalid_params", "since must be \"prompt\"") }
         let requested = p["lines"]?.int ?? (since == nil ? Self.readLinesDefault : Self.readLinesMax)
@@ -380,35 +385,67 @@ public final class ApiRouter {
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
         }
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
+        let mentions = try (p["mentions"]?.array ?? []).map { try HandoffMention(json: $0).target(on: board) }
+        if !mentions.isEmpty, !PromptTarget.runsAgent(terminal) {
+            throw Failure("unavailable", "\(terminal.id) runs no agent with a Canvas integration, so nothing there would take the mentions; name the objects in the text instead")
+        }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
+        // Queued before the text goes in: the target's integration drains them with this prompt.
+        let sender = p["caller"]?.string
+        let senderName = sender.flatMap { try? agentTile($0) }.map { PromptTarget.label($0.1, shownTitle: terminalStatus?($0.0, $0.1.id).title) }
+        let handed = try board.handOff(mentions, to: terminal.id, from: sender, fromName: senderName)
         guard await submitToTerminal(board, terminal.id, text) else {
+            board.commit(handed.map { $0.id })
             throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
         }
         // Only a reporting agent's next report can end the pre-prompt state.
         let waitable = Self.state(of: current) != LifecycleState.unknown.rawValue
         if waitable { pendingPrompts.insert(terminal.id) }
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
-        return .object([
+        var result: [String: JSONValue] = [
             "agent": agentEntry(current, on: board),
             "submittedAt": .string(Date().formatted(.iso8601)),
             "waitable": .bool(waitable),
+        ]
+        if !handed.isEmpty { result["mentions"] = try JSONValue.encode(handed) }
+        return .object(result)
+    }
+
+    /// `agent.read` `final`: the answer the terminal's integration reported when its last turn
+    /// ended (`Board.finalAnswers`), never its screen.
+    private func finalAnswer(of terminal: CanvasObject, on board: Board, _ p: JSONValue) throws -> JSONValue {
+        guard p["lines"] == nil, p["since"] == nil else { throw Failure("invalid_params", "final takes no lines or since: it returns the whole last answer") }
+        let state = Self.state(of: terminal)
+        if pendingPrompts.contains(terminal.id) || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
+            throw Failure("unavailable", "\(terminal.id) is still in its turn (\(pendingPrompts.contains(terminal.id) ? "prompted" : state)): agent.wait for it, then read final")
+        }
+        guard let answer = board.finalAnswers[terminal.id] else {
+            throw Failure("unavailable", "no final answer is known for \(terminal.id)'s last turn: its agent (\(terminal.props["agent"]?["kind"]?.string ?? "none reporting")) reported none, the turn was interrupted, or Canvas restarted since. Read the screen with since: \"prompt\" instead")
+        }
+        return .object([
+            "agent": agentEntry(terminal, on: board),
+            "text": .string(answer),
+            "lines": .number(Double(answer.split(separator: "\n", omittingEmptySubsequences: false).count)),
         ])
     }
 
     /// `tray.drain`: the tray's mentions go to the terminal the tray shows (the board's prompt
     /// target), so a caller tile gets them only when it is that terminal; any other caller gets
-    /// none and the tray stays as it is. Without a caller (a script) or a window, anyone drains.
+    /// only what agents handed to it (`agent.prompt` `mentions`), and the tray stays as it is.
+    /// Without a caller (a script) or a window, anyone drains the tray.
     private func drain(_ p: JSONValue) async throws -> JSONValue {
         let board = try board(p)
         let caller = p["caller"]?.string
-        if let caller, let state = viewState?(board), state.promptTarget != caller {
-            var result: [String: JSONValue] = ["mentions": .array([]), "context": .string(""), "held": .number(Double(board.tray.count))]
-            if let target = state.promptTarget { result["target"] = .string(target) }
-            return .object(result)
+        let state = caller == nil ? nil : viewState?(board)
+        let showsTray = state.map { $0.promptTarget == caller } ?? true
+        let drained = await board.drain(peek: p["peek"]?.bool ?? false, caller: caller, tray: showsTray)
+        var result: [String: JSONValue] = ["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)]
+        if !showsTray {
+            result["held"] = .number(Double(board.tray.count))
+            if let target = state?.promptTarget { result["target"] = .string(target) }
         }
-        let drained = await board.drain(peek: p["peek"]?.bool ?? false, caller: caller)
-        return .object(["mentions": try JSONValue.encode(drained.mentions), "context": .string(drained.context)])
+        return .object(result)
     }
 
     // MARK: Images
@@ -439,10 +476,7 @@ public final class ApiRouter {
         }
         let scale = p["scale"]?.number ?? 1
         guard (0.1...4).contains(scale) else { throw Failure("invalid_params", "scale must be between 0.1 and 4") }
-        let exclude = try Set((p["exclude"]?.array ?? []).map { value in
-            guard let type = value.string.flatMap(ObjectType.init(rawValue:)) else { throw Failure("invalid_params", "exclude takes object types, not \(value)") }
-            return type
-        })
+        let exclude = try RenderExclusion(p["exclude"]?.array ?? [], objects: board.objects)
         let timeout = min(max(p["timeoutMs"]?.int ?? 8000, 0), 60_000)
         let request = RenderRequest(target: target, scale: scale, full: p["full"]?.bool ?? false, exclude: exclude,
                                     padding: max(0, p["padding"]?.number ?? 0), timeout: .milliseconds(timeout))
@@ -617,8 +651,15 @@ public final class ApiRouter {
         case "object.create":
             let board = try board(p)
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
-            guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
+            guard var props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             let frame = try p["frame"].map { try Self.frame($0, onto: nil) }
+            if type == .note || type == .html {
+                if let root = props["root"]?.string, !root.isEmpty {
+                    try board.checkLinkRoot(root)
+                } else if let root = board.defaultLinkRoot(for: caller(p)) {
+                    props = props.merging(.object(["root": .string(root)]))
+                }
+            }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], type.unknownPropWarnings(props))
 
@@ -626,6 +667,7 @@ public final class ApiRouter {
             let id = try string(p, "id")
             let board = try board(forObject: id)
             let frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
+            if let root = p["props"]?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
@@ -700,7 +742,7 @@ public final class ApiRouter {
             let tile = try string(p, "tile")
             guard let state = LifecycleState(rawValue: try string(p, "state")) else { throw Failure("invalid_params", "unknown state") }
             try board(forObject: tile).reportLifecycle(tile: tile, kind: try string(p, "kind"), state: state, message: p["message"]?.string, seq: p["seq"]?.int,
-                                                       source: p["source"]?.string, call: p["call"]?.string)
+                                                       source: p["source"]?.string, call: p["call"]?.string, final: p["final"]?.string)
             return .object([:])
 
         case "agent.report_session":
@@ -784,7 +826,8 @@ public final class ApiRouter {
     /// `width`). Paths resolve against the caller's (or the given) board.
     private func measure(_ p: JSONValue) async throws -> JSONValue {
         guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
-        let size = try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: p["width"]?.number, root: try board(p).root)
+        let props = p["props"] ?? .object([:])
+        let size = try await ObjectMeasure.size(type: type, props: props, width: p["width"]?.number, root: pathRoot(try board(p), type: type, props: props, caller: caller(p), creating: true))
         return .object(["w": .number(size.width), "h": .number(size.height)])
     }
 
@@ -832,15 +875,15 @@ public final class ApiRouter {
         let root: URL
         if method == "object.create" {
             guard p["type"]?.string == ObjectType.note.rawValue else { return p }
-            root = try board(p).root
+            root = pathRoot(try board(p), type: .note, props: .object(props), caller: caller(p), creating: true)
         } else {
             let id = try string(p, "id")
             if let index = Self.reference(id) {
                 guard let created = pending[index], created["type"]?.string == ObjectType.note.rawValue else { return p }
-                root = try board(created).root
+                root = pathRoot(try board(created), type: .note, props: (created["props"] ?? .object([:])).merging(.object(props)), caller: caller(created), creating: true)
             } else {
-                guard let board = try? board(forObject: id), board.objects[id]?.type == .note else { return p }
-                root = board.root
+                guard let board = try? board(forObject: id), let note = board.objects[id], note.type == .note else { return p }
+                root = pathRoot(board, type: .note, props: note.props.merging(.object(props)), caller: nil, creating: false)
             }
         }
         let text = await NoteMarkdown.anchoringRanges(markdown, root: root)
@@ -863,7 +906,8 @@ public final class ApiRouter {
         let width = p["frame"]?["w"]?.number
         if method == "object.create" {
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
-            return try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: width, root: try board(p).root)
+            return try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: width,
+                                                root: pathRoot(try board(p), type: type, props: p["props"] ?? .object([:]), caller: caller(p), creating: true))
         }
         let id = try string(p, "id")
         let base: (type: ObjectType, props: JSONValue, width: Double?, root: URL)
@@ -871,25 +915,40 @@ public final class ApiRouter {
             guard let created = pending[index], let type = ObjectType(rawValue: try string(created, "type")) else {
                 throw Failure("invalid_params", "\(id) must name an earlier create op")
             }
-            base = (type, created["props"] ?? .object([:]), created["frame"]?["w"]?.number, try board(created).root)
+            let props = p["props"].map { (created["props"] ?? .object([:])).merging($0) } ?? created["props"] ?? .object([:])
+            base = (type, props, created["frame"]?["w"]?.number, pathRoot(try board(created), type: type, props: props, caller: caller(created), creating: true))
         } else {
             let board = try board(forObject: id)
             let object = try board.object(id)
-            base = (object.type, object.props, object.frame.w, board.root)
+            let props = p["props"].map { object.props.merging($0) } ?? object.props
+            base = (object.type, props, object.frame.w, pathRoot(board, type: object.type, props: props, caller: nil, creating: false))
         }
-        let props = p["props"].map { base.props.merging($0) } ?? base.props
-        return try await ObjectMeasure.size(type: base.type, props: props, width: width ?? ([.code, .image].contains(base.type) ? nil : base.width), root: base.root)
+        return try await ObjectMeasure.size(type: base.type, props: base.props, width: width ?? ([.code, .image].contains(base.type) ? nil : base.width), root: base.root)
+    }
+
+    /// The directory a create's or update's paths resolve against: a note's or HTML tile's link
+    /// root (`Board.linkRoot`, on a create the caller's checkout by default), else the board root.
+    func pathRoot(_ board: Board, type: ObjectType, props: JSONValue, caller: ObjectID?, creating: Bool) -> URL {
+        guard type == .note || type == .html else { return board.root }
+        if creating, props["root"]?.string?.isEmpty != false, let root = board.defaultLinkRoot(for: caller) { return URL(fileURLWithPath: root) }
+        return board.linkRoot(props: props)
     }
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
-    /// current, or automatically placed) origin.
+    /// automatically placed) origin; an update that gives no origin re-fits clear of what it
+    /// didn't already cover (`Board.refitFrame`).
     func fitted(_ method: String, _ p: JSONValue, size: CGSize?) throws -> JSONValue {
         guard let size, var params = p.object else { return p }
         params.removeValue(forKey: "size")
         let origin: (x: Double, y: Double)
         if method == "object.update" {
             let id = try string(p, "id")
-            let current = try board(forObject: id).object(id).frame
+            let board = try board(forObject: id)
+            guard p["frame"]?["x"]?.number != nil || p["frame"]?["y"]?.number != nil else {
+                params["frame"] = try JSONValue.encode(try board.refitFrame(id, to: size))
+                return .object(params)
+            }
+            let current = try board.object(id).frame
             origin = (p["frame"]?["x"]?.number ?? current.x, p["frame"]?["y"]?.number ?? current.y)
         } else if let x = p["frame"]?["x"]?.number, let y = p["frame"]?["y"]?.number {
             origin = (x, y)
@@ -900,6 +959,14 @@ public final class ApiRouter {
         }
         params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.width, h: size.height))
         return .object(params)
+    }
+
+    /// A fitted `object.create`/`object.update` result with `overlaps`, the objects the fitted
+    /// object now covers (`Board.overlaps(of:)`), when there are any.
+    func withOverlaps(_ result: JSONValue) -> JSONValue {
+        guard let id = result["object"]?["id"]?.string, let board = try? board(forObject: id) else { return result }
+        let covered = board.overlaps(of: id)
+        return covered.isEmpty ? result : result.merging(.object(["overlaps": .array(covered.map(JSONValue.string))]))
     }
 
     /// A `frame` param: all of x, y, w, h, or, onto `base` (an update's current frame), any of
@@ -971,6 +1038,8 @@ public final class ApiRouter {
                 }
             }
         }
+        // Fitted objects report what they cover once the whole batch has laid them out.
+        for index in results.indices where sizes[index] != nil { results[index] = withOverlaps(results[index]) }
         return .object(["results": .array(results), "revision": .number(Double(board.revision))])
     }
 
@@ -1033,10 +1102,22 @@ public final class ApiRouter {
             }.map(\.id))
         }
         // Code tiles read from disk: those checked for fit, and those line-bound arrows attach to
-        // (their line count bounds the scroll their anchors assume).
+        // (their line count bounds the scroll their anchors assume): arrows in scope, and arrows
+        // whose route and label may lie on a scoped object (reported too).
+        let scoped = scope.map { ids in ids.compactMap { objects[$0]?.frame.rect } }
         var lineBound = Set<ObjectID>()
-        for object in objects.values where object.type == .arrow && (scope?.contains(object.id) ?? true) {
+        for object in objects.values where object.type == .arrow {
             guard let spec = ArrowSpec(object.props) else { continue }
+            if let scope, !scope.contains(object.id) {
+                let ends = [spec.from, spec.to].compactMap { binding -> CGRect? in
+                    switch binding {
+                    case .object(let id, _, _): objects[id]?.frame.rect
+                    case .point(let point): CGRect(origin: point, size: .zero)
+                    }
+                }
+                guard let reach = ends.dropFirst().reduce(ends.first, { $0?.union($1) })?.insetBy(dx: -300, dy: -300),
+                      scoped?.contains(where: { $0.intersects(reach) }) == true else { continue }
+            }
             for case .object(let id, .some, _) in [spec.from, spec.to] { lineBound.insert(id) }
         }
         let read = objects.values.filter { $0.type == .code && ((scope?.contains($0.id) ?? true) || lineBound.contains($0.id)) }
@@ -1058,8 +1139,8 @@ public final class ApiRouter {
         // HTML: each page laid out at its frame's width by the app's WebKit, concurrently.
         let htmlSizes = await withTaskGroup(of: (ObjectID, CGSize?).self) { group in
             for object in measurable where object.type == .html {
-                let props = object.props, width = object.frame.w
-                group.addTask { (object.id, try? await ObjectMeasure.htmlExtent(props, width: width, root: root)) }
+                let props = object.props, width = object.frame.w, pageRoot = board.linkRoot(of: object)
+                group.addTask { (object.id, try? await ObjectMeasure.htmlExtent(props, width: width, root: pageRoot)) }
             }
             var sizes: [ObjectID: CGSize] = [:]
             for await (id, size) in group { sizes[id] = size }
@@ -1109,7 +1190,13 @@ public final class ApiRouter {
         return .object([
             "overlaps": .array(report.overlaps.map { .array($0.map(JSONValue.string)) }),
             "arrowCrossings": .array(report.crossings.map { .object(["arrow": .string($0.arrow), "crosses": .array($0.crosses.map(JSONValue.string))]) }),
-            "labelOverlaps": .array(report.labelOverlaps.map { .object(["arrow": .string($0.arrow), "overlaps": .array($0.overlaps.map(JSONValue.string))]) }),
+            "labelOverlaps": .array(report.labelOverlaps.map { overlap in
+                let frame = overlap.frame
+                return .object(["arrow": .string(overlap.arrow), "label": .string(overlap.label),
+                                "frame": .object(["x": .number(frame.x.rounded(.down)), "y": .number(frame.y.rounded(.down)),
+                                                  "w": .number(frame.w.rounded(.up)), "h": .number(frame.h.rounded(.up))]),
+                                "overlaps": .array(overlap.overlaps.map(JSONValue.string))])
+            }),
             "overflow": .array(overflow),
             "truncated": .array(truncated),
         ])

@@ -26,6 +26,7 @@ A param the method doesn't take, or a required one missing, is `invalid_params` 
 - `tray.list` shows what the user has staged but not yet sent. Don't drain the tray yourself; your harness attaches it to the user's next prompt.
   The tray's mentions are for the terminal it shows (`view.get` `promptTarget`): `tray.drain` from any other terminal returns none (`held` says how many wait) and leaves them staged.
   A drawn shape's mention quotes its whole text, says `over <type> <id>` (or `partly over`, for a shape mostly on a tile) with the region in that tile's units, and for a shape on a browser or HTML tile lists the page elements under it (`<selector> "<text>"`, as the page is laid out when the prompt is sent). A Hyper-click on a drawing mentions the whole selection or drawing group it belongs to.
+  A Hyper-click in a note's body mentions the block under it (`kind: note`: the paragraph, list item with its sub-items, quote, table row, fence, or a heading with its section; `headings` is its section path). The prompt gets that path and the block's text from the note as it reads when sent, with `changed since it was mentioned` or `no longer in the note` when an edit changed or removed it. Its title bar mentions the whole note (up to 80 lines).
 - `view.get` says what the user sees, including `appearance` (`dark` or `light`): tiles and renders draw in it, so style charts and pages to match
   (dark: a transparent or dark background with light text, e.g. matplotlib `plt.style.use("dark_background")` and `savefig(…, transparent=True)`).
 - An arrow's `frame` is the bounds of its routed line as drawn.
@@ -33,7 +34,7 @@ A param the method doesn't take, or a required one missing, is `invalid_params` 
 ## Objects
 
 - `frame` is `{x, y, w, h}` in canvas points (100% zoom): the whole box the object draws. A tile's 26 pt title bar is inside its frame, at the top.
-  Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room); within 10 minutes of your last tile, the next one stacks below it (else right of it) when that is as much in view. Without a calling terminal (a script outside any tile), or on another board (`board`), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray. Objects you create or change on another board are still credited to your terminal (`createdBy`, `board.history`).
+  Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room within 600 pt of it; otherwise beside it even out of view: raise a marker with `view.attention` when the user should look); within 10 minutes of your last tile, the next one stacks below it (else right of it) when that is as much in view. Without a calling terminal (a script outside any tile), or on another board (`board`), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray. Objects you create or change on another board are still credited to your terminal (`createdBy`, `board.history`).
 - `props` on `object.update` merge shallowly: `{"range": …}` replaces `range` and keeps other props. Set a prop to `null` to clear it.
   `frame` on `object.update` may give any of `x, y, w, h` (`{"frame": {"h": 420}}`); the rest stay. On create it needs all four, or `size: "fit"` (below).
 - A prop the type doesn't define (a typo like `colour` or `markdwon`) is kept, but `object.create`/`object.update` (and each batch op's result) add `warnings`, one per unknown key naming the type's real props. No `warnings` key means every prop is known.
@@ -52,8 +53,10 @@ A param the method doesn't take, or a required one missing, is `invalid_params` 
 - Image tiles (`type: image`, `ImageProps`): `{"path": "out/fig.png", "caption": "…"}` (board-relative or absolute; png, jpg, gif, webp, heic, tiff, bmp, svg, a pdf's first page).
   This is where a chart goes: save the figure to a file and create the tile, no base64 in HTML. Without a frame (or `frame` of just x, y, w) it fits its picture: one point per pixel, at most `w` (default 960) wide.
   It reloads when the file changes on disk, so re-save the chart to the same path to update it (no `object.update` needed). A Hyper-click on it mentions `image <path> · pixel (x, y) of W×H`.
-- Images elsewhere: a note shows `![alt](out/fig.png)` (board-relative, or an absolute path inside the board root or the temp directory), scaled to its width;
-  an HTML tile loads `<img src="out/fig.png">` the same way (board-relative, or `/tmp/…`); `file://` URLs and paths anywhere else never load in a page.
+- Images elsewhere: a note shows `![alt](out/fig.png)` (relative to its root, below, or an absolute path inside it or the temp directory), scaled to its width;
+  an HTML tile loads `<img src="out/fig.png">` the same way (relative to its root, or `/tmp/…`); `file://` URLs and paths anywhere else never load in a page.
+- Link roots: a note's paths (`path:line` and markdown links, excerpt fences, images) and an HTML tile's (`<canvas-link>`, `<canvas-code>`, `<img>`) resolve against its `root` prop (absolute or board-relative: the board's checkout or another worktree of its repository; anything else is `invalid_params`), else the board root.
+  A note or page you create from another worktree than the board's gets your worktree as `root` by default, so write `tests/x.ts:16`, not `../wt-x/tests/x.ts:16`; the create result shows it.
 
 ## Layout
 
@@ -69,6 +72,8 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   Images: the picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip. Browser tiles are `unsupported`.
 - `size: "fit"` on `object.create`/`object.update` measures instead of taking `w`/`h`: `frame` then needs only `x, y` (plus `w` to wrap a note, text, or an HTML page, or to cap a code tile's or image's width);
   an update re-measures at the object's current position and width (code and images: at `frame.w` or the 960 pt default, never their current width, so a re-fit can widen them).
+  An update without `frame.x`/`y` doesn't grow over what it didn't already cover: it grows up or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its own longer side, else grows in place.
+  A fitted result (create, update, or batch op) has `overlaps`, the ids it now covers, when there are any: move it or them.
   After changing an HTML tile's `html` or a note's `markdown`, refit it in the same call: `canvas.object.update(id=tile, props={"html": page}, size="fit")` (the tile doesn't grow by itself).
   `object.measure` takes `width`, not `frame`.
 - `canvas.layout.place(id=a, near=b, side="right", gap=40, align="start")` (`side`: right, left, above, below; `align`: start, center, end)
@@ -93,10 +98,11 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   ```
 - `canvas.layout.check(ids=[…])`, `canvas.layout.check(rect={"x": 0, "y": 0, "w": 4000, "h": 3000})`, or the whole board with neither → `overlaps` (pairs),
   `arrowCrossings` (`{arrow, crosses}`: routes through tiles, text, or filled shapes other than the arrow's own ends),
-  `labelOverlaps` (`{arrow, overlaps}`: the arrow's label, placed as drawn, lies on these tiles, text, or filled shapes, its own ends included, or on these arrows' labels; widen the gap or shorten the label),
+  `labelOverlaps` (`{arrow, label, frame, overlaps}`: the arrow's label text, placed as drawn at `frame` (an arrow's own frame leaves its label out), lies on these tiles, text, or filled shapes, its own ends included, or on these arrows' labels; widen the gap, shorten the label, or move the tile),
   `overflow` (`{id, x, y}`: points of code/note/text/HTML content beyond the frame; for code, its range's rows and longest line; for HTML, its page laid out at the frame's width),
   `truncated` (`{id, what: "caption", x}`: a code caption the frame cuts off, `x` points short).
   A group and its members, and an unfilled rect around what it contains, are not overlaps. Follow tiles are fixed-size viewers and never overflow or truncate.
+  With `ids` or `rect`, arrows through the checked objects and labels on them count too, whichever arrow it is: check a new tile by its id to find labels it covers.
   It judges what is drawn (whole tile frames, routes and line-bound ends as drawn), so an empty report means a clean picture. Run it after a layout pass instead of screenshots.
 - Groups are regions: `{"members": [...], "title": "…", "color": "blue", "padding": 24}`. The frame is always the members' bounds plus padding and a 32 pt title band, updated as members move;
   it is what `encloses` uses. One group per lane replaces a rect + title text + group.
@@ -119,12 +125,17 @@ and `attention.changed` (`{id, active, message?, raisedBy?}`: a marker raised, o
 `idle`, `done` (idle with results the user hasn't looked at yet), or `unknown` (no integration reporting: a shell, aider, a CLI without Canvas hooks; its `kind` is `unknown` too).
 `kind` is the integrated agent (`omp`, `claude`, `codex`, `gemini`, `opencode`); `program` is what runs in the terminal's foreground (`gemini`, `cargo test`; absent at a shell prompt) and `title` the title that program set (e.g. Gemini CLI's "✋ Action Required (glow)"), for any terminal.
 `agent.read` returns up to 2000 lines of the terminal's text, trailing blank lines removed; `since="prompt"` returns only what followed your last `agent.prompt` to it (`truncated` when there was more).
-`agent.prompt` returns `waitable`: then `agent.wait` right after it waits for that prompt's turn (it ignores the state from before the prompt), so wait for `done` directly:
+`final=True` returns just the agent's last answer (the final message of its last finished turn, reported by omp, Codex, Claude Code and Gemini CLI; not opencode) instead of its screen; it fails with `unavailable` while the agent is still in its turn and when no answer is known (interrupted turn, no integration, app restarted): then read `since="prompt"`.
+`agent.prompt` returns `waitable`: then `agent.wait` right after it waits for that prompt's turn (it ignores the state from before the prompt), so wait for `done` directly.
+Hand over board objects with `mentions` instead of describing them: the receiver gets them as hidden `<canvas-mentions from="<your tile>">` context with that prompt, resolved like the user's Hyper-click mentions (note text, code excerpts), and they never touch the user's tray.
+Each is `{"object": id}`, plus `"lines": {"start", "end"}` for a code tile (without lines, the range it shows) or `"point": {"x", "y"}` for an image tile's pixel; the objects must be on the receiver's board, and the receiver must run an integrated agent (else `unavailable`):
 ```python
-canvas.agent.prompt(target="fees", text="review the diff, read-only")
+canvas.agent.prompt(target="fees", text="review the findings note against the code, read-only",
+                    mentions=[{"object": note_id}, {"object": code_id, "lines": {"start": 41, "end": 48}}])
 canvas.agent.wait(target="fees", timeout_ms=900_000)      # done, idle, or blocked
-reply = canvas.agent.read(target="fees", since="prompt")["text"]
+reply = canvas.agent.read(target="fees", final=True)["text"]
 ```
+CLI: `canvas agent.prompt --target fees --text "…" --mentions '[{"object":"obj_…"}]'`, then `canvas agent.read --target fees --final`.
 On a terminal whose lifecycle is `unknown` (`waitable` false) `agent.wait` gives it 15 s to report (an agent you just launched there) and then fails with `unavailable`; for a shell or a CLI without integration, poll `agent.read(since="prompt")` instead.
 `agent.prompt` to a `blocked` agent fails with `conflict` naming what it waits on (an approval or a question on its screen would take your text): tell the user, or `agent.wait` for it to move on.
 `force=True` sends anyway, e.g. to a Claude Code or Gemini CLI agent that stays `blocked` after the user pressed Esc on or denied an approval. It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to another agent's approval.

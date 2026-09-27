@@ -48,8 +48,9 @@ final class HtmlTile: NSView, TileContent {
     nonisolated override var isFlipped: Bool { true }
 
     var objectID: ObjectID { object.id }
-    /// Where the page's board-relative `<img src>` paths resolve.
-    var boardRoot: URL { board.root }
+    /// Where the page's relative `<img src>` paths resolve: the tile's link root (a scratch tile
+    /// being measured runs on a board rooted there already).
+    var boardRoot: URL { board.objects[object.id] != nil ? board.linkRoot(of: object) : board.root }
     var html: String { object.props["html"]?.string ?? "" }
     private var allowNetwork: [String] { object.props["allowNetwork"]?.array?.compactMap(\.string) ?? [] }
     private var pageURL: URL { HtmlKit.pageURL(tile: object.id) }

@@ -107,33 +107,40 @@ struct KeyboardNavigationTests {
         #expect(Layout.nearest(to: closed, among: []) == nil)
     }
 
-    /// ⌘J: blocked agents first, then marked objects, each top to bottom; visiting a marked one
-    /// clears its marker, and the next press still moves on rather than starting over.
-    @Test func nextNeedsYouVisitsBlockedAgentsThenMarkersInReadingOrder() {
+    /// ⌘J: blocked agents first, then marked objects, then done agents not seen yet, each top to
+    /// bottom; visiting a marked one clears its marker, visiting a done agent's terminal focuses
+    /// it, which sees it (it turns idle), and the next press still moves on rather than starting
+    /// over.
+    @Test func nextNeedsYouVisitsBlockedAgentsThenMarkersThenDoneAgentsInReadingOrder() {
         func object(_ id: ObjectID, _ type: ObjectType, y: Double, state: String? = nil) -> CanvasObject {
             var props: [String: JSONValue] = [:]
-            if let state { props["lifecycle"] = .object(["state": .string(state), "message": .string("approve Edit?")]) }
+            if let state { props["lifecycle"] = .object(["state": .string(state), "message": .string("approve Edit?"), "seen": .bool(false)]) }
             return CanvasObject(id: id, type: type, frame: Frame(x: 0, y: y, w: 100, h: 100), z: 0, parent: nil, createdBy: .user, createdAt: Date(), props: .object(props))
         }
-        let objects = Dictionary(uniqueKeysWithValues: [
+        var objects = Dictionary(uniqueKeysWithValues: [
             object("lower-agent", .terminal, y: 900, state: "blocked"), object("upper-agent", .terminal, y: 0, state: "blocked"),
             object("idle-agent", .terminal, y: -500, state: "idle"), object("note", .note, y: -900), object("code", .code, y: 300),
-            object("plain", .note, y: 50),
+            object("plain", .note, y: 50), object("lower-done", .terminal, y: 700, state: "done"), object("upper-done", .terminal, y: -700, state: "done"),
+            object("marked-done", .terminal, y: 800, state: "done"),
         ].map { ($0.id, $0) })
-        var attention = Dictionary(uniqueKeysWithValues: ["code", "note", "upper-agent"].map { ($0, Attention(object: $0, message: "look", raisedBy: nil, raisedAt: Date())) })
+        var attention = Dictionary(uniqueKeysWithValues: ["code", "note", "upper-agent", "marked-done"].map { ($0, Attention(object: $0, message: "look", raisedBy: nil, raisedAt: Date())) })
         let items = NeedsYouItem.all(objects, attention: attention)
-        #expect(items.map(\.id) == ["upper-agent", "lower-agent", "note", "code"])
-        #expect(items.first?.message == "approve Edit?" && items.first?.reason == .blocked)
+        #expect(items.map(\.id) == ["upper-agent", "lower-agent", "note", "code", "marked-done", "upper-done", "lower-done"])
+        #expect(items.map(\.reason) == [.blocked, .blocked, .marked, .marked, .marked, .done, .done], "a done agent with a marker is listed once, as marked")
+        #expect(items.first?.message == "approve Edit?")
 
         var visited: [ObjectID] = []
         var last: NeedsYouItem?
-        for _ in 0..<5 {
+        for _ in 0..<8 {
             guard let next = NeedsYouItem.next(after: last, in: NeedsYouItem.all(objects, attention: attention)) else { break }
             visited.append(next.id)
             attention[next.id] = nil
+            // Focused: seen.
+            if objects[next.id]?.props["lifecycle"]?["state"]?.string == "done" { objects[next.id]?.props = .object(["lifecycle": .object(["state": .string("idle"), "seen": .bool(true)])]) }
             last = next
         }
-        #expect(visited == ["upper-agent", "lower-agent", "note", "code", "upper-agent"], "blocked agents stay until answered")
+        #expect(visited == ["upper-agent", "lower-agent", "note", "code", "marked-done", "upper-done", "lower-done", "upper-agent"], "blocked agents stay until answered")
+        #expect(!NeedsYouItem.all(objects, attention: attention).contains { $0.reason != .blocked })
         #expect(NeedsYouItem.next(after: nil, in: []) == nil)
     }
 

@@ -133,6 +133,7 @@
           "description": "Markdown. Code fence info strings pick a mode: ```ts file=path#L10-40``` (or symbol=Name, optionally with file=) is a live excerpt of the file; add `propose` to render the fence body as a diff against that range; file=path@<sha>#L10-40 pins to a commit; anchor=\"first line text\" re-finds the range when lines move. Any other fence is free-written; path:line references in it are clickable."
         },
         "title": { "type": "string", "description": "shown in the tile's title bar (default \"Note\") and Go to" },
+        "root": { "type": "string", "description": "the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params" },
         "scale": { "$ref": "#/definitions/Scale" }
       },
       "additionalProperties": false
@@ -143,6 +144,7 @@
       "properties": {
         "html": { "type": "string", "description": "page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded" },
         "title": { "type": "string" },
+        "root": { "type": "string", "description": "the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root" },
         "allowNetwork": { "type": "array", "items": { "type": "string", "description": "host, host:port, or *.host; http/https/ws to anything else is blocked" }, "default": [] },
         "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" },
         "scale": { "$ref": "#/definitions/Scale" }
@@ -346,6 +348,20 @@
             "y": { "type": "integer", "description": "from its top edge" }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "object", "block", "headings", "lines", "text"],
+          "description": "a block of a note (a Hyper-click in its body): the paragraph, list item with its nested items, quote, table row, fence, or heading with its section, as it read when staged; the drain re-finds it by its text in the note as it is then",
+          "properties": {
+            "kind": { "const": "note" },
+            "object": { "$ref": "#/definitions/Id" },
+            "block": { "enum": ["paragraph", "item", "heading", "quote", "code", "row", "html"] },
+            "headings": { "type": "array", "items": { "type": "string" }, "description": "the headings of the sections it sits in, outermost first" },
+            "lines": { "$ref": "#/definitions/LineRange", "description": "its lines in the note's markdown when staged" },
+            "text": { "type": "string", "description": "its markdown when staged (indentation removed), at most 40 lines and 2000 characters" }
+          },
+          "additionalProperties": false
         }
       ]
     },
@@ -372,6 +388,17 @@
         "graph": { "type": "object", "description": "structured view: contents, encloses, overlaps, arrows" }
       },
       "additionalProperties": false
+    },
+    "PromptMention": {
+      "type": "object",
+      "required": ["object"],
+      "properties": {
+        "object": { "$ref": "#/definitions/Id", "description": "an object on the target terminal's board" },
+        "lines": { "$ref": "#/definitions/LineRange", "description": "code tiles only: these lines of its file (at its pinned commit, if any). Without it a code tile showing a range mentions that range" },
+        "point": { "type": "object", "required": ["x", "y"], "properties": { "x": { "type": "integer", "minimum": 0 }, "y": { "type": "integer", "minimum": 0 } }, "additionalProperties": false, "description": "image tiles only: a pixel of the picture, in the image's own pixels from its top-left" }
+      },
+      "additionalProperties": false,
+      "description": "A board object `agent.prompt` attaches for the receiving agent, as a Hyper-click would mention it: a code tile's lines, an image tile's pixel, else the whole object"
     },
     "Agent": {
       "type": "object",
@@ -592,7 +619,7 @@
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room. `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
+      "description": "Create an object. Omit `frame` to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
@@ -607,10 +634,10 @@
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "reused": { "const": true, "description": "a changes tile: the caller's existing tile for the same root, base, and paths came back (updated) instead of a new one" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "reused": { "const": true, "description": "a changes tile: the caller's existing tile for the same root, base, and paths came back (updated) instead of a new one" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "`size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids" } } }
     },
     "object.update": {
-      "description": "Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w: after changing an html tile's `html` or a note's `markdown`, pass `size: \"fit\"` in the same update to refit its height to the new content.",
+      "description": "Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: \"fit\"` in the same update to refit its height to the new content.",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -624,7 +651,7 @@
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "`size: fit` only, present when the fitted object covers others (by layout.check's overlap rule; in a batch, once the whole batch is laid out): their ids" } } }
     },
     "object.delete": {
       "description": "Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached.",
@@ -787,7 +814,7 @@
           },
           "labelOverlaps": {
             "type": "array",
-            "items": { "type": "object", "required": ["arrow", "overlaps"], "properties": { "arrow": { "$ref": "#/definitions/Id" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "objects under the label; an arrow id means that arrow's label" } }, "additionalProperties": false }
+            "items": { "type": "object", "required": ["arrow", "label", "frame", "overlaps"], "properties": { "arrow": { "$ref": "#/definitions/Id" }, "label": { "type": "string", "description": "the caption as drawn" }, "frame": { "$ref": "#/definitions/Frame", "description": "where the label chip is drawn (an arrow's own frame leaves it out)" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "objects under the label; an arrow id means that arrow's label" } }, "additionalProperties": false }
           },
           "overflow": {
             "type": "array",
@@ -821,7 +848,7 @@
       "result": { "type": "object", "properties": {} }
     },
     "tray.drain": {
-      "description": "Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets no mentions and an empty context, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title).",
+      "description": "Resolve all staged mentions at their current revision and return them with a ready-to-inject context block. By default the tray is cleared; with `peek: true` it is left intact so the caller can `tray.commit` exactly these ids once the context has really been delivered (a cancelled prompt then loses nothing). The tray's mentions are for the terminal it shows (the board's prompt target, `view.get` `promptTarget`): a `caller` tile that isn't that terminal gets none of them, the tray stays as it is, and `held` says how many wait for `target`. Without a caller (a script) or while the board has no window, the tray drains to anyone. A `caller` also gets the mentions other agents attached for it with `agent.prompt` `mentions` (never shown in the tray), after the tray's, in a block per sending terminal (`<canvas-mentions … from=\"obj_…\">` and a line naming it); `tray.commit` of their ids removes them too. In the context, a mention of the caller's own terminal says `(your terminal)`; other terminals are named (their `name`, else title).",
       "params": {
         "type": "object",
         "properties": {
@@ -836,7 +863,7 @@
         "required": ["mentions", "context"],
         "properties": {
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/ResolvedMention" } },
-          "context": { "type": "string", "description": "ready-to-inject prompt context block; empty string when the tray was empty or its mentions are for another terminal" },
+          "context": { "type": "string", "description": "ready-to-inject prompt context: the tray's block, then one block per agent that attached mentions for the caller; empty string when there is nothing for the caller" },
           "held": { "type": "integer", "description": "present when the caller isn't the terminal the tray shows: the mentions left staged for it" },
           "target": { "$ref": "#/definitions/Id", "description": "with `held`: the terminal the tray shows, if any" }
         }
@@ -864,7 +891,8 @@
           "message": { "type": "string" },
           "seq": { "type": "integer" },
           "source": { "type": "string" },
-          "call": { "type": "string", "description": "identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input)" }
+          "call": { "type": "string", "description": "identifies the tool call the report is about, the same for its approval request and its completion (the hooks hash the tool and its input)" },
+          "final": { "type": "string", "description": "only with `idle`: the final assistant message of the turn that just ended (the text `agent.read` `final` returns until the next turn starts)" }
         },
         "additionalProperties": false
       },
@@ -901,13 +929,15 @@
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true.",
+      "description": "Paste a prompt into another agent's terminal (bracketed paste) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must report a lifecycle (an agent with a Canvas integration), else `unavailable`.",
       "params": {
         "type": "object",
         "required": ["target", "text"],
         "properties": {
           "target": { "type": "string", "description": "agent name or tile id" },
           "text": { "type": "string" },
+          "mentions": { "type": "array", "items": { "$ref": "#/definitions/PromptMention" }, "description": "objects on the target's board to attach, e.g. [{\"object\": \"obj_…\"}, {\"object\": \"obj_…\", \"lines\": {\"start\": 41, \"end\": 48}}]" },
+          "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal, named to the receiver with the mentions; clients fill from CANVAS_TILE_ID" },
           "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" }
         },
         "additionalProperties": false
@@ -918,7 +948,8 @@
         "properties": {
           "agent": { "$ref": "#/definitions/Agent", "description": "as it was when the prompt was submitted (its lifecycle is still the previous turn's)" },
           "submittedAt": { "type": "string", "format": "date-time" },
-          "waitable": { "type": "boolean", "description": "the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: \"prompt\"`" }
+          "waitable": { "type": "boolean", "description": "the agent reports a lifecycle, so `agent.wait` can tell when this prompt is done; false: it reports none (yet) and `agent.wait` fails unless a first report arrives within 15 s, so poll `agent.read` with `since: \"prompt\"`" },
+          "mentions": { "type": "array", "items": { "$ref": "#/definitions/Mention" }, "description": "present with `mentions`: what waits for the target's prompt (an object already waiting there is not attached twice)" }
         }
       }
     },
@@ -938,14 +969,15 @@
       "result": { "type": "object", "required": ["agent"], "properties": { "agent": { "$ref": "#/definitions/Agent" } } }
     },
     "agent.read": {
-      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line.",
+      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Inline images (kitty graphics placeholders) read as one `[image]` line. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, the turn was interrupted, or the app restarted since (answers are kept in memory).",
       "params": {
         "type": "object",
         "required": ["target"],
         "properties": {
           "target": { "type": "string", "description": "agent name or tile id" },
           "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "tail length; larger values are capped at 2000. With `since`: the last this many lines of the reply (default 2000)" },
-          "since": { "const": "prompt", "description": "only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started" }
+          "since": { "const": "prompt", "description": "only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started" },
+          "final": { "type": "boolean", "default": false, "description": "the last answer instead of the screen; takes no `lines` or `since`" }
         },
         "additionalProperties": false
       },
@@ -1026,7 +1058,7 @@
           "target": { "oneOf": [{ "$ref": "#/definitions/Id" }, { "type": "array", "items": { "$ref": "#/definitions/Id" } }, { "$ref": "#/definitions/Frame" }] },
           "scale": { "type": "number", "minimum": 0.1, "maximum": 4, "default": 1, "description": "pixels per canvas point; lowered to keep the image under 32 megapixels (the result says what was used)" },
           "full": { "type": "boolean", "default": false, "description": "id targets: render the whole content, not just the part inside the frame" },
-          "exclude": { "type": "array", "items": { "$ref": "#/definitions/ObjectType" }, "description": "object types to leave out (e.g. [\"terminal\"])" },
+          "exclude": { "type": "array", "items": { "anyOf": [{ "$ref": "#/definitions/ObjectType" }, { "$ref": "#/definitions/Id" }] }, "description": "object types and/or object ids to leave out (e.g. [\"terminal\", \"obj_…\"]); a group id takes its members with it; targets are always drawn" },
           "padding": { "type": "number", "default": 0, "description": "canvas points added around the target" },
           "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/canvas-renders/ (out of the repo)" },
           "format": { "enum": ["png", "jpeg"], "default": "png", "description": "format of the temporary file when no `out` is given" },

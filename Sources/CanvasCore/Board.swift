@@ -72,6 +72,13 @@ public final class Board {
     public private(set) var tray: [Mention] = []
     /// Unseen attention markers by object (see Attention.swift).
     public internal(set) var attention: [ObjectID: Attention] = [:]
+    /// Mentions agents attached to their `agent.prompt` for each terminal, waiting for its next
+    /// drained prompt (Handoff.swift); in memory only.
+    public internal(set) var handoffs: [ObjectID: [Handoff]] = [:]
+    /// Each terminal's last answer: the final assistant message of its agent's last finished
+    /// turn, as its integration reported it with `idle` (`agent.read` `final`). A new turn clears
+    /// it; in memory only.
+    public internal(set) var finalAnswers: [ObjectID: String] = [:]
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
@@ -114,6 +121,9 @@ public final class Board {
     /// The canvas rect the board's window shows (canvas coordinates); nil without a window.
     /// Placement prefers slots inside it.
     public var viewport: () -> Frame? = { nil }
+    /// The directory a terminal's shell last reported (OSC 7), where the program in it (an
+    /// agent) was started; nil when unknown or without a window. Set by the app.
+    public var reportedDirectory: (ObjectID) -> String? = { _ in nil }
     /// An arrow's routed line as currently drawn (canvas coordinates, at least two points), so
     /// deleting what it points at keeps its end exactly where the user saw it and its reported
     /// frame is what is drawn. Without it, routes come from object frames.
@@ -275,6 +285,7 @@ public final class Board {
         log(.deleted, removed, actor: actor, "deleted \(ActivityLog.describe(removed))")
         let before = tray.count
         tray.removeAll { $0.target.objectIDs.contains(id) }
+        forgetHandoffs(of: id)
         let marked = attention.removeValue(forKey: id) != nil
         onChange?()
         onEvent?(.objectDeleted(id))
@@ -409,14 +420,20 @@ public final class Board {
     public static let followMinimumSize = (w: 400.0, h: 300.0)
     /// How recent an agent's last object must be for its next one to stack beside it (`place`).
     public static let answerStackWindow: TimeInterval = 10 * 60
+    /// How far (gap between the frames) a slot beside a tile may be from it and still win for
+    /// being in view. Further out, the view no longer matters: on a busy board an in-view spot
+    /// 1,600 pt away sits next to someone else's terminal and reads as theirs.
+    public static let nearbyDistance = 600.0
 
     /// Where a new object goes when nobody gave it a frame: the free slot nearest the caller's
     /// tile, touching it at `placementGap` when there's room (right first, then below, left,
-    /// above), else nearest the viewport center. The app also places the user's own new objects
-    /// here, beside the tile they came from (`near`, e.g. Edit Here's terminal) or at the viewport
-    /// center. See `place(_:)` for what counts as free. `shrinkingTo` (a follow tile's minimum
-    /// size): when nothing that size fits wholly in view, a smaller slot that does, down to the
-    /// minimum, beats one partly outside it.
+    /// above), else nearest the viewport center. Beside a tile, a slot in view beats one out of
+    /// it only while it is within `nearbyDistance` of the tile; beyond that the nearest slot
+    /// wins, in view or not (the agent raises a marker when the user should look). The app also
+    /// places the user's own new objects here, beside the tile they came from (`near`, e.g. Edit
+    /// Here's terminal) or at the viewport center. See `place(_:)` for what counts as free.
+    /// `shrinkingTo` (a follow tile's minimum size): when nothing that size fits wholly in view,
+    /// a smaller slot that does, down to the minimum, beats one partly outside it.
     ///
     /// `stacking` (an agent's own create without a frame; `caller` is that agent): its answers
     /// stack instead of going round the terminal. When the caller created a tile within
@@ -464,13 +481,35 @@ public final class Board {
         freeSlot(width: ideal.w, height: ideal.h, anchor: ideal, beside: false, minimum: nil)
     }
 
+    /// Where `id` goes when `size: "fit"` resizes it to `size` without a given origin: grown from
+    /// its top-left corner when that covers nothing it didn't already; else grown from another
+    /// corner (`Layout.refit`: left, up, or both); else moved to the free slot nearest that
+    /// top-left-grown frame (`place(_:)`'s rule, in view first, its own groups aside) among those
+    /// no farther than its longer side; else grown from the top-left anyway (`overlaps(of:)`
+    /// says onto what).
+    public func refitFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
+        let current = try object(id).frame
+        let grown = Frame(x: current.x, y: current.y, w: size.width, h: size.height)
+        let containers = Set(objects.values.filter { $0.type == .group && BoardGeometry.leafMembers(of: $0.id, in: objects).contains(id) }.map(\.id))
+        let neighbours = objects.values.filter { $0.id != id && !containers.contains($0.id) && BoardGeometry.countsForOverlaps($0) }.map(\.frame)
+        if let corner = Layout.refit(current, to: size, clearOf: neighbours) { return corner }
+        return freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: containers.union([id]), within: max(grown.w, grown.h))
+    }
+
+    /// The objects `id` overlaps by accident, by `layout.check`'s `overlaps` rule.
+    public func overlaps(of id: ObjectID) -> [ObjectID] {
+        BoardGeometry(objects: objects, labelSizes: [:]).overlaps(scope: [id]).flatMap { $0 }.filter { $0 != id }
+    }
+
     /// `beside`: the slot goes next to `anchor` (an object), nearest by the gap between them, then
     /// by side in `order`; otherwise it replaces `anchor`, nearest by origin. `minimum`: a slot
     /// partly in view may be cut down to its part in view when that is at least this big.
+    /// `ignoring`: objects that don't block (one being moved, and its groups). `within`: only
+    /// slots whose origin is at most that far from `anchor`'s count; with none, `anchor` itself.
     private func freeSlot(width w: Double, height h: Double, anchor: Frame, beside: Bool, minimum: (w: Double, h: Double)?,
-                          order: [Layout.Side] = [.right, .below, .left, .above]) -> Frame {
+                          order: [Layout.Side] = [.right, .below, .left, .above], ignoring: Set<ObjectID> = [], within: Double? = nil) -> Frame {
         let gap = Self.placementGap
-        let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape }
+        let blocked = objects.values.filter { $0.type != .arrow && $0.type != .shape && !ignoring.contains($0.id) }
             .map { Frame(x: $0.frame.x - gap, y: $0.frame.y - gap, w: $0.frame.w + 2 * gap, h: $0.frame.h + 2 * gap) }
         let screen = viewport().flatMap { view in
             view.intersects(anchor) && view.w > 2 * gap && view.h > 2 * gap ? Frame(x: view.x + gap, y: view.y + gap, w: view.w - 2 * gap, h: view.h - 2 * gap) : nil
@@ -486,15 +525,17 @@ public final class Board {
             xs.formUnion([screen.x.rounded(.up), (screen.maxX - w).rounded(.down)])
             ys.formUnion([screen.y.rounded(.up), (screen.maxY - h).rounded(.down)])
         }
-        // In view, cut down to fit in view, partly in view, out of view; then distance to the
-        // anchor, then side (in `order`), then distance from where that side's slot would ideally
-        // start; ties go top-left first.
+        // In view, cut down to fit in view, partly in view, out of view (beside a tile: only
+        // within `nearbyDistance` of it; further slots all rank after those, by distance alone);
+        // then distance to the anchor, then side (in `order`), then distance from where that
+        // side's slot would ideally start; ties go top-left first.
         typealias Cost = (Int, Double, Int, Double, Double, Double)
         func cost(_ slot: Frame, cut: Bool) -> Cost {
             let outside = cut ? 1 : screen.map { $0.contains(slot) ? 0 : $0.intersects(slot) ? 2 : 3 } ?? 0
             guard beside else { return (outside, 0, 0, hypot(slot.x - anchor.x, slot.y - anchor.y), slot.y, slot.x) }
             let dx = max(0, anchor.x - slot.maxX, slot.x - anchor.maxX)
             let dy = max(0, anchor.y - slot.maxY, slot.y - anchor.maxY)
+            let distance = hypot(dx, dy).rounded()
             let side: Layout.Side
             let ideal: (x: Double, y: Double)
             if slot.x >= anchor.maxX {
@@ -506,7 +547,7 @@ public final class Board {
             } else {
                 (side, ideal) = (.above, (anchor.x, anchor.y - h - gap))
             }
-            return (outside, hypot(dx, dy).rounded(), order.firstIndex(of: side) ?? order.count, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
+            return (distance > Self.nearbyDistance ? 4 : outside, distance, order.firstIndex(of: side) ?? order.count, hypot(slot.x - ideal.x, slot.y - ideal.y), slot.y, slot.x)
         }
         /// A slot partly in view cut down to its part in view, when that is at least `minimum`.
         func cut(_ slot: Frame) -> Frame? {
@@ -517,6 +558,7 @@ public final class Board {
         }
         var best: (slot: Frame, cost: Cost)?
         func consider(_ slot: Frame, cut: Bool) {
+            if let within, hypot(slot.x - anchor.x, slot.y - anchor.y) > within { return }
             let slotCost = cost(slot, cut: cut)
             if let best, !(slotCost < best.cost) { return }
             if blocked.contains(where: { $0.intersects(slot) }) { return }
@@ -529,7 +571,7 @@ public final class Board {
                 if let smaller = cut(slot) { consider(smaller, cut: true) }
             }
         }
-        // Unreachable: right of the rightmost blocker is always free.
+        // Unreachable without `within`: right of the rightmost blocker is always free.
         return best?.slot ?? Frame(x: anchor.x.rounded(), y: anchor.y.rounded(), w: w, h: h)
     }
 
@@ -553,20 +595,29 @@ public final class Board {
 
     /// Resolve every staged mention at its current revision and return the prompt context.
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids. `caller` is the
-    /// terminal the context goes to: mentions of it say so, other terminals are named.
+    /// terminal the context goes to: mentions of it say so, other terminals are named. The
+    /// mentions other agents handed to `caller` (`handOff`) follow the tray's, one block per
+    /// sender; `tray` false leaves the tray out (it shows another terminal).
     /// Old-side and pinned code excerpts are read from git, hence async.
-    public func drain(peek: Bool = false, caller: ObjectID? = nil) async -> (mentions: [MentionContext.Resolved], context: String) {
+    public func drain(peek: Bool = false, caller: ObjectID? = nil, tray includeTray: Bool = true) async -> (mentions: [MentionContext.Resolved], context: String) {
         var resolved: [MentionContext.Resolved] = []
-        for (index, mention) in tray.enumerated() {
+        for (index, mention) in (includeTray ? tray : []).enumerated() {
             resolved.append(await MentionContext.resolve(mention, index: index + 1, on: self, caller: caller))
         }
-        let context = MentionContext.render(resolved, board: self)
+        var blocks = resolved.isEmpty ? [] : [MentionContext.render(resolved, board: self)]
+        if let caller {
+            let handed = await resolveHandoffs(for: caller, from: resolved.count + 1)
+            resolved.append(contentsOf: handed.mentions)
+            blocks.append(contentsOf: handed.blocks)
+        }
         if !peek { commit(resolved.map(\.id)) }
-        return (resolved, context)
+        return (resolved, blocks.joined(separator: "\n"))
     }
 
-    /// Remove exactly these mentions (the ones whose context was delivered). Unknown ids are ignored.
+    /// Remove exactly these mentions (the ones whose context was delivered), from the tray and
+    /// from what agents handed to terminals. Unknown ids are ignored.
     public func commit(_ ids: [MentionID]) {
+        commitHandoffs(ids)
         let before = tray.count
         tray.removeAll { ids.contains($0.id) }
         if tray.count != before { trayChanged() }
@@ -594,9 +645,12 @@ public final class Board {
     /// other calls (parallel siblings, subagents) finish meanwhile; finishing one re-raises the
     /// next. `working` without a call (a new prompt) and `idle` end every wait. A finished call
     /// reported out of order (lower `seq`) still ends its own wait but changes nothing else.
-    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil) throws {
+    /// `final`: with `idle`, the last answer of the turn that just ended (`finalAnswers`), kept
+    /// until the next turn starts.
+    public func reportLifecycle(tile: ObjectID, kind: String, state: LifecycleState, message: String?, seq: Int?, source: String?, call: String? = nil, final: String? = nil) throws {
         let terminal = try object(tile)
         guard terminal.type == .terminal else { throw BoardError.invalidParams("\(tile) is not a terminal tile") }
+        guard final == nil || state == .idle else { throw BoardError.invalidParams("final comes only with state idle: the answer of the turn that just ended") }
         let key = "\(tile)|\(source ?? kind)"
         if let seq {
             if let last = lifecycleSeq[key], seq <= last {
@@ -626,8 +680,12 @@ public final class Board {
             // Going to working from idle, done, or no state is the user's next prompt reaching the
             // agent: a new turn. From blocked (an approval answered) it continues the same answer.
             let previous = terminal.props["lifecycle"]?["state"]?.string
-            if previous != LifecycleState.working.rawValue, previous != LifecycleState.blocked.rawValue { agentStartedTurn(tile) }
+            if previous != LifecycleState.working.rawValue, previous != LifecycleState.blocked.rawValue {
+                agentStartedTurn(tile)
+                finalAnswers[tile] = nil
+            }
         }
+        if state == .idle, let final, !final.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { finalAnswers[tile] = final }
         let effective: LifecycleState = state == .idle && !seenSinceWorking.contains(tile) && wasWorking(terminal) ? .done : state
         var lifecycle: [String: JSONValue] = ["state": .string(effective.rawValue), "seen": .bool(seenSinceWorking.contains(tile))]
         if let message { lifecycle["message"] = .string(message) }

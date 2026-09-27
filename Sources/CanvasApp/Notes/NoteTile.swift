@@ -119,11 +119,21 @@ final class NoteTile: NSView, TileContent {
     }
 
     var markdown: String { object.props["markdown"]?.string ?? "" }
+    /// Where the note's relative paths resolve (`Board.linkRoot`).
+    private var linkRoot: URL { board.linkRoot(of: object) }
 
     func update(_ object: CanvasObject) {
         let changed = object.props["markdown"] != self.object.props["markdown"]
+        let rerooted = object.props["root"] != self.object.props["root"]
         self.object = object
-        guard changed else { return }
+        guard changed else {
+            if rerooted {
+                excerpts = [:]
+                captured = [:]
+                resolve()
+            }
+            return
+        }
         if let session {
             session.observe(object)
             if session.conflicted { showConflict() }
@@ -182,7 +192,7 @@ final class NoteTile: NSView, TileContent {
         let generation = resolveGeneration
         let jobs = fences
         let captured = captured
-        let root = board.root
+        let root = linkRoot
         resolveTask = Task { [weak self] in
             var results: [String: NoteExcerpt] = [:]
             for job in jobs {
@@ -209,7 +219,8 @@ final class NoteTile: NSView, TileContent {
         let unpinned = fences.filter { $0.fence.commit == nil }
         let files = unpinned.compactMap { results[$0.key]?.path }.filter { !$0.isEmpty }
         let unfound = unpinned.contains { $0.fence.path == nil && results[$0.key]?.path.isEmpty != false }
-        watch(files: Set(files.map { FileEvents.canonical(board.absoluteURL($0).path) } + imageFiles.map { FileEvents.canonical($0.path) }), root: unfound)
+        let root = linkRoot
+        watch(files: Set(files.map { FileEvents.canonical($0.hasPrefix("/") ? $0 : root.appendingPathComponent($0).path) } + imageFiles.map { FileEvents.canonical($0.path) }), root: unfound)
         persistAnchors(results)
     }
 
@@ -238,7 +249,7 @@ final class NoteTile: NSView, TileContent {
     private func watch(files: Set<String>, root: Bool) {
         watchedFiles = files
         watchesRoot = root
-        let rootPath = FileEvents.canonical(board.root.path)
+        let rootPath = FileEvents.canonical(linkRoot.path)
         var directories = Set(files.map(FileEvents.watchableDirectory(for:)))
         if root { directories.insert(rootPath) }
         // A directory inside another watched one adds nothing to a recursive stream.
@@ -358,7 +369,7 @@ final class NoteTile: NSView, TileContent {
     private func open(_ link: NoteLink) {
         switch link {
         case .code(let path, let lines):
-            var props: [String: JSONValue] = ["path": .string(board.relativePath(path))]
+            var props: [String: JSONValue] = ["path": .string(board.boardPath(path, linkRoot: linkRoot))]
             if let lines { props["range"] = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))]) }
             let size = Board.defaultSize(.code)
             board.create(type: .code, props: .object(props), frame: board.place(width: size.w, height: size.h, near: object.id))
@@ -516,7 +527,7 @@ final class NoteTile: NSView, TileContent {
     /// was never live) are resolved first.
     func render(_ request: TileRenderRequest) async -> TileRender {
         var resolved = excerpts
-        let root = board.root
+        let root = linkRoot
         for fence in fences where resolved[fence.key] == nil {
             resolved[fence.key] = await NoteSource.excerpt(for: fence.fence, root: root, captured: captured[fence.key], body: fence.body)
         }
@@ -557,16 +568,50 @@ final class NoteTile: NSView, TileContent {
         return TileRender(image: image, contentSize: contentSize, state: image == nil ? .failed : .rendered, reason: image == nil ? "bitmap allocation failed" : nil)
     }
 
+    /// An excerpt row mentions its code line; any other paragraph the markdown block it came
+    /// from (`NoteItem`); the title bar, margins, and rules mention the whole note.
     func mentionTarget(at point: NSPoint) -> MentionTarget? {
+        hoveredRow = nil
         guard !isEditing, let fragment = fragment(at: point), let offset = offset(of: fragment.rangeInElement.location),
-              let storage = display.textStorage, offset < storage.length,
-              let row = storage.attribute(.noteCodeRow, at: offset, effectiveRange: nil) as? NoteCodeRow else {
-            hoveredRow = nil
+              let storage = display.textStorage, offset < storage.length else {
             return .object(object.id)
         }
-        let target = MentionTarget.code(object: object.id, path: row.path, lines: LineRange(start: row.line, end: row.line), side: nil, symbol: row.symbol, commit: row.commit)
-        hoveredRow = (target, rect(of: fragment))
-        return target
+        if let row = storage.attribute(.noteCodeRow, at: offset, effectiveRange: nil) as? NoteCodeRow {
+            let target = MentionTarget.code(object: object.id, path: row.path, lines: LineRange(start: row.line, end: row.line), side: nil, symbol: row.symbol, commit: row.commit)
+            hoveredRow = (target, rect(of: fragment))
+            return target
+        }
+        guard let line = storage.attribute(.noteMarkdownLine, at: offset, effectiveRange: nil) as? Int, let item = item(at: line) else {
+            return .object(object.id)
+        }
+        return .note(object: object.id, item: item)
+    }
+
+    /// The block last looked up: holding Hyper asks on every mouse move.
+    private var itemCache: (rev: Int, line: Int, item: NoteItem?)?
+
+    private func item(at line: Int) -> NoteItem? {
+        if let itemCache, itemCache.rev == object.rev, itemCache.line == line { return itemCache.item }
+        let item = NoteItem.at(line: line, in: markdown)
+        itemCache = (object.rev, line, item)
+        return item
+    }
+
+    /// Every paragraph rendered from markdown `lines`, as one rect.
+    private func rect(ofLines lines: LineRange) -> NSRect? {
+        guard let storage = display.textStorage, let layout = display.textLayoutManager, let content = layout.textContentManager else { return nil }
+        var union: NSRect?
+        storage.enumerateAttribute(.noteMarkdownLine, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let line = value as? Int, (lines.start...lines.end).contains(line),
+                  let start = content.location(content.documentRange.location, offsetBy: range.location) else { return }
+            layout.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+                guard let offset = self.offset(of: fragment.rangeInElement.location), offset < NSMaxRange(range) else { return false }
+                let rect = self.rect(of: fragment)
+                if !rect.isEmpty { union = union.map { $0.union(rect) } ?? rect }
+                return true
+            }
+        }
+        return union
     }
 
     /// The row last hovered and its outline: a proposal's added row mentions the real line it
@@ -580,6 +625,7 @@ final class NoteTile: NSView, TileContent {
     }
 
     func outline(for target: MentionTarget) -> NSRect? {
+        if case .note(_, let item) = target { return rect(ofLines: item.lines) ?? bounds }
         guard case .code(_, let path, let lines, _, let symbol, let commit, _) = target else { return bounds }
         if let hoveredRow, hoveredRow.target == target { return hoveredRow.rect }
         let wanted = NoteCodeRow(path: path, line: lines.start, symbol: symbol, commit: commit)

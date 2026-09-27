@@ -56,13 +56,14 @@ public enum ChangesBaseChoice: Equatable, Sendable {
         }
     }
 
-    /// How the picker and Review Changes name it: `Uncommitted changes`, `Branch vs origin/main`
-    /// (`defaultBranch`: `GitWorktree.defaultBranch`), `vs v1.2`.
+    /// How the pickers (changes and code tiles) and Review Changes name it: `Uncommitted
+    /// changes`, `Branch vs origin/main` (`defaultBranch`: `GitWorktree.defaultBranch`), `vs v1.2`
+    /// (a full SHA shortened).
     public func title(defaultBranch: String?) -> String {
         switch self {
         case .uncommitted: "Uncommitted changes"
         case .branch: "Branch vs \(defaultBranch ?? "default branch")"
-        case .other(let revision): "vs \(revision)"
+        case .other(let revision): "vs \(revision.count == 40 && revision.allSatisfy(\.isHexDigit) ? String(revision.prefix(7)) : revision)"
         }
     }
 
@@ -376,9 +377,9 @@ public struct ChangedFile: Sendable {
         viewed?[boardPath]?.string == fingerprint
     }
 
-    /// The innermost declaration around a line of one side.
-    public func symbol(line: Int, side: DiffSide) -> String? {
-        (side == .old ? oldSymbols : newSymbols).filter { $0.lines.contains(line) }.min { $0.lines.count < $1.lines.count }?.name
+    /// The innermost declaration around lines of one side (`innermost(around:)`).
+    public func symbol(lines: LineRange, side: DiffSide) -> String? {
+        (side == .old ? oldSymbols : newSymbols).innermost(around: lines)
     }
 }
 
@@ -422,6 +423,10 @@ public struct ChangeSet: Sendable {
     /// (`ReviewPatch.discardUncommitted`).
     public var includesCommits: Bool { base != nil && base != head }
 
+    /// Some file has something to stage, unstage, or discard: false for a review of commits
+    /// only, where the tile is for reading (its header offers no staging).
+    public var actionable: Bool { files.contains { $0.stageable || $0.unstageable || $0.discardable } }
+
     /// Files a tile loads at most; the rest are counted in `omitted`.
     public static let maxFiles = 300
     /// Sides longer than this aren't highlighted.
@@ -444,8 +449,7 @@ public struct ChangeSet: Sendable {
     /// The base as the header names it: `origin/main` for the merge-base with it, else the
     /// commit or ref as written (a full SHA shortened).
     public var baseName: String {
-        let mergeBase = "merge-base with "
-        if baseLabel.hasPrefix(mergeBase) { return String(baseLabel.dropFirst(mergeBase.count)) }
+        if let branch = GitDiffEngine.ResolvedBase.mergeBaseBranch(baseLabel) { return branch }
         if baseLabel.count == 40, baseLabel.allSatisfy(\.isHexDigit) { return String(baseLabel.prefix(7)) }
         return baseLabel
     }
@@ -663,7 +667,7 @@ public struct ChangeSet: Sendable {
         case .tooLarge, .diffTooLarge: notice = "too large to show"
         case .submodule: notice = "submodule"
         case .unstable: notice = "kept changing while diffing; waiting for the next write"
-        case .missing: return nil
+        case .missing, .ignored: return nil
         case .notRepository, .noBase, .pinned, .pinUnavailable: notice = diff.baseLabel ?? "not comparable"
         }
         let newMode = entry.newMode ?? (status == .deleted ? nil : Self.mode(of: url))

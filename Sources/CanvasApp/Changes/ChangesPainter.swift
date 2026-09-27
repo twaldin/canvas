@@ -90,6 +90,8 @@ struct ChangesPainter {
     var selection: (file: Int, hunk: Int, lines: Set<Int>)?
     /// A refusal or failure, shown in the header in place of the summary.
     var message: String?
+    /// The Discard button asking to be pressed again (a file's when `hunk` is nil): "Discard?".
+    var discardAsked: (file: Int, hunk: Int?)?
     /// The tile holds the keyboard: the header says which keys work.
     var focused = false
     /// The filter's text; `drawsFilter` draws its box (cards and renders, where no field is).
@@ -295,7 +297,7 @@ struct ChangesPainter {
         }
         let leadWidth = lead.map(measure) ?? 0, restWidth = measure(rest)
         let hintAttributes: [NSAttributedString.Key: Any] = [.font: font]
-        let hint = ChangesMetrics.hint(focused ? ChangesMetrics.keysHints : ChangesMetrics.idleHints, available: available, summary: leadWidth + restWidth) {
+        let hint = ChangesMetrics.hint(ChangesMetrics.hints(focused: focused, actionable: set.actionable), available: available, summary: leadWidth + restWidth) {
             ($0 as NSString).size(withAttributes: hintAttributes).width
         }
         var hintRect: CGRect?
@@ -459,7 +461,7 @@ struct ChangesPainter {
         var text = target.label
         let side: DiffSide = target.mappings.allSatisfy(\.modified.isEmpty) ? .old : .new
         let line = side == .old ? target.mappings.first?.original.lowerBound ?? 1 : target.modified.lowerBound
-        if let symbol = changed.symbol(line: line, side: side) { text += " · \(symbol)" }
+        if let symbol = changed.symbol(lines: LineRange(start: line, end: line), side: side) { text += " · \(symbol)" }
         let buttons = buttons(inRow: rect, file: file, hunk: hunk)
         var right = (buttons.first?.1.minX ?? rect.maxX) - 10
         if let pill = Self.pill(target.status) {
@@ -501,16 +503,18 @@ struct ChangesPainter {
     private func drawButtons(_ buttons: [(ChangesAction, CGRect)], file: Int, hunk: Int?) {
         for (action, frame) in buttons {
             let enabled = enabled(action, file: file, hunk: hunk)
-            NSColor.controlColor.setFill()
+            let asking = action == .revert && discardAsked.map { $0.file == file && $0.hunk == hunk } == true
+            (asking ? NSColor.systemRed : NSColor.controlColor).setFill()
             let path = NSBezierPath(roundedRect: frame, xRadius: 4, yRadius: 4)
             path.fill()
             NSColor.separatorColor.setStroke()
             path.lineWidth = 0.5
             path.stroke()
-            let tint: NSColor = !enabled ? .tertiaryLabelColor : action == .revert ? .systemRed : .labelColor
-            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: tint]
-            let size = (action.rawValue as NSString).size(withAttributes: attributes)
-            (action.rawValue as NSString).draw(at: CGPoint(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2), withAttributes: attributes)
+            let tint: NSColor = asking ? .white : !enabled ? .tertiaryLabelColor : action == .revert ? .systemRed : .labelColor
+            let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11, weight: asking ? .semibold : .regular), .foregroundColor: tint]
+            let title = asking ? "Discard?" : action.rawValue
+            let size = (title as NSString).size(withAttributes: attributes)
+            (title as NSString).draw(at: CGPoint(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2), withAttributes: attributes)
         }
     }
 

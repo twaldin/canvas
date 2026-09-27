@@ -77,9 +77,9 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     Click a line to open it in a code tile; drag over lines, ⇧-click or ⌘-click to select lines (an edited line brings its old version), then Stage, Unstage, or Discard just those; \
     Hyper-click (⌃⌥⇧⌘) a line or hunk header to mention it; click a file's header to fold it, its Viewed box to fold it until it changes; click the summary to pick the base.
     Keys once the tile has the keyboard (↩ or a click): j or ↓ next hunk, k or ↑ previous hunk, J or ] next file, K or [ previous file, \
-    / filter files, Return open the hunk in a code tile, s stage, u unstage, r twice discard, m mention (the selected lines, else the hunk), Esc back to the canvas. \
-    With the tile only selected: j/k, J/K, ]/[, ↓/↑.
-    Every Stage, Unstage, and Discard is one ⌘Z. Discard only puts back work not committed yet: committed hunks have none.
+    / filter files, Return open the hunk in a code tile, s stage, u unstage, r twice discard, m mention (the selected lines, else the hunk), Esc back to the canvas.
+    Discard asks first: click it (or press r) again to throw the change away. Every Stage, Unstage, and Discard is one ⌘Z. \
+    Discard only puts back work not committed yet: committed hunks have none.
     """
 
     init(object: CanvasObject, board: Board) {
@@ -261,6 +261,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         painter.message = message
         painter.focused = hasKeyboard
         painter.drawsFilter = filterField == nil
+        if let asked = discardAsked, let file = set.files.firstIndex(where: { $0.boardPath == asked.path }) {
+            let hunk = asked.hunk.flatMap { id in set.files[file].hunks.firstIndex { $0.id == id } }
+            if asked.hunk == nil || hunk != nil { painter.discardAsked = (file, hunk) }
+        }
         self.painter = painter
         clampScroll()
         scheduleToolTips()
@@ -527,7 +531,11 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         case .button(let action, let file, let hunk):
             let lines = hunk.flatMap { hunk in selection.flatMap { $0.file == file && $0.hunk == hunk ? $0.lines : nil } }
             if let hunk { current = (file, hunk) }
-            perform(action, file: file, hunk: hunk, lines: lines)
+            if action == .revert {
+                askToDiscard(file: file, hunk: hunk, lines: lines, byClick: true)
+            } else {
+                perform(action, file: file, hunk: hunk, lines: lines)
+            }
         case .viewed(let file):
             toggleViewed(file)
         case .file(let file):
@@ -619,19 +627,40 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
     }
 
-    /// j/k, ↓/↑, J/K, ]/[ and Return: also while the tile is only selected (the canvas's keyboard).
-    func handleNavigationKey(_ event: NSEvent) -> Bool {
-        guard event.type == .keyDown, painter != nil else { return false }
+    /// The tile's own keys.
+    private enum Key { case next, previous, nextFile, previousFile, open, stage, unstage, discard, filter, mention }
+
+    private static func key(_ event: NSEvent) -> Key? {
+        guard event.type == .keyDown else { return nil }
         let modifiers = Self.modifiers(event)
-        guard modifiers.isEmpty || modifiers == .shift else { return false }
+        guard modifiers.isEmpty || modifiers == .shift else { return nil }
         switch (event.keyCode, event.charactersIgnoringModifiers, modifiers == .shift) {
-        case (125, _, false), (_, "j", false): step(1)
-        case (126, _, false), (_, "k", false): step(-1)
-        case (_, "J", _), (_, "]", false): stepFile(1)
-        case (_, "K", _), (_, "[", false): stepFile(-1)
-        case (36, _, false), (76, _, false): openCurrent()
-        default: return false
+        case (125, _, false), (_, "j", false): return .next
+        case (126, _, false), (_, "k", false): return .previous
+        case (_, "J", _), (_, "]", false): return .nextFile
+        case (_, "K", _), (_, "[", false): return .previousFile
+        case (36, _, false), (76, _, false): return .open
+        case (_, "s", false): return .stage
+        case (_, "u", false): return .unstage
+        case (_, "r", false): return .discard
+        case (_, "/", false): return .filter
+        case (_, "m", false): return .mention
+        default: return nil
         }
+    }
+
+    /// Whether the canvas leaves a key to the tile while it is the one selected: its keys other
+    /// than Return (which enters it), `r` included, which would pick the rectangle tool.
+    static func isOwnKey(_ event: NSEvent) -> Bool {
+        key(event).map { $0 != .open } ?? false
+    }
+
+    /// One of the tile's keys pressed while it is only selected (the canvas has the keyboard):
+    /// like a code tile's rows and a terminal, the tile acts on keys only once it has the
+    /// keyboard, so the header says how to give it that, and the canvas does nothing with it.
+    func keyWhileSelected(_ event: NSEvent) -> Bool {
+        guard Self.isOwnKey(event) else { return false }
+        show(message: "press ↩ first to use the tile's keys", for: 3)
         return true
     }
 
@@ -653,24 +682,31 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         if !first.inView { reveal(file: first.file, hunk: first.hunk) }
     }
 
-    /// s and r only with the keyboard in the tile, so typing elsewhere can never stage or discard.
+    /// Keys only with the keyboard in the tile, so typing elsewhere can never stage or discard.
     override func keyDown(with event: NSEvent) {
-        if handleNavigationKey(event) { return }
-        guard Self.modifiers(event).isEmpty else { return super.keyDown(with: event) }
-        switch (event.keyCode, event.charactersIgnoringModifiers) {
-        case (53, _):
+        if event.keyCode == 53, Self.modifiers(event).isEmpty {
             if selection != nil {
                 selection = nil
                 refreshPainter()
             } else {
                 (enclosingScrollView as? CanvasView)?.leaveTile(object.id)
             }
-        case (_, "s"): actOnCurrent(.stage)
-        case (_, "u"): actOnCurrent(.unstage)
-        case (_, "r"): askToDiscard()
-        case (_, "/"): focusFilter()
-        case (_, "m"): mentionCurrent()
-        default: super.keyDown(with: event)
+            return
+        }
+        guard let key = Self.key(event) else { return super.keyDown(with: event) }
+        switch key {
+        case .next: step(1)
+        case .previous: step(-1)
+        case .nextFile: stepFile(1)
+        case .previousFile: stepFile(-1)
+        case .open: openCurrent()
+        case .stage: actOnCurrent(.stage)
+        case .unstage: actOnCurrent(.unstage)
+        case .discard:
+            guard let target = keyTarget else { return show(message: "pick a hunk first (j/k or click)") }
+            askToDiscard(file: target.file, hunk: target.hunk, lines: target.lines, byClick: false)
+        case .filter: focusFilter()
+        case .mention: mentionCurrent()
         }
     }
 
@@ -685,27 +721,37 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         return current.map { ($0.file, $0.hunk, nil) }
     }
 
-    /// The target the last `r` asked about, while its question shows.
-    private var discardAsked: String?
+    /// A Discard asked about (a first `r`, or a first click on a Discard button) while its
+    /// question shows: the file, its hunk (nil: the whole file) and picked lines.
+    private struct DiscardQuestion: Equatable {
+        var path: String
+        var hunk: String?
+        var lines: Set<Int>?
+    }
 
-    /// `r` discards only when pressed again within 2 s (the header asks), so one stray key never
-    /// throws away work; a committed hunk has nothing to discard and says so at once.
-    private func askToDiscard() {
-        guard let target = keyTarget, let set, set.files.indices.contains(target.file), set.files[target.file].hunks.indices.contains(target.hunk) else {
+    private var discardAsked: DiscardQuestion?
+
+    /// Discard asks first, by key or by click alike: the first `r` or click turns the button
+    /// into "Discard?" and the header says how to go on; the same again while it shows (2 s
+    /// for `r`, 3 s for a click) discards, so one stray key (vim's replace) or click never
+    /// throws work away. A committed hunk has nothing to discard and says so at once.
+    private func askToDiscard(file: Int, hunk: Int?, lines: Set<Int>?, byClick: Bool) {
+        guard let set, set.files.indices.contains(file), hunk.map(set.files[file].hunks.indices.contains) ?? true else {
             return show(message: "pick a hunk first (j/k or click)")
         }
-        let hunk = set.files[target.file].hunks[target.hunk]
-        guard hunk.status.discardable else { return show(message: Self.committedRefusal) }
-        let key = "\(hunk.id) \(target.lines.map { $0.sorted().map(String.init).joined(separator: ",") } ?? "")"
-        if discardAsked == key {
+        let changed = set.files[file]
+        guard hunk.map({ changed.hunks[$0].status.discardable }) ?? changed.discardable else { return show(message: Self.committedRefusal) }
+        let question = DiscardQuestion(path: changed.boardPath, hunk: hunk.map { changed.hunks[$0].id }, lines: lines)
+        if discardAsked == question {
             discardAsked = nil
             messageWork?.cancel()
             message = nil
-            return perform(.revert, file: target.file, hunk: target.hunk, lines: target.lines)
+            refreshPainter()
+            return perform(.revert, file: file, hunk: hunk, lines: lines)
         }
-        let what = target.lines.map { "\($0.count) selected line\($0.count == 1 ? "" : "s")" } ?? "this hunk"
-        show(message: "press r again to discard \(what) from your files", for: 2)
-        discardAsked = key
+        let what = lines.map { "\($0.count) selected line\($0.count == 1 ? "" : "s")" } ?? (hunk == nil ? "all of \(PathLabel.short(changed.boardPath))" : "this hunk")
+        discardAsked = question
+        show(message: "\(byClick ? "click Discard again" : "press r again") to discard \(what) from your files", for: byClick ? 3 : 2)
     }
 
     static let committedRefusal = "committed: Discard only puts back work not committed yet"
@@ -848,7 +894,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                         : try ReviewPatch.revert(hunks ?? changed.hunks, of: changed, in: repository, lines: lines)
                 }
                 try await ReviewGit.shared.apply(patch)
-                try board.recordReview(tile: tile, entry: ReviewPatch.entry(action.entryName, file: changed, hunk: target, lines: lines, patch: patch), patch: patch)
+                let entry = ReviewPatch.entry(action.entryName, file: changed, hunk: target, lines: lines, patch: patch)
+                try board.recordReview(tile: tile, entry: entry, patch: patch)
+                // Files changing shows nowhere on the board: say what went and how to get it back.
+                if action == .revert { (self?.enclosingScrollView as? CanvasView)?.showNotice(ReviewPatch.discardNotice(of: entry)) }
                 self?.revealAfterLoad = true
                 // The lines were picked for this action: done with them (Esc leaves right away).
                 if lines != nil, let self {
@@ -900,7 +949,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
 
     /// Edit › Mention and `m`: the selected lines, else the current hunk (also while the tile is
-    /// only selected: j/k pick hunks then too).
+    /// only selected: the hunk picked while it had the keyboard).
     func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? {
         currentMention
     }
@@ -922,7 +971,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// are in the diff (`ChangeSet.mention`).
     private func mention(file: Int, hunk: Int, lines: Set<Int>?) -> MentionTarget? {
         guard let set, let found = set.mention(file: file, hunk: hunk, lines: lines) else { return nil }
-        let symbol = set.files[file].symbol(line: found.lines.start, side: found.side)
+        let symbol = set.files[file].symbol(lines: found.lines, side: found.side)
         return .code(object: object.id, path: found.path, lines: found.lines, side: set.base == nil ? nil : found.side.rawValue, symbol: symbol, commit: set.base, diff: found.detail)
     }
 

@@ -45,6 +45,12 @@ Point the user at Help › Canvas Basics for the same text in the app.
 - **Undo**: ⌘Z undoes the last change, the user's or an agent's (an agent's batch is one step, and a notice names the agent; undoing a changes tile's Stage, Unstage, or Discard names it too); ⇧⌘Z redoes. While a terminal has the keyboard, ⌘Z goes to the terminal, never the canvas.
   Navigation and bookkeeping nobody chose (a follow tile re-aiming) aren't undo steps; ⌘[ / ⌘] go back and forward through the user's navigation.
 
+## Reviewing work
+
+- **Review Changes** (⇧⌘R, or right-click the canvas) opens a changes tile: each changed file with its changes (hunks), green added, red removed. Its summary is a picker: Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed); a code tile's base picker uses the same words, the exact base (merge-base, sha) in its tooltip.
+- **Stage** marks a change ready for the next commit, **Unstage** takes the mark off; neither changes files. **Discard** throws an uncommitted change away from the files: it asks first (the button turns into "Discard?" for a few seconds, or `r` twice), then a notice names what went with "⌘Z undoes". Committed hunks have no Discard.
+- **committed**: already in the branch's history (a branch review); **Viewed** folds a file until it changes. The tile's keys work once Return (or a click) gives it the keyboard; while it is only selected they say so.
+
 ## Pointing an agent at things
 
 - **Hyper-click** (⌃⌥⇧⌘-click; Caps Lock mapped to Hyper): stages a mention of a code line, page element, drawing, image pixel, or tile in the **tray**, the bar at the bottom of the window.
@@ -62,7 +68,7 @@ Point the user at Help › Canvas Basics for the same text in the app.
 - ⌘P Go to (tiles, files, `@symbols`); ⌘T new terminal; ⌘W close the selection; ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
   In a terminal Esc belongs to the program: ⌘Esc (View › Leave Tile) leaves any tile.
-- A code tile without changes shows a quiet "no changes"; its diff-base picker appears when the pointer is over the header.
+- A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.
 - Save as PNG…, Save as HTML… and Export Selection (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.
   Export Selection keeps the titles and borders of groups whose tiles are all selected; a marquee around groups selects them and the arrows between what it selects.
   Its picture is at most 8000 px on its longest side, named after the one tile or group selected.

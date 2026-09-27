@@ -425,16 +425,28 @@ public struct ReviewPatch: Equatable, Sendable {
         case let other?: action = other.capitalized
         case nil: action = "Change"
         }
+        return "\(action) of \(subject(of: entry))"
+    }
+
+    /// What a Discard just did, said where the user looks once it is done (nothing on the board
+    /// shows files changing), in undo's words: `Discarded src/a.rs, lines 15–46 from your files
+    /// · ⌘Z undoes`.
+    public static func discardNotice(of entry: JSONValue) -> String {
+        "Discarded \(subject(of: entry)) from your files · ⌘Z undoes"
+    }
+
+    /// What an entry acted on: `src/a.rs`, `src/a.rs, lines 15–46`, `2 lines of src/a.rs`.
+    private static func subject(of entry: JSONValue) -> String {
         let path = entry["path"]?.string ?? "a file"
         switch entry["scope"]?.string {
         case "hunk":
-            guard let label = entry["label"]?.string else { return "\(action) of \(path)" }
-            return "\(action) of \(path), \(label.prefix(1).lowercased() + label.dropFirst())"
+            guard let label = entry["label"]?.string else { return path }
+            return "\(path), \(label.prefix(1).lowercased() + label.dropFirst())"
         case "lines":
             let count = Int((entry["added"]?.number ?? 0) + (entry["removed"]?.number ?? 0))
-            return "\(action) of \(count) line\(count == 1 ? "" : "s") of \(path)"
+            return "\(count) line\(count == 1 ? "" : "s") of \(path)"
         default:
-            return "\(action) of \(path)"
+            return path
         }
     }
 

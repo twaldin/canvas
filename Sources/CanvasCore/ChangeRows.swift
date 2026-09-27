@@ -36,6 +36,21 @@ public enum ChangesMetrics {
     public static let keysHints = ["j/k hunks · J/K or ]/[ files · ↩ open · s stage · u unstage · r r discard · m mention · esc done",
                                    "j/k hunks · s stage · u unstage · r r discard · m mention · esc", "j/k · s · u · rr · m · esc"]
     public static let idleHints = ["⇧-click or drag lines to stage just those · ↩ or click for keys", "↩ or click to use keys", "↩ for keys"]
+    /// The same for a listing with nothing to stage, unstage, or discard (a branch's commits
+    /// reviewed against its merge-base, nothing uncommitted): reading keys only.
+    public static let readingKeysHints = ["j/k hunks · J/K or ]/[ files · ↩ open · m mention · esc done", "j/k hunks · ↩ open · m mention · esc", "j/k · ↩ · m · esc"]
+    public static let readingIdleHints = Array(idleHints.dropFirst())
+
+    /// The hints a header offers: with the keyboard (`focused`) or without, for a listing
+    /// whose Stage or Discard can act (`ChangeSet.actionable`) or not.
+    public static func hints(focused: Bool, actionable: Bool) -> [String] {
+        switch (focused, actionable) {
+        case (true, true): keysHints
+        case (true, false): readingKeysHints
+        case (false, true): idleHints
+        case (false, false): readingIdleHints
+        }
+    }
     /// Space between the header's summary and its hint.
     public static let hintGap: CGFloat = 14
 

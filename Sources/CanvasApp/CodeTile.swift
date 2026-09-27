@@ -49,6 +49,8 @@ final class CodeTile: NSView, TileContent {
     private var vanishCheck: Task<Void, Never>?
     /// Where the follow tile stepped back to after its file was deleted: no edit flash there.
     private var steppedBackTo: String?
+    /// The repository whose default branch the base picker last read, and that branch.
+    private var knownDefaultBranch: (repository: String, branch: String?)?
 
     static let flashDuration: TimeInterval = 3
 
@@ -570,12 +572,23 @@ extension CodeTile {
 
     private func showHeader(for document: CodeDocument?) {
         // A pinned tile has no diff base to pick.
-        header.show(diffBase: pinnedCommit == nil ? diffBaseProp : nil, status: document?.status ?? "loading…", warning: document?.warning,
-                    changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
+        header.show(diffBase: pinnedCommit == nil ? diffBaseProp : nil, defaultBranch: defaultBranch(for: document), baseDescription: document?.baseDescription,
+                    status: document?.status ?? "loading…", warning: document?.warning, changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
         let before = header.height
         let history = followOf == nil ? [] : self.history
         header.show(history: history.map(\.aim), edited: history.map(\.edited), current: displayed)
         if header.height != before { resizeSubviews(withOldSize: bounds.size) }
+    }
+
+    /// The default branch the base picker names (`Branch vs origin/main`): the one the
+    /// merge-base was taken with, else as the repository's files say (read once per repository).
+    private func defaultBranch(for document: CodeDocument?) -> String? {
+        guard let diff = document?.diff, let repository = diff.repository else { return nil }
+        if let branch = diff.baseLabel.flatMap(GitDiffEngine.ResolvedBase.mergeBaseBranch) { return branch }
+        if let known = knownDefaultBranch, known.repository == repository { return known.branch }
+        let branch = GitWorktree.containing(repository)?.defaultBranch
+        knownDefaultBranch = (repository, branch)
+        return branch
     }
 
     /// The follow history, newest first, each location with whether the agent edited it there.
@@ -788,7 +801,7 @@ extension CodeTile {
     private func code(_ lines: LineRange, side: DiffSide, in document: CodeDocument) -> MentionTarget {
         let commit = side == .old ? document.diff.base : document.mentionCommit
         return .code(object: object.id, path: document.path, lines: lines, side: commit == nil || document.isPinned ? nil : side.rawValue,
-                     symbol: document.enclosingSymbol(line: lines.start, side: side), commit: commit)
+                     symbol: document.enclosingSymbol(lines: lines, side: side), commit: commit)
     }
 
     func outline(for target: MentionTarget) -> NSRect? {

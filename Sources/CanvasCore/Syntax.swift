@@ -76,9 +76,17 @@ public struct SyntaxAnalysis: Sendable {
 
     public static let empty = SyntaxAnalysis(spans: [], symbols: [])
 
-    /// The innermost declaration containing a line, e.g. `CodeTile.reload`.
-    public func enclosingSymbol(line: Int) -> String? {
-        symbols.filter { $0.lines.contains(line) }.min { $0.lines.count < $1.lines.count }?.name
+    /// The innermost declaration containing all of `lines`, e.g. `CodeTile.reload`.
+    public func enclosingSymbol(lines: LineRange) -> String? {
+        symbols.innermost(around: lines)
+    }
+}
+
+extension Sequence<SyntaxSymbol> {
+    /// The innermost declaration holding every one of `lines`: a range spanning several
+    /// declarations (a whole file's excerpt) names none of them, only one they all sit in.
+    public func innermost(around lines: LineRange) -> String? {
+        filter { $0.lines.contains(lines.start) && $0.lines.contains(lines.end) }.min { $0.lines.count < $1.lines.count }?.name
     }
 }
 

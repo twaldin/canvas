@@ -462,7 +462,12 @@ public struct CodeDocument: Sendable {
     public let notice: String?
     /// Why the tile shows plain source or a read-only base version.
     public let warning: String?
+    /// The header's status: the counts, and the base's commit unless the header's picker
+    /// already names it (a commit typed as its sha).
     public let status: String
+    /// What the diff is against, exactly, for the header's tooltips: `against merge-base with
+    /// origin/main b57db4f`. Nil without a base.
+    public let baseDescription: String?
 
     public var text: SideText { side == .old ? diff.old : diff.new }
 
@@ -488,14 +493,18 @@ public struct CodeDocument: Sendable {
         wrapText = WrapText(text)
         // Only modified files have signs that peek base lines.
         oldWrapText = diff.state == .modified ? WrapText(diff.old) : nil
-        let base = diff.base.map { " · \(diff.baseLabel ?? "base") \($0.prefix(7))" } ?? ""
+        // The header's picker names the base in words (`Branch vs origin/main`, `vs v1.2`), so
+        // the status adds only its commit, and not even that when the picker shows it.
+        let base = diff.base.map { sha in diff.baseLabel.map { !$0.isEmpty && sha.hasPrefix($0) } == true ? "" : " · \(sha.prefix(7))" } ?? ""
+        baseDescription = diff.state == .pinned ? nil : diff.base.map { "against \(diff.baseLabel ?? "base") \($0.prefix(7))" }
         var notice: String?
         var warning: String?
         let status: String
         switch diff.state {
         case .modified: status = "+\(diff.addedCount) −\(diff.removedCount)\(base)"
         case .unchanged: status = "no changes\(base)"
-        case .added: status = "new file · +\(diff.addedCount)\(base)"
+        case .added: status = "\(diff.untracked ? "new file, not tracked by git yet" : "new file") · +\(diff.addedCount)\(base)"
+        case .ignored: status = "ignored by git"
         case .deleted:
             status = "−\(diff.removedCount)\(base)"
             warning = "deleted — base version, read-only"
@@ -626,9 +635,9 @@ public struct CodeDocument: Sendable {
     /// The file as of a pinned commit (`pinnedCommit`): read-only, never the working tree.
     public var isPinned: Bool { diff.state == .pinned }
 
-    public func enclosingSymbol(line: Int, side: DiffSide) -> String? {
-        let symbols = side == self.side ? symbols : oldSymbols
-        return symbols.filter { $0.lines.contains(line) }.min { $0.lines.count < $1.lines.count }?.name
+    /// The innermost declaration holding all of `lines` on one side (`innermost(around:)`).
+    public func enclosingSymbol(lines: LineRange, side: DiffSide) -> String? {
+        (side == self.side ? symbols : oldSymbols).innermost(around: lines)
     }
 
     /// The sign whose bar covers `line`, or whose wedge sits on its top edge.

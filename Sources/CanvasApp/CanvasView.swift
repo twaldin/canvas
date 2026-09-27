@@ -81,8 +81,8 @@ final class CanvasDocumentView: NSView {
         case 53: cancelOperation(nil)
         case 51, 117: deleteBackward(nil)
         default:
-            // j/k and ↓/↑ step through a selected changes tile's hunks.
-            if canvas?.selectedChangesTile?.handleNavigationKey(event) == true { return }
+            // A selected changes tile's keys say to press Return first (they act once it has the keyboard).
+            if canvas?.selectedChangesTile?.keyWhileSelected(event) == true { return }
             super.keyDown(with: event)
         }
     }
@@ -1118,8 +1118,8 @@ final class CanvasView: NSScrollView {
 
     /// Review Changes: a changes tile for the uncommitted work (`base`: or everything the branch
     /// changed) of the board root, or of another worktree of its repository (`root`), at a
-    /// document point (`createHere`), selected with the canvas holding the keyboard, so j/k step
-    /// through hunks. It lists first: with nothing to review the tile is a compact "No changes"
+    /// document point (`createHere`), selected with the canvas holding the keyboard, so Return
+    /// gives it the keys. It lists first: with nothing to review the tile is a compact "No changes"
     /// (it grows when changes appear, `ChangesMetrics.grown`), not a full-size empty one. With
     /// one already on the board for that directory and base (`Board.changesTile`), Review
     /// Changes goes to it instead.

@@ -254,6 +254,59 @@ public enum MentionTarget: Codable, Equatable, Sendable {
     }
 }
 
+extension MentionTarget {
+    /// Props that say how an object looks or what the app keeps about it, not what it holds:
+    /// scaling a tile, a changes tile's Viewed folds, a terminal's lifecycle and agent, a page's
+    /// own title.
+    static let bookkeepingProps: Set<String> = ["scale", "viewed", "lifecycle", "agent", "pageTitle"]
+
+    /// Whether an update of one of its objects (`before` → `after`) changed what this mention
+    /// holds, so the chip and the context say "edited". Moving, resizing, scaling or restacking
+    /// never does, nor bookkeeping (`bookkeepingProps`). A code mention holds its file's lines,
+    /// not the tile's view of them: re-aiming the code tile it came from changes nothing, and
+    /// from a changes tile only another base or worktree, or a Stage, Unstage or Discard (or its
+    /// undo) of a hunk of that file over the mentioned lines, does; staging another file in the
+    /// same tile doesn't. Terminal text and page log entries are what they were when staged.
+    public func isEdited(from before: CanvasObject, to after: CanvasObject) -> Bool {
+        switch self {
+        case .code(_, let path, let lines, let side, _, _, _):
+            guard after.type == .changes else { return false }
+            if before.props["base"] != after.props["base"] || before.props["root"] != after.props["root"] { return true }
+            let old = before.props["reviewed"]?.array ?? [], new = after.props["reviewed"]?.array ?? []
+            // An action appends its entry (the oldest may drop off past the limit); undo removes it.
+            let added = new.filter { !old.contains($0) }
+            let changed = added.isEmpty ? old.filter { !new.contains($0) } : added
+            return changed.contains { Self.review($0, touches: path, lines, side: side) }
+        case .terminal, .console:
+            return false
+        case .object, .dom, .group, .image, .note:
+            return Self.content(of: before) != Self.content(of: after)
+        }
+    }
+
+    private static func content(of object: CanvasObject) -> [String: JSONValue] {
+        (object.props.object ?? [:]).filter { !bookkeepingProps.contains($0.key) }
+    }
+
+    /// Whether a `props.reviewed` entry acted on these lines of `path`: its whole file, or a
+    /// hunk whose span on the mention's side (either side without one) meets them.
+    private static func review(_ entry: JSONValue, touches path: String, _ lines: LineRange, side: String?) -> Bool {
+        guard entry["path"]?.string == path else { return false }
+        guard entry["scope"]?.string != "file" else { return true }
+        guard let header = entry["header"]?.string, let mapping = UnifiedDiff.mapping(fromHeader: Substring(header)) else { return true }
+        func meets(_ span: Range<Int>) -> Bool {
+            // An empty span sits after its line: it touches that line and the next.
+            let low = span.isEmpty ? span.lowerBound - 1 : span.lowerBound, high = span.isEmpty ? span.lowerBound : span.upperBound - 1
+            return low <= lines.end && lines.start <= high
+        }
+        switch side {
+        case DiffSide.old.rawValue: return meets(mapping.original)
+        case DiffSide.new.rawValue: return meets(mapping.modified)
+        default: return meets(mapping.original) || meets(mapping.modified)
+        }
+    }
+}
+
 /// Which part of a terminal a terminal mention holds.
 public enum TerminalPart: String, Codable, Sendable {
     /// What the user selected.

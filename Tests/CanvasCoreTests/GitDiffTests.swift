@@ -195,15 +195,27 @@ struct GitDiffTests {
         let repo = try await TempRepo()
         try await repo.write("keep.txt", "same\n")
         try await repo.write("gone.txt", numbered(1...3))
+        try await repo.write(".gitignore", "node_modules/\n")
         try await repo.commit("base")
         try await repo.write("fresh.txt", "one\ntwo\n")
+        try await repo.write("added.txt", "staged\n")
+        try await repo.git("add", "added.txt")
+        try await repo.write("node_modules/dep/index.js", numbered(1...4))
         try await offPool { Result { try FileManager.default.removeItem(at: repo.url("gone.txt")) } }.get()
         try await repo.writeData("image.png", Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x01]))
         let engine = GitDiffEngine(watchesRepositories: false)
 
         let fresh = await engine.diff(file: repo.url("fresh.txt"), base: .mergeBase)
-        #expect(fresh.state == .added)
+        #expect(fresh.state == .added && fresh.untracked)
         #expect(CodeDocument(path: "fresh.txt", diff: fresh).signs == [GitSign(kind: .added, lines: 1..<3, old: 1..<1)])
+        let added = await engine.diff(file: repo.url("added.txt"), base: .mergeBase)
+        #expect(added.state == .added && !added.untracked, "a new file in the index is tracked")
+
+        // A dependency git ignores is no change of the branch's: plain source, no signs.
+        let ignored = await engine.diff(file: repo.url("node_modules/dep/index.js"), base: .mergeBase)
+        #expect(ignored.state == .ignored && ignored.new.lineCount == 4)
+        let dependency = CodeDocument(path: "node_modules/dep/index.js", diff: ignored)
+        #expect(dependency.signs.isEmpty && dependency.warning == nil)
 
         let gone = await engine.diff(file: repo.url("gone.txt"), base: .mergeBase)
         #expect(gone.state == .deleted && gone.old.lineCount == 3)

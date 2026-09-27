@@ -53,6 +53,14 @@ public actor GitDiffEngine {
     public struct ResolvedBase: Equatable, Sendable {
         public var sha: String?
         public var label: String
+
+        static let mergeBasePrefix = "merge-base with "
+
+        /// The branch a merge-base label was taken with: `origin/main` for `merge-base with
+        /// origin/main`; nil for any other label.
+        public static func mergeBaseBranch(_ label: String) -> String? {
+            label.hasPrefix(mergeBasePrefix) ? String(label.dropFirst(mergeBasePrefix.count)) : nil
+        }
     }
 
     private final class Repository {
@@ -207,7 +215,16 @@ public actor GitDiffEngine {
             guard let old = await offPool({ UnifiedDiff.reconstructOld(new: new, parsed: parsed) }) else { return nil }
             diff = result(.deleted, base: sha, label: resolved.label, old: old, new: new, hunks: UnifiedDiff.hunks(parsed.mappings))
         } else if patch.entry == .absent {
-            diff = result(.added, base: sha, label: resolved.label, new: new, hunks: Self.allAdded(new))
+            // New since the base: an agent's new file, tracked yet or not, is work of the branch;
+            // a file git ignores (a node_modules frame) isn't, and shows as plain source.
+            let status = (try? await runner.run(["status", "--porcelain=v1", "--ignored=matching", "--untracked-files=all", "--", path], in: repository.toplevel)).map { String(decoding: $0.prefix(2), as: UTF8.self) }
+            if status == "!!" {
+                diff = result(.ignored, base: sha, label: resolved.label, new: new)
+            } else {
+                var added = result(.added, base: sha, label: resolved.label, new: new, hunks: Self.allAdded(new))
+                added.untracked = status == "??"
+                diff = added
+            }
         } else if parsed.mappings.isEmpty {
             // Mode-only changes and identical content alike: nothing to show line by line.
             diff = result(.unchanged, base: sha, label: resolved.label, old: new, new: new)
@@ -476,7 +493,7 @@ public actor GitDiffEngine {
             let shortName = branch.replacingOccurrences(of: "refs/remotes/", with: "").replacingOccurrences(of: "refs/heads/", with: "")
             let data = try? await runner.run(["merge-base", branch, "HEAD"], in: toplevel)
             let sha = data.map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
-            return sha.isEmpty ? ResolvedBase(sha: nil, label: "no merge-base with \(shortName)") : ResolvedBase(sha: sha, label: "merge-base with \(shortName)")
+            return sha.isEmpty ? ResolvedBase(sha: nil, label: "no merge-base with \(shortName)") : ResolvedBase(sha: sha, label: ResolvedBase.mergeBasePrefix + shortName)
         }
     }
 

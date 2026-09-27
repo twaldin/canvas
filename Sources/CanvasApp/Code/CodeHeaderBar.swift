@@ -1,12 +1,14 @@
 import AppKit
 import CanvasCore
 
-/// Controls above a code tile: the diff base (merge-base | HEAD), previous/next change, the
+/// Controls above a code tile: the diff base, named as the changes tile's picker names it
+/// (Uncommitted changes, Branch vs origin/main, vs <commit>), previous/next change, the
 /// status line and any warning, and for follow tiles "N new ▸" (while the user holds the tile),
 /// Pin, and a strip of recent locations. An optional caption strip sits under the first row.
 /// A file without changes against its base shows only a quiet "no changes" there until the
 /// pointer is over the header, which brings the base picker back (a board of read-only diagram
 /// tiles repeated "merge-base ⌄ ⌃⌄ no changes · …" on every one).
+/// The picker's and the status's tooltips say exactly what the diff is against.
 /// The rightmost `reservedTrailing` points stay free for tile-level buttons the language
 /// service adds. Heights follow `CodeMetrics`.
 @MainActor
@@ -38,8 +40,10 @@ final class CodeHeaderBar: NSView {
     /// card: a tile created as a card (dozens at once, zoomed out or offscreen) never builds them
     /// on creation. What they show is kept below until then.
     private var controls: Controls?
-    private var baseChoices = ["merge-base", "HEAD"]
-    private var baseSelected = 0
+    private var baseChoices: [ChangesBaseChoice] = [.uncommitted, .branch]
+    private var baseTitles = [ChangesBaseChoice.uncommitted, .branch].map { $0.title(defaultBranch: nil) }
+    private var baseSelected = 1
+    private var baseDescription: String?
     private var statusLine = NSAttributedString()
     private var changes = false
     private var diffs = true
@@ -79,7 +83,6 @@ final class CodeHeaderBar: NSView {
             base.isBordered = false
             base.target = header
             base.action = #selector(CodeHeaderBar.baseChanged(_:))
-            base.toolTip = "Changes are shown against this base"
             for (button, symbol, action) in [(previous, "chevron.up", #selector(CodeHeaderBar.previousChange)), (next, "chevron.down", #selector(CodeHeaderBar.nextChange))] {
                 button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol == "chevron.up" ? "Previous change" : "Next change")
                 button.bezelStyle = .recessed
@@ -150,16 +153,20 @@ final class CodeHeaderBar: NSView {
         CodeMetrics.chromeHeight(caption: captionText != nil, history: !history.isEmpty) - CodeMetrics.titleHeight
     }
 
-    /// `diffBase` is the prop (`merge-base`, `head`, or a commit); `warning` shows before the
-    /// status in orange.
+    /// `diffBase` is the prop (`merge-base`, `head`, or a commit), named in the picker with
+    /// `defaultBranch` (`Branch vs origin/main`); `baseDescription` is what the diff is against
+    /// exactly, for the tooltips; `warning` shows before the status in orange.
     /// `diffBase` nil: the tile shows no diff (pinned to a commit), so there is no base to pick
     /// and no changes to step through.
-    func show(diffBase: String?, status text: String, warning: String?, changes: Bool, follow: Bool, missed: Int) {
+    func show(diffBase: String?, defaultBranch: String?, baseDescription: String?, status text: String, warning: String?, changes: Bool, follow: Bool, missed: Int) {
         diffs = diffBase != nil
         if let diffBase {
-            baseChoices = ["merge-base", "HEAD"] + (["merge-base", "head", "HEAD"].contains(diffBase) ? [] : [String(diffBase.prefix(12))])
-            baseSelected = diffBase == "merge-base" ? 0 : diffBase.lowercased() == "head" ? 1 : 2
+            let current = ChangesBaseChoice(prop: diffBase)
+            baseChoices = ChangesBaseChoice.choices(current: current)
+            baseTitles = baseChoices.map { $0.title(defaultBranch: defaultBranch) }
+            baseSelected = baseChoices.firstIndex(of: current) ?? 1
         }
+        self.baseDescription = baseDescription
         let line = NSMutableAttributedString()
         if let warning {
             line.append(NSAttributedString(string: "⚠︎ \(warning)", attributes: [.foregroundColor: NSColor.systemOrange, .font: NSFont.systemFont(ofSize: 11, weight: .medium)]))
@@ -206,13 +213,14 @@ final class CodeHeaderBar: NSView {
 
     private func apply(_ controls: Controls) {
         controlsStale = false
-        if controls.base.itemTitles != baseChoices {
+        if controls.base.itemTitles != baseTitles {
             controls.base.removeAllItems()
-            controls.base.addItems(withTitles: baseChoices)
+            controls.base.addItems(withTitles: baseTitles)
         }
         controls.base.selectItem(at: baseSelected)
+        controls.base.toolTip = "Changes are shown " + (baseDescription ?? "against this base")
         controls.status.attributedStringValue = quiet ? Self.quietLine(statusLine.string) : statusLine
-        controls.status.toolTip = statusLine.string
+        controls.status.toolTip = [statusLine.string, baseDescription.map { "Changes " + $0 }].compactMap { $0 }.joined(separator: "\n")
         controls.previous.isEnabled = changes
         controls.next.isEnabled = changes
         for control in [controls.base, controls.previous, controls.next] as [NSView] { control.isHidden = !diffs || quiet }
@@ -385,7 +393,9 @@ final class CodeHeaderBar: NSView {
     }
 
     @objc private func baseChanged(_ sender: NSPopUpButton) {
-        onBase?(sender.indexOfSelectedItem == 0 ? "merge-base" : sender.indexOfSelectedItem == 1 ? "head" : sender.titleOfSelectedItem ?? "merge-base")
+        guard baseChoices.indices.contains(sender.indexOfSelectedItem) else { return }
+        let choice = baseChoices[sender.indexOfSelectedItem]
+        onBase?(choice == .uncommitted ? "head" : choice.prop)
     }
 
     @objc private func previousChange() { onChange?(false) }

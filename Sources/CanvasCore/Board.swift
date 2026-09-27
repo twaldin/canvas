@@ -281,7 +281,7 @@ public final class Board {
         if let changes = ActivityLog.changes(from: before, to: object) {
             log(.updated, object, actor: credited, "\(ActivityLog.describe(object)): \(changes)", cause: cause, before: before)
         }
-        markMentionsEdited(for: id)
+        markMentionsEdited(from: before, to: object)
         onEvent?(.objectUpdated(object))
         if before.frame != object.frame { refitGroups(containing: id, actor: credited, caller: caller, visited: refitting) }
         return object
@@ -365,7 +365,7 @@ public final class Board {
             if let changes = ActivityLog.changes(from: previous, to: object) {
                 log(.updated, object, actor: replayActor, "\(ActivityLog.describe(object)): \(changes)")
             }
-            markMentionsEdited(for: object.id)
+            markMentionsEdited(from: previous, to: object)
             onEvent?(.objectUpdated(object))
         } else {
             log(.created, object, actor: replayActor, "restored \(ActivityLog.describe(object)) at \(ActivityLog.position(reported(object).frame))")
@@ -645,9 +645,11 @@ public final class Board {
         if tray.count != before { trayChanged() }
     }
 
-    private func markMentionsEdited(for id: ObjectID) {
+    /// Staged mentions of the object turn "edited" when the update changed what they hold
+    /// (`MentionTarget.isEdited`), never for a move, resize, scale, or restack.
+    private func markMentionsEdited(from before: CanvasObject, to after: CanvasObject) {
         var changed = false
-        for index in tray.indices where tray[index].target.objectIDs.contains(id) && !tray[index].edited {
+        for index in tray.indices where !tray[index].edited && tray[index].target.objectIDs.contains(after.id) && tray[index].target.isEdited(from: before, to: after) {
             tray[index].edited = true
             changed = true
         }

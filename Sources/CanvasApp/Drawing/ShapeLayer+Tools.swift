@@ -33,6 +33,8 @@ extension ShapeLayer {
             tool = .select
             return true
         }
+        // A selected changes tile's keys are its own (r discards there, never the rectangle tool).
+        if canvas.selectedChangesTile != nil, ChangesTile.isOwnKey(event) { return false }
         guard let key = event.charactersIgnoringModifiers?.lowercased(), let match = Tool.allCases.first(where: { $0.key == key }) else { return false }
         tool = match
         return true

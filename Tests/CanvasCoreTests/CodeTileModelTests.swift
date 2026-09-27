@@ -39,18 +39,21 @@ struct SyntaxTests {
         func free() {}
         """
         let analysis = Syntax.analyze(swift, language: .swift)
-        #expect(analysis.enclosingSymbol(line: 3) == "Board.follow")
-        #expect(analysis.enclosingSymbol(line: 1) == "Board")
-        #expect(analysis.enclosingSymbol(line: 6) == "free")
+        #expect(analysis.enclosingSymbol(lines: LineRange(start: 3, end: 3)) == "Board.follow")
+        #expect(analysis.enclosingSymbol(lines: LineRange(start: 1, end: 1)) == "Board")
+        #expect(analysis.enclosingSymbol(lines: LineRange(start: 6, end: 6)) == "free")
+        #expect(analysis.enclosingSymbol(lines: LineRange(start: 2, end: 4)) == "Board.follow", "a range inside one declaration names it")
+        #expect(analysis.enclosingSymbol(lines: LineRange(start: 3, end: 5)) == "Board", "past the method's end: the type holding both")
+        #expect(analysis.enclosingSymbol(lines: LineRange(start: 1, end: 6)) == nil, "a range over several declarations names none")
 
         let ts = "export class Store {\n  load(id: string) {\n    return id\n  }\n}\nconst run = () => {\n  go()\n}\n"
         let script = Syntax.analyze(ts, language: .typescript)
-        #expect(script.enclosingSymbol(line: 3) == "Store.load")
-        #expect(script.enclosingSymbol(line: 7) == "run")
+        #expect(script.enclosingSymbol(lines: LineRange(start: 3, end: 3)) == "Store.load")
+        #expect(script.enclosingSymbol(lines: LineRange(start: 7, end: 7)) == "run")
 
         let python = Syntax.analyze("class A:\n    def b(self):\n        pass\n\nx = 1\n", language: .python)
-        #expect(python.enclosingSymbol(line: 3) == "A.b")
-        #expect(python.enclosingSymbol(line: 5) == nil)
+        #expect(python.enclosingSymbol(lines: LineRange(start: 3, end: 3)) == "A.b")
+        #expect(python.enclosingSymbol(lines: LineRange(start: 5, end: 5)) == nil)
     }
 
     @Test func languageFollowsTheFileName() {
@@ -149,7 +152,8 @@ struct CodeBoardTests {
         let short = base.prefix(7)
         #expect(context.contains("[1] code lib.rs:2-2 · tile \(tile.id) · diff vs merge-base \(short), old side"))
         #expect(context.contains("  > 2    fn gone()"), "old-side lines come from the mention's commit")
-        #expect(context.contains("[2] code lib.rs:1-1 · tile \(tile.id) · diff vs merge-base \(short) (edited)"))
+        #expect(context.contains("[2] code lib.rs:1-1 · tile \(tile.id) · diff vs merge-base \(short)\n"))
+        #expect(!context.contains("(edited)"), "re-aiming the tile leaves the mentioned lines as they were")
         #expect(context.contains("  > 1    fn new()"), "new-side lines come from the working tree")
         #expect(context.contains("[3] code lib.rs:1-1 · tile \(tile.id) · at \(short)"))
         #expect(context.contains("  > 1    fn old()"), "a pinned excerpt reads the commit")

@@ -97,6 +97,59 @@ struct BoardTests {
         #expect(await board.drain().context.contains("(edited)"))
     }
 
+    @Test func movingScalingOrRestackingAStagedTileIsNotAnEdit() throws {
+        let board = makeBoard()
+        let note = board.create(type: .note, props: .object(["markdown": .string("v1")]))
+        try board.stage(.object(note.id))
+        try board.update(note.id, frame: Frame(x: 400, y: 300, w: 640, h: 480))
+        try board.update(note.id, z: 99)
+        try board.update(note.id, props: .object(["scale": .number(2)]))
+        #expect(!board.tray[0].edited)
+        try board.update(note.id, props: .object(["markdown": .string("v2")]))
+        #expect(board.tray[0].edited)
+    }
+
+    /// A changes-tile mention of `a.txt` lines 10–12 turns "edited" only when a review action
+    /// touches those lines of that file (debugger study round 7: staging another file did).
+    @Test func changesMentionIsEditedOnlyByActionsOnItsOwnLines() throws {
+        let board = makeBoard()
+        let tile = board.create(type: .changes, props: .object([:]))
+        try board.stage(.code(object: tile.id, path: "a.txt", lines: LineRange(start: 10, end: 12), diff: "added line · unstaged hunk"))
+        func entry(_ path: String, _ header: String?, scope: String = "hunk") -> JSONValue {
+            var entry: [String: JSONValue] = ["action": "stage", "path": .string(path), "scope": .string(scope)]
+            if let header { entry["header"] = .string(header) }
+            return .object(entry)
+        }
+        var reviewed: [JSONValue] = []
+        func review(_ next: JSONValue) throws {
+            reviewed.append(next)
+            try board.update(tile.id, props: .object(["reviewed": .array(reviewed)]))
+        }
+        try review(entry("b.txt", nil, scope: "file"))
+        try review(entry("b.txt", "@@ -8,6 +8,8 @@"))
+        try review(entry("a.txt", "@@ -30,3 +30,4 @@"))
+        try board.update(tile.id, props: .object(["viewed": .object(["a.txt": "f1"])]))
+        try board.update(tile.id, frame: Frame(x: 0, y: 0, w: 900, h: 700))
+        #expect(!board.tray[0].edited, "other files, other hunks, Viewed and moves leave the lines as they were")
+
+        try review(entry("a.txt", "@@ -8,4 +8,6 @@"))
+        #expect(board.tray[0].edited, "a Stage of the hunk holding the lines")
+    }
+
+    @Test func undoingAnotherFilesReviewLeavesTheMentionButUndoingItsOwnEditsIt() throws {
+        let board = makeBoard()
+        let tile = board.create(type: .changes, props: .object([:]))
+        let other: JSONValue = .object(["action": "stage", "path": "b.txt", "scope": "file"])
+        let own: JSONValue = .object(["action": "revert", "path": "a.txt", "scope": "file"])
+        try board.update(tile.id, props: .object(["reviewed": .array([other])]))
+        try board.stage(.code(object: tile.id, path: "a.txt", lines: LineRange(start: 3, end: 3)))
+        _ = board.undo()
+        #expect(!board.tray[0].edited)
+        try board.update(tile.id, props: .object(["reviewed": .array([own])]))
+        _ = board.undo()
+        #expect(board.tray[0].edited)
+    }
+
     @Test func updateWithStaleRevConflicts() throws {
         let board = makeBoard()
         let note = board.create(type: .note, props: .object(["markdown": .string("v1")]))

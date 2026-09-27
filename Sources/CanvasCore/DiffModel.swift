@@ -101,8 +101,11 @@ public struct FileDiff: Sendable, Equatable {
         /// Differs from the base (including files deleted from the working tree).
         case modified
         case unchanged
-        /// Untracked, or new since the base: every line is added.
+        /// New since the base, untracked (`untracked`) or not: every line is added.
         case added
+        /// Not in the base and ignored by git (a dependency under `node_modules`, a build
+        /// output): no work of the branch's, so `new` holds it as plain source, no signs.
+        case ignored
         case deleted
         case binary
         /// Neither on disk nor in the base.
@@ -138,6 +141,8 @@ public struct FileDiff: Sendable, Equatable {
     public var hunks: [DiffHunk]
     /// Top-level directory of the repository the file belongs to.
     public var repository: String?
+    /// An `added` file git doesn't track yet (not in the index either).
+    public var untracked = false
 
     public init(state: State, base: String?, baseLabel: String?, old: SideText, new: SideText, hunks: [DiffHunk], repository: String? = nil) {
         self.repository = repository

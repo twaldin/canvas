@@ -79,11 +79,12 @@ public enum ObjectMeasure {
                       height: (CGFloat(RenderMath.tileTitleHeight) + document.height.rounded(.up)) * scale)
     }
 
-    /// The lines a code tile's `range` (or symbol, or whole file) resolves to, read from disk.
+    /// The lines a code tile shows fitted: its `range` (what the tile scrolls to and tints; a
+    /// `symbol` beside it only names it), else the symbol's declaration, else the whole file.
     public static func codeExcerpt(_ props: JSONValue, root: URL) async throws -> NoteExcerpt {
         guard let path = props["path"]?.string else { throw Failure.invalidParams("code props need a path") }
         let range = try? props["range"]?.decode(LineRange.self)
-        let fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: props["symbol"]?.string)
+        let fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: range == nil ? props["symbol"]?.string : nil)
         let excerpt = await NoteSource.excerpt(for: fence, root: root, captured: nil)
         guard excerpt.range != nil else {
             if case .stale(let reason) = excerpt.status { throw Failure.unavailable(reason) }

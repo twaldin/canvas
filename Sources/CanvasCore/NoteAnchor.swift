@@ -153,26 +153,34 @@ public enum NoteAnchor {
     }
 
     /// Last line (0-based) of the declaration starting at `start`: the line closing its first brace
-    /// block if one opens within a few lines, else the indented block below it (plus a closing
-    /// `end` at the same indent for Ruby/Lua-style languages).
+    /// block if one opens within a few lines of the signature's end (a parameter list may run over
+    /// many lines first), else the indented block below it (plus a closing `end` at the same
+    /// indent for Ruby/Lua-style languages).
     static func extentEnd(from start: Int, in source: [String]) -> Int {
         let limit = min(source.count, start + maxSymbolLines)
         var depth = 0
         var opened = false
+        var parens = 0
+        var signatureEnd: Int?
         for index in start..<limit {
             for character in stripped(source[index]) {
-                if character == "{" {
+                switch character {
+                case "{":
                     depth += 1
                     opened = true
-                } else if character == "}" {
-                    depth -= 1
+                case "}": depth -= 1
+                case "(": parens += 1
+                case ")": parens = max(0, parens - 1)
+                default: break
                 }
             }
             if opened, depth <= 0 { return index }
-            if !opened {
+            // Inside a parameter list the body can't have started yet.
+            if !opened, parens == 0 {
+                if signatureEnd == nil { signatureEnd = index }
                 let trimmed = source[index].trimmingCharacters(in: .whitespaces)
                 if trimmed.hasSuffix(";") { return index }
-                if index - start >= 3 || trimmed.hasSuffix(":") { break }
+                if index - signatureEnd! >= 3 || trimmed.hasSuffix(":") { break }
             }
         }
         if opened { return limit - 1 }

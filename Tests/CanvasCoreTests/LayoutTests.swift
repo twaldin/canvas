@@ -107,6 +107,26 @@ final class LayoutApiTests {
         #expect(try #require(refit["object"]?["frame"]).decode(Frame.self).w == Double(natural.width))
     }
 
+    @Test func aCodeTileFitsItsRangeEvenWithASymbolAndCheckFlagsOneThatDoesnt() async throws {
+        // The codex study's evaluateTradeUp: a signature over five lines, then the body.
+        let source = ["import pg from \"pg\";", "", "export async function evaluate(", "  pool: pg.Pool,", "  inputs: Input[],", "  outcomes: Outcome[]",
+                      "): Promise<TradeUp | null> {"] + (1...40).map { "  const step\($0) = \($0);" } + ["  return null;", "}"]
+        try source.joined(separator: "\n").write(to: board.root.appendingPathComponent("eval.ts"), atomically: true, encoding: .utf8)
+        func props(_ extra: [String: JSONValue]) -> JSONValue { .object(["path": "eval.ts"].merging(extra) { $1 }) }
+        let range: JSONValue = .object(["start": 3, "end": 49])
+        let byRange = Self.size(try await result("object.measure", .object(["type": "code", "props": props(["range": range])])))
+        #expect(byRange.height > 47 * 16, "all 47 rows")
+        let both = Self.size(try await result("object.measure", .object(["type": "code", "props": props(["range": range, "symbol": "evaluate"])])))
+        #expect(both == byRange, "the tile shows its range; the symbol only names it")
+        let bySymbol = Self.size(try await result("object.measure", .object(["type": "code", "props": props(["symbol": "evaluate"])])))
+        #expect(bySymbol == byRange, "a multi-line signature doesn't cut the declaration short")
+
+        let small = try await result("object.create", .object(["type": "code", "props": props(["range": range, "symbol": "evaluate"]),
+                                                                "frame": .object(["x": 0, "y": 0, "w": 344, "h": 124])]))
+        let check = try await result("layout.check", .object(["ids": [try #require(small["object"]?["id"])]]))
+        #expect(check["overflow"]?.array?.first?["y"]?.number ?? 0 > 600, "a tile far shorter than its range overflows")
+    }
+
     @Test func unmeasurableContentSaysWhy() async throws {
         let browser = try await call("object.measure", .object(["type": "browser", "props": .object(["url": "https://example.com"])]))
         #expect(browser["error"]?["code"] == .string("unsupported"))

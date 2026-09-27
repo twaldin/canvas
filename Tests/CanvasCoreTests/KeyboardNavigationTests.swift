@@ -66,6 +66,77 @@ struct KeyboardNavigationTests {
         #expect(Layout.neighbor(of: terminal, among: [rightLow, right], toward: .right) == 1)
     }
 
+    /// Study geometry: ⌥⌘↑ from the terminal went to a code tile above it, and ⌥⌘↓ from there went
+    /// on to the follow tile beside the terminal (nearer by center) instead of back.
+    @Test func theOppositeArrowRightAfterAMoveGoesBack() {
+        let terminal = CGRect(x: -474, y: 0, width: 1000, height: 620)
+        let code = CGRect(x: 144, y: -500, width: 640, height: 450)
+        let follow = CGRect(x: 550, y: 0, width: 640, height: 620)
+        let right = CGRect(x: 1300, y: -500, width: 400, height: 450)
+        let frames: [ObjectID: CGRect] = ["terminal": terminal, "code": code, "follow": follow, "right": right]
+        func others(_ id: ObjectID?) -> [(id: ObjectID, frame: CGRect)] { frames.filter { $0.key != id }.sorted { $0.key < $1.key }.map { ($0.key, $0.value) } }
+        #expect(Layout.neighbor(of: code, among: [terminal, follow], toward: .down) == 1, "plain geometry picks the follow tile")
+
+        var walk = TileWalk()
+        #expect(walk.step(from: "terminal", frame: terminal, toward: .up, among: others("terminal")) == "code")
+        #expect(walk.step(from: "code", frame: code, toward: .down, among: others("code")) == "terminal", "back where it came from")
+        #expect(walk.step(from: "terminal", frame: terminal, toward: .up, among: others("terminal")) == "code")
+        #expect(walk.step(from: "code", frame: code, toward: .right, among: others("code")) == "right")
+        #expect(walk.step(from: "right", frame: right, toward: .left, among: others("right")) == "code", "a run unwinds move by move")
+        #expect(walk.step(from: "code", frame: code, toward: .down, among: others("code")) == "terminal")
+
+        // Starting anywhere else forgets the trail: from the code tile, ↓ is plain geometry again.
+        #expect(walk.step(from: "terminal", frame: terminal, toward: .up, among: others("terminal")) == "code")
+        #expect(walk.step(from: "follow", frame: follow, toward: .left, among: others("follow")) == "terminal")
+        #expect(walk.step(from: "code", frame: code, toward: .down, among: others("code")) == "follow")
+        // A tile that is gone can't be gone back to: plain geometry instead.
+        #expect(walk.step(from: "follow", frame: follow, toward: .up, among: others("follow").filter { $0.id != "code" }) == "right")
+    }
+
+    /// ⌘W keeps going: the tile that takes the selection after the selected one closes.
+    @Test func theNearestTileByNeighborGeometryTakesOverAClosedOnesSelection() {
+        let closed = CGRect(x: 0, y: 0, width: 600, height: 400)
+        let below = CGRect(x: 100, y: 440, width: 600, height: 400)
+        let diagonal = CGRect(x: 620, y: 420, width: 300, height: 300)
+        let farRight = CGRect(x: 900, y: 0, width: 400, height: 400)
+        #expect(Layout.nearest(to: closed, among: [farRight, diagonal, below]) == 2, "in line and nearest along its heading")
+        #expect(Layout.nearest(to: closed, among: [farRight, diagonal]) == 0, "in line beats a nearer diagonal tile")
+        #expect(Layout.nearest(to: closed, among: [diagonal]) == 0)
+        let stacked = CGRect(x: 0, y: 0, width: 600, height: 400)
+        #expect(Layout.nearest(to: closed, among: [stacked]) == 0, "one exactly under it, which no heading reaches")
+        #expect(Layout.nearest(to: closed, among: []) == nil)
+    }
+
+    /// ⌘J: blocked agents first, then marked objects, each top to bottom; visiting a marked one
+    /// clears its marker, and the next press still moves on rather than starting over.
+    @Test func nextNeedsYouVisitsBlockedAgentsThenMarkersInReadingOrder() {
+        func object(_ id: ObjectID, _ type: ObjectType, y: Double, state: String? = nil) -> CanvasObject {
+            var props: [String: JSONValue] = [:]
+            if let state { props["lifecycle"] = .object(["state": .string(state), "message": .string("approve Edit?")]) }
+            return CanvasObject(id: id, type: type, frame: Frame(x: 0, y: y, w: 100, h: 100), z: 0, parent: nil, createdBy: .user, createdAt: Date(), props: .object(props))
+        }
+        let objects = Dictionary(uniqueKeysWithValues: [
+            object("lower-agent", .terminal, y: 900, state: "blocked"), object("upper-agent", .terminal, y: 0, state: "blocked"),
+            object("idle-agent", .terminal, y: -500, state: "idle"), object("note", .note, y: -900), object("code", .code, y: 300),
+            object("plain", .note, y: 50),
+        ].map { ($0.id, $0) })
+        var attention = Dictionary(uniqueKeysWithValues: ["code", "note", "upper-agent"].map { ($0, Attention(object: $0, message: "look", raisedBy: nil, raisedAt: Date())) })
+        let items = NeedsYouItem.all(objects, attention: attention)
+        #expect(items.map(\.id) == ["upper-agent", "lower-agent", "note", "code"])
+        #expect(items.first?.message == "approve Edit?" && items.first?.reason == .blocked)
+
+        var visited: [ObjectID] = []
+        var last: NeedsYouItem?
+        for _ in 0..<5 {
+            guard let next = NeedsYouItem.next(after: last, in: NeedsYouItem.all(objects, attention: attention)) else { break }
+            visited.append(next.id)
+            attention[next.id] = nil
+            last = next
+        }
+        #expect(visited == ["upper-agent", "lower-agent", "note", "code", "upper-agent"], "blocked agents stay until answered")
+        #expect(NeedsYouItem.next(after: nil, in: []) == nil)
+    }
+
     @Test func fileSearchRanksFileNamesOverScatteredPathMatches() {
         let index = FileIndex(paths: [
             "docs/maintenance.md",

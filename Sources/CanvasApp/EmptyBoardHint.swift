@@ -19,7 +19,8 @@ final class EmptyBoardHint: NSVisualEffectView {
         stack.alignment = .centerX
         stack.spacing = 14
         let lines: [(String, NSFont, NSColor)] = [
-            ("Press ⌘T for a terminal, then run your agent: omp, claude, or codex.", .systemFont(ofSize: 15, weight: .medium), .labelColor),
+            ("Press ⌘T for a terminal, then run any agent CLI.", .systemFont(ofSize: 15, weight: .medium), .labelColor),
+            ("omp, claude, codex, gemini, and opencode report when they need you, follow their reads, and get your mentions.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("Or right-click anywhere → New Terminal Here.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("Hyper is ⌃⌥⇧⌘: Hyper-click code, notes, shapes, or web pages to point your agent at them.", .systemFont(ofSize: 13), .secondaryLabelColor),
         ]

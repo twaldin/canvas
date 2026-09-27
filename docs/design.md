@@ -173,6 +173,9 @@ Command Line Tools ship no Instruments, so the spike measured with `footprint`, 
 | Agent-like status line (20 redraws/s, 20 s) in a live terminal, window on another Space | 0.93 s CPU | 0.04 s CPU |
 | 12 tiles zoomed out and back in: card images held | 126 MB | 13 MB while zoomed out, <1 MB after |
 | Zoom-out with N terminals: main-thread `zmx history` calls | N × ~40 ms | 0 |
+| 3 idle omp + 1 shell, window minimized after being shown once (interrupt wakeups/s, from `proc_pid_rusage`) | ~50–56/s (Ghostty-focused surfaces' timers) | 2–5/s |
+| Same, window shown, nothing focused (`top` idlew/s, CPU) | 24/s, 0.9% | 0.2/s, 0.0% |
+| Shell printing 50 lines/s, window minimized (interrupt wakeups/s, CPU) | 88/s, 2.6 ms/s | 28/s, 1.7 ms/s |
 
 Code tiles (astra-skyblock replica, 205 objects with 62 code tiles; every code tile visited at 100% and back to fit, then a fixed pan/zoom sequence with three ⌘9↔⌘0 transitions): the TextKit 2 tile left the app at 559 MB footprint (+267 MB over the fresh board, ~4.3 MB per code tile) and spent 5.19 s CPU on the sequence; drawing only visible rows from a compact model (no NSScrollView, nothing in the window while not live) leaves it at 319 MB (+19 MB, ~0.3 MB per tile) and 2.93 s CPU.
 

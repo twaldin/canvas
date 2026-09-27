@@ -2,6 +2,8 @@
 # Build Canvas and assemble .build/Canvas.app (ad-hoc signed) so macOS and window managers
 # treat it as a real application. Usage: scripts/bundle.sh [debug|release]
 # CANVAS_VERSION (default 0.1) and CANVAS_BUILD (default 1) set the bundle version (releases).
+# CANVAS_BUNDLE_APP assembles it elsewhere (a frozen copy for studies), leaving the bundle a
+# running dev instance launched from .build/Canvas.app untouched.
 set -eu
 config="${1:-debug}"
 version="${CANVAS_VERSION:-0.1}"
@@ -10,7 +12,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo"
 swift build -j 4 -c "$config" --product Canvas
 bin="$(swift build -c "$config" --show-bin-path)"
-app="$repo/.build/Canvas.app"
+app="${CANVAS_BUNDLE_APP:-$repo/.build/Canvas.app}"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/clients/ts"
 cp "$bin/Canvas" "$app/Contents/MacOS/Canvas"

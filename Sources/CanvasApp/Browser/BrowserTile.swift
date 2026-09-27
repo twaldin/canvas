@@ -72,11 +72,11 @@ final class BrowserTile: NSView, TileContent {
     /// The badge's list of the page's errors, while open.
     fileprivate var problemsList: PageProblemsView?
     /// The page that didn't load, shown in place of a blank page (`BrowserLoadFailure`), the
-    /// failed loads of that address in a row, and the pending automatic retry.
+    /// failed loads of that address in a row, and the pending automatic retry or watch.
     private(set) var loadFailure: BrowserLoadFailure?
     private let failureView = BrowserFailureView()
     private var failedLoads: (url: URL, count: Int)?
-    private var retryWork: DispatchWorkItem?
+    private var retryTask: Task<Void, Never>?
 
     init(object: CanvasObject, board: Board) {
         objectID = object.id
@@ -314,8 +314,8 @@ final class BrowserTile: NSView, TileContent {
         drivenTimer?.invalidate()
         drivenTimer = nil
         // A failed page stays failed until the web view comes back and tries again.
-        retryWork?.cancel()
-        retryWork = nil
+        retryTask?.cancel()
+        retryTask = nil
         guard let webView else { return }
         observations = []
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
@@ -446,7 +446,8 @@ final class BrowserTile: NSView, TileContent {
     /// A main-frame load failed: the page area says so ("Can't reach localhost:5391 ·
     /// Connection refused", a Retry button) instead of staying blank, the old page's title
     /// goes (the title bar falls back to the address), and a local address tries again by
-    /// itself (`BrowserLoadFailure.retryDelays`). Quiet: no alert, no marker.
+    /// itself (`BrowserLoadFailure.retryDelays`), then, while the tile is on screen, loads when
+    /// its server answers (`watchInterval`). Quiet: no alert, no marker.
     private func loadFailed(_ error: Error, webView: WKWebView) {
         let error = error as NSError
         let failing = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? webView.url ?? object.props["url"]?.string.flatMap(BrowserURL.normalize)
@@ -460,17 +461,35 @@ final class BrowserTile: NSView, TileContent {
         if !chrome.isEditing { chrome.setAddress(url.absoluteString) }
         if object.props["pageTitle"] != nil { try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .null])) }
         NSLog("Canvas: browser %@ %@", objectID, failure.summary)
-        retryWork?.cancel()
-        retryWork = nil
-        guard let delay = failure.retryDelay else { return }
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated {
-                self?.retryWork = nil
+        retryTask?.cancel()
+        retryTask = nil
+        if let delay = failure.retryDelay {
+            retryTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                self?.retryTask = nil
                 self?.retryFailedLoad(restart: false)
             }
+        } else if failure.watches, isLive {
+            retryTask = Task { [weak self] in
+                guard await Self.waitForServer(at: url) else { return }
+                self?.retryTask = nil
+                self?.retryFailedLoad(restart: true)
+            }
         }
-        retryWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// True once something answers at `url` (any HTTP response to a HEAD request, asked every
+    /// `BrowserLoadFailure.watchInterval`); false when cancelled first. Loads no page.
+    private nonisolated static func waitForServer(at url: URL) async -> Bool {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: 2)
+        request.httpMethod = "HEAD"
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(BrowserLoadFailure.watchInterval))
+            guard !Task.isCancelled else { return false }
+            if (try? await URLSession.shared.data(for: request)) != nil { return true }
+        }
+        return false
     }
 
     /// Loads the failed address again; the failure stays up until the page commits, so a
@@ -479,16 +498,16 @@ final class BrowserTile: NSView, TileContent {
     private func retryFailedLoad(restart: Bool) {
         guard let failure = loadFailure else { return }
         if restart { failedLoads = nil }
-        retryWork?.cancel()
-        retryWork = nil
+        retryTask?.cancel()
+        retryTask = nil
         failureView.showRetrying()
         load(failure.url.absoluteString)
     }
 
     /// The page committed (or another address was asked for): the failure is over.
     private func clearLoadFailure() {
-        retryWork?.cancel()
-        retryWork = nil
+        retryTask?.cancel()
+        retryTask = nil
         failedLoads = nil
         guard loadFailure != nil else { return }
         loadFailure = nil
@@ -689,12 +708,17 @@ final class BrowserTile: NSView, TileContent {
         isLive = live
         if live {
             attach()
-            // Back in view after its retries ran out (a dev server that took longer): try again.
-            if loadFailure != nil, retryWork == nil, webView?.isLoading != true { retryFailedLoad(restart: true) }
+            // Back in view after its retries ran out or its watch stopped: try again.
+            if loadFailure != nil, retryTask == nil, webView?.isLoading != true { retryFailedLoad(restart: true) }
         } else {
             readyWaiters.removeAll()
             setPageActivity(false)
             placePage()
+            // Only a tile on screen watches for its server.
+            if loadFailure?.watches == true {
+                retryTask?.cancel()
+                retryTask = nil
+            }
         }
     }
 

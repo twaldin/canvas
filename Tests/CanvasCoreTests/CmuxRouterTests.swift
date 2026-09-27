@@ -292,18 +292,20 @@ struct BrowserLoadFailureTests {
         BrowserLoadFailure(url: URL(string: address)!, domain: domain, code: code, description: "The operation couldn’t be completed.", attempt: attempt)
     }
 
-    @Test func aLocalServerNotUpYetIsRetriedWithBackoffThenWaitsForRetry() throws {
+    @Test func aLocalServerNotUpYetIsRetriedWithBackoffThenWatchedUntilItAnswers() throws {
         let refused = try #require(failure("http://localhost:5391/", NSURLErrorCannotConnectToHost))
         #expect(refused.headline == "Can't reach localhost:5391" && refused.detail == "Connection refused · trying again in 1 s")
         #expect(refused.summary == "can't reach localhost:5391 (connection refused)")
-        let delays = (1...6).map { failure("http://127.0.0.1:3000/app", NSURLErrorCannotConnectToHost, attempt: $0)?.retryDelay }
-        #expect(delays == BrowserLoadFailure.retryDelays.map(Optional.some) + [nil], "a few tries, further apart, then Retry is the user's")
-        #expect(failure("http://localhost:5391/", NSURLErrorCannotConnectToHost, attempt: 6)?.detail == "Connection refused")
+        let attempts = (1...6).compactMap { failure("http://127.0.0.1:3000/app", NSURLErrorCannotConnectToHost, attempt: $0) }
+        #expect(attempts.map(\.retryDelay) == BrowserLoadFailure.retryDelays.map(Optional.some) + [nil], "a few tries, further apart")
+        #expect(attempts.map(\.watches) == [false, false, false, false, false, true], "then the server is watched instead")
+        #expect(attempts[5].detail == "Connection refused · loads when the server answers")
         #expect(failure("http://app.localhost:8080/", NSURLErrorTimedOut)?.retryDelay == 1)
     }
 
     @Test func remoteAndPermanentFailuresWaitForTheUserAndCancellationsAreNoFailure() {
         #expect(failure("https://example.com/", NSURLErrorCannotConnectToHost)?.retryDelay == nil, "a remote site waits for Reload")
+        #expect(failure("https://example.com/", NSURLErrorCannotConnectToHost, attempt: 6)?.watches == false, "nor is it watched")
         #expect(failure("https://nosuch.example/", NSURLErrorCannotFindHost)?.detail == "Server not found")
         #expect(failure("http://localhost:5391/", NSURLErrorSecureConnectionFailed)?.retryDelay == nil, "retrying can't fix a bad certificate")
         #expect(failure("http://localhost:5391/", NSURLErrorCancelled) == nil, "a navigation that was superseded")

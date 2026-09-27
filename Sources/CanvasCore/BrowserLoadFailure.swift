@@ -4,7 +4,8 @@ import Foundation
 /// offline): what the tile says in place of a blank page, and when it tries again. A dev server
 /// started in a terminal beside the tile comes up seconds after the tile first asks (every tile
 /// reloads at launch while the server's terminal restarts its command), so a local address is
-/// retried a few times with backoff; a remote one waits for Reload.
+/// retried a few times with backoff, then watched quietly until its server answers (one started
+/// minutes later); a remote one waits for Reload.
 public struct BrowserLoadFailure: Equatable, Sendable {
     public let url: URL
     /// What went wrong, in a few lowercase words ("connection refused").
@@ -15,6 +16,9 @@ public struct BrowserLoadFailure: Equatable, Sendable {
 
     /// Waits before each automatic retry of a local address, in order: about half a minute in all.
     public static let retryDelays: [TimeInterval] = [1, 2, 4, 8, 15]
+    /// After the retries, how often a local address the tile still shows is asked, quietly (no
+    /// page load, so nothing flickers), whether its server answers yet.
+    public static let watchInterval: TimeInterval = 5
 
     /// Nil for errors that aren't a failed page: a cancelled or superseded navigation, a
     /// response the page handed to a download, a policy decision.
@@ -71,10 +75,15 @@ public struct BrowserLoadFailure: Equatable, Sendable {
         return Self.retryDelays[attempt - 1]
     }
 
-    /// The line under the headline: the reason, and the retry when one is due.
+    /// A local address whose retries are spent: the tile loads it again when its server answers
+    /// (`watchInterval`).
+    public var watches: Bool { retries && attempt > Self.retryDelays.count }
+
+    /// The line under the headline: the reason, and the retry or the wait when one is due.
     public var detail: String {
-        guard let delay = retryDelay else { return reason.prefix(1).uppercased() + reason.dropFirst() }
-        return "\(reason.prefix(1).uppercased() + reason.dropFirst()) · trying again in \(Int(delay)) s"
+        let reason = reason.prefix(1).uppercased() + reason.dropFirst()
+        if let delay = retryDelay { return "\(reason) · trying again in \(Int(delay)) s" }
+        return watches ? "\(reason) · loads when the server answers" : reason
     }
 
     /// For agents (a render's reason): "can't reach localhost:5391 (connection refused)".

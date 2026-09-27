@@ -24,9 +24,9 @@ Read these before you build anything; each one cost earlier agents a round trip.
   A 20-object first draft overwhelms; a compact one gets read.
 - **Let the canvas do the geometry.** Omit `frame` and a new object lands in the free spot nearest your terminal:
   clear of every tile and group (other agents' too), inside the user's view when there's room within ~600 pt of your terminal, else beside you out of view: raise a marker (`view.attention`) on anything they should look at. Read the returned frame to place related objects.
-  From a script outside any tile, it lands nearest the centre of the user's view instead.
+  `frame: {w, h}` alone places that size the same way. From a script outside any tile, it lands nearest the centre of the user's view instead.
   For deliberate layouts use `size: "fit"` and the layout helpers (`layout.place`/`stack`/`grid`/`translate`, then `layout.check`), not hand-computed coordinates:
-  those collided with the follow tile and other agents' tiles.
+  those collided with the follow tile and other agents' tiles. `layout.check` lists code tiles meant to scroll under `scrolls`, not `overflow`; when `object.update` returns `overlaps`, move the object or grow it the other way.
 - **Renders go to a temp file.** `canvas render obj_…` without `--out` writes a new PNG under `$TMPDIR/canvas-renders/` and returns its `path`.
   Never pass an `--out` inside the repo: it shows up in `git status`.
 - **Write locations as `path:line`.** The user can ⌘-click `src/a.ts:42`, `:42:7`, `:10-20` or `#L10-20` in your terminal output to open that code beside your terminal
@@ -229,8 +229,8 @@ A code tile shows the whole current file, scrolled so `range` sits a few rows be
 ### Changes tiles
 
 To show the user what you changed, create a changes tile instead of an HTML diff: `canvas object.create --type changes --json '{"props":{},"size":"fit"}'`.
-Props: `base` (default `HEAD`: uncommitted work, staged or not; also `merge-base` or a commit), optional `root` (another worktree of the board's repo, e.g. `"../wt-agent"`: review your worktree on the board where your terminal is), `paths` (files/dirs in it) and `title`.
-Creating it again with the same `root`/`base`/`paths` returns your existing tile (`reused: true`). The user stages or discards per file, hunk, or selected lines (each one ⌘Z) and Hyper-clicks lines to ask you about them.
+Props: `base` (default `HEAD`: uncommitted work, staged or not; `merge-base`: everything the branch changed, a PR's view; or a commit), optional `root` (another worktree of the board's repo, e.g. `"../wt-agent"`: review your worktree on the board where your terminal is), `paths` (files/dirs in it) and `title`.
+Creating it again with the same `root`/`base`/`paths` returns your existing tile (`reused: true`). The user stages, unstages or discards per file, hunk, or selected lines (each one ⌘Z; committed hunks can't be discarded) and switches the base in the header.
 Read what they kept with `object.get`: `changes.files[].hunks[]` carry `status` (unstaged|partial|staged|committed) and the unified `lines`, so no render is needed; `props.reviewed[]` lists what they staged or discarded, with the patch. Every field: `references/api.md` "Changes tiles".
 
 ### HTML explainers
@@ -257,6 +257,7 @@ Read it before building an explainer.
 - `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "blue", "fill": "none" | "semi" | "solid"}` with a `frame`; a rect drawn around tiles *encloses* them.
 - `arrow`: `{"from": {"object": "obj_…"}, "to": {"object": "obj_…", "lines": {"start": 41, "end": 48}}, "relation": "calls", "label": "…", "route": "avoid"}`;
   an end bound to a code tile's `lines` attaches at that row (see Known surprises). `relation` is the machine-readable edge, `label` what the user reads.
+  For a walkthrough, join the stops with `"relation": "next_step"` arrows (label them "1 · parse"): ⌥⌘→/⌥⌘← step along them, centring each stop; don't reproduce the geometric order. Links to lines a tile already shows (exactly, or inside a captioned tile's range) go to that tile.
 - `group`: `{"members": [ids], "title": "…", "color": "blue"}` is a titled, tinted region that always wraps its members; use one per lane or cluster instead of a rect plus a label.
 
 Colors, fills, text sizes, arrow routing and binding rules: `references/shapes.md`.
@@ -270,6 +271,9 @@ The page's viewport is the tile's body (`innerWidth` = frame width, `innerHeight
 A browser tile's `title` is yours and never overwritten; the page's own title is `props.pageTitle` and doesn't bump `rev`.
 Pages you drive stay live for 60 s wherever the tile is; all tiles share one signed-out WebKit profile.
 Leave tiles and servers the user is looking at until they say they're done with them ("looks good" isn't done). Don't promise a page refreshes by itself after you change what it shows: reload or render it and check.
+Tiles record the page's console, uncaught errors and failed requests from load: after an edit and reload, read `canvas get <tile>` → `page.errors`/`page.entries` (pass `page.cursor` as `--since` next time) before calling it clean; omp's `tab.console()`/`errors()`/`requests()` see load too.
+Also read a dev-server terminal on the board after edits (`agent.list` program `next dev`, `vite`…): `canvas agent.read --target <it> --lines 40`. Compile errors and 500s show there. Report, don't restart it unasked.
+A page that didn't load shows "Can't reach host:port" (local servers retry by themselves; `view.render` gives the reason). Never open the Web Inspector yourself.
 Eval and CSP limits, rendering unloaded pages, and history credit: `references/browser.md`.
 
 ## Follow mode
@@ -322,13 +326,13 @@ canvas agent.read --target reviewer --since prompt   # only what came after your
 ```
 
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
-Then `agent.read --since prompt` returns just the reply (`--lines N` gives the plain tail), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`).
+Then `agent.read --since prompt` returns just the reply (`--lines N` gives the plain tail), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`; `cutOff` means the turn died on that error: say so, don't treat it as done).
 Hand over board objects instead of describing them: `agent.prompt` `mentions=[{"object": id}, {"object": code_id, "lines": {"start": 41, "end": 48}}]` reach the receiver as hidden context naming your terminal.
 Kind `omp`, `claude`, `codex`, `gemini` (before 0.60) or `opencode` reports a lifecycle (a fresh Codex from its first prompt). Kind `unknown` (a shell, aider, another CLI) has none:
 `agent.prompt` works, `agent.wait` fails once 15 s pass without a first report (enough for an agent you just started), so poll `agent.read --since prompt`; `program` and `title` (e.g. Gemini's '✋ Action Required') still hint at its state.
 Claude Code and Gemini CLI run no hook when their user presses Esc or denies an approval, so their tile keeps its last state until the next prompt.
 Don't prompt an agent that is `blocked`; it is waiting for its user (omp reports every approval prompt as blocked, nested ones included, and the user sees it as a ring and bubble on its terminal, on the tab, and as an edge pill when off screen).
-`agent.prompt` to a `blocked` agent fails with `conflict` quoting what it waits on. Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Tell the user instead; force only when you know the dialog is gone.
+`agent.prompt` to a `blocked` agent fails with `conflict` quoting what it waits on, and so does one whose foreground program isn't its agent (tmux, nvim): tell the user. Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Force only when you know the dialog is gone.
 `board.open --select true` switches the user's tab: only when they asked to see that board.
 
 ## Compositions
@@ -360,7 +364,7 @@ Then address it with `board: <id>` (from the result) on every call, and start ag
 ⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal Esc goes to the program: ⌘Esc leaves any tile);
 ⌘J goes to the next thing that needs the user (blocked agents, marked tiles, then finished agents not seen yet); ⌘[ / ⌘] go back and forward through their navigation; ⌘W closes the selected tile or focused terminal; ⌘F finds in a code tile;
 ⌘9 fits everything, ⌘0 is 100%, ⌘=/⌘- zoom; ⌘T opens a terminal; ⌘G groups the selection; ⌘Z undoes the user's last change or an agent's (never navigation, follow re-aims or the app's own bookkeeping), and names an agent's step it undoes.
-Hyper-click (⌃⌥⇧⌘-click) stages a mention for the terminal the tray shows; Hyper-V pastes staged mentions into a terminal whose agent has no integration.
+Hyper-click (⌃⌥⇧⌘-click) or Edit › Mention ⇧⌘M (from the keyboard; `m` in a changes tile) stages a mention for the terminal the tray shows ("→ name ▾" picks another); Hyper-V pastes staged mentions into a terminal whose agent has no integration.
 ⌘-click a `path:line` in terminal output to open it in the terminal's preview tile (⌥⌘-click keeps a separate tile). Code › Go to Definition ⌃⌘J, Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter); without a language server they answer from text search.
-File › Review Changes ⇧⌘R (goes to an existing one for the same root and base); right-click empty canvas for New Terminal/Note/Browser Here; right-click a terminal for Follow Files. Every action is also in the menu bar (Help › search).
+File › Review Changes ⇧⌘R (goes to an existing one for the same root and base) and Review Branch; right-click empty canvas for New Terminal/Note/Browser Here; right-click a terminal for Follow Files. View › Hide Canvas Chrome for presenting. Every action is also in the menu bar (Help › search).
 Help › Canvas Basics is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" from it, not from Canvas's source.

@@ -314,6 +314,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func saveAsPNG(_ sender: Any?) { keyController?.saveAsPNG(sender) }
     @objc func saveHTMLTile(_ sender: Any?) { keyController?.saveHTMLTile(sender) }
     @objc func openHTMLTileInBrowser(_ sender: Any?) { keyController?.openHTMLTileInBrowser(sender) }
+    @objc func copyNoteAsMarkdown(_ sender: Any?) { keyController?.copyNoteAsMarkdown(sender) }
+    @objc func saveNoteAsMarkdown(_ sender: Any?) { keyController?.saveNoteAsMarkdown(sender) }
     @objc func showWebInspector(_ sender: Any?) { keyController?.showWebInspector(sender) }
     @objc func snapshotPage(_ sender: Any?) { keyController?.snapshotPage(sender) }
     @objc func clearBrowsingData(_ sender: Any?) {
@@ -380,6 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Export Selection as PNG…", #selector(saveAsPNG(_:)), "E", [.command, .shift]),
             item("Save HTML Tile as HTML…", #selector(saveHTMLTile(_:)), ""),
             item("Open HTML Tile in Browser", #selector(openHTMLTileInBrowser(_:)), ""),
+            item("Save Note as Markdown…", #selector(saveNoteAsMarkdown(_:)), ""),
             // The focused or selected browser tile's page, frozen as an image tile beside it.
             item("Snapshot Page to Image", #selector(snapshotPage(_:)), ""),
             .separator(),
@@ -393,6 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .separator(),
             item("Copy", #selector(NSText.copy(_:)), "c"),
             item("Copy as Image", #selector(copyAsImage(_:)), "C", [.command, .shift]),
+            item("Copy Note as Markdown", #selector(copyNoteAsMarkdown(_:)), ""),
             item("Paste", #selector(NSText.paste(_:)), "v"),
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
             item("Delete Selection", #selector(deleteSelection(_:)), "\u{8}"),

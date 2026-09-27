@@ -669,8 +669,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func copyAsImage(_ sender: Any?) { canvas.copySelectionAsImage() }
     @objc func saveAsPNG(_ sender: Any?) { canvas.saveSelectionAsPNG() }
-    @objc func saveHTMLTile(_ sender: Any?) { selectedHTMLTile.map(canvas.saveHTML) }
-    @objc func openHTMLTileInBrowser(_ sender: Any?) { selectedHTMLTile.map(canvas.openHTMLInBrowser) }
+    @objc func saveHTMLTile(_ sender: Any?) { selected(.html).map(canvas.saveHTML) }
+    @objc func openHTMLTileInBrowser(_ sender: Any?) { selected(.html).map(canvas.openHTMLInBrowser) }
+    @objc func copyNoteAsMarkdown(_ sender: Any?) { selected(.note).map(canvas.copyNoteMarkdown) }
+    @objc func saveNoteAsMarkdown(_ sender: Any?) { selected(.note).map(canvas.saveNoteMarkdown) }
 
     /// View ▸ Show Web Inspector: Safari's Web Inspector for the focused, else the one selected,
     /// browser tile's page.
@@ -691,10 +693,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         return (id, browser)
     }
 
-    /// The one selected object, when it is an HTML tile (Save as HTML, Open in Browser).
-    private var selectedHTMLTile: ObjectID? {
+    /// The one selected object, when it is of `type` (an HTML tile's Save as HTML and Open in
+    /// Browser, a note's Copy and Save as Markdown).
+    private func selected(_ type: ObjectType) -> ObjectID? {
         let selection = canvas.selection
-        guard selection.count == 1, let id = selection.first, board.objects[id]?.type == .html else { return nil }
+        guard selection.count == 1, let id = selection.first, board.objects[id]?.type == type else { return nil }
         return id
     }
 
@@ -747,7 +750,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return true
         case #selector(clearAttentionMarkers(_:)): return !board.attention.isEmpty
         case #selector(copyAsImage(_:)), #selector(saveAsPNG(_:)): return !selection.isEmpty
-        case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selectedHTMLTile != nil
+        case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selected(.html) != nil
+        case #selector(copyNoteAsMarkdown(_:)), #selector(saveNoteAsMarkdown(_:)): return selected(.note) != nil
         case #selector(showWebInspector(_:)): return inspectableBrowser != nil
         case #selector(snapshotPage(_:)): return keyboardBrowser != nil
         case #selector(toggleFollowFiles(_:)):

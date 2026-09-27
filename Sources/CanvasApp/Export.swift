@@ -3,7 +3,8 @@ import CanvasCore
 import UniformTypeIdentifiers
 
 /// Sharing what's on the board: the selection as a picture (drawn by `view.render` as View ›
-/// Hide Canvas Chrome shows it), and an HTML tile as a self-contained page.
+/// Hide Canvas Chrome shows it), an HTML tile as a self-contained page, and a note as its
+/// markdown.
 extension CanvasView {
     /// Pixels per canvas point for exported pictures: sharp on Retina screens and in documents.
     static let exportScale = 2.0
@@ -34,8 +35,9 @@ extension CanvasView {
         let drawn = Set(selection.filter { [.shape, .arrow].contains(board.objects[$0]?.type) })
         let namesake = SelectionScope.namesake(selection: selection, groups: selectionGroups, drawn: drawn)
         var title = namesake.flatMap { board.objects[$0] }.map { $0.type == .group ? $0.props["title"]?.string ?? "" : TileFrameView.title(for: $0) }
-        // An image tile's title is its file name: `chart.png` saves as `chart.png`, not `chart.png.png`.
-        if let name = title, LocalImage.extensions.contains((name as NSString).pathExtension.lowercased()) || (name as NSString).pathExtension.lowercased() == "html" {
+        // An image tile's title is its file name: `chart.png` saves as `chart.png`, not
+        // `chart.png.png`; so is a page or a note titled `report.html` or `notes.md`.
+        if let name = title, LocalImage.extensions.contains((name as NSString).pathExtension.lowercased()) || ["html", "md"].contains((name as NSString).pathExtension.lowercased()) {
             title = ((name as NSString).lastPathComponent as NSString).deletingPathExtension
         }
         return ExportFile.name(title, ext: ext)
@@ -135,6 +137,45 @@ extension CanvasView {
                 }
             } catch {
                 self?.exportFailed("Open in Browser", error)
+            }
+        }
+    }
+
+    /// Markdown files (`.md`), as the save sheet offers them.
+    private static let markdownType = UTType("net.daringfireball.markdown") ?? .plainText
+
+    /// The note's markdown as stored (what `object.get` returns: links, excerpt fences and their
+    /// anchors as written), not its rendering.
+    private func noteMarkdown(_ id: ObjectID) -> String? {
+        guard let note = board.objects[id], note.type == .note else { return nil }
+        return note.props["markdown"]?.string ?? ""
+    }
+
+    /// Copy as Markdown (a note's menu, Edit › Copy Note as Markdown): the note's markdown as
+    /// plain text on the general pasteboard, for a doc, an incident or a chat.
+    func copyNoteMarkdown(_ id: ObjectID) {
+        guard let markdown = noteMarkdown(id) else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(markdown, forType: .string)
+        NSLog("Canvas: copied note %@ as %d characters of markdown", id, markdown.count)
+    }
+
+    /// Save as Markdown… (a note's menu, File › Save Note as Markdown…): the same text in a
+    /// `.md` file named after the note, through the export save sheet.
+    func saveNoteMarkdown(_ id: ObjectID) {
+        guard let window, noteMarkdown(id) != nil else { return }
+        let panel = exportPanel(Self.markdownType, ext: "md")
+        panel.beginSheetModal(for: window) { [weak self, panel] response in
+            guard let self, response == .OK, let url = panel.url, let markdown = self.noteMarkdown(id) else { return }
+            Self.rememberExportDirectory(of: url)
+            Task { @MainActor in
+                do {
+                    try await Self.write(Data(markdown.utf8), to: url)
+                    NSLog("Canvas: saved note %@ as %@", id, url.path)
+                } catch {
+                    self.exportFailed("Save as Markdown", error)
+                }
             }
         }
     }

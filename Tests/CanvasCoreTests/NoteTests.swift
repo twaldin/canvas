@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import CanvasCore
@@ -73,7 +74,7 @@ struct NoteFenceTests {
 struct NoteLinkTests {
     /// Each linked run of the rendered note: its text and where it goes.
     func links(_ markdown: String) -> [String: NoteLink] {
-        let text = NoteRenderer(excerpts: [:]).render(NoteMarkdown.parse(markdown), placeholder: "")
+        let text = NoteRenderer(excerpts: [:], width: 400).render(NoteMarkdown.parse(markdown), placeholder: "")
         var found: [String: NoteLink] = [:]
         text.enumerateAttribute(.noteLink, in: NSRange(location: 0, length: text.length)) { value, range, _ in
             guard let encoded = value as? String else { return }
@@ -100,6 +101,124 @@ struct NoteLinkTests {
     @Test func aMarkdownLinksTextKeepsItsDestination() {
         let found = links("[core.py:10](https://example.com/blame)")
         #expect(found == ["core.py:10": .web(URL(string: "https://example.com/blame")!)])
+    }
+}
+
+@MainActor
+struct NoteTableTests {
+    /// The incident persona's evidence timeline (round 8): a long event and a long citation.
+    let timeline = """
+    | UTC | event | evidence |
+    |---|---|---|
+    | 19:04:27.5 | First victim gets a 409 on the claim while the listing is still reserved by another buyer | incident-2026-09-26/api.jsonl:1092 |
+    | 19:04:31 | Retry storm | `api.jsonl:1101` |
+    """
+
+    func render(_ markdown: String, noteWidth: CGFloat) -> (text: NSAttributedString, renderer: NoteRenderer) {
+        let renderer = NoteRenderer(excerpts: [:], width: noteWidth - 2 * ObjectMeasure.noteInset.width)
+        return (renderer.render(NoteMarkdown.parse(markdown), placeholder: ""), renderer)
+    }
+
+    /// Each table row as TextKit lays it out in the note: its text, the lines it was given
+    /// (line separators), and the lines TextKit made of it, laid out as the note display does.
+    func rows(_ text: NSAttributedString, noteWidth: CGFloat) -> [(text: String, lines: Int, laidOut: Int, widest: CGFloat)] {
+        let content = NSTextContentStorage()
+        let layout = NSTextLayoutManager()
+        let delegate = NoteLayoutDelegate()
+        layout.delegate = delegate
+        content.addTextLayoutManager(layout)
+        let container = NSTextContainer(size: CGSize(width: noteWidth - 2 * ObjectMeasure.noteInset.width, height: 0))
+        container.lineFragmentPadding = ObjectMeasure.noteLineFragmentPadding
+        layout.textContainer = container
+        content.attributedString = text
+        layout.ensureLayout(for: layout.documentRange)
+        var rows: [(String, Int, Int, CGFloat)] = []
+        layout.enumerateTextLayoutFragments(from: layout.documentRange.location, options: [.ensuresLayout]) { fragment in
+            let string = ((fragment.textElement as? NSTextParagraph)?.attributedString.string ?? "").trimmingCharacters(in: .newlines)
+            if string.contains("\t") {
+                let widest = fragment.textLineFragments.map { $0.typographicBounds.maxX }.max() ?? 0
+                rows.append((string, string.components(separatedBy: "\u{2028}").count, fragment.textLineFragments.count, widest))
+            }
+            return true
+        }
+        withExtendedLifetime(delegate) {}
+        return rows
+    }
+
+    /// A row's column `index` as it reads down its lines.
+    func column(_ index: Int, of row: String, joinedBy separator: String = " ") -> String {
+        row.components(separatedBy: "\u{2028}").compactMap { line in
+            let cells = line.components(separatedBy: "\t")
+            return index < cells.count && !cells[index].isEmpty ? cells[index] : nil
+        }.joined(separator: separator)
+    }
+
+    @Test func longCellsWrapInTheirColumnsWithinTheNotesWidth() throws {
+        let (text, renderer) = render(timeline, noteWidth: 420)
+        #expect(renderer.tableShortfall == 0)
+        let laidOut = rows(text, noteWidth: 420)
+        #expect(laidOut.count == 3)
+        // The long event wraps onto lines of its own row; TextKit neither wraps nor cuts them again.
+        #expect(laidOut[1].lines > 1)
+        for row in laidOut {
+            #expect(row.laidOut == row.lines)
+            #expect(row.widest <= 420 - 2 * ObjectMeasure.noteInset.width)
+        }
+        // The event reads whole down its column, and the citation is one run that links whole.
+        #expect(column(1, of: laidOut[1].text) == "First victim gets a 409 on the claim while the listing is still reserved by another buyer")
+        #expect(column(2, of: laidOut[1].text) == "incident-2026-09-26/api.jsonl:1092")
+        let citation = (text.string as NSString).range(of: "incident-2026-09-26/api.jsonl:1092")
+        #expect(citation.location != NSNotFound)
+        var linked = NSRange()
+        let link = text.attribute(.noteLink, at: citation.location, longestEffectiveRange: &linked, in: NSRange(location: 0, length: text.length)) as? String
+        #expect(link.flatMap(NoteLink.init(encoded:)) == .code(path: "incident-2026-09-26/api.jsonl", lines: LineRange(start: 1092, end: 1092)))
+        #expect(linked == citation)
+    }
+
+    @Test func tooNarrowForEveryWholeRunTheWidestBreaksFirst() throws {
+        let (text, renderer) = render(timeline, noteWidth: 340)
+        #expect(renderer.tableShortfall == 0)
+        let laidOut = rows(text, noteWidth: 340)
+        #expect(laidOut.allSatisfy { $0.laidOut == $0.lines })
+        // The timestamp stays whole; the widest run, the citation, breaks at a separator.
+        #expect(column(0, of: laidOut[1].text) == "19:04:27.5")
+        #expect(column(2, of: laidOut[1].text, joinedBy: "") == "incident-2026-09-26/api.jsonl:1092")
+        #expect(column(2, of: laidOut[1].text) != "incident-2026-09-26/api.jsonl:1092")
+    }
+
+    @Test func aTableThatFitsKeepsOneLinePerRow() {
+        let (text, renderer) = render(timeline, noteWidth: 1400)
+        #expect(renderer.tableShortfall == 0)
+        #expect(!text.string.contains("\u{2028}"))
+        #expect(rows(text, noteWidth: 1400).allSatisfy { $0.laidOut == 1 })
+    }
+
+    @Test func aCitationWiderThanItsColumnBreaksAfterAPathSeparatorAndLinksOnBothLines() throws {
+        let markdown = """
+        | at | evidence |
+        |---|---|
+        | 1 | incident-2026-09-26/api.jsonl:1092 |
+        """
+        let (text, renderer) = render(markdown, noteWidth: 160)
+        #expect(renderer.tableShortfall == 0)
+        let row = try #require(rows(text, noteWidth: 160).last)
+        #expect(row.laidOut == row.lines)
+        let pieces = row.text.components(separatedBy: "\u{2028}").map { $0.replacingOccurrences(of: "\t", with: "") }
+        #expect(pieces.count > 1)
+        #expect(pieces.dropLast().allSatisfy { $0.hasSuffix("/") || $0.hasSuffix("-") || $0.hasSuffix(".") || $0.hasSuffix(":") })
+        #expect(pieces.joined().hasSuffix("incident-2026-09-26/api.jsonl:1092"))
+        let second = (text.string as NSString).range(of: pieces[1])
+        let link = text.attribute(.noteLink, at: second.location, effectiveRange: nil) as? String
+        #expect(link.flatMap(NoteLink.init(encoded:)) == .code(path: "incident-2026-09-26/api.jsonl", lines: LineRange(start: 1092, end: 1092)))
+    }
+
+    @Test func aTableTooWideEvenWithWordsBrokenIsCutBySoMuch() {
+        let header = "| " + (1...12).map { "column \($0)" }.joined(separator: " | ") + " |"
+        let markdown = header + "\n|" + String(repeating: "---|", count: 12) + "\n| " + (1...12).map { "value \($0)" }.joined(separator: " | ") + " |"
+        let narrow = render(markdown, noteWidth: 300).renderer
+        #expect(narrow.tableShortfall > 0)
+        // As wide as it says, nothing is cut.
+        #expect(render(markdown, noteWidth: 300 + narrow.tableShortfall).renderer.tableShortfall == 0)
     }
 }
 

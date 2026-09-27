@@ -66,7 +66,7 @@ final class NoteTile: NSView, TileContent {
         editor.font = NoteRenderer.codeFont
         editor.textColor = .labelColor
         editor.backgroundColor = .textBackgroundColor
-        editor.textContainerInset = NSSize(width: 6, height: 8)
+        editor.textContainerInset = Self.editorInset
         // Misspellings are underlined, but nothing is changed as the user types: markdown and
         // code want their quotes, dashes and words as typed.
         editor.isContinuousSpellCheckingEnabled = true
@@ -121,6 +121,8 @@ final class NoteTile: NSView, TileContent {
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
         super.resizeSubviews(withOldSize: oldSize)
+        // A table's cells wrap to the note's width.
+        if let renderedWidth, renderedWidth != textWidth { renderDisplay() }
         placeBanner()
     }
 
@@ -171,11 +173,18 @@ final class NoteTile: NSView, TileContent {
         resolve()
     }
 
+    /// The width of the text container the note lays out in (`ObjectMeasure.noteInset`).
+    private var textWidth: CGFloat { bounds.width - 2 * ObjectMeasure.noteInset.width }
+    /// The width the display's text was rendered for, while that text depends on it (a table).
+    private var renderedWidth: CGFloat?
+
     /// Fills the on-screen text view. Only while live: a not-live note keeps its parsed document
     /// and excerpts but no text layout (about 1 MB per note on a large board).
     private func renderDisplay() {
         guard live || isEditing else { return }
-        let text = NoteRenderer(excerpts: excerpts, images: images).render(document, placeholder: Self.placeholder)
+        let renderer = NoteRenderer(excerpts: excerpts, images: images, width: textWidth)
+        let text = renderer.render(document, placeholder: Self.placeholder)
+        renderedWidth = renderer.fitsWidth ? textWidth : nil
         display.textStorage?.setAttributedString(text)
     }
 
@@ -536,7 +545,8 @@ final class NoteTile: NSView, TileContent {
 
     /// The banner sits at the top of the part of the note in view clear of the toolbar, so on
     /// a note taller than the window it is where the user is editing, not thousands of points
-    /// below at the note's end; it follows every pan and zoom while shown.
+    /// below at the note's end; it follows every pan and zoom while shown. At the note's top it
+    /// pushes the editor's text down instead of covering the first lines, where the user typed.
     private func showBanner(_ text: String) {
         banner.stringValue = text
         banner.isHidden = false
@@ -549,6 +559,7 @@ final class NoteTile: NSView, TileContent {
 
     private func hideBanner() {
         banner.isHidden = true
+        setEditorTopInset(0)
         if let viewportObserver { NotificationCenter.default.removeObserver(viewportObserver) }
         viewportObserver = nil
     }
@@ -562,6 +573,17 @@ final class NoteTile: NSView, TileContent {
         // Unflipped: the visible top is `maxY`. With none of the note in view, its top.
         let top = shown.isEmpty ? bounds.maxY : shown.maxY
         banner.frame = NSRect(x: 0, y: max(bounds.minY, top - height), width: bounds.width, height: height)
+        setEditorTopInset(top >= bounds.maxY ? height : 0)
+    }
+
+    /// The editor's usual text inset.
+    private static let editorInset = NSSize(width: 6, height: 8)
+
+    /// Room above the editor's first line beyond its usual inset (the banner's, at the top).
+    private func setEditorTopInset(_ extra: CGFloat) {
+        // `textContainerInset` is symmetric: the bottom gains the same room, below the last line.
+        let inset = NSSize(width: Self.editorInset.width, height: Self.editorInset.height + extra)
+        if editor.textContainerInset != inset { editor.textContainerInset = inset }
     }
 
     // MARK: TileContent
@@ -602,8 +624,8 @@ final class NoteTile: NSView, TileContent {
         let root = linkRoot
         let sources = NoteImages.sources(in: document)
         let pictures = await NoteImages.load(sources, root: root)
-        let text = NoteRenderer(excerpts: resolved, images: pictures).render(document, placeholder: Self.placeholder)
         let inset = NSSize(width: 8, height: 10)
+        let text = NoteRenderer(excerpts: resolved, images: pictures, width: request.size.width - 2 * inset.width).render(document, placeholder: Self.placeholder)
         let content = NSTextContentStorage()
         let layout = NSTextLayoutManager()
         let delegate = NoteLayoutDelegate()
@@ -755,6 +777,22 @@ final class NoteDisplayView: NSTextView {
         defer { DevPerf.record("draw.NoteDisplayView", since: perfStart) }
         super.draw(dirtyRect)
     }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(wrapping(newSize))
+    }
+}
+
+private extension NSTextView {
+    /// `size` as wide as the clip view showing this text view: the note's text views wrap at
+    /// their width and never scroll sideways. Under the canvas's magnification AppKit resolved
+    /// the editor's width autoresizing to a point more than its clip view's, and TextKit 2 then
+    /// widened it to its longest line (644 pt in a 560 pt note): after a conflict round the
+    /// editor no longer wrapped and cut every long line at the note's edge.
+    func wrapping(_ size: NSSize) -> NSSize {
+        guard let clip = superview as? NSClipView else { return size }
+        return NSSize(width: clip.bounds.width, height: size.height)
+    }
 }
 
 /// The rendered note's scroll view keeps overlay scrollers whatever the system setting, so the
@@ -795,6 +833,10 @@ final class NoteEditor: NSTextView {
 
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(wrapping(newSize))
     }
 
     override func resignFirstResponder() -> Bool {

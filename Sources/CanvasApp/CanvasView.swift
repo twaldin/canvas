@@ -1299,6 +1299,10 @@ final class CanvasView: NSScrollView {
             menu.addItem(MenuAction.item("Save as HTML…") { [weak self] in self?.saveHTML(id) })
             menu.addItem(MenuAction.item("Open in Browser") { [weak self] in self?.openHTMLInBrowser(id) })
         }
+        if count == 1, board.objects[id]?.type == .note {
+            menu.addItem(MenuAction.item("Copy as Markdown") { [weak self] in self?.copyNoteMarkdown(id) })
+            menu.addItem(MenuAction.item("Save as Markdown…") { [weak self] in self?.saveNoteMarkdown(id) })
+        }
         if count == 1, let browser = tiles[id]?.content as? BrowserTile {
             menu.addItem(MenuAction.item("Snapshot to Image") { [weak self] in self?.snapshotPage(id) })
             menu.addItem(MenuAction.item("Inspect Element", enabled: browser.canShowInspector) { [weak browser] in browser?.showInspector() })
@@ -1495,10 +1499,12 @@ final class CanvasView: NSScrollView {
     }
 
     /// The part of `view` in the viewport clear of the toolbar and tray, in `view`'s
-    /// coordinates; empty when none of it is.
+    /// coordinates; empty when none of it is. Its bounds, not its `visibleRect`: a tile's content
+    /// (unflipped, in its flipped frame) reported a visible rect a title bar's height above its
+    /// bounds, and a note's conflict banner placed by it covered the title bar.
     func clearVisibleRect(of view: NSView) -> NSRect {
         guard let document = documentView else { return .zero }
-        return view.visibleRect.intersection(view.convert(Self.docRect(clearViewport), from: document))
+        return view.bounds.intersection(view.convert(Self.docRect(clearViewport), from: document))
     }
 
     /// ⌘0: 100%. With a selection, the selection at 100%, centered clear of the chrome (its top

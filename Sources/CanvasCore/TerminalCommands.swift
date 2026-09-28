@@ -184,12 +184,14 @@ public struct TerminalCommandTracker: Sendable {
 
     /// The terminal's title changed. `promptTitle`: the title the integration gives a prompt in
     /// the directory the shell reported (`~/src/app`). True when this title is the command the
-    /// shell just started.
+    /// shell just started. Before the first prompt since Canvas attached, no title is: the title
+    /// a reattached session comes back with is the program's own (`π ! Add Per-Command Help…`),
+    /// which the header shows, not a command line it hides.
     @discardableResult
     public mutating func title(_ title: String, at date: Date, promptTitle: String?) -> Bool {
         let title = title.trimmingCharacters(in: .whitespaces)
-        guard !title.isEmpty else { return false }
-        if let promptAt, date.timeIntervalSince(promptAt) <= Self.promptWindow {
+        guard !title.isEmpty, let promptAt else { return false }
+        if date.timeIntervalSince(promptAt) <= Self.promptWindow {
             promptTitles.insert(title)
             return false
         }

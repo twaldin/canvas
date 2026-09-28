@@ -159,6 +159,15 @@ struct TerminalCommandTests {
         #expect(TerminalCommandTracker.promptTitle(cwd: "/tmp/x", home: "/Users/me") == "/tmp/x")
     }
 
+    @Test func aReattachedSessionsTitleIsTheProgramsNotACommandTheHeaderHides() {
+        // Canvas relaunched: the session comes back titled by omp, which waits on a question.
+        var tracker = TerminalCommandTracker()
+        let title = "π ! Add Per-Command Help"
+        let started = tracker.title(title, at: Date(), promptTitle: "~/src/app")
+        #expect(!started, "no prompt seen since attach: no command started")
+        #expect(TerminalName.label(name: "omp", title: title, command: tracker.running) == "omp · π ! Add Per-Command Help")
+    }
+
     @Test func aCommandStartsOnceItsTitleComesAndEndsAtTheNextPrompt() {
         // The header's status (the previous command's exit and duration) clears as one starts.
         var tracker = TerminalCommandTracker()

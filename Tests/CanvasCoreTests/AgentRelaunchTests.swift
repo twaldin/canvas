@@ -11,6 +11,8 @@ final class AgentRelaunchTests {
     var root: URL { dir.appendingPathComponent("root") }
     var spool: URL { dir.appendingPathComponent("agent-reports") }
     var servers: [SocketServer] = []
+    /// Text `agent.prompt` typed into a terminal, any launch.
+    var typed: [String] = []
 
     @MainActor
     struct Launch {
@@ -36,6 +38,10 @@ final class AgentRelaunchTests {
         let registry = BoardRegistry(store: BoardStore(directory: dir.appendingPathComponent("boards"), debounce: 60), agentReports: spool)
         let board = registry.open(root: root)
         let router = ApiRouter(registry: registry)
+        router.submitToTerminal = { [unowned self] _, _, text in
+            typed.append(text)
+            return true
+        }
         let socket = dir.appendingPathComponent("s\(servers.count)").path
         let server = SocketServer(path: socket) { request, connection in await router.handle(request, connection: connection) }
         try server.start()
@@ -132,5 +138,46 @@ final class AgentRelaunchTests {
         let after = try launch()
         try await eventually { after.board.objects[omp]?.props["agent"] == nil }
         #expect(after.board.objects[omp]?.props["lifecycle"] == nil, "a plain shell again")
+    }
+
+    @Test func anAgentThatAskedWhileCanvasWasAwayIsBlockedAndAPromptIsRefused() async throws {
+        let before = try launch()
+        let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
+        try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
+        before.quit()
+
+        // omp's `ask` came up while Canvas was closed; the extension spooled its blocked report.
+        try spooled(omp, seq: 101, ["kind": "omp", "state": "blocked", "source": "canvas-omp", "message": "Commit?"])
+        let after = try launch()
+        func lifecycle() -> JSONValue? { after.board.objects[omp]?.props["lifecycle"] }
+        try await eventually { lifecycle()?["state"] == .string("blocked") }
+        #expect(lifecycle()?["message"] == .string("Commit?") && lifecycle()?["restored"] == nil, "confirmed by the replay")
+        #expect(NeedsYouItem.all(after.board.objects, attention: after.board.attention).map(\.reason) == [.blocked], "⌘J goes to it")
+        let refused = try await call(after, "agent.prompt", ["target": .string(omp), "text": "Don't commit yet"])
+        #expect(refused["error"]?["code"] == .string("conflict"))
+        #expect(refused["error"]?["message"]?.string?.contains("Commit?") == true, "\(refused)")
+        #expect(typed.isEmpty, "Return never picked the dialog's default")
+    }
+
+    @Test func aWorkingStateNobodyConfirmedSinceTheRelaunchIsNotTypedInto() async throws {
+        let before = try launch()
+        let omp = before.board.create(type: .terminal, props: .object(["cwd": .string(root.path)])).id
+        try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
+        before.quit()
+
+        // An extension from before the spool dropped what it said while Canvas was closed.
+        let after = try launch()
+        let listed = try await call(after, "agent.list", [:])["result"]?["agents"]?.array?.first
+        #expect(listed?["lifecycle"]?["state"] == .string("working") && listed?["lifecycle"]?["restored"] == .bool(true), "\(String(describing: listed))")
+        let refused = try await call(after, "agent.prompt", ["target": .string(omp), "text": "Don't commit yet"])
+        #expect(refused["error"]?["code"] == .string("conflict"), "\(refused)")
+        #expect(typed.isEmpty)
+        let forced = try await call(after, "agent.prompt", ["target": .string(omp), "text": "Don't commit yet", "force": .bool(true)])
+        #expect(forced["result"]?["waitable"] == .bool(true))
+        #expect(typed == ["Don't commit yet"])
+        // Its next report is live again.
+        try after.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 101, source: "canvas-omp")
+        #expect(after.board.objects[omp]?.props["lifecycle"]?["restored"] == nil)
+        #expect(try await call(after, "agent.prompt", ["target": .string(omp), "text": "also the branch"])["ok"] == .bool(true))
     }
 }

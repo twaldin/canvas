@@ -18,6 +18,9 @@ extension CanvasView {
         let excluded = request.exclude
         let origin = CanvasDocumentView.origin
 
+        // Routes as the next frame draws them (a new `avoid` arrow's, not its provisional line):
+        // an arrow's outline can decide the region.
+        board.settleArrows?()
         // Targets first: with `full` their rendered content decides the region.
         var renders: [ObjectID: TileRender] = [:]
         var outlines: [ObjectID: Frame] = [:]
@@ -38,7 +41,14 @@ extension CanvasView {
                 }
                 outlines[id] = frame
             }
-            guard let union = RenderMath.union(Array(outlines.values)) else {
+            // An arrow between two targets is part of what they show: the region takes its whole
+            // route, so a detour around a tile is never cropped to a stub beside them.
+            let targets = Set(ids)
+            let between = board.objects.values.filter { object in
+                guard object.type == .arrow, !targets.contains(object.id), !excluded.hides(object), let spec = ArrowSpec(object.props) else { return false }
+                return [spec.from.objectID, spec.to.objectID].allSatisfy { $0.map(targets.contains) ?? false }
+            }
+            guard let union = RenderMath.union(Array(outlines.values) + between.compactMap { outline(of: $0.id) }) else {
                 throw ApiRouter.Failure("not_found", "nothing to render: the targets have no area")
             }
             region = RenderMath.snapped(union, padding: request.padding)

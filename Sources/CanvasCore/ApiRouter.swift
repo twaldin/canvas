@@ -1220,6 +1220,19 @@ public final class ApiRouter {
         for index in results.indices where sizes[index] != nil || Self.rescales(ops[index]["method"]?.string ?? "", ops[index]["params"] ?? .null) {
             results[index] = withOverlaps(results[index])
         }
+        // Arrows report the route the whole batch leaves them on (a tile a later op adds may be in
+        // their way), routed together once the step has closed.
+        let arrows = results.compactMap { result -> CanvasObject? in
+            guard result["object"]?["type"] == .string(ObjectType.arrow.rawValue), let id = result["object"]?["id"]?.string else { return nil }
+            return board.objects[id]
+        }
+        if !arrows.isEmpty {
+            let frames = Dictionary(board.reported(arrows).map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+            for index in results.indices {
+                guard let object = results[index]["object"], let id = object["id"]?.string, let frame = frames[id] else { continue }
+                results[index] = results[index].merging(.object(["object": object.merging(.object(["frame": try JSONValue.encode(frame)]))]))
+            }
+        }
         return .object(["results": .array(results), "revision": .number(Double(board.revision))])
     }
 

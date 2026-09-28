@@ -110,6 +110,7 @@ final class ShapeLayer: NSView {
         canvas.board.arrowPath = { [unowned layer] id in
             layer.items[id]?.arrow.map { $0.path.map(ShapeLayer.canvasPoint) }
         }
+        canvas.board.settleArrows = { [unowned layer] in layer.settleAvoiding() }
         let toolbar = DrawingToolbar(layer: layer)
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(toolbar)
@@ -269,15 +270,16 @@ final class ShapeLayer: NSView {
 
     /// `avoid` routes are a grid search around every tile, and any tile change may change them,
     /// so they re-route once per burst of changes (a batch, a multi-tile move), after it: on
-    /// the next main-queue turn, or before the layer draws or renders, whichever comes first.
-    /// Until then they keep the route the user sees.
+    /// the next main-queue turn, before the layer draws or renders, or before the API reports an
+    /// arrow (`Board.settleArrows`), whichever comes first. Until then they keep the route the
+    /// user sees (a new arrow a provisional one, never drawn or reported).
     private func rerouteAvoiding() {
         guard !avoiding.isEmpty, !avoidingStale else { return }
         avoidingStale = true
         DispatchQueue.main.async { [weak self] in self?.settleAvoiding() }
     }
 
-    private func settleAvoiding() {
+    func settleAvoiding() {
         guard avoidingStale else { return }
         avoidingStale = false
         for id in avoiding { reroute(arrow: id) }

@@ -375,6 +375,101 @@ final class ApiRouterTests {
         #expect(try drawn["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 110, y: 50, w: 280, h: 190))
     }
 
+    /// The app's drawing layer as it routes `avoid` arrows: a new one draws a provisional straight
+    /// line and a changed one keeps its last route until the layer settles (the next main-queue
+    /// turn, a draw, or `Board.settleArrows`), which routes them all from the board as it is then.
+    @MainActor
+    final class DrawnArrows {
+        var paths: [ObjectID: [CGPoint]] = [:]
+        var pending = false
+        var settles = 0
+
+        init(_ board: Board) {
+            let forward = board.onEvent
+            board.onEvent = { [unowned self] event in
+                forward?(event)
+                switch event {
+                case .objectCreated(let object), .objectUpdated(let object):
+                    if object.type == .arrow, paths[object.id] == nil { paths[object.id] = [CGPoint(x: -14, y: 251.5), CGPoint(x: 718, y: 251.5)] }
+                    pending = true
+                default: break
+                }
+            }
+            board.arrowPath = { [unowned self] id in paths[id] }
+            board.settleArrows = { [unowned self, unowned board] in
+                guard pending else { return }
+                pending = false
+                settles += 1
+                for (id, route) in board.geometry.routes() where paths[id] != nil { paths[id] = route }
+            }
+        }
+    }
+
+    func bounds(_ route: [CGPoint]) -> Frame {
+        let xs = route.map { Double($0.x) }, ys = route.map { Double($0.y) }
+        return Frame(x: xs.min()!, y: ys.min()!, w: xs.max()! - xs.min()!, h: ys.max()! - ys.min()!)
+    }
+
+    func reportedFrames(_ client: LineClient, _ id: ObjectID) async throws -> [Frame?] {
+        let objects = try await call(client, "board.get", [:])["result"]?["objects"]?.array ?? []
+        let got = try await call(client, "object.get", ["id": .string(id)])
+        return [try objects.first { $0["id"] == .string(id) }?["frame"]?.decode(Frame.self),
+                try got["result"]?["object"]?["frame"]?.decode(Frame.self)]
+    }
+
+    @Test func anAvoidArrowsCreateAndUpdateReportTheRouteItIsDrawnOn() async throws {
+        let a = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
+        let b = board.create(type: .note, props: .object(["markdown": "b"]), frame: Frame(x: 600, y: 0, w: 100, h: 100))
+        let c = board.create(type: .note, props: .object(["markdown": "c"]), frame: Frame(x: 600, y: 400, w: 100, h: 100))
+        _ = board.create(type: .note, props: .object(["markdown": "wall"]), frame: Frame(x: 250, y: -100, w: 200, h: 300))
+        let layer = DrawnArrows(board)
+        let client = try connect()
+
+        let created = try await call(client, "object.create", ["type": "arrow", "props": .object([
+            "from": .object(["object": .string(a.id)]), "to": .object(["object": .string(b.id)]), "route": "avoid",
+        ])])
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        let around = bounds(try #require(board.geometry.routes()[id]))
+        #expect(around.y < -100, "the route goes over the wall")
+        #expect(try created["result"]?["object"]?["frame"]?.decode(Frame.self) == around, "not the provisional straight line")
+        #expect(layer.paths[id].map(bounds) == around, "what is drawn next")
+        #expect(try await reportedFrames(client, id) == [around, around])
+
+        let updated = try await call(client, "object.update", ["id": .string(id), "props": .object(["to": .object(["object": .string(c.id)])])])
+        let moved = bounds(try #require(board.geometry.routes()[id]))
+        #expect(moved != around)
+        #expect(try updated["result"]?["object"]?["frame"]?.decode(Frame.self) == moved, "not the route to its old end")
+        #expect(try await reportedFrames(client, id) == [moved, moved])
+    }
+
+    @Test func aBatchReportsItsAvoidArrowsOnTheRouteTheWholeBatchLeaves() async throws {
+        let a = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
+        let b = board.create(type: .note, props: .object(["markdown": "b"]), frame: Frame(x: 600, y: 0, w: 100, h: 100))
+        let layer = DrawnArrows(board)
+        let client = try connect()
+        func arrow(_ from: CanvasObject, _ to: CanvasObject) -> JSONValue {
+            .object(["method": "object.create", "params": .object(["type": "arrow", "props": .object([
+                "from": .object(["object": .string(from.id)]), "to": .object(["object": .string(to.id)]), "route": "avoid",
+            ])])])
+        }
+        // The wall arrives after the arrows, in the same batch.
+        let batch = try await call(client, "object.batch", ["board": .string(board.id), "ops": .array([
+            arrow(a, b), arrow(b, a),
+            .object(["method": "object.create", "params": .object(["type": "note", "props": .object(["markdown": "wall"]),
+                                                                    "frame": .object(["x": 250, "y": -100, "w": 200, "h": 300])])]),
+        ])])
+        let results = try #require(batch["result"]?["results"]?.array)
+        #expect(layer.settles == 1, "routed once for the whole batch, not once per op")
+        let routes = board.geometry.routes()
+        for result in results.prefix(2) {
+            let id = try #require(result["object"]?["id"]?.string)
+            let drawn = bounds(try #require(routes[id]))
+            #expect(drawn.y < -100 || drawn.y + drawn.h > 200, "the route goes around the wall")
+            #expect(try result["object"]?["frame"]?.decode(Frame.self) == drawn)
+            #expect(try await reportedFrames(client, id) == [drawn, drawn])
+        }
+    }
+
     @Test func promptFailsWhenTheSurfaceIsNotAttached() async throws {
         let tile = terminal()
         router.submitToTerminal = { _, _, _ in false }

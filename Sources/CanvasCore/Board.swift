@@ -150,6 +150,11 @@ public final class Board {
     /// deleting what it points at keeps its end exactly where the user saw it and its reported
     /// frame is what is drawn. Without it, routes come from object frames.
     public var arrowPath: ((ObjectID) -> [CGPoint]?)?
+    /// Routes what the drawing layer has pending (its `avoid` re-route, which otherwise runs once
+    /// per burst of changes, before the next frame), so `arrowPath` answers with what is drawn.
+    /// `reported` calls it outside an open step: a batch reports its arrows once its step closes,
+    /// routing them once, not once per op. Set by the app.
+    public var settleArrows: (() -> Void)?
     /// The page elements under a canvas rect of a browser or HTML tile, for mentions of shapes
     /// drawn on it; nil when the page can't answer quickly (not loaded, not live). Set by the app.
     public var pageElements: (@MainActor (ObjectID, CGRect) async -> PageElements?)?

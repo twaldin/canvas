@@ -64,9 +64,12 @@ extension Board {
 
     /// Objects as the API reports them: an arrow's frame is the bounds of its routed line (what
     /// is drawn; the stored frame means nothing once an end is bound), everything else as stored.
+    /// Outside a step the drawing layer first routes what it has pending (`settleArrows`), so a
+    /// new or changed `avoid` arrow reports its route, not the provisional one it holds until then.
     public func reported(_ list: [CanvasObject]) -> [CanvasObject] {
         let arrows = list.filter { $0.type == .arrow }.map(\.id)
         guard !arrows.isEmpty else { return list }
+        if !history.isOpen { settleArrows?() }
         let paths = arrowPaths(arrows)
         return list.map { object in
             guard let path = paths[object.id] else { return object }

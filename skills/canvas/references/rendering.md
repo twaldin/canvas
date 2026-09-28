@@ -3,7 +3,7 @@
 What `view.render`, `view.snapshot`, `view.get` and `board.history` return, beyond SKILL.md's summary.
 
 Python: `canvas.view.render(target="obj_…", full=True)["path"]`
-(`target` is an id, a list of ids, or `{"x","y","w","h"}`).
+(`target` is an id, a list of ids, or `{"x","y","w","h"}`; ids render the region under them, taking in the whole route of any arrow between two of them).
 The app writes a new file under `$TMPDIR/canvas-renders/` (or `out` if you pass one: png or jpg by extension; clients resolve relative paths), and `path` in the result is that file.
 The result maps pixels to the canvas: pixel `(px, py)` is canvas `(canvasRect.x + px / scale, canvasRect.y + py / scale)`,
 and `objects` lists every object drawn with its `pixelRect`

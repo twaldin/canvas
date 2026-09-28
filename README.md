@@ -1,20 +1,26 @@
 # Canvas
 
-A native macOS infinite canvas for coding agents. Agents run unmodified in real terminal tiles, and next to them sit code, note, browser, HTML, and drawing tiles. You and the agents read and change the same objects: the canvas holds the current working state, while each agent's transcript stays in its own terminal.
+**Point at a line. Your agent gets the line.**
 
-[omp](https://github.com/can1357/oh-my-pi) is the first-class agent. Any terminal program runs in a tile.
+Canvas is a native macOS app where coding agents run unmodified in real terminals, and the things they work on sit beside them: the actual file, with your language server and a git gutter against your branch; the page, in a browser; notes whose code excerpts stay live against the files they quote. Hyper-click a line of code, a DOM element, a note paragraph or a command's output, and it goes with your next prompt to the agent working in that checkout. The agent points back the same way: it opens the exact code it means, draws arrows between things, and leaves notes and walkthroughs you can step through.
+
+The terminal keeps the transcript. The canvas keeps the work.
+
+[omp](https://github.com/can1357/oh-my-pi) is the first-class agent. Claude Code, Codex, opencode and Gemini CLI (before 0.60) get the same mentions inside Canvas, with no setup, and any terminal program runs in a tile.
 
 ## What's on the canvas
 
+- **Mentions.** Hyper-click (⌃⌥⇧⌘-click) a line of code, a DOM element, a note paragraph, a command's output or a shape to stage a mention in the tray. It goes with the next prompt you submit to the terminal the tray targets; a mention from another worktree targets the agent working there. ⇧⌘M mentions whatever the keyboard is on.
+- **Code tiles.** The whole file, scrolled to a range. A gitsigns-style gutter shows changes against the merge-base (or HEAD); click a sign to peek at the old lines. Language-server hover, go to definition, references, and outline. A follow tile tracks what an agent reads and edits, and flashes the lines it changed.
+- **Notes.** Markdown with fences that stay live against the files they quote; a `propose` fence renders as a diff, and a fence whose code moved away says it's stale.
+- **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid, code excerpts); agents chain them into walkthroughs you step through with ⌥⌘→.
+- **Changes tiles.** Review an agent's work like a PR: stage, unstage or discard files, hunks and lines. ⌘Z undoes agents' changes too, and says what it undid.
+- **Browser tiles.** omp's `browser` tool drives them; the page's errors show on the tile.
 - **Terminal tiles.** Rendered by libghostty. Sessions live in [zmx](https://github.com/neurosnap/zmx), so they survive an app restart, and after a reboot omp, Claude Code and Codex tiles resume their recorded session. They use your Ghostty config (theme, colors, font family, keybinds; Canvas keeps its own font size, and zoom scales text), turn a program's notification or bell into an attention marker, and ⌘-click opens a `path:line` in the output as a code tile.
-- **Code tiles.** The whole file, scrolled to a range. A gitsigns-style gutter shows changes against the merge-base (or HEAD); click a sign to peek at the old lines. Language-server hover, go to definition, references, and outline. A follow tile tracks what an agent reads and edits.
-- **Notes.** Markdown with fences that stay live against the files they quote.
-- **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid, code excerpts).
-- **Browser tiles.** omp's `browser` tool drives them.
+- **Several agents.** Each agent's state is on its tile: blue working, orange needs you, green done and not yet seen. ⌘J goes to whoever needs you next.
 - **Drawing.** Shapes, arrows (straight, orthogonal, or routed around tiles), ink, and titled group regions.
-- **Mentions.** Hyper-click anything (a line of code, a note paragraph, a shape) to stage a mention into the prompt of the terminal you're targeting.
 - **Getting around.** Go to… (⌘P) searches every group and tile by title, path, or note heading and takes you to the one you pick. When you've panned into empty space, a "Back to content" pill brings you home, and Zoom to Fit (⌘9) frames the main cluster of work instead of shrinking to fit a few far-off strays.
-- **Agent API.** A local socket with a JSON schema, a Python SDK, a TypeScript client, and a `canvas` CLI. Agents create and lay out objects in atomic batches, measure and fit content, render any region offscreen without moving your view, and read the board's activity history.
+- **Agent API.** A local socket with a JSON schema, a Python SDK, a TypeScript client, and a `canvas` CLI. Agents create and lay out objects in atomic batches, measure and fit content, render any region offscreen without moving your view, read the board's activity history, and hand each other board objects instead of re-describing them.
 
 ## Install
 

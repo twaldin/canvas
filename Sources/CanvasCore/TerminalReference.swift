@@ -388,7 +388,8 @@ extension Board {
     ///   answer anywhere on the board (`existing`: the canvas goes to it);
     /// - else the tile the terminal's last ⌘-click opened is re-aimed, while nobody has changed
     ///   it since (moved, resized, re-based, re-aimed: its `rev`) and the user hasn't kept it
-    ///   (`keepCode`: scrolled, clicked or selected in it, opened it in an editor);
+    ///   (`keepCode`: scrolled, clicked or selected in it, opened it in an editor), as
+    ///   navigation (`reaimForNavigation`: not an undo step, Back re-aims it back);
     /// - else a new tile opens beside the terminal (`place(near:)`, shrunk down to
     ///   `followMinimumSize` to land wholly in view) and becomes the terminal's preview.
     /// `newTile` (⌥⌘-click) always opens a new tile, which the user keeps.
@@ -402,9 +403,8 @@ extension Board {
                 return CodeOpened(id: existing, created: false, reaim: nil, existing: true)
             }
             if let preview = codePreviews[tile], let object = objects[preview.tile], object.rev == preview.rev,
-               let aimed = try? update(object.id, props: .object(["path": .string(stored), "range": range, "symbol": .null])) {
-                codePreviews[tile] = (aimed.id, aimed.rev)
-                return CodeOpened(id: aimed.id, created: false, reaim: nil)
+               let reaim = reaimForNavigation(object.id, to: CodeAim(path: stored, range: lines)) {
+                return CodeOpened(id: object.id, created: false, reaim: reaim)
             }
         }
         let size = Board.defaultSize(.code)

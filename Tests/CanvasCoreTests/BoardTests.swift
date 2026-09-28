@@ -342,6 +342,23 @@ struct BoardTests {
         #expect(board.codeFileVanished(mine.id, path: "gone.ts", existing: []) == .kept && board.objects[mine.id] != nil)
     }
 
+    /// Codex daily F1: a ⌘-click re-aiming the terminal's preview is navigation (Back re-aims it
+    /// back), so the next ⌘Z undoes the user's change before it, not the re-aim.
+    @Test func aCommandClickPreviewReaimIsNavigationNotTheNextUndo() throws {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]))
+        let preview = board.openCode(path: root.appendingPathComponent("a.ts").path, lines: LineRange(start: 1, end: 1), beside: terminal.id)
+        let note = board.create(type: .note, props: .object(["markdown": "x"]), frame: Frame(x: -2000, y: 0, w: 200, h: 100))
+        try board.update(note.id, frame: Frame(x: -1500, y: 0, w: 200, h: 100))
+        let reaimed = board.openCode(path: root.appendingPathComponent("b.ts").path, lines: LineRange(start: 5, end: 5), beside: terminal.id)
+        #expect(reaimed.id == preview.id && reaimed.reaim?.after == CodeAim(path: "b.ts", range: LineRange(start: 5, end: 5)))
+        #expect(board.undo())
+        #expect(board.objects[note.id]?.frame.x == -2000, "the user's move is what ⌘Z undid")
+        #expect(board.objects[preview.id]?.props["path"] == "b.ts", "the preview keeps its aim")
+        #expect(board.restoreAim(try #require(reaimed.reaim).inverted) && board.objects[preview.id]?.props["path"] == "a.ts", "Back re-aims it")
+        #expect(board.openCode(path: root.appendingPathComponent("c.ts").path, lines: nil, beside: terminal.id).id == preview.id, "after Back, still the terminal's one preview")
+    }
+
     @Test func aCommandClickPreviewWhoseFileVanishedClosesButAKeptOneStays() throws {
         let board = makeBoard()
         for name in ["a.ts", "b.ts"] { try "x\n".write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8) }

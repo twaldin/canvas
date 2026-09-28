@@ -518,9 +518,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// ⌘Z undoes the latest board change (the user's or an agent's). A text field or editor with
     /// its own pending edits undoes those first; a terminal holding the keyboard keeps ⌘Z and ⇧⌘Z
-    /// for its program (`canvasUndoApplies`). Undoing an agent's change, or one to the user's
-    /// files or git index (a changes tile's Stage or Discard), is never silent: a notice names
-    /// it (`UndoHistory.Step.notice`).
+    /// for its program (`canvasUndoApplies`). No undo or redo is silent: a notice names what it
+    /// did and whose change it was (`UndoHistory.Step.notice`).
     @objc func undoCanvas(_ sender: Any?) { undo(redo: false) }
     @objc func redoCanvas(_ sender: Any?) { undo(redo: true) }
 

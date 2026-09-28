@@ -368,7 +368,7 @@ final class CanvasView: NSScrollView {
                     if !opened.created { self.setSelection([opened.id]) }
                     self.reveal(opened.id, openedFrom: source.isNull ? .null : self.document.convert(source, from: nil))
                 }
-                self.recordNavigation(from: from, landing: self.board.objects[opened.id].flatMap(CodeAim.init))
+                self.recordNavigation(from: from, reaim: opened.reaim, landing: self.board.objects[opened.id].flatMap(CodeAim.init))
             }
         }
         // A page's or note's code link (an HTML tile's, a browser page's error list, a note's):

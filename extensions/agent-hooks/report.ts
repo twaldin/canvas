@@ -43,6 +43,11 @@ async function spool(socketPath: string, tile: string, entry: { seq: number; met
   await mkdir(directory, { recursive: true });
   const name = `${entry.seq}-${process.pid}-${randomBytes(4).toString("hex")}.json`;
   const temporary = join(directory, `.${name}`);
-  await writeFile(temporary, JSON.stringify(entry));
+  const text = JSON.stringify(entry);
+  // Canvas removes a tile's folder once its replay empties it; recreate it if that raced us.
+  await writeFile(temporary, text).catch(async () => {
+    await mkdir(directory, { recursive: true });
+    await writeFile(temporary, text);
+  });
   await rename(temporary, join(directory, name));
 }

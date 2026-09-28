@@ -39,9 +39,14 @@ public enum AgentReportSpool {
         return entries.sorted { ($0.seq, $0.file.lastPathComponent) < ($1.seq, $1.file.lastPathComponent) }
     }
 
-    /// Deletes replayed reports. File IO: call it off the main actor.
+    /// Deletes replayed reports, and each tile's folder once it's empty (a writer that loses
+    /// its folder to this recreates it, `report.ts`). File IO: call it off the main actor.
     public static func remove(_ entries: [Entry]) {
-        for entry in entries { try? FileManager.default.removeItem(at: entry.file) }
+        let manager = FileManager.default
+        for entry in entries { try? manager.removeItem(at: entry.file) }
+        for folder in Set(entries.map { $0.file.deletingLastPathComponent() }) where (try? manager.contentsOfDirectory(atPath: folder.path))?.isEmpty == true {
+            try? manager.removeItem(at: folder)
+        }
     }
 }
 

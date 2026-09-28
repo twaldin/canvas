@@ -17,7 +17,7 @@ public final class CmuxRouter {
     private var adopted: [ObjectID: Int] = [:]
 
     /// The address that opens an existing browser tile instead of a new one: `canvas:obj_…`.
-    public static let tileScheme = "canvas:"
+    private static let tileScheme = "canvas:"
 
     public init(registry: BoardRegistry, password: String? = nil) {
         self.registry = registry

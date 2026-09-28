@@ -452,9 +452,8 @@ enum BrowserScripts {
       else post('ready');
       if (document.readyState !== 'complete') addEventListener('load', () => post('load'), { once: true });
 
-      window.__canvasCmux = { snapshot, act, press, exists, waitFor, setActivity,
-        scroll(dx, dy) { scrollBy(dx, dy); return { scroll_x: scrollX, scroll_y: scrollY }; },
-        readyState: () => document.readyState };
+      window.__canvasCmux = { snapshot, act, press, waitFor, setActivity,
+        scroll(dx, dy) { scrollBy(dx, dy); return { scroll_x: scrollX, scroll_y: scrollY }; } };
     })();
     """#
 }

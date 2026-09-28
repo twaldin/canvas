@@ -25,7 +25,7 @@ final class HtmlTile: NSView, TileContent {
     private var scrollY: Double = 0
     /// The page's own background luminance (`PageSurface`); nil while it leaves it transparent
     /// (the tile's own background shows through).
-    fileprivate var pageLuminance: Double?
+    private(set) var surfaceLuminance: Double?
     private var hovered: WebMentions.Element?
     private var hoverInFlight = false
     private var queuedHover: NSPoint?
@@ -517,13 +517,11 @@ extension HtmlTile: WKNavigationDelegate, WKUIDelegate {
 }
 
 extension HtmlTile {
-    var surfaceLuminance: Double? { pageLuminance }
-
     /// Reads the page's background for drawings over the tile.
     fileprivate func probeSurface(_ webView: WKWebView) {
         Task { @MainActor [weak self] in
-            guard let probe = await PageSurface.probe(webView), let self, probe.luminance != self.pageLuminance else { return }
-            self.pageLuminance = probe.luminance
+            guard let probe = await PageSurface.probe(webView), let self, probe.luminance != self.surfaceLuminance else { return }
+            self.surfaceLuminance = probe.luminance
             NotificationCenter.default.post(name: .tileSurfaceChanged, object: self)
         }
     }

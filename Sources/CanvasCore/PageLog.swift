@@ -3,7 +3,7 @@ import Foundation
 /// One thing a browser tile's page reported: a console message, an uncaught error or unhandled
 /// rejection (`exception`), or a request that failed (an HTTP status of 400 or more, a network
 /// error, a resource that didn't load). `seq` orders a document's entries; `time` is ISO 8601.
-public struct PageLogEntry: Codable, Equatable, Sendable {
+public struct PageLogEntry: Codable, Hashable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case console, exception, request
     }
@@ -65,6 +65,12 @@ public struct PageLogEntry: Codable, Equatable, Sendable {
         return "\(name):\(line)"
     }
 
+    /// The stack's frames as the page reported them, without Canvas's own
+    /// (`PageCapture.isOwnFrame`): what the error list and a console mention list.
+    public var frames: [String] {
+        (stack ?? "").split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !PageCapture.isOwnFrame($0) }
+    }
+
     /// The time of day it happened (`14:03:05`), in the local time zone.
     public var clockTime: String? {
         guard let date = PageLog.isoFormatter.date(from: time) else { return nil }
@@ -91,14 +97,14 @@ public struct PageLog: Equatable, Sendable {
     /// Most entries `json` returns; the latest ones win.
     public static let returnedEntries = 100
 
-    public init(document: String, url: String, entries: [PageLogEntry], dropped: Int = 0, errors: Int, warnings: Int, vitals: JSONValue = .null) {
+    public init(document: String, url: String, entries: [PageLogEntry], errors: Int, warnings: Int) {
         self.document = document
         self.url = url
         self.entries = entries
-        self.dropped = dropped
+        dropped = 0
         self.errors = errors
         self.warnings = warnings
-        self.vitals = vitals
+        vitals = .null
     }
 
     /// What `PageCapture.readScript` returns, parsed; nil when it isn't one.
@@ -122,18 +128,18 @@ public struct PageLog: Equatable, Sendable {
     /// Where the next read continues: pass it back as `since`.
     public var cursor: String { "\(document):\(entries.last?.seq ?? 0)" }
 
-    /// The entries after `since` (a `cursor` of this log or an older one), at most `limit`, the
-    /// latest kept; `omitted` counts the older ones left out. A cursor from an earlier document
-    /// (the page reloaded since) means the whole of this one.
-    public func entries(after since: Cursor?, limit: Int = PageLog.returnedEntries) -> (entries: [PageLogEntry], omitted: Int) {
+    /// The entries after `since` (a `cursor` of this log or an older one), at most
+    /// `returnedEntries`, the latest kept; `omitted` counts the older ones left out. A cursor
+    /// from an earlier document (the page reloaded since) means the whole of this one.
+    public func entries(after since: Cursor?) -> (entries: [PageLogEntry], omitted: Int) {
         let after = since.flatMap { $0.document == document ? $0.seq : nil } ?? -1
         let newer = entries.filter { $0.seq > after }
-        return (Array(newer.suffix(limit)), max(0, newer.count - limit))
+        return (Array(newer.suffix(Self.returnedEntries)), max(0, newer.count - Self.returnedEntries))
     }
 
     /// The API's `page` object: the entries after `since`, the counts, the cursor, and the vitals.
     public func json(since: Cursor? = nil) -> JSONValue {
-        let shown = entries(after: since, limit: Self.returnedEntries)
+        let shown = entries(after: since)
         var fields: [String: JSONValue] = [
             "loaded": .bool(true),
             "url": .string(url),
@@ -323,13 +329,12 @@ public enum PageSource {
     /// resolved like a terminal's ⌘-click reference (`TerminalReferences.resolve`): against
     /// the board root, then by trailing path among its `listed` files (`/static/game.js` →
     /// `public/static/game.js`). Only files inside `root`; nil when nothing resolves.
-    public static func file(for url: URL, root: String, isFile: (String) -> Bool = TerminalReferences.isFile,
-                            listed: FileIndex? = nil) -> String? {
+    public static func file(for url: URL, root: String, listed: FileIndex) -> String? {
         func real(_ path: String) -> String { URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path }
         let base = real(root)
         func inside(_ path: String) -> String? {
             let standard = URL(fileURLWithPath: path).standardizedFileURL.path
-            return real(standard).hasPrefix(base + "/") && isFile(standard) ? standard : nil
+            return real(standard).hasPrefix(base + "/") && TerminalReferences.isFile(standard) ? standard : nil
         }
         if url.isFileURL { return inside(url.path) }
         guard url.scheme == "http" || url.scheme == "https" else { return nil }
@@ -338,8 +343,8 @@ public enum PageSource {
         if path.isEmpty || path.hasSuffix("/") { path += "index.html" }
         let relative = String(path.drop { $0 == "/" })
         guard !relative.isEmpty, !relative.split(separator: "/").contains("..") else { return nil }
-        return TerminalReferences.resolve(relative, directories: [root], home: NSHomeDirectory(), isFile: isFile,
-                                          listed: listed.map { (root: root, files: $0) }, near: root).flatMap(inside)
+        return TerminalReferences.resolve(relative, directories: [root], home: NSHomeDirectory(), isFile: TerminalReferences.isFile,
+                                          listed: (root: root, files: listed), near: root).flatMap(inside)
     }
 }
 
@@ -355,9 +360,9 @@ public enum PageCapture {
     /// The message handler (page world) that hears the page's error count.
     public static let messageName = "canvasPageLog"
     /// The script's name in stack traces and the Web Inspector.
-    public static let scriptName = "canvas-page-log.js"
+    static let scriptName = "canvas-page-log.js"
     /// A stack frame of this script (WebKit shows injected scripts as `user-script:<n>`).
-    public static func isOwnFrame(_ frame: String) -> Bool {
+    static func isOwnFrame(_ frame: String) -> Bool {
         frame.contains(scriptName) || frame.hasPrefix("user-script:") || frame.contains("@user-script:")
     }
 
@@ -370,9 +375,9 @@ public enum PageCapture {
       const MAX_PROBLEMS = 200, MAX_OTHER = 200, MAX_TEXT = 1000, MAX_STACK = 4000;
       const OMP_ENTRIES = 500, OMP_RECORDS = 200, BODY_MAX = 65536;
       // This script's own frames (JavaScriptCore honors its sourceURL; WebKit's user scripts show as `user-script:<n>`).
-      const marker = 'canvas-page-log.js';
+      const marker = '\#(scriptName)';
       const handlers = globalThis.webkit && globalThis.webkit.messageHandlers;
-      const handler = handlers && handlers.canvasPageLog;
+      const handler = handlers && handlers.\#(messageName);
       const post = (message) => { try { if (handler) handler.postMessage(message); } catch {} };
       const later = typeof globalThis.setTimeout === 'function' ? globalThis.setTimeout.bind(globalThis) : null;
       const listen = typeof globalThis.addEventListener === 'function' ? globalThis.addEventListener.bind(globalThis) : null;
@@ -407,7 +412,7 @@ public enum PageCapture {
       const omp = { entries: [], nextSeq: 1, dropped: 0 };
       const responses = { nextId: 1, records: [] };
       if (!globalThis.__ompConsoleCapture) define('__ompConsoleCapture', omp, true);
-      if (!globalThis.__ompCmuxResponses) Object.defineProperty(globalThis, '__ompCmuxResponses', { value: responses, configurable: true });
+      if (!globalThis.__ompCmuxResponses) define('__ompCmuxResponses', responses, false);
       const pushOmp = (entry) => {
         entry.seq = omp.nextSeq++;
         entry.ts = now();
@@ -641,7 +646,7 @@ public enum PageCapture {
         }
         if (typeof open === 'function' && typeof send === 'function') {
           proto.open = function (method, url) {
-            try { requests.set(this, { method: String(method || 'GET').toUpperCase(), url: absolute(url), headers: {}, started: now(), watched: false }); } catch {}
+            try { requests.set(this, { method: String(method || 'GET').toUpperCase(), url: absolute(url), headers: {} }); } catch {}
             return open.apply(this, arguments);
           };
           proto.send = function () {
@@ -650,11 +655,9 @@ public enum PageCapture {
               if (request) {
                 request.started = now();
                 request.aborted = false;
-                if (!request.watched) {
-                  request.watched = true;
-                  this.addEventListener('abort', aborted);
-                  this.addEventListener('loadend', finished);
-                }
+                // The same listeners again (a reused request) are no-ops: each fires once.
+                this.addEventListener('abort', aborted);
+                this.addEventListener('loadend', finished);
               }
             } catch {}
             return send.apply(this, arguments);
@@ -710,6 +713,6 @@ public enum PageCapture {
       // A new document starts clean: the tile's count follows it.
       post(0);
     })();
-    //# sourceURL=canvas-page-log.js
+    //# sourceURL=\#(scriptName)
     """#
 }

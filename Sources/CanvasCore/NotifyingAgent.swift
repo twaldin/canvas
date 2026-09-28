@@ -92,8 +92,14 @@ extension Board {
     /// Terminal `tile`'s foreground program is now `program` (nil: the shell is at its prompt).
     /// An agent reporting by notification ends with its program: at the prompt the tile is a
     /// plain shell again (`releaseAgent`). A program it runs meanwhile (an editor) doesn't end it.
+    /// So does an integrated agent still said to be `working` or `blocked` (killed, or exited
+    /// while Canvas was away, without the `agent.release` its integration sends at exit): the
+    /// shell holds the terminal, so nothing there is in a turn.
     public func terminalProgram(_ tile: ObjectID, is program: String?) {
-        guard program == nil, let terminal = objects[tile], NotifyingAgent.reports(terminal) else { return }
+        guard program == nil, let terminal = objects[tile] else { return }
+        let state = terminal.props["lifecycle"]?["state"]?.string
+        let busy = state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue
+        guard NotifyingAgent.reports(terminal) || busy else { return }
         try? releaseAgent(tile: tile)
     }
 

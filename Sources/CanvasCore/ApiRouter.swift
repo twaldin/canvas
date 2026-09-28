@@ -14,9 +14,13 @@ public final class BoardRegistry {
     var routerHook: ((Board, BoardEvent) -> Void)?
     /// Terminal tiles deleted for good on any open board (`Board.onTerminalsEnded`): the app ends their sessions.
     public var onTerminalsEnded: ((Board, [ObjectID]) -> Void)?
+    /// Where agent integrations spool the reports they couldn't deliver (`AgentReportSpool`);
+    /// nil replays nothing.
+    public let agentReports: URL?
 
-    public init(store: BoardStore = BoardStore()) {
+    public init(store: BoardStore = BoardStore(), agentReports: URL? = nil) {
         self.store = store
+        self.agentReports = agentReports
     }
 
     @discardableResult
@@ -38,7 +42,22 @@ public final class BoardRegistry {
         board.activity.record(.restart, actor: .system, rev: board.revision,
                               summary: "Canvas started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
         frontmost = frontmost ?? id
+        replayAgentReports(on: board)
         return board
+    }
+
+    /// What the board's agents said while Canvas was away (`AgentReportSpool`): read off the
+    /// main actor, applied in `seq` order, then deleted.
+    private func replayAgentReports(on board: Board) {
+        guard let directory = agentReports else { return }
+        let tiles = board.objects.values.filter { $0.type == .terminal }.map(\.id)
+        guard !tiles.isEmpty else { return }
+        Task { @MainActor [weak board] in
+            let entries = await offPool { AgentReportSpool.read(from: directory, tiles: tiles) }
+            guard !entries.isEmpty else { return }
+            board?.replay(entries)
+            await offPool { AgentReportSpool.remove(entries) }
+        }
     }
 
     public func close(_ id: BoardID) {
@@ -437,7 +456,8 @@ public final class ApiRouter {
 
     /// `agent.prompt`: remembers the terminal's text as it is just before submitting (the reply
     /// boundary for `agent.read` `since: "prompt"`), then pastes and presses Enter. From then on
-    /// `agent.wait` ignores the state the agent was in before this prompt. A `blocked` agent is
+    /// `agent.wait` ignores the state the agent was in before this prompt, unless the agent was in
+    /// its turn (`working`): the prompt joins that turn, whose end answers it. A `blocked` agent is
     /// refused unless `force`: its screen holds a dialog or selector, which would take the text.
     private func prompt(_ p: JSONValue) async throws -> JSONValue {
         let (board, terminal) = try agentTile(try string(p, "target"))
@@ -475,10 +495,14 @@ public final class ApiRouter {
             throw Failure("unavailable", "terminal \(terminal.id) has no attached surface")
         }
         // Only a reporting agent's next report can end the pre-prompt state. An agent reporting
-        // by notification is `unknown` from now until its next one (`NotifyingAgent`).
+        // by notification is `unknown` from now until its next one (`NotifyingAgent`). An agent
+        // still in its turn as the text lands takes it into that turn (omp as a steering message
+        // before the turn ends; Codex before its next tool call, or right after its last answer,
+        // with one Stop for both): no report may come until that turn ends, which answers it.
         let notifying = NotifyingAgent.reports(current)
         let waitable = notifying || Self.state(of: current) != LifecycleState.unknown.rawValue
-        if notifying { board.notifyingAgentSubmitted(terminal.id) } else if waitable { pendingPrompts.insert(terminal.id) }
+        let midTurn = board.objects[terminal.id].map(Self.state) == LifecycleState.working.rawValue
+        if notifying { board.notifyingAgentSubmitted(terminal.id) } else if waitable, !midTurn { pendingPrompts.insert(terminal.id) }
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
         var result: [String: JSONValue] = [
             "agent": agentEntry(current, on: board),
@@ -500,7 +524,7 @@ public final class ApiRouter {
         let cutOff = board.turnErrors[terminal.id]
         guard let answer = board.finalAnswers[terminal.id] else {
             if let cutOff { throw Failure("unavailable", "\(terminal.id)'s last turn ended on an error before any answer: \(cutOff)") }
-            throw Failure("unavailable", "no final answer is known for \(terminal.id)'s last turn: its agent (\(terminal.props["agent"]?["kind"]?.string ?? "none reporting")) reported none, the turn was interrupted, or Canvas restarted since. Read the screen with since: \"prompt\" instead")
+            throw Failure("unavailable", "no final answer is known for \(terminal.id)'s last turn: its agent (\(terminal.props["agent"]?["kind"]?.string ?? "none reporting")) reported none, or the turn was interrupted. Read the screen with since: \"prompt\" instead")
         }
         return .object([
             "agent": agentEntry(terminal, on: board),
@@ -824,11 +848,7 @@ public final class ApiRouter {
             return .object([:])
 
         case "agent.report":
-            let tile = try string(p, "tile")
-            guard let state = LifecycleState(rawValue: try string(p, "state")) else { throw Failure("invalid_params", "unknown state") }
-            try board(forObject: tile).reportLifecycle(tile: tile, kind: try string(p, "kind"), state: state, message: p["message"]?.string, seq: p["seq"]?.int,
-                                                       source: p["source"]?.string, call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false,
-                                                       error: p["error"]?.string)
+            try board(forObject: try string(p, "tile")).reportLifecycle(params: p)
             return .object([:])
 
         case "agent.report_session":

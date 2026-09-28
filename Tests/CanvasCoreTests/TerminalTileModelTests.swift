@@ -304,6 +304,30 @@ struct TerminalBoardTests {
         #expect(lifecycle() == nil && board.objects[tile]?.props["agent"] == nil, "a plain shell again")
     }
 
+    @Test func anIntegratedAgentSaidToBeBusyAtTheShellPromptHasExited() throws {
+        let board = makeBoard()
+        let omp = board.create(type: .terminal, props: .object([:])).id
+        func lifecycle(_ tile: ObjectID) -> String? { board.objects[tile]?.props["lifecycle"]?["state"]?.string }
+        try board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        board.terminalProgram(omp, is: "omp")
+        #expect(lifecycle(omp) == "working", "the agent holds the terminal: its turn goes on")
+        // Killed mid-turn (or it exited while Canvas was away, its release lost): the shell has the terminal.
+        board.terminalProgram(omp, is: nil)
+        #expect(board.objects[omp]?.props["lifecycle"] == nil && board.objects[omp]?.props["agent"] == nil, "no turn runs at a shell prompt")
+
+        let codex = board.create(type: .terminal, props: .object([:])).id
+        try board.reportLifecycle(tile: codex, kind: "codex", state: .blocked, message: "approve Bash?", seq: 1, source: "canvas-codex")
+        board.terminalProgram(codex, is: nil)
+        #expect(board.objects[codex]?.props["lifecycle"] == nil, "nor a dialog")
+
+        // A finished agent's answer and dot stay: only a claim to be in a turn is false at the prompt.
+        let done = board.create(type: .terminal, props: .object([:])).id
+        try board.reportLifecycle(tile: done, kind: "codex", state: .working, message: nil, seq: 1, source: "canvas-codex")
+        try board.reportLifecycle(tile: done, kind: "codex", state: .idle, message: nil, seq: 2, source: "canvas-codex", final: "Fixed.")
+        board.terminalProgram(done, is: nil)
+        #expect(lifecycle(done) == "done")
+    }
+
     @Test func notificationsOnlyBecomeALifecycleForAProgramWithoutAnIntegration() throws {
         let board = makeBoard()
         let shell = board.create(type: .terminal, props: .object([:])).id

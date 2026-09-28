@@ -62,6 +62,13 @@ public struct BoardSnapshot: Codable, Sendable {
     /// What the prompt target rule remembers (`PromptTarget.State`); optional so older board
     /// files still load.
     public var promptTarget: PromptTarget.State?
+    /// Each terminal's last answer and the error its last turn ended on (`Board.finalAnswers`,
+    /// `Board.turnErrors`), and the highest lifecycle `seq` accepted per "tile|source", so
+    /// `agent.read` `final` and the staleness rule survive a restart; optional so older board
+    /// files still load.
+    public var finalAnswers: [ObjectID: String]?
+    public var turnErrors: [ObjectID: String]?
+    public var lifecycleSeq: [String: Int]?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -85,11 +92,11 @@ public final class Board {
     public internal(set) var handoffs: [ObjectID: [Handoff]] = [:]
     /// Each terminal's last answer: the final assistant message of its agent's last finished
     /// turn, as its integration reported it with `idle` (`agent.read` `final`). A new turn clears
-    /// it; in memory only.
+    /// it; saved with the board.
     public internal(set) var finalAnswers: [ObjectID: String] = [:]
     /// The error each terminal's last turn ended on (an API error, an abort, the output limit),
     /// as its integration reported it with `idle`: that turn's `finalAnswers` entry is cut off.
-    /// A new turn clears it; in memory only.
+    /// A new turn clears it; saved with the board.
     public internal(set) var turnErrors: [ObjectID: String] = [:]
 
     /// Board revision at which each object last changed (for `board.get since`).
@@ -97,8 +104,10 @@ public final class Board {
     /// Terminal tiles the user has seen since their agent last reported `working` (or, reporting
     /// by notification, last notified: `NotifyingAgent`).
     var seenSinceWorking: Set<ObjectID> = []
-    /// Highest accepted lifecycle seq per "tile|source".
-    private var lifecycleSeq: [String: Int] = [:]
+    /// Highest accepted lifecycle seq per "tile|source"; saved with the board, so a report
+    /// replayed after a restart (`AgentReportSpool`) that is older than one already applied is
+    /// dropped like any stale report.
+    var lifecycleSeq: [String: Int] = [:]
     /// Tool calls each terminal's agent waits on the user to approve, oldest first, with the
     /// blocker message each was reported with (`reportLifecycle` `call`).
     private var pendingApprovals: [ObjectID: [(call: String, message: String?)]] = [:]
@@ -201,12 +210,17 @@ public final class Board {
         for marker in snapshot.attention ?? [] where objects[marker.object] != nil { attention[marker.object] = marker }
         promptTarget = snapshot.promptTarget ?? PromptTarget.State()
         promptTarget.prune(objects)
+        finalAnswers = (snapshot.finalAnswers ?? [:]).filter { objects[$0.key] != nil }
+        turnErrors = (snapshot.turnErrors ?? [:]).filter { objects[$0.key] != nil }
+        lifecycleSeq = (snapshot.lifecycleSeq ?? [:]).filter { objects[String($0.key.prefix { $0 != "|" })] != nil }
     }
 
     public var snapshot: BoardSnapshot {
         BoardSnapshot(format: Self.format, id: id, root: root.path, revision: revision, objects: objects.values.sorted { $0.z < $1.z }, tray: tray,
                       attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object },
-                      promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget)
+                      promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget,
+                      finalAnswers: finalAnswers.isEmpty ? nil : finalAnswers, turnErrors: turnErrors.isEmpty ? nil : turnErrors,
+                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -825,6 +839,17 @@ public final class Board {
         if let sessionId { agent["sessionId"] = .string(sessionId) }
         if let sessionPath { agent["sessionPath"] = .string(sessionPath) }
         try update(tile, props: .object(["agent": .object(agent)]), caller: tile)
+    }
+
+    /// `agent.report` as its params (schema `agent.report`): a report over the socket, or one an
+    /// integration spooled while Canvas was away (`AgentReportSpool`).
+    public func reportLifecycle(params p: JSONValue) throws {
+        guard let tile = p["tile"]?.string, let kind = p["kind"]?.string, let name = p["state"]?.string else {
+            throw BoardError.invalidParams("agent.report needs tile, kind, and state")
+        }
+        guard let state = LifecycleState(rawValue: name) else { throw BoardError.invalidParams("unknown state") }
+        try reportLifecycle(tile: tile, kind: kind, state: state, message: p["message"]?.string, seq: p["seq"]?.int, source: p["source"]?.string,
+                            call: p["call"]?.string, final: p["final"]?.string, serial: p["serial"]?.bool ?? false, error: p["error"]?.string)
     }
 
     /// The agent exited (`agent.release`): the tile is a plain shell again. Its lifecycle and the

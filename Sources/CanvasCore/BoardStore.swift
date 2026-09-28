@@ -125,12 +125,16 @@ public final class BoardStore {
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
-    /// Writes a human-readable snapshot (for committing to the repo). The selection tray and
-    /// attention markers are personal, transient state, so they are left out.
+    /// Writes a human-readable snapshot (for committing to the repo). The selection tray,
+    /// attention markers, and agents' last answers are personal, transient state, so they are
+    /// left out.
     public static func export(_ board: Board, to url: URL) throws {
         var snapshot = board.snapshot
         snapshot.tray = nil
         snapshot.attention = nil
+        snapshot.finalAnswers = nil
+        snapshot.turnErrors = nil
+        snapshot.lifecycleSeq = nil
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

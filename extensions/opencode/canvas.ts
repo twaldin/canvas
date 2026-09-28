@@ -7,10 +7,12 @@
 //  - the selection tray drained into the prompt you submit, as a hidden (synthetic) part
 //  - follow mode: files the agent reads, edits, and writes re-aim its follow tile
 // Every Canvas call has a short timeout and its errors are swallowed: Canvas being gone never
-// stalls opencode.
+// stalls opencode. Lifecycle reports it isn't there to take are spooled for it to replay
+// (agent-hooks/report.ts).
 import { resolve } from "node:path";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { absolute, editLocation, type Location, patchLocation, readLocation } from "../agent-hooks/follow";
+import { report as spooled } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-opencode";
@@ -46,7 +48,7 @@ export const CanvasPlugin = async ({ directory }: Input) => {
     // project/directory it opens), and a counter from each start would reorder their reports.
     const send = () => {
       seq = Math.max(seq + 1, Date.now() * 1000);
-      return quietly(client.api.agent.report({ tile: tile!, kind: "opencode", state, message, seq, source: SOURCE, call }));
+      return spooled(client, { tile: tile!, kind: "opencode", state, message, seq, source: SOURCE, call });
     };
     // Debounced: a retry or a tool-only continuation shouldn't flicker the badge.
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);

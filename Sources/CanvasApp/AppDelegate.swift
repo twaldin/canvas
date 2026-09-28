@@ -3,7 +3,7 @@ import CanvasCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards))
+    private let registry = BoardRegistry(store: BoardStore(directory: AppPaths.boards), agentReports: AppPaths.agentReports)
     private lazy var router = ApiRouter(registry: registry)
     private var server: SocketServer?
     private var cmuxServer: SocketServer?
@@ -45,9 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.controllers[board.id]?.apply(event)
             self?.notifier.observe(event, on: board)
         }
-        // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session.
+        // Every delete of a terminal (UI close, API, batch, undo/redo) ends its zmx session, and
+        // with it any report its agent spooled (`AgentReportSpool`), which nothing would replay.
         registry.onTerminalsEnded = { _, tiles in
             for tile in tiles { TerminalTile.killSession(tile: tile) }
+            let spooled = tiles.map { AppPaths.agentReports.appendingPathComponent($0, isDirectory: true) }
+            Task.detached { for folder in spooled { try? FileManager.default.removeItem(at: folder) } }
         }
         // object.measure, size: "fit", and layout.check lay HTML pages out in WebKit.
         ObjectMeasure.html = { props, width, root in try await HtmlTile.measure(props: props, width: width, root: root) }

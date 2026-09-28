@@ -405,12 +405,10 @@ public enum MentionContext {
         var lines = ["[\(index)] page \(entry.noun) · browser tile \(id)\(tile) · page \(url)\(when)\(edited)"]
         lines.append(contentsOf: entry.text.split(separator: "\n", omittingEmptySubsequences: false).prefix(maxExcerptLines).map { "    \($0)" })
         if let source = entry.source { lines.append("    source: \(source)") }
-        if let stack = entry.stack {
-            let frames = stack.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !PageCapture.isOwnFrame($0) }
-            if !frames.isEmpty { lines.append("    stack:") }
-            lines.append(contentsOf: frames.prefix(maxStackLines).map { "      \($0)" })
-            if frames.count > maxStackLines { lines.append("      … \(frames.count - maxStackLines) more frames") }
-        }
+        let frames = entry.frames
+        if !frames.isEmpty { lines.append("    stack:") }
+        lines.append(contentsOf: frames.prefix(maxStackLines).map { "      \($0)" })
+        if frames.count > maxStackLines { lines.append("      … \(frames.count - maxStackLines) more frames") }
         return lines
     }
 

@@ -150,8 +150,10 @@ public enum MentionContext {
                     lines.append(contentsOf: noteLines(markdown, of: id))
                 }
                 if object.type == .terminal, let screen = await board.terminalScreen?(id) {
-                    let shown = TerminalExcerpt.lines(screen)
-                    lines.append(shown.isEmpty ? "    (its screen is empty)" : "    its screen now:")
+                    let shown = TerminalExcerpt.lines(screen.text)
+                    // What the user is looking at: the rows they scrolled back to, saying so.
+                    let heading = screen.scrolledBack > 0 ? "the rows its view shows, scrolled back \(screen.scrolledBack) rows from its live screen:" : "its screen now:"
+                    lines.append(shown.isEmpty ? "    (its screen is empty)" : "    \(heading)")
                     lines.append(contentsOf: terminalLines(shown))
                 }
                 lines.append(contentsOf: await pageLines(under: object, on: board, indent: "    "))

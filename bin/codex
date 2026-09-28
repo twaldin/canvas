@@ -8,6 +8,7 @@ real=$(canvas_agent_real codex) || exit 127
 canvas_integrate || exec "$real" "$@"
 hooks=$(bun "$here/extensions/codex/config.ts" 2>/dev/null) || exec "$real" "$@"
 export CANVAS_AGENT=codex
-# Codex fires SessionStart only with the first prompt; say now that this tile runs Codex.
-{ printf '{}' | "$here/extensions/agent-hooks/run" codex Launch; } >/dev/null 2>&1 &
+# Codex fires SessionStart only with the first prompt; say now that this tile runs Codex, and
+# whether it first asks about this folder (its arguments tell the folder and the subcommand).
+{ printf '{}' | "$here/extensions/agent-hooks/run" codex Launch "$@"; } >/dev/null 2>&1 &
 exec "$real" -c "$hooks" "$@"

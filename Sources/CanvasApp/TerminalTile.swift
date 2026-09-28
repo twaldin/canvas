@@ -613,11 +613,27 @@ final class TerminalTile: NSView, TileContent {
         return (entry.command, text[lines].joined(separator: "\n"))
     }
 
-    /// The terminal's current screen (not where the user scrolled to), soft-wrapped rows joined,
-    /// for a mention of the whole terminal.
+    /// Which finished command `command` is now, from the newest (`block`'s index), while
+    /// `block` can still read it: the last one (Ghostty's selection of it), or an older one whose
+    /// line is still in the terminal's text (not cleared or trimmed from the scrollback).
+    func blockIndex(of command: TerminalCommand) -> Int? {
+        guard let index = log.index(of: command) else { return nil }
+        return index == -1 || textToCursor().map({ log.positions(in: $0)[index] != nil }) == true ? index : nil
+    }
+
+    /// The terminal's current screen (not where the user scrolled to), soft-wrapped rows joined.
     func screenText() -> String? {
         guard let grid else { return nil }
         return read(active(0, 0), active(grid.columns - 1, grid.rows - 1))
+    }
+
+    /// What a mention of the whole terminal quotes: the rows its view shows while the user has
+    /// scrolled back (`scrolledBack` rows above the live screen), else the current screen.
+    func shownText() -> (text: String, scrolledBack: Int)? {
+        guard let grid else { return nil }
+        let back = scrolledBack
+        guard back > 0 else { return screenText().map { ($0, 0) } }
+        return read(viewport(0, 0), viewport(grid.columns - 1, grid.rows - 1)).map { ($0, back) }
     }
 
     private func active(_ column: Int, _ row: Int) -> ghostty_point_s {

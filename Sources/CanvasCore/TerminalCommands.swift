@@ -69,7 +69,7 @@ public struct TerminalCommand: Codable, Equatable, Sendable {
 
     /// The part of a command line a marker names: from its first segment (split at `;`, `&&`,
     /// `||` outside quotes) that isn't setup (`cd`, `export`, `clear`, `source`, `.`, `unset`,
-    /// `set`, variable assignments alone), without leading `VAR=value` assignments or an `env`
+    /// `set`, `sleep`, variable assignments alone), without leading `VAR=value` assignments or an `env`
     /// that only sets them: `cd crates/x && cargo test` → `cargo test`,
     /// `clear; RUST_BACKTRACE=1 cargo test` → `cargo test`. The line itself when all of it is setup.
     public static func significant(_ line: String) -> String {
@@ -93,7 +93,7 @@ public struct TerminalCommand: Codable, Equatable, Sendable {
         return line
     }
 
-    private static let setupCommands: Set<String> = ["cd", "pushd", "popd", "export", "clear", "source", ".", "unset", "set", "alias", "true"]
+    private static let setupCommands: Set<String> = ["cd", "pushd", "popd", "export", "clear", "source", ".", "unset", "set", "alias", "true", "sleep"]
 
     /// A word of a command line as the shell splits it (quotes and backslashes keep blanks and
     /// operators inside), or a list operator (`;`, `&&`, `||`, `&`, a newline).

@@ -211,6 +211,7 @@ struct TerminalCommandTests {
         #expect(name("echo \"a; cd b\" && make") == "echo \"a; cd b\" && make", "operators inside quotes don't split")
         #expect(name("cd /tmp") == "cd /tmp", "all setup: the line as it is")
         #expect(name("cargo test | tee log") == "cargo test | tee log")
+        #expect(name("cd . && sleep 32 && go test ./...") == "go test ./...", "a wait before the command is setup too")
         let long = TerminalCommand(command: "export PATH=$HOME/.rustup/bin:$PATH; cargo build --release", exit: 0, durationMs: 35_900)
         #expect(long.noticeMessage == "cargo build --release finished · 35 s")
         let now = Date()
@@ -417,7 +418,7 @@ struct TerminalMentionTests {
         let board = Board(id: "brd_test", root: root)
         let shell = board.create(type: .terminal, props: .object([:])).id
         board.terminalLabel = { $0 == shell ? "go · ~/src/app" : nil }
-        board.terminalScreen = { _ in "❯ ls\nREADME.md\n" }
+        board.terminalScreen = { _ in ("❯ ls\nREADME.md\n", 0) }
         board.terminalBlockIndex = { id, command in id == shell && command.command == "go test ./..." ? -3 : nil }
         let output = (1...60).map { "ok \($0)" }.joined(separator: "\n")
         try board.stage(.terminal(object: shell, text: output, part: .command, command: TerminalCommand(command: "go test ./...", exit: 1, durationMs: 42_000)))
@@ -427,8 +428,14 @@ struct TerminalMentionTests {
                 "the call that reads that block, counted from the terminal's newest command")
         #expect(context.contains("    ok 10\n    … 20 lines omitted …\n    ok 31"))
         #expect(context.contains("[2] terminal \(shell) \"go · ~/src/app\""))
-        #expect(context.contains("    README.md"))
+        #expect(context.contains("    its screen now:\n    ❯ ls\n    README.md"))
         #expect(context.contains("canvas agent.read --target <id>"))
         #expect(!context.contains("canvas get <id> --as graph"), "only terminals mentioned")
+        // Scrolled back: the rows the user is looking at, not the live screen, and it says so.
+        board.terminalScreen = { _ in ("1. Anonymous actions\n   server/routes/claims.ts:241", 40) }
+        try board.stage(.object(shell))
+        let scrolled = await board.drain().context
+        #expect(scrolled.contains("    the rows its view shows, scrolled back 40 rows from its live screen:\n    1. Anonymous actions\n       server/routes/claims.ts:241"))
+        #expect(!scrolled.contains("its screen now"))
     }
 }

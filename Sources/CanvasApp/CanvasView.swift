@@ -230,8 +230,8 @@ final class CanvasView: NSScrollView {
         // Mentions name a terminal as its header does, one of a whole terminal carries its screen,
         // and one of a command's block says which `agent.read` block it is.
         board.terminalLabel = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.label }
-        board.terminalScreen = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.screenText() }
-        board.terminalBlockIndex = { [weak self] id, command in (self?.tiles[id]?.content as? TerminalTile)?.log.index(of: command) }
+        board.terminalScreen = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.shownText() }
+        board.terminalBlockIndex = { [weak self] id, command in (self?.tiles[id]?.content as? TerminalTile)?.blockIndex(of: command) }
         for object in board.snapshot.objects { add(object) }
         // Markers the user hadn't seen when the board was last open.
         for marker in board.attention.values { showMarker(marker.object, message: marker.message) }

@@ -4,6 +4,9 @@
 # CANVAS_VERSION (default 0.1) and CANVAS_BUILD (default 1) set the bundle version (releases).
 # CANVAS_BUNDLE_APP assembles it elsewhere (a frozen copy for studies), leaving the bundle a
 # running dev instance launched from .build/Canvas.app untouched.
+# CANVAS_SIGN_IDENTITY signs for distribution (docs/releasing.md): a Developer ID Application
+# identity, with the hardened runtime, scripts/Canvas.entitlements and a secure timestamp. "-"
+# signs the same way ad hoc (no timestamp), to try the hardened runtime without a certificate.
 set -eu
 config="${1:-debug}"
 version="${CANVAS_VERSION:-0.1}"
@@ -41,13 +44,30 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>CanvasApp.CanvasApplication</string>
+  <key>NSAppleEventsUsageDescription</key><string>A program running in Canvas wants to control another app.</string>
+  <key>NSMicrophoneUsageDescription</key><string>A program or page running in Canvas wants to use the microphone.</string>
+  <key>NSCameraUsageDescription</key><string>A program or page running in Canvas wants to use the camera.</string>
 </dict>
 </plist>
 PLIST
 # SwiftPM copies some resource files (tree-sitter queries) read-only; the README's
 # `xattr -dr com.apple.quarantine` can't clear a read-only file, so make everything user-writable.
 chmod -R u+w "$app"
-codesign --force --sign - "$app"
+if [ -n "${CANVAS_SIGN_IDENTITY:-}" ]; then
+  set -- --force --options runtime --sign "$CANVAS_SIGN_IDENTITY"
+  [ "$CANVAS_SIGN_IDENTITY" = - ] || set -- "$@" --timestamp
+  # Inside out: nested code before the bundle that seals it. The executable is the only Mach-O
+  # today; a nested framework, XPC service or helper app would need signing as a bundle.
+  nested="$(find "$app/Contents" \( -name '*.framework' -o -name '*.xpc' -o -name '*.app' -o -name '*.appex' \) -print)"
+  [ -z "$nested" ] || { echo "bundle.sh: sign these nested bundles before the app: $nested" >&2; exit 1; }
+  find "$app/Contents" -depth -type f ! -path "$app/Contents/MacOS/Canvas" -print | while IFS= read -r file; do
+    case "$(file -b "$file")" in Mach-O*) codesign "$@" "$file" ;; esac
+  done
+  codesign "$@" --entitlements "$repo/scripts/Canvas.entitlements" "$app"
+  codesign --verify --deep --strict "$app"
+else
+  codesign --force --sign - "$app"
+fi
 # Development input replay helper (docs/testing.md); rebuilt only when its source changes.
 if [ ! -x "$repo/.build/dev-input" ] || [ "$repo/scripts/dev-input.swift" -nt "$repo/.build/dev-input" ]; then
   swiftc -O "$repo/scripts/dev-input.swift" -o "$repo/.build/dev-input"

@@ -82,6 +82,7 @@ bun scripts/gen-clients.ts     # regenerate the Python/TS clients from schema/ca
 
 - [docs/design.md](docs/design.md): the design record, covering principles, architecture, and decisions.
 - [docs/contracts.md](docs/contracts.md): the API, tile, and scene contracts.
+- [docs/releasing.md](docs/releasing.md): signing, notarizing, and publishing a release.
 - [skills/canvas/SKILL.md](skills/canvas/SKILL.md): how agents work on the canvas.
 
 ## License

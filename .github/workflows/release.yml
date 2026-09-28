@@ -1,7 +1,15 @@
 name: Release
 
-# Push a tag like v0.2.0 to build Canvas.app (ad-hoc signed, not notarized) and attach
-# Canvas-0.2.0.zip to a GitHub release.
+# Push a tag like v0.2.0 to build Canvas.app and attach Canvas-0.2.0.zip to a GitHub release.
+# With the signing secrets below the zip holds a Developer ID-signed, notarized and stapled app;
+# without them, an ad-hoc signed one (docs/releasing.md).
+#
+# Secrets (Settings › Secrets and variables › Actions):
+#   CANVAS_CERT_P12            base64 of the Developer ID Application certificate + key (.p12)
+#   CANVAS_CERT_PASSWORD       the .p12's export password
+#   CANVAS_NOTARY_KEY          base64 of the App Store Connect API key (AuthKey_<id>.p8)
+#   CANVAS_NOTARY_KEY_ID       that key's id
+#   CANVAS_NOTARY_ISSUER       the issuer id shown above the keys in App Store Connect
 on:
   push:
     tags: ["v*"]
@@ -12,12 +20,33 @@ permissions:
 jobs:
   release:
     runs-on: macos-26
+    env:
+      SIGNED: ${{ secrets.CANVAS_CERT_P12 != '' && secrets.CANVAS_NOTARY_KEY != '' }}
     steps:
       - uses: actions/checkout@v5
       - name: Select Command Line Tools
         run: |
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
+      - name: Import the Developer ID certificate
+        if: env.SIGNED == 'true'
+        env:
+          CANVAS_CERT_P12: ${{ secrets.CANVAS_CERT_P12 }}
+          CANVAS_CERT_PASSWORD: ${{ secrets.CANVAS_CERT_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf %s "$CANVAS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CANVAS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -n 1)"
+          [ -n "$identity" ] || { echo "no Developer ID Application identity in CANVAS_CERT_P12" >&2; exit 1; }
+          echo "CANVAS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
       - name: Build Canvas.app
         env:
           CANVAS_VERSION: ${{ github.ref_name }}
@@ -26,9 +55,24 @@ jobs:
           export CANVAS_VERSION="${CANVAS_VERSION#v}"
           scripts/bundle.sh release
           codesign --verify --deep --strict .build/Canvas.app
-      - name: Zip
+      - name: Notarize and zip
+        if: env.SIGNED == 'true'
+        env:
+          CANVAS_NOTARY_KEY_BASE64: ${{ secrets.CANVAS_NOTARY_KEY }}
+          CANVAS_NOTARY_KEY_ID: ${{ secrets.CANVAS_NOTARY_KEY_ID }}
+          CANVAS_NOTARY_ISSUER: ${{ secrets.CANVAS_NOTARY_ISSUER }}
+        run: |
+          export CANVAS_NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+          trap 'rm -f "$CANVAS_NOTARY_KEY"' EXIT
+          printf %s "$CANVAS_NOTARY_KEY_BASE64" | base64 --decode > "$CANVAS_NOTARY_KEY"
+          scripts/notarize.sh .build/Canvas.app "Canvas-${GITHUB_REF_NAME#v}.zip"
+      - name: Zip (ad hoc)
+        if: env.SIGNED != 'true'
         run: ditto -c -k --keepParent .build/Canvas.app "Canvas-${GITHUB_REF_NAME#v}.zip"
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" "Canvas-${GITHUB_REF_NAME#v}.zip" --title "Canvas ${GITHUB_REF_NAME#v}" --generate-notes
+      - name: Remove the signing keychain
+        if: always() && env.SIGNED == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

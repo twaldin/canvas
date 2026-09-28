@@ -161,8 +161,10 @@ extension Board {
         return reaimForNavigation(reaim.tile, to: reaim.after) != nil
     }
 
-    /// Re-aims code tile `id` as navigation: credited to the user, not an undo step.
-    private func reaimForNavigation(_ id: ObjectID, to aim: CodeAim) -> CodeReaim? {
+    /// Re-aims code tile `id` as navigation (Go to, a link, a ⌘-click preview, a follow tile's
+    /// history strip): credited to the user, not an undo step (Back and Forward undo it).
+    @discardableResult
+    public func reaimForNavigation(_ id: ObjectID, to aim: CodeAim) -> CodeReaim? {
         guard let object = objects[id], let before = CodeAim(object) else { return nil }
         guard before != aim else { return CodeReaim(tile: id, before: before, after: aim) }
         guard (try? unrecorded({ try update(id, props: aim.props) })) != nil else { return nil }

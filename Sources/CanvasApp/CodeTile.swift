@@ -276,11 +276,11 @@ final class CodeTile: NSView, TileContent {
         refreshHeader()
     }
 
-    /// The user picked a location (history strip, same-file definition): shown at once.
+    /// The user picked a location (history strip): shown at once, as navigation (no undo step).
     private func userAim(_ aim: Aim) {
         lock.userAimed(aim)
         apply(aim)
-        _ = try? board.update(object.id, props: .object(["path": .string(aim.path), "range": aim.range?.json ?? .null]))
+        board.reaimForNavigation(object.id, to: CodeAim(path: aim.path, range: aim.range))
     }
 
     // MARK: Loading

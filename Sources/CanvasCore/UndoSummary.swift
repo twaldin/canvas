@@ -103,12 +103,14 @@ extension UndoHistory.Step {
         return shown.prefix(2).joined(separator: "; ") + (shown.count > 2 ? "…" : "")
     }
 
-    /// The notice an undo (`redo` false) or redo of the step shows, nil when it needs none: one
-    /// someone else made (`author`, `Undid omp: created 9 code tiles · ⇧⌘Z redoes`) or one that
-    /// changed the user's files or git index (`Undid Stage of src/a.rs · ⇧⌘Z redoes`), which
-    /// nothing on the board shows happening.
+    /// The notice an undo (`redo` false) or redo of the step shows: every one, so ⌘Z never does
+    /// something unseen (a tile off screen moved back, an earlier step undone where the user
+    /// expected another), named with its author when someone else made it (`Undid omp: created 9
+    /// code tiles · ⇧⌘Z redoes`), and with what it did to the user's files or git index (`Undid
+    /// Stage of src/a.rs · ⇧⌘Z redoes`). Nil only for a step that did nothing it can name.
     public func notice(redo: Bool, author: String?) -> String? {
-        guard author != nil || !effectNames.isEmpty else { return nil }
+        let summary = summary
+        guard !summary.isEmpty else { return nil }
         let verb = redo ? "Redid" : "Undid", again = redo ? "⌘Z undoes" : "⇧⌘Z redoes"
         return "\(verb) \(author.map { "\($0): " } ?? "")\(summary) · \(again)"
     }

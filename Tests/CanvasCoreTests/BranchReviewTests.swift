@@ -160,7 +160,7 @@ struct BranchReviewTests {
         #expect(ChangesBaseChoice.other("HEAD~3").prop == "HEAD~3")
     }
 
-    @Test func undoingAGitActionNamesItAndABoardMoveOfTheUsersSaysNothing() throws {
+    @Test func undoingAGitActionNamesItAndSoDoesUndoingTheUsersOwnMove() throws {
         let board = Board(id: "brd_t", root: URL(fileURLWithPath: "/tmp"))
         let tile = board.create(type: .changes, props: .object([:]))
         let patch = ReviewPatch(repository: URL(fileURLWithPath: "/tmp"), text: "", target: .index, reverse: false)
@@ -172,7 +172,7 @@ struct BranchReviewTests {
         #expect(ReviewPatch.name(of: .object(["action": "revert", "path": "a.rs", "scope": "lines", "added": 1, "removed": 1])) == "Discard of 2 lines of a.rs")
 
         try board.update(tile.id, frame: Frame(x: 50, y: 50, w: tile.frame.w, h: tile.frame.h))
-        #expect(board.nextUndo?.notice(redo: false, author: nil) == nil, "the user sees their own move undone")
+        #expect(board.nextUndo?.notice(redo: false, author: nil) == "Undid moved a changes tile · ⇧⌘Z redoes", "no undo is silent")
     }
 
     @Test func aCompactNoChangesTileGrowsWhenChangesAppearAndASizedOneKeepsItsSize() async throws {

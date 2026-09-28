@@ -236,7 +236,7 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         separator.boxType = .separator
         footer.font = .systemFont(ofSize: 11)
         footer.textColor = .secondaryLabelColor
-        footer.lineBreakMode = .byTruncatingTail
+        footer.wrapAsNote()
         footer.isHidden = true
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
@@ -409,11 +409,12 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         // The inset table style pads above the first row; keep the same room below the last.
         let shown = min(rows.count, Self.visibleRows)
         let listHeight = shown > 0 ? table.rect(ofRow: shown - 1).maxY + table.rect(ofRow: 0).minY : 0
-        let footerRoom: CGFloat = note == nil ? 0 : 22
         footer.stringValue = note ?? ""
-        footer.toolTip = note
+        footer.wrapAsNote()
         footer.isHidden = note == nil
-        footerHeight.constant = footerRoom == 0 ? 0 : 18
+        // The panel is 560 wide unless the window is narrower; before its first layout, assume 560.
+        footerHeight.constant = note == nil ? 0 : max(18, footer.height(atWidth: (bounds.width > 0 ? bounds.width : 560) - 28))
+        let footerRoom: CGFloat = note == nil ? 0 : footerHeight.constant + 4
         height.constant = Self.fieldHeight + 1 + (shown > 0 ? listHeight + 8 : 0) + footerRoom
         list.isHidden = rows.isEmpty
         separator.isHidden = rows.isEmpty && note == nil

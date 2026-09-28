@@ -234,20 +234,21 @@ private final class FilterList: NSView, NSTextFieldDelegate {
         header.textColor = .secondaryLabelColor
         let action = headerAction.map { PanelAction(title: $0.title, run: $0.run) }
         let headerWidth = header.fittingSize.width + (action.map { $0.fittingSize.width + 16 } ?? 0)
-        let width = min(max(buttons.map(\.fittingSize.width).max() ?? 0, headerWidth, 240), NavigationPanel.maxSize.width)
-        let noteHeight: CGFloat = note == nil ? 0 : 16
+        // A note (why there is no language server, and how to install one) gets room to read in
+        // about three lines.
+        let width = min(max(buttons.map(\.fittingSize.width).max() ?? 0, headerWidth, note == nil ? 240 : 400), NavigationPanel.maxSize.width)
+        let line = note.map(NSTextField.init(labelWithString:))
+        line?.font = .systemFont(ofSize: 10.5)
+        line?.textColor = .tertiaryLabelColor
+        line?.wrapAsNote()
+        let noteHeight = line.map { $0.height(atWidth: width - 8) + 2 } ?? 0
         let top = Self.headerHeight + noteHeight
         let listHeight = min(CGFloat(rows.count) * Self.rowHeight, NavigationPanel.maxSize.height - top - Self.fieldHeight - 6)
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: top + Self.fieldHeight + 6 + listHeight))
         header.frame = NSRect(x: 4, y: 0, width: width - 8 - (action.map { $0.fittingSize.width + 8 } ?? 0), height: 16)
         addSubview(header)
-        if let note {
-            let line = NSTextField(labelWithString: note)
-            line.font = .systemFont(ofSize: 10.5)
-            line.textColor = .tertiaryLabelColor
-            line.lineBreakMode = .byTruncatingTail
-            line.toolTip = note
-            line.frame = NSRect(x: 4, y: Self.headerHeight - 2, width: width - 8, height: 14)
+        if let line {
+            line.frame = NSRect(x: 4, y: Self.headerHeight - 2, width: width - 8, height: noteHeight - 2)
             addSubview(line)
         }
         if let action {
@@ -381,5 +382,23 @@ enum HoverText {
             result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
         }
         return result
+    }
+}
+
+extension NSTextField {
+    /// Wraps onto as many lines as it needs: a panel's note (an install hint names the command
+    /// and the variable to set), which one truncated line cut off, and whose tooltip an inactive
+    /// app doesn't show.
+    func wrapAsNote() {
+        usesSingleLineMode = false
+        cell?.wraps = true
+        lineBreakMode = .byWordWrapping
+        maximumNumberOfLines = 0
+    }
+
+    /// Its height laid out `width` wide.
+    func height(atWidth width: CGFloat) -> CGFloat {
+        preferredMaxLayoutWidth = width
+        return ceil(fittingSize.height)
     }
 }

@@ -91,7 +91,7 @@ A shape `over` a tile marks a region in the tile's local units (`partly over`: m
 On a browser or HTML tile the mention adds `page elements under it (<url>):` lines (`<selector> "<text>"`), read when the prompt was sent: re-check with the selectors or a render if the page may have changed.
 A Hyper-click on a page's `<canvas>`, `<video>` or `<img>` carries `pixel (x, y) of W×H` in the element's own pixels: use it directly instead of mapping a drawn shape's region.
 A terminal mention quotes its screen (one over 41 lines keeps 40: the first 3, the last 10 and failure lines).
-A command's output (``[n] command `go test ./...` · exit 1``) ends `· read it: canvas agent.read --target <id> --block -N`: run exactly that to read the block (up to its last 2000 lines).
+A command's output (``[n] command `go test ./...` · exit 1``) ends `· read it: canvas agent.read --target <id> --block -N` while that block can still be read (after `clear` the mention's own lines are all there is): run exactly that to read the block (up to its last 2000 lines).
 Whether the user's last command passed: `lastCommand` (`{command, exit, durationMs}`) in `agent.list`/`object.get`, not the screen.
 An `(edited)` marker means what the mention holds changed after the user staged it (a note's text, a page's address, a Stage/Unstage/Discard of that code mention's own lines): re-read it.
 Every mention kind and field: `references/api.md` "Reading the board".
@@ -260,8 +260,9 @@ canvas agent.read --target reviewer --since prompt   # only what came after your
 
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
 Then `agent.read --since prompt` returns what followed your prompt (its echo, then the reply), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`; `cutOff` means the turn died on that error: say so, don't treat it as done).
+A prompt sent while the agent is `working` joins that turn: `agent.wait` returns at its end. The last answer survives an app restart, and an agent that finished while Canvas was closed comes back `done` with it.
 Hand over board objects instead of describing them: `agent.prompt` `mentions=[{"object": id}, {"object": code_id, "lines": {"start": 41, "end": 48}}]` reach the receiver as hidden context naming your terminal.
-Kind `omp`, `claude`, `codex`, `gemini` (before 0.60) or `opencode` reports a lifecycle.
+Kind `omp`, `claude`, `codex`, `gemini` (before 0.60) or `opencode` reports a lifecycle (a Codex tile is `blocked` at launch while Codex asks whether to trust the folder).
 Agents without an integration (aider via Canvas's `aider` wrapper, any CLI's OSC 9/777 or bell) have their program as `kind` and `lifecycle.via: "notifications"`: `done` when they last said they wait, `unknown` after a prompt, never working/blocked; `agent.wait` returns at their next notification (give it `timeout_ms`), and `mentions` can't go to them.
 Kind `unknown` (a shell, another CLI) has none: `agent.wait` fails once 15 s pass without a first report, so poll `agent.read --since prompt`; `program` and `title` still hint at its state.
 Don't prompt an agent that is `blocked`; it is waiting for its user. `agent.prompt` to one fails with `conflict` quoting what it waits on, and so does one whose foreground program isn't its agent (nvim, another tmux pane): tell the user.
@@ -293,7 +294,7 @@ Then address it with `board: <id>` (from the result) on every call, and start ag
 
 Help › Canvas Basics ⌥⌘/ is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" and "which key?" from it, not from Canvas's source.
 ⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows (all four) move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal or a web page Esc stays with the program or page: ⌘Esc leaves any tile).
-⌘J goes to the next thing that needs the user; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and names an agent's step it undoes.
+⌘J goes to the next thing that needs the user; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and a notice names what it undid.
 Hyper-click (⌃⌥⇧⌘-click) or Edit › Mention ⇧⌘M stages a mention for the terminal the tray shows ("→ name ▾" picks another); Hyper-V pastes staged mentions into the terminal the user is typing in (else that one), for agents without an integration.
 Mouse users: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; don't tell a user without a trackpad that zooming needs a pinch.
 On a PC keyboard ⌘ is the Windows key and does what Ctrl does elsewhere, ⌥ is Alt (`macos-option-as-alt = true` in their Ghostty config for Meta), and Hyper is Ctrl+Alt+Shift+Win: point them at Canvas Basics' "Coming from Linux or Windows" section.

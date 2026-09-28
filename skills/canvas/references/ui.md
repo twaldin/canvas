@@ -47,8 +47,8 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
   While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed; "N new ▸" catches up. Pin keeps the current view as its own tile; right-click the terminal › Follow Files (or Object › Follow Files) turns it off.
 - **Where your objects land**: next to your terminal, clear of other tiles, inside the user's view when there's room within ~600 pt of it; they show "by <your terminal's name>" in their title bar.
   The view never moves for you: when the view is full, what you made may be off screen; raise a marker, or tell the user ⌘9 (Zoom to Fit).
-- **Undo**: ⌘Z undoes the last change, the user's or an agent's (an agent's batch is one step, and a notice names the agent; undoing a changes tile's Stage, Unstage, or Discard names it too); ⇧⌘Z redoes. While a terminal has the keyboard, ⌘Z goes to the terminal, never the canvas.
-  Navigation and bookkeeping nobody chose (a follow tile re-aiming) aren't undo steps; ⌘[ / ⌘] go back and forward through the user's navigation.
+- **Undo**: ⌘Z undoes the last change, the user's or an agent's (an agent's batch is one step), and every ⌘Z/⇧⌘Z shows a notice naming what it undid or redid (the agent, or a changes tile's Stage, Unstage, or Discard); ⇧⌘Z redoes. While a terminal has the keyboard, ⌘Z goes to the terminal, never the canvas.
+  Navigation and bookkeeping nobody chose (a follow tile re-aiming, a terminal's ⌘-click preview re-aiming, a pick in a follow tile's history strip) aren't undo steps; ⌘[ / ⌘] go back and forward through the user's navigation.
 
 ## Reviewing work
 

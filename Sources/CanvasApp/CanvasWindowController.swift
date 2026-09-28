@@ -15,6 +15,16 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
 
+    /// The board in front: the frontmost visible board window, with tabs its selected tab (the
+    /// others are ordered out). What menu commands and ⌘Z act on, also while a panel such as
+    /// Canvas Basics is key or the app isn't active (replayed input).
+    static var frontmost: CanvasWindowController? {
+        NSApp.orderedWindows.lazy.compactMap { window -> CanvasWindowController? in
+            guard window.isVisible, window.tabGroup.map({ $0.selectedWindow === window }) ?? true else { return nil }
+            return window.windowController as? CanvasWindowController
+        }.first
+    }
+
     init(board: Board, registry: BoardRegistry) {
         self.board = board
         self.registry = registry

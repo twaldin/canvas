@@ -261,12 +261,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return URL(fileURLWithPath: cwd == "/" ? NSHomeDirectory() : cwd)
     }
 
-    /// The board the user is on: the key window's, else the main window's (a panel such as
-    /// Canvas Basics can be key over it, and only the selected tab's window is main).
+    /// The board the user is on (`CanvasWindowController.frontmost`).
     private var keyController: CanvasWindowController? {
-        controllers.values.first { $0.window?.isKeyWindow == true }
-            ?? controllers.values.first { $0.window?.isMainWindow == true }
-            ?? controllers.values.first
+        CanvasWindowController.frontmost ?? controllers.values.first
     }
 
     /// Tile `id`'s content in `board`'s window, for the router's questions only a live tile answers.

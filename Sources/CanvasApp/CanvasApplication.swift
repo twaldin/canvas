@@ -34,7 +34,7 @@ final class CanvasApplication: NSApplication {
 
     /// An untargeted action while no window is key: the replayed window's responder chain first.
     override func target(forAction action: Selector, to target: Any?, from sender: Any?) -> Any? {
-        if target == nil, keyWindow == nil, DevInput.enabled, let window = DevInput.frontWindow() {
+        if target == nil, keyWindow == nil, DevInput.enabled, let window = CanvasWindowController.frontmost?.window {
             var responder = window.firstResponder
             while let current = responder {
                 if current.responds(to: action) { return current }

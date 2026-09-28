@@ -64,7 +64,7 @@ enum DevInput {
                 var timer: DispatchSourceTimer?
             }
             let burst = Burst()
-            DevPerf.begin("burst of \(count) \(fields["kind"] ?? "")", phase: "gesture", window: frontWindow())
+            DevPerf.begin("burst of \(count) \(fields["kind"] ?? "")", phase: "gesture", window: CanvasWindowController.frontmost?.window)
             let timer = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
             burst.timer = timer
             timer.schedule(deadline: .now(), repeating: interval, leeway: .nanoseconds(0))
@@ -98,10 +98,10 @@ enum DevInput {
         if fields["kind"] == "perf" {
             // A performance probe span over an idle stretch (DevPerf): what redraws and runs while
             // nobody touches the app, also with the window minimized or covered (no frames then).
-            let window = frontWindow() ?? NSApp.windows.first { $0.windowController is CanvasWindowController }
+            let window = CanvasWindowController.frontmost?.window ?? NSApp.windows.first { $0.windowController is CanvasWindowController }
             return DevPerf.idle(ms: Double(fields["ms"] ?? "") ?? 5000, window: window)
         }
-        guard let window = frontWindow(), let content = window.contentView else { return }
+        guard let window = CanvasWindowController.frontmost?.window, let content = window.contentView else { return }
         let flags = modifiers(fields["mods"])
         func number(_ key: String) -> CGFloat { CGFloat(Double(fields[key] ?? "") ?? 0) }
         /// Window content points with a top-left origin → window coordinates.
@@ -268,14 +268,6 @@ enum DevInput {
             }
         default:
             NSLog("DevInput: unknown kind \(fields["kind"] ?? "nil")")
-        }
-    }
-
-    /// The front board window: with tabs, the selected tab (the others are ordered out).
-    static func frontWindow() -> NSWindow? {
-        NSApp.orderedWindows.first { window in
-            window.isVisible && window.windowController is CanvasWindowController
-                && (window.tabGroup.map { $0.selectedWindow === window } ?? true)
         }
     }
 }

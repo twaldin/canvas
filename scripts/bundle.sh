@@ -30,6 +30,13 @@ cp -R clients/ts/src "$app/Contents/Resources/clients/ts/src"
 # the user's, and no stale bytecode.
 cp -R clients/python/canvas_sdk clients/python/pyproject.toml "$app/Contents/Resources/clients/python/"
 find "$app/Contents/Resources/clients/python" -name __pycache__ -prune -exec rm -rf {} +
+# Importing the SDK would write bytecode into the bundle for whichever Python the user runs, and a
+# file added to the bundle breaks its signature. A plain file named __pycache__ where Python would
+# make that directory makes it skip writing (the import still works, compiled in memory), without
+# touching the user's own code the way PYTHONDONTWRITEBYTECODE or PYTHONPYCACHEPREFIX would.
+find "$app/Contents/Resources/clients/python" -name '*.py' -exec dirname {} \; | sort -u | while IFS= read -r dir; do
+  : > "$dir/__pycache__"
+done
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

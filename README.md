@@ -19,10 +19,11 @@ A native macOS infinite canvas for coding agents. Agents run unmodified in real 
 ## Install
 
 1. Download `Canvas-<version>.zip` from [Releases](../../releases), unzip it, and move `Canvas.app` to `/Applications`.
-2. The app is ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. Right-click the app and choose **Open**, or run:
+2. The app is ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. Clear the quarantine flag:
    ```sh
    xattr -dr com.apple.quarantine /Applications/Canvas.app
    ```
+   Or open it once, then choose **Open Anyway** in System Settings › Privacy & Security. On macOS 14, right-clicking the app and choosing **Open** also works; macOS 15 removed that shortcut.
 3. Install the runtime tools. Terminal tiles need zmx. The CLI and the omp extension need [bun](https://bun.sh).
    ```sh
    brew install neurosnap/tap/zmx oven-sh/bun/bun

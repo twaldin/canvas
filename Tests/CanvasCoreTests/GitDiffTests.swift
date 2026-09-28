@@ -141,29 +141,36 @@ struct GitBaseTests {
         let before = await engine.diff(file: repo.url("a.txt"), base: .mergeBase)
         #expect(before.state == .modified && before.base == first)
 
-        let toplevel = try await repo.git("rev-parse", "--show-toplevel")
-        let moved = Task {
-            for await note in NotificationCenter.default.notifications(named: .gitDiffBaseChanged) where note.object as? String == toplevel { return true }
-            return false
-        }
-        let second = try await repo.commit("two")
-        let announced = try await withThrowingTaskGroup(of: Bool.self) { group in
-            group.addTask { await moved.value }
-            group.addTask {
-                try await Task.sleep(for: .seconds(10))
-                return false
-            }
-            defer { group.cancelAll() }
-            return try await group.next() ?? false
-        }
-        moved.cancel()
-        #expect(announced, "a commit on the base branch must re-resolve the merge-base")
+        var second = ""
+        let heard = try await announced(repo) { second = try await repo.commit("two") }
+        #expect(heard, "a commit on the base branch must re-resolve the merge-base")
         let after = await engine.diff(file: repo.url("a.txt"), base: .mergeBase)
         #expect(after.base == second)
         #expect(after.state == .unchanged)
 
         await engine.release(held)
         #expect(await engine.watchedRepositoryCount == 0, "the last live holder going away stops the stream")
+    }
+
+    /// The study: on a feature branch, a new file's tile said "not tracked by git yet" after it
+    /// was committed, in that tile and in any new one, until relaunch: the cached diff kept git
+    /// status's `??` because neither the base nor the content had changed.
+    @Test func committingANewFileOnABranchIsNoLongerUntracked() async throws {
+        let repo = try await TempRepo(branch: "main")
+        try await repo.write("a.txt", numbered(1...3))
+        try await repo.commit("base")
+        try await repo.git("checkout", "-q", "-b", "feature")
+        try await repo.write("new.txt", numbered(1...5))
+        let engine = GitDiffEngine()
+        let held = try #require(await engine.retain(containing: repo.url("new.txt")))
+        let fresh = await engine.diff(file: repo.url("new.txt"), base: .mergeBase)
+        #expect(fresh.state == .added && fresh.untracked)
+
+        let heard = try await announced(repo) { try await repo.commit("new file") }
+        #expect(heard, "tiles showing it hear that its tracked state changed")
+        let committed = await engine.diff(file: repo.url("new.txt"), base: .mergeBase)
+        #expect(committed.state == .added && !committed.untracked, "new on the branch, and tracked")
+        await engine.release(held)
     }
 
     /// The incident study: a follow tile re-aiming cancelled its load mid-resolution, the shared
@@ -200,6 +207,26 @@ struct GitBaseTests {
         #expect(committed.state == .unchanged && committed.base == first)
         await engine.release(held)
     }
+}
+
+/// Whether `.gitDiffBaseChanged` is posted for `repo` within 10 s of `change`.
+private func announced(_ repo: TempRepo, by change: () async throws -> Void) async throws -> Bool {
+    let toplevel = try await repo.git("rev-parse", "--show-toplevel")
+    let heard = Task {
+        for await note in NotificationCenter.default.notifications(named: .gitDiffBaseChanged) where note.object as? String == toplevel { return true }
+        return false
+    }
+    // Cancelling ends the wait for notifications, answering false.
+    let deadline = Task {
+        try? await Task.sleep(for: .seconds(10))
+        heard.cancel()
+    }
+    defer {
+        deadline.cancel()
+        heard.cancel()
+    }
+    try await change()
+    return await heard.value
 }
 
 struct GitDiffTests {

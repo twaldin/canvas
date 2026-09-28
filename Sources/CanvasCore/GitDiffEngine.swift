@@ -28,17 +28,20 @@ public enum DiffBase: Hashable, Sendable {
 
 extension Notification.Name {
     /// Posted (object: the repository's top-level path) when a resolved diff base moved, e.g.
-    /// after a commit, checkout, rebase, or fetch. Live code tiles reload on it.
+    /// after a commit, checkout, rebase, or fetch, or when the index changed whether a new file
+    /// is tracked (`git add`). Live code tiles reload on it.
     public static let gitDiffBaseChanged = Notification.Name("canvas.gitDiffBaseChanged")
 }
 
 /// Git diffs for code tiles (docs/design.md, Code/diff and Performance):
 ///  - repositories that live tiles hold (`retain`) keep their resolved diff bases and a debounced
-///    FSEvents stream on the git directory that re-resolves them when HEAD or refs move; with no
-///    holder the record and its stream are dropped
+///    FSEvents stream on the git directory that re-resolves them when HEAD or refs move, and
+///    retires cached diffs of new files when the index moves; with no holder the record and its
+///    stream are dropped
 ///  - requests for the same repository and base that arrive together share one `git ls-tree`
 ///    and one `git diff`
-///  - results are cached by (base SHA, content hash), so an unchanged file never runs git
+///  - results are cached by (base SHA, content hash), so an unchanged file never runs git; a new
+///    file's entry also holds the index it was read against, as git status told it apart
 ///  - the file is read once, diffed, and read again: a patch that doesn't describe the captured
 ///    text is retried, never reconstructed
 ///  - all git goes through `GitRunner.shared` (at most two processes app-wide)
@@ -65,14 +68,17 @@ public actor GitDiffEngine {
 
     private final class Repository {
         let toplevel: URL
+        /// The worktree's own git directory, whose `index` says what is tracked.
+        let gitDir: String
         let watchedDirectories: [String]
         var bases: [DiffBase: ResolvedBase] = [:]
         var watcher: FileEventStream?
         var holders = 0
 
-        init(toplevel: URL, watchedDirectories: [String]) {
+        init(toplevel: URL, gitDir: String, commonDir: String) {
             self.toplevel = toplevel
-            self.watchedDirectories = watchedDirectories
+            self.gitDir = gitDir
+            self.watchedDirectories = Array(Set([gitDir, commonDir]))
         }
     }
 
@@ -81,6 +87,13 @@ public actor GitDiffEngine {
         var path: String
         var base: String
         var content: Data
+    }
+
+    /// A cached diff, and for a file the base lacks (added, or ignored) the index it was read
+    /// against: whether git tracks the file isn't in the key, so a changed index retires it.
+    private struct Cached {
+        var diff: FileDiff
+        var index: String?
     }
 
     private struct BatchKey: Hashable {
@@ -113,7 +126,7 @@ public actor GitDiffEngine {
     /// Held repositories by top-level path, and which directories lie in them.
     private var repositories: [String: Repository] = [:]
     private var repositoryOfDirectory: [String: String] = [:]
-    private var cache: [CacheKey: FileDiff] = [:]
+    private var cache: [CacheKey: Cached] = [:]
     private var cacheOrder: [CacheKey] = []
     private let cacheLimit = 64
     private var batches: [BatchKey: [Request]] = [:]
@@ -198,10 +211,13 @@ public actor GitDiffEngine {
         let key = CacheKey(toplevel: toplevel, path: path, base: sha, content: hash)
         // Keyed by commit: another base that resolved to the same commit (HEAD is the merge-base)
         // shares the diff but names its own base.
-        if var cached = cache[key] {
-            cached.baseLabel = resolved.label
-            return cached
+        if let cached = cache[key], cached.index == nil || cached.index == Self.indexStamp(repository.gitDir) {
+            var diff = cached.diff
+            diff.baseLabel = resolved.label
+            return diff
         }
+        // Taken before git status runs: an index written meanwhile retires the entry next time.
+        let index = Self.indexStamp(repository.gitDir)
         let patch = await patch(path, in: repository, base: sha)
         let patchData = patch.patch
         let parsed = await offPool { UnifiedDiff.parse(patchData) }
@@ -238,7 +254,7 @@ public actor GitDiffEngine {
         // git read the file some time after we did; only a file still identical afterwards
         // proves the patch describes the text we captured.
         guard await offPool({ Self.read(file).data }) == data else { return nil }
-        store(diff, for: key)
+        store(Cached(diff: diff, index: diff.state == .added || diff.state == .ignored ? index : nil), for: key)
         return diff
     }
 
@@ -286,11 +302,18 @@ public actor GitDiffEngine {
         return await offPool { SideText(String(decoding: data, as: UTF8.self)) }
     }
 
-    private func store(_ diff: FileDiff, for key: CacheKey) {
-        if cache.updateValue(diff, forKey: key) == nil {
+    private func store(_ entry: Cached, for key: CacheKey) {
+        if cache.updateValue(entry, forKey: key) == nil {
             cacheOrder.append(key)
             if cacheOrder.count > cacheLimit { cache.removeValue(forKey: cacheOrder.removeFirst()) }
         }
+    }
+
+    /// When the index at `gitDir` was last written, and its size; nil without one.
+    private static func indexStamp(_ gitDir: String) -> String? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: gitDir + "/index"),
+              let date = attributes[.modificationDate] as? Date else { return nil }
+        return "\(date.timeIntervalSinceReferenceDate) \(attributes[.size] as? Int ?? 0)"
     }
 
     private static func read(_ file: URL) -> (data: Data?, tooLarge: Bool, isDirectory: Bool) {
@@ -497,13 +520,13 @@ public actor GitDiffEngine {
             repositoryOfDirectory[directory.path] = lines[0]
             return held
         }
-        return Repository(toplevel: URL(fileURLWithPath: lines[0]), watchedDirectories: Array(Set([lines[1], lines[2]])))
+        return Repository(toplevel: URL(fileURLWithPath: lines[0]), gitDir: lines[1], commonDir: lines[2])
     }
 
     /// The repository's resolved base, reused only when it names a commit: an answer without one
     /// (no commits yet, or git cancelled or failing mid-question) is asked again on the next
     /// load, so it never outlives what caused it. It is still recorded, so a HEAD or ref change
-    /// re-resolves it and tiles showing it reload (`refreshBases`).
+    /// re-resolves it and tiles showing it reload (`refresh`).
     private func resolve(_ base: DiffBase, in repository: Repository) async -> ResolvedBase {
         if let known = repository.bases[base], known.sha != nil { return known }
         let resolved = await Self.resolve(base, in: repository.toplevel)
@@ -589,8 +612,9 @@ public actor GitDiffEngine {
     private func watch(_ repository: Repository) {
         let toplevel = repository.toplevel.path
         repository.watcher = FileEventStream(paths: repository.watchedDirectories, latency: 0.4) { [weak self] paths in
-            guard let self, paths.contains(where: Self.movesBase) else { return }
-            Task { await self.refreshBases(toplevel) }
+            let bases = paths.contains(where: Self.movesBase), index = paths.contains(where: Self.isIndex)
+            guard let self, bases || index else { return }
+            Task { await self.refresh(toplevel, bases: bases, index: index) }
         }
     }
 
@@ -601,15 +625,31 @@ public actor GitDiffEngine {
         return name == "HEAD" || name == "packed-refs" || path.contains("/refs/")
     }
 
-    /// Re-resolve the bases tiles are using; announce the repository when any of them moved.
-    func refreshBases(_ toplevel: String) async {
+    /// The index: what git tracks, so whether a file the base lacks is untracked (`git add`).
+    nonisolated static func isIndex(_ path: String) -> Bool {
+        (path as NSString).lastPathComponent == "index" && !path.contains("/objects/") && !path.contains("/refs/")
+    }
+
+    /// After a git write: re-resolve the bases tiles are using (`bases`) and retire cached diffs
+    /// read against another index (`index`); announce the repository when either changed what
+    /// its tiles show.
+    func refresh(_ toplevel: String, bases: Bool, index: Bool) async {
         guard let repository = repositories[toplevel] else { return }
-        let previous = repository.bases
         var changed = false
-        for base in previous.keys {
-            let resolved = await Self.resolve(base, in: repository.toplevel)
-            if resolved != previous[base] { changed = true }
-            repository.bases[base] = resolved
+        if index {
+            let now = Self.indexStamp(repository.gitDir)
+            let stale = Set(cache.filter { $0.key.toplevel == toplevel && $0.value.index != nil && $0.value.index != now }.keys)
+            for key in stale { cache.removeValue(forKey: key) }
+            cacheOrder.removeAll { stale.contains($0) }
+            changed = !stale.isEmpty
+        }
+        if bases {
+            let previous = repository.bases
+            for base in previous.keys {
+                let resolved = await Self.resolve(base, in: repository.toplevel)
+                if resolved != previous[base] { changed = true }
+                repository.bases[base] = resolved
+            }
         }
         if changed {
             NotificationCenter.default.post(name: .gitDiffBaseChanged, object: toplevel)

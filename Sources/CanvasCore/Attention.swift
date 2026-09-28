@@ -21,6 +21,15 @@ public struct Attention: Codable, Equatable, Sendable {
         self.earlierTurn = earlierTurn
     }
 
+    /// What a one-line pill (a marker's or blocked agent's bubble, an edge pill) shows of
+    /// `message`: its first non-empty line, ending in "…" when more follows (an agent's
+    /// multi-paragraph question); the whole message is the pill's tooltip. Nil for no text.
+    public static func pillLine(_ message: String?) -> String? {
+        let lines = (message ?? "").split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard let first = lines.first else { return nil }
+        return lines.count > 1 ? first + " …" : first
+    }
+
     public var json: JSONValue {
         var fields: [String: JSONValue] = ["id": .string(object), "active": .bool(true)]
         if let message { fields["message"] = .string(message) }

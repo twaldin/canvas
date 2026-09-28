@@ -184,7 +184,7 @@ Getting lost on a big board must always have a one-step way back.
 
 ### Persistence
 
-- Quitting, and closing a board's tab or window, end nothing: terminals keep running in their zmx sessions (agents keep working) and are back when the app or the folder opens again. Closing a tab or window with terminals asks first in a sheet that names what keeps running (Keep Running, End Sessions, Cancel); a closed board's browser pages are released and reload when it reopens. Canvas Basics and the README say so.
+- Quitting, and closing a board's tab or window, end nothing: terminals keep running in their zmx sessions (agents keep working) and are back when the app or the folder opens again. Closing a tab or window with terminals asks first in a sheet that names what keeps running (Keep Running, End Sessions, Cancel). Closing the last board window quits Canvas, and the sheet says so; like Quit, it keeps the board for the next launch (`open-boards.json`); a closed board's browser pages are released and reload when it reopens. Canvas Basics and the README say so.
 
 - Terminals: zmx sessions.
 - Boards: `~/Library/Application Support/Canvas/boards/`, keyed by the repo's shared git directory plus branch/worktree; a board file holds its objects, the staged tray, and unseen attention markers. Boards survive worktree deletion as archived boards; "export to repo" commits one on request.

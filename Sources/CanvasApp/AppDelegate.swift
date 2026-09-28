@@ -239,9 +239,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Records the shown boards' roots in tab order (AppPaths.openBoards) for the next launch.
+    /// Closing the last board window quits Canvas (`applicationShouldTerminateAfterLastWindowClosed`),
+    /// so that board stays recorded, as Quit keeps every tab.
     private func saveOpenBoards(closing: NSWindow? = nil) {
         guard !terminating else { return }
-        let shown = controllers.values.filter { $0.window.map { $0 !== closing && isShown($0) } ?? false }
+        let open = controllers.values.filter { $0.window.map(isShown) ?? false }
+        let others = open.filter { $0.window !== closing }
+        let shown = others.isEmpty ? open : others
         let order = shown.first?.window?.tabbedWindows ?? []
         let roots = shown.sorted { lhs, rhs in
             (order.firstIndex { $0 === lhs.window } ?? .max) < (order.firstIndex { $0 === rhs.window } ?? .max)

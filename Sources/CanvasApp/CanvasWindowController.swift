@@ -311,13 +311,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// on working, headless) and come back when the folder is opened again. With any terminal on
     /// the board a sheet says so first, naming what keeps running: Keep Running (Return), End
     /// Sessions (⌘⌫: its terminals close as in the close-terminal sheet, then the tab), Cancel (Esc).
+    /// Closing the last board window quits Canvas, which the sheet says; the next launch reopens
+    /// the board (`AppDelegate.saveOpenBoards`).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         let terminals = canvas.tiles.values.compactMap { $0.content as? TerminalTile }.sorted { $0.objectID < $1.objectID }
         guard !terminals.isEmpty else { return true }
-        let place = (sender.tabbedWindows?.count ?? 1) > 1 ? "tab" : "window"
+        let tabs = sender.tabbedWindows?.count ?? 1
+        let last = tabs <= 1 && !NSApp.windows.contains { $0 !== sender && $0 is CanvasWindow && ($0.isVisible || $0.isMiniaturized) }
+        let keep = SessionProcesses.keepRunningText(terminals.map { $0.sessionProcesses() })
         let alert = NSAlert()
         alert.messageText = "Close “\(board.root.lastPathComponent)” and keep \(terminals.count == 1 ? "its terminal" : "its terminals") running?"
-        alert.informativeText = "\(SessionProcesses.keepRunningText(terminals.map { $0.sessionProcesses() })) in the background after the \(place) closes; opening this folder again (File › Open Board…) shows the board as you left it. End Sessions closes the board's terminals first."
+        alert.informativeText = last
+            ? "This is Canvas's last window: closing it quits Canvas. \(keep) in the background; the next time Canvas opens it shows this board as you left it. End Sessions closes the board's terminals first."
+            : "\(keep) in the background after the \(tabs > 1 ? "tab" : "window") closes; opening this folder again (File › Open Board…) shows the board as you left it. End Sessions closes the board's terminals first."
         alert.addButton(withTitle: "Keep Running")
         let end = alert.addButton(withTitle: "End Sessions")
         end.keyEquivalent = "\u{8}"

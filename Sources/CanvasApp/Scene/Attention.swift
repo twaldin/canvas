@@ -18,13 +18,19 @@ enum AttentionStyle {
     private static let hand = NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: "Needs you")?
         .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .bold).applying(NSImage.SymbolConfiguration(paletteColors: [ink])))
     static let glyphWidth: CGFloat = 18
+    /// What the pill draws: one line of the message (`Attention.pillLine`), else the default.
     func text(_ message: String?) -> NSString {
-        (message?.isEmpty == false ? message! : self == .blocked ? "Needs you" : "Look here") as NSString
+        (Attention.pillLine(message) ?? (self == .blocked ? "Needs you" : "Look here")) as NSString
     }
-    /// A bubble's tooltip: its whole message when truncated, then what the bubble is.
+    /// The whole message, for tooltips; the pill's own text without one.
+    func whole(_ message: String?) -> String {
+        message.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 } ?? text(message) as String
+    }
+    /// A bubble's tooltip: its whole message when the pill cuts it (too wide, or more than one
+    /// line), then what the bubble is.
     func toolTip(_ message: String?, truncated: Bool) -> String {
         let about = self == .blocked ? CanvasBasics.blockedBubble : CanvasBasics.marker
-        return truncated ? "\(text(message))\n\n\(about)" : about
+        return truncated || whole(message) != text(message) as String ? "\(whole(message))\n\n\(about)" : about
     }
 }
 
@@ -102,12 +108,11 @@ final class AttentionMarker: NSView {
         let ringFrame = shown.isNull ? .zero : shown.integral
         if ring.frame != ringFrame { ring.frame = ringFrame }
         ring.rect = ringRect.offsetBy(dx: -ringFrame.minX, dy: -ringFrame.minY)
-        if bubble.frame != rect {
-            bubble.frame = rect
-            // A truncated message reads whole in the bubble's tooltip, with what the bubble is.
-            let tip = style.toolTip(message, truncated: rect.width < naturalWidth)
-            if bubble.toolTip != tip { bubble.toolTip = tip }
-        }
+        if bubble.frame != rect { bubble.frame = rect }
+        // A cut message reads whole in the bubble's tooltip, with what the bubble is; set on
+        // every placement, so a new message with the same bubble rect gets its own.
+        let tip = style.toolTip(message, truncated: rect.width < naturalWidth)
+        if bubble.toolTip != tip { bubble.toolTip = tip }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -256,7 +261,7 @@ final class AttentionEdgeView: NSView {
             chevron.message = pointer.message
             chevron.style = pointer.style
             // The pill shows the start of its message: the whole of it, and where the pill leads.
-            let tip = "\(pointer.style.text(pointer.message))\n\n\(pointer.style == .blocked ? "An agent waiting for you" : "Something to look at") is off screen that way: click to go there."
+            let tip = "\(pointer.style.whole(pointer.message))\n\n\(pointer.style == .blocked ? "An agent waiting for you" : "Something to look at") is off screen that way: click to go there."
             if chevron.toolTip != tip { chevron.toolTip = tip }
             chevron.onClick = { [weak self] in self?.onReveal?(pointer.id) }
             chevron.angle = atan2(pointer.target.y - pointer.frame.midY, pointer.target.x - pointer.frame.midX)

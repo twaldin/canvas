@@ -51,4 +51,12 @@ struct AgentNoticesTests {
         #expect(!notices.isCurrent(deleted))
         #expect(notices.isCurrent(other), "tiles are independent")
     }
+
+    /// Morning study m1: an agent's multi-paragraph question drew its other lines outside the
+    /// one-line bubble, over the terminal's title bar. The pill shows one line and says more follows.
+    @Test func aPillShowsTheFirstLineOfAMultiLineMessage() {
+        #expect(Attention.pillLine("\n  Commit these changes?\n\n--config takes the path of a JSON file.\n") == "Commit these changes? …")
+        #expect(Attention.pillLine("approve Bash?") == "approve Bash?")
+        #expect(Attention.pillLine(" \n\n ") == nil && Attention.pillLine(nil) == nil, "no text: the pill's default")
+    }
 }

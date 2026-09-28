@@ -193,6 +193,14 @@ public final class Board {
             }
             // Format 1 stored a tile's body; the title bar drew above it. Same box on screen.
             if format < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
+            // A terminal saved `working` or `blocked` said so before Canvas last closed: until its
+            // agent reports again (live, or a spooled report replayed), that is only what it was.
+            if object.type == .terminal, var props = object.props.object, var lifecycle = props["lifecycle"]?.object,
+               let state = lifecycle["state"]?.string, state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
+                lifecycle["restored"] = .bool(true)
+                props["lifecycle"] = .object(lifecycle)
+                object.props = .object(props)
+            }
             objects[object.id] = object
             changedAt[object.id] = snapshot.revision
         }

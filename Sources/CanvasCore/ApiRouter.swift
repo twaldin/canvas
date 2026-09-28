@@ -466,6 +466,12 @@ public final class ApiRouter {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
         }
+        // `working` saved before Canvas last closed, with no report since (an agent whose
+        // integration predates the spool, or that ended meanwhile): it may be sitting in a
+        // question or approval now, which the text and Return would answer.
+        if Self.state(of: terminal) == LifecycleState.working.rawValue, terminal.props["lifecycle"]?["restored"]?.bool == true, p["force"]?.bool != true {
+            throw Failure("conflict", "\(terminal.id) was working when Canvas last closed and its agent hasn't reported since, so it may now wait on a question or approval that the prompt would answer. Read its screen (agent.read) first; force: true sends anyway")
+        }
         // An agent reporting from inside tmux (or an editor it started) isn't what the typing
         // reaches, unless it runs in tmux's active pane.
         if PromptTarget.runsAgent(terminal), p["force"]?.bool != true {

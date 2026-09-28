@@ -128,7 +128,6 @@ extension Board {
         }
         if preview, let source, let previous = codePreviews[source], let object = objects[previous.tile], object.rev == previous.rev,
            isNavigationSurface(object.id), let reaim = reaimForNavigation(object.id, to: aim) {
-            codePreviews[source] = (object.id, objects[object.id]?.rev ?? 0)
             return CodeOpened(id: object.id, created: false, reaim: reaim)
         }
         let view = viewport()
@@ -161,13 +160,16 @@ extension Board {
         return reaimForNavigation(reaim.tile, to: reaim.after) != nil
     }
 
-    /// Re-aims code tile `id` as navigation (Go to, a link, a ⌘-click preview, a follow tile's
-    /// history strip): credited to the user, not an undo step (Back and Forward undo it).
+    /// Re-aims code tile `id` as navigation (Go to, a link, a ⌘-click preview, Back and Forward,
+    /// a follow tile's history strip): credited to the user, not an undo step (Back and Forward
+    /// undo it). A preview (`codePreviews`) nobody else changed stays its source's preview, so
+    /// the next ⌘-click or changes-tile click re-aims it again.
     @discardableResult
     public func reaimForNavigation(_ id: ObjectID, to aim: CodeAim) -> CodeReaim? {
         guard let object = objects[id], let before = CodeAim(object) else { return nil }
         guard before != aim else { return CodeReaim(tile: id, before: before, after: aim) }
-        guard (try? unrecorded({ try update(id, props: aim.props) })) != nil else { return nil }
+        guard let aimed = try? unrecorded({ try update(id, props: aim.props) }) else { return nil }
+        for (source, preview) in codePreviews where preview.tile == id && preview.rev == object.rev { codePreviews[source] = (id, aimed.rev) }
         return CodeReaim(tile: id, before: before, after: aim)
     }
 }

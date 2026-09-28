@@ -404,7 +404,6 @@ extension Board {
             }
             if let preview = codePreviews[tile], let object = objects[preview.tile], object.rev == preview.rev,
                let reaim = reaimForNavigation(object.id, to: CodeAim(path: stored, range: lines)) {
-                codePreviews[tile] = (object.id, objects[object.id]?.rev ?? 0)
                 return CodeOpened(id: object.id, created: false, reaim: reaim)
             }
         }

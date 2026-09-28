@@ -356,6 +356,7 @@ struct BoardTests {
         #expect(board.objects[note.id]?.frame.x == -2000, "the user's move is what ⌘Z undid")
         #expect(board.objects[preview.id]?.props["path"] == "b.ts", "the preview keeps its aim")
         #expect(board.restoreAim(try #require(reaimed.reaim).inverted) && board.objects[preview.id]?.props["path"] == "a.ts", "Back re-aims it")
+        #expect(board.openCode(path: root.appendingPathComponent("c.ts").path, lines: nil, beside: terminal.id).id == preview.id, "after Back, still the terminal's one preview")
     }
 
     @Test func aCommandClickPreviewWhoseFileVanishedClosesButAKeptOneStays() throws {

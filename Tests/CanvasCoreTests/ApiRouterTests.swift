@@ -211,6 +211,38 @@ final class ApiRouterTests {
         #expect(submitted == ["use nargs=2"])
     }
 
+    @Test func aPromptToAnAgentInItsTurnIsAnsweredWhenThatTurnEnds() async throws {
+        // omp takes a prompt typed mid-turn as a steering message and answers both in one turn:
+        // no report comes until that turn's idle.
+        let omp = terminal()
+        try board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        let client = try connect()
+        #expect(try await call(client, "agent.prompt", ["target": .string(omp), "text": "also tell me the branch"])["result"]?["waitable"] == .bool(true))
+        client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(omp)","timeoutMs":5000}}"#)
+        client.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == .string("ping"), "still in its turn")
+        try board.reportLifecycle(tile: omp, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp", final: "Hash 1a2b3c\nBranch study-pair")
+        let waited = try await client.next()
+        #expect(waited["id"] == .string("w"))
+        #expect(waited["result"]?["agent"]?["lifecycle"]?["state"] == .string("done"))
+        let final = try await call(client, "agent.read", ["target": .string(omp), "final": .bool(true)])
+        #expect(final["result"]?["text"] == .string("Hash 1a2b3c\nBranch study-pair"), "\(final)")
+
+        // Codex takes it before its next tool call, saying so (UserPromptSubmit: `working`), and
+        // ends the turn with one Stop whose answer is the prompt's.
+        let codex = terminal()
+        try board.reportLifecycle(tile: codex, kind: "codex", state: .working, message: nil, seq: 10, source: "canvas-codex")
+        _ = try await call(client, "agent.prompt", ["target": .string(codex), "text": "add BANANA"])
+        client.send(#"{"id":"w2","method":"agent.wait","params":{"target":"\#(codex)","timeoutMs":5000}}"#)
+        try board.reportLifecycle(tile: codex, kind: "codex", state: .working, message: nil, seq: 11, source: "canvas-codex", call: "f0c82fec96cbd7c6")
+        try board.reportLifecycle(tile: codex, kind: "codex", state: .working, message: nil, seq: 12, source: "canvas-codex")
+        client.send(#"{"id":"ping2","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == .string("ping2"))
+        try board.reportLifecycle(tile: codex, kind: "codex", state: .idle, message: nil, seq: 13, source: "canvas-codex", final: "DONE-ONE\nBANANA")
+        #expect(try await client.next()["id"] == .string("w2"))
+        #expect(try await call(client, "agent.read", ["target": .string(codex), "final": .bool(true)])["result"]?["text"] == .string("DONE-ONE\nBANANA"))
+    }
+
     @Test func anUpdateMayGiveAnyPartOfTheFrame() async throws {
         let note = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 10, y: 20, w: 300, h: 100))
         let client = try connect()

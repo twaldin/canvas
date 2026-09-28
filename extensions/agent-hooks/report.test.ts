@@ -1,0 +1,91 @@
+// bun test extensions/agent-hooks — lifecycle reports while Canvas is away (report.ts).
+import { afterEach, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CanvasClient, CanvasError } from "../../clients/ts/src/index";
+import { release, report, spoolDirectory } from "./report";
+
+const homes: string[] = [];
+afterEach(() => {
+  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+});
+
+function home(): string {
+  const dir = mkdtempSync(join(tmpdir(), "canvas-spool-"));
+  homes.push(dir);
+  return dir;
+}
+
+/** A client whose Canvas is gone, as the real one reports it (`bun test` treats the socket's own ENOENT as uncaught). */
+function away(socketPath: string): CanvasClient {
+  const fail = () => Promise.reject(new CanvasError("unavailable", `Canvas socket ${socketPath}: connect ENOENT (not sent)`));
+  return { socketPath, api: { agent: { report: fail, release: fail } } } as unknown as CanvasClient;
+}
+
+function spooled(socket: string, tile: string): Array<{ seq: number; method: string; params: Record<string, unknown> }> {
+  const dir = spoolDirectory(socket, tile);
+  return readdirSync(dir)
+    .sort()
+    .map((name) => JSON.parse(readFileSync(join(dir, name), "utf8")));
+}
+
+test("reports Canvas isn't there to take wait beside its socket, in seq order, with their answer", async () => {
+  const socket = join(home(), "canvas.sock");
+  const client = away(socket);
+  await report(client, { tile: "obj_a1", kind: "codex", state: "working", seq: 1_700_000_000_000_001, source: "canvas-codex" });
+  await report(client, { tile: "obj_a1", kind: "codex", state: "idle", seq: 1_700_000_000_000_002, source: "canvas-codex", final: "Fixed." });
+  await release(client, { tile: "obj_a1", kind: "codex", source: "canvas-codex" }, 1_700_000_000_000_003);
+  const entries = spooled(socket, "obj_a1");
+  expect(entries.map((entry) => [entry.seq, entry.method, entry.params.state])).toEqual([
+    [1_700_000_000_000_001, "agent.report", "working"],
+    [1_700_000_000_000_002, "agent.report", "idle"],
+    [1_700_000_000_000_003, "agent.release", undefined],
+  ]);
+  expect(entries[1].params.final).toBe("Fixed.");
+  expect(readdirSync(spoolDirectory(socket, "obj_a1")).some((name) => name.startsWith("."))).toBe(false);
+});
+
+test("a report Canvas answered, even with an error, is not kept", async () => {
+  const socket = join(home(), "canvas.sock");
+  const server = Bun.listen({
+    unix: socket,
+    socket: {
+      data(connection, data) {
+        for (const line of data.toString().split("\n").filter(Boolean)) {
+          const { id } = JSON.parse(line);
+          connection.write(`${JSON.stringify({ id, ok: false, error: { code: "not_found", message: "object obj_gone" } })}\n`);
+        }
+      },
+    },
+  });
+  try {
+    const client = new CanvasClient({ socketPath: socket, timeoutMs: 1000, reconnectTimeoutMs: 0 });
+    await report(client, { tile: "obj_gone", kind: "omp", state: "idle", seq: 5, source: "canvas-omp" });
+    client.close();
+    expect(() => readdirSync(spoolDirectory(socket, "obj_gone"))).toThrow();
+  } finally {
+    server.stop(true);
+  }
+});
+
+test("a spool that can't be written costs the agent nothing", async () => {
+  const dir = home();
+  // The socket's directory is a file: nothing can be created under it.
+  writeFileSync(join(dir, "blocked"), "");
+  const client = away(join(dir, "blocked", "canvas.sock"));
+  await expect(report(client, { tile: "obj_a1", kind: "omp", state: "idle", seq: 1, source: "canvas-omp" })).resolves.toBeUndefined();
+});
+
+test("a Codex Stop hook run while Canvas is closed spools the turn's end with its answer", async () => {
+  const socket = join(home(), "canvas.sock");
+  const hook = Bun.spawn(["bun", join(import.meta.dir, "hook.ts"), "codex", "Stop"], {
+    stdin: new Blob([JSON.stringify({ session_id: "s1", cwd: "/tmp", last_assistant_message: "No blocking findings." })]),
+    env: { ...process.env, CANVAS_ENV: "1", CANVAS_TILE_ID: "obj_codex1", CANVAS_SOCKET: socket, CANVAS_AGENT_HOOKS: "1" },
+  });
+  expect(await hook.exited).toBe(0);
+  const [entry] = spooled(socket, "obj_codex1");
+  expect(entry.method).toBe("agent.report");
+  expect(entry.params).toMatchObject({ tile: "obj_codex1", kind: "codex", state: "idle", source: "canvas-codex", final: "No blocking findings." });
+  expect(entry.seq).toBe(entry.params.seq as number);
+});

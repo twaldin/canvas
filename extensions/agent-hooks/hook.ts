@@ -10,13 +10,15 @@
 //  - the selection tray drained into the prompt you submit, as hidden context
 //  - follow mode: files the agent reads, edits, and writes re-aim its follow tile
 // A hook never fails or stalls the agent: every Canvas call has a short timeout, errors are
-// swallowed, and the process exits by a hard deadline.
+// swallowed, and the process exits by a hard deadline. Lifecycle reports Canvas isn't there to
+// take are spooled for it to replay (./report.ts).
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { canvasGuidance } from "../guidance";
 import { codexStartupQuestion } from "./codex-trust";
 import { absolute, editLocation, type Location, patchLocation, readLocation, structuredPatchChanges } from "./follow";
+import { release, report as spooled } from "./report";
 import { thread } from "./threads";
 
 type Kind = "claude" | "codex" | "gemini" | "opencode";
@@ -48,7 +50,7 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
   // process start time orders their reports the way the agent fired them.
   const seq = Math.floor(performance.timeOrigin * 1000);
   const report = (state: "working" | "blocked" | "idle", message?: string, call?: string, final?: string, serial?: boolean) =>
-    quietly(client.api.agent.report({ tile, kind, state, message, seq, source, call, final, serial }));
+    spooled(client, { tile, kind, state, message, seq, source, call, final, serial });
   const context = (text: string) => JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: text } });
   // Only the tile's own session owns its lifecycle, session id and tray (./threads.ts). A
   // subagent's approvals and finished calls still count (the tile waits on them); nothing of
@@ -142,7 +144,7 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       await report("idle");
       return undefined;
     case "SessionEnd":
-      await quietly(client.api.agent.release({ tile, kind, source }));
+      await release(client, { tile, kind, source }, seq);
       return undefined;
   }
   return undefined;

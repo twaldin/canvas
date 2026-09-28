@@ -9,6 +9,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
+import { release, report } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-omp";
@@ -28,6 +29,7 @@ export default function canvas(pi: ExtensionAPI): void {
   const guidance = canvasGuidance("omp", tile);
 
   // Short timeouts: a missing, wedged, or restarting app must never stall the user's prompt.
+  // Lifecycle reports it isn't there to take are spooled for it to replay (agent-hooks/report.ts).
   const client = new CanvasClient({ timeoutMs: 1500, reconnectTimeoutMs: 0 });
   let seq = Date.now() * 1000;
   let active = false;
@@ -54,7 +56,7 @@ export default function canvas(pi: ExtensionAPI): void {
     const state = blockers.size > 0 ? "blocked" : active ? "working" : "idle";
     const settled = state === "idle";
     const send = () =>
-      quietly(client.api.agent.report({ tile: tile!, kind: "omp", state, message: firstBlocker, seq: ++seq, source: SOURCE, final: settled ? final : undefined, error: settled ? failure : undefined }));
+      report(client, { tile: tile!, kind: "omp", state, message: firstBlocker, seq: ++seq, source: SOURCE, final: settled ? final : undefined, error: settled ? failure : undefined });
     // Debounce idle so retries and tool-only continuations don't flicker the badge.
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
@@ -119,7 +121,9 @@ export default function canvas(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", () => {
-    if (reporting) void quietly(client.api.agent.release({ tile, kind: "omp", source: SOURCE }));
+    // A debounced idle still pending would land after the release (and replay after it).
+    clearTimeout(idleTimer);
+    if (reporting) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
   });
 
   pi.on("agent_start", () => {

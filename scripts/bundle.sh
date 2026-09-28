@@ -44,6 +44,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+# SwiftPM copies some resource files (tree-sitter queries) read-only; the README's
+# `xattr -dr com.apple.quarantine` can't clear a read-only file, so make everything user-writable.
+chmod -R u+w "$app"
 codesign --force --sign - "$app"
 # Development input replay helper (docs/testing.md); rebuilt only when its source changes.
 if [ ! -x "$repo/.build/dev-input" ] || [ "$repo/scripts/dev-input.swift" -nt "$repo/.build/dev-input" ]; then

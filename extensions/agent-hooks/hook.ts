@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { canvasGuidance } from "../guidance";
+import { codexStartupQuestion } from "./codex-trust";
 import { absolute, editLocation, type Location, patchLocation, readLocation, structuredPatchChanges } from "./follow";
 import { thread } from "./threads";
 
@@ -58,8 +59,10 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
   if (subagent && event !== "PermissionRequest" && event !== "PostToolUse" && event !== "PostToolUseFailure" && event !== "Notification") return undefined;
   switch (event) {
     case "Launch": {
-      // bin/codex, as Codex starts: it fires SessionStart only with the first prompt.
-      await report("idle");
+      // bin/codex, as Codex starts (its arguments after the event): it fires SessionStart only
+      // with the first prompt, and none of its hooks while it asks about the folder first.
+      const question = codexStartupQuestion(process.argv.slice(4), process.cwd());
+      await (question ? report("blocked", question) : report("idle"));
       return undefined;
     }
     case "SessionStart": {

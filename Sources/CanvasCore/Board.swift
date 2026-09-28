@@ -147,12 +147,13 @@ public final class Board {
     /// A terminal tile's name as its header shows it (its `props.name`, else the program running
     /// in it and the title that program set), for mentions; nil without a window. Set by the app.
     public var terminalLabel: (@MainActor (ObjectID) -> String?)?
-    /// A terminal tile's current screen as text (soft-wrapped rows joined), for a mention of
-    /// the whole terminal; nil when its session isn't running. Set by the app.
-    public var terminalScreen: (@MainActor (ObjectID) async -> String?)?
+    /// What a mention of the whole terminal quotes: the rows its view shows (soft-wrapped rows
+    /// joined), `scrolledBack` rows above its live screen while the user scrolled back, else its
+    /// current screen (0); nil when its session isn't running. Set by the app.
+    public var terminalScreen: (@MainActor (ObjectID) async -> (text: String, scrolledBack: Int)?)?
     /// Which of a terminal tile's finished commands `command` is now, from the newest (-1, as
-    /// `agent.read` `block` counts), for a mention of its block; nil when the terminal's log
-    /// doesn't have it (older than Canvas's attach). Set by the app.
+    /// `agent.read` `block` counts), for a mention of its block; nil when `agent.read` can't read
+    /// that block (older than Canvas's attach, cleared, trimmed from the scrollback). Set by the app.
     public var terminalBlockIndex: (@MainActor (ObjectID, TerminalCommand) -> Int?)?
     /// Terminal tiles that left the board for good, once the step that removed them is over:
     /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create). A terminal a failed

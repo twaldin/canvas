@@ -16,14 +16,6 @@ final class PageProblemsView: NSView {
     private static let footerHeight: CGFloat = 24
     private static let inset: CGFloat = 10
 
-    /// What the list shows of the page Canvas released: its errors and when it went.
-    struct Previous {
-        var problems: [PageLogEntry]
-        var releasedAt: Date
-        /// The page loaded again since (false: the tile has no page now).
-        var reloaded: Bool
-    }
-
     var onClose: (() -> Void)?
     /// The list's height changed (a row opened or closed).
     var onResize: (() -> Void)?
@@ -39,14 +31,7 @@ final class PageProblemsView: NSView {
     private var items: [NSView] = []
     private var rows: [Row] { items.compactMap { $0 as? Row } }
     /// Entries shown whole, kept across refreshes.
-    private var expanded: Set<Key> = []
-
-    private struct Key: Hashable {
-        var time: String
-        var seq: Int
-        var text: String
-        init(_ entry: PageLogEntry) { (time, seq, text) = (entry.time, entry.seq, entry.text) }
-    }
+    private var expanded: Set<PageLogEntry> = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -82,23 +67,25 @@ final class PageProblemsView: NSView {
 
     nonisolated override var isFlipped: Bool { true }
 
-    /// The page's errors, newest first, then the released page's under a label saying when it went.
-    func show(_ entries: [PageLogEntry], previous: Previous?) {
+    /// The page's errors, newest first, then the released page's (`previous`) under a label
+    /// saying when it went and whether the page loaded again since (`reloaded`).
+    func show(_ entries: [PageLogEntry], previous: PageReport.Released?, reloaded: Bool) {
         items.forEach { $0.removeFromSuperview() }
         items = entries.prefix(Self.maxRows).map(row)
         if let previous {
-            let time = DateFormatter.localizedString(from: previous.releasedAt, dateStyle: .none, timeStyle: .medium)
-            let none = previous.problems.isEmpty ? ": no errors" : ""
-            let label = previous.reloaded
+            let time = DateFormatter.localizedString(from: previous.at, dateStyle: .none, timeStyle: .medium)
+            let problems = previous.log.problems
+            let none = problems.isEmpty ? ": no errors" : ""
+            let label = reloaded
                 ? "Before Canvas released the page at \(time) (out of view) and loaded it again\(none)"
                 : "Before Canvas released the page at \(time) (out of view)\(none)"
             items.append(SectionLabel(label))
-            items += previous.problems.prefix(Self.maxRows).map(row)
+            items += problems.prefix(Self.maxRows).map(row)
         }
         items.forEach(rowsView.addSubview)
         let count = entries.count
         title.stringValue = switch (count, previous) {
-        case (0, let previous?): previous.reloaded ? "No errors since the page reloaded" : "Page released"
+        case (0, _?): reloaded ? "No errors since the page reloaded" : "Page released"
         case (1, _): "1 error on this page"
         default: "\(count) errors on this page"
         }
@@ -107,10 +94,10 @@ final class PageProblemsView: NSView {
     }
 
     private func row(_ entry: PageLogEntry) -> Row {
-        let row = Row(entry, expanded: expanded.contains(Key(entry)), resolve: resolve)
+        let row = Row(entry, expanded: expanded.contains(entry), resolve: resolve)
         row.onToggle = { [weak self, weak row] in
             guard let self, let row else { return }
-            if row.isExpanded { self.expanded.insert(Key(row.entry)) } else { self.expanded.remove(Key(row.entry)) }
+            if row.isExpanded { self.expanded.insert(row.entry) } else { self.expanded.remove(row.entry) }
             self.layoutRows()
             self.onResize?()
         }
@@ -220,9 +207,7 @@ final class PageProblemsView: NSView {
             self.entry = entry
             isExpanded = expanded
             source = entry.shortSource.map { short in LinkText(short, font: .systemFont(ofSize: 11), target: entry.source.flatMap { resolve?($0) }) }
-            frames = (entry.stack ?? "").split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty && !PageCapture.isOwnFrame($0) }.prefix(Self.maxFrames)
-                .map { LinkText($0, font: Self.frameFont, target: resolve?($0)) }
+            frames = entry.frames.prefix(Self.maxFrames).map { LinkText($0, font: Self.frameFont, target: resolve?($0)) }
             super.init(frame: .zero)
             message.stringValue = entry.text
             message.font = Self.messageFont

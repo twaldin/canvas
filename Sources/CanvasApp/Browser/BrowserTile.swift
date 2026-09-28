@@ -39,7 +39,7 @@ final class BrowserTile: NSView, TileContent {
     private(set) var object: CanvasObject
     private(set) var webView: WKWebView?
     /// The loaded page's background luminance (`PageSurface`), kept while the page is detached.
-    fileprivate var pageLuminance: Double?
+    private(set) var surfaceLuminance: Double?
     private let chrome = BrowserChrome()
     /// Covers the web view while `view.snapshot` renders (WebKit draws outside `cacheDisplay`).
     private let cover = NSImageView()
@@ -88,11 +88,12 @@ final class BrowserTile: NSView, TileContent {
     /// A `file:line` in the error list opened code (`board.openForNavigation`); `existing` when
     /// a tile already showed it.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
-    /// The page that didn't load, shown in place of a blank page (`BrowserLoadFailure`), the
-    /// failed loads of that address in a row, and the pending automatic retry or watch.
+    /// The page that didn't load, shown in place of a blank page (`BrowserLoadFailure`), its
+    /// address's failed loads in a row since the last fresh round of retries, and the pending
+    /// automatic retry or watch.
     private(set) var loadFailure: BrowserLoadFailure?
     private let failureView = BrowserFailureView()
-    private var failedLoads: (url: URL, count: Int)?
+    private var failedInRow = 0
     private var retryTask: Task<Void, Never>?
 
     init(object: CanvasObject, board: Board) {
@@ -118,9 +119,8 @@ final class BrowserTile: NSView, TileContent {
         chrome.onReload = { [weak self] in
             guard let self else { return }
             self.credit.user()
-            if self.loadFailure != nil { return self.retryFailedLoad(restart: true) }
-            if let webView = self.webView, webView.isLoading { return webView.stopLoading() }
-            self.track(self.ensureWebView().reload())
+            if self.loadFailure == nil, let webView = self.webView, webView.isLoading { return webView.stopLoading() }
+            self.reload()
         }
         chrome.setAddress(object.props["url"]?.string ?? "")
         addSubview(chrome)
@@ -240,10 +240,19 @@ final class BrowserTile: NSView, TileContent {
         WebMentions.install(on: configuration)
         let controller = configuration.userContentController
         controller.addUserScript(WKUserScript(source: BrowserScripts.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: BrowserScripts.world))
-        controller.add(PageMessages(tile: self), contentWorld: BrowserScripts.world, name: BrowserScripts.messageName)
+        controller.add(PageMessages { [weak self] message in
+            guard let kind = message.body as? String else { return }
+            self?.pageMessage(kind)
+        }, contentWorld: BrowserScripts.world, name: BrowserScripts.messageName)
         // The page's console, errors and requests from its first line on (`PageLog`).
         controller.addUserScript(WKUserScript(source: PageCapture.source, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
-        controller.add(PageLogMessages(tile: self), contentWorld: .page, name: PageCapture.messageName)
+        controller.add(PageMessages { [weak self] message in
+            // The page's world can post anything here: only a plausible error count counts.
+            guard let self, message.frameInfo.isMainFrame, let count = (message.body as? NSNumber)?.doubleValue,
+                  count.isFinite, count >= 0, count < 1e9 else { return }
+            self.pageErrors = Int(count)
+            self.problemsChanged()
+        }, contentWorld: .page, name: PageCapture.messageName)
         let view = BrowserWebView(frame: webViewFrame, configuration: configuration)
         view.onUserInput = { [weak self] in
             self?.credit.user()
@@ -291,8 +300,6 @@ final class BrowserTile: NSView, TileContent {
 
     /// Shows the web view in the tile, creating it on first use.
     private func attach() {
-        releaseTimer?.invalidate()
-        releaseTimer = nil
         ensureWebView()
         placePage()
         scheduleSnapshotRefresh()
@@ -317,7 +324,7 @@ final class BrowserTile: NSView, TileContent {
                 webView.frame = webViewFrame
                 addSubview(webView, positioned: .below, relativeTo: failureView)
             }
-            webView.isHidden = drivenTimer == nil && !pageOnScreen
+            webView.isHidden = visibility == .hidden
             if isLive {
                 releaseTimer?.invalidate()
                 releaseTimer = nil
@@ -344,6 +351,7 @@ final class BrowserTile: NSView, TileContent {
                 guard let self else { return }
                 self.placePage()
                 self.scheduleSnapshotRefresh()
+                self.failedPageShown(self.pageOnScreen)
             }
         }
     }
@@ -404,7 +412,7 @@ final class BrowserTile: NSView, TileContent {
         signalChange()
     }
 
-    func scheduleRelease() {
+    private func scheduleRelease() {
         releaseTimer?.invalidate()
         releaseTimer = Timer.scheduledTimer(withTimeInterval: Self.releaseDelay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -523,9 +531,9 @@ final class BrowserTile: NSView, TileContent {
         let error = error as NSError
         let failing = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? webView.url ?? object.props["url"]?.string.flatMap(BrowserURL.normalize)
         guard let url = failing else { return }
-        let count = failedLoads.map { $0.url == url ? $0.count + 1 : 1 } ?? 1
+        let count = loadFailure?.url == url ? failedInRow + 1 : 1
         guard let failure = BrowserLoadFailure(url: url, domain: error.domain, code: error.code, description: error.localizedDescription, attempt: count) else { return }
-        failedLoads = (url, count)
+        failedInRow = count
         loadFailure = failure
         failureView.show(failure)
         failureView.isHidden = false
@@ -538,13 +546,11 @@ final class BrowserTile: NSView, TileContent {
             retryTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled else { return }
-                self?.retryTask = nil
                 self?.retryFailedLoad(restart: false)
             }
-        } else if failure.watches, isLive {
+        } else if failure.watches, pageOnScreen {
             retryTask = Task { [weak self] in
                 guard await Self.waitForServer(at: url) else { return }
-                self?.retryTask = nil
                 self?.retryFailedLoad(restart: true)
             }
         }
@@ -564,22 +570,40 @@ final class BrowserTile: NSView, TileContent {
     }
 
     /// Loads the failed address again; the failure stays up until the page commits, so a
-    /// retry that fails again never flashes a blank page. `restart` (Retry, Reload, the tile
+    /// retry that fails again never flashes a blank page. `restart` (Retry, Reload, the page
     /// coming back into view) begins a fresh round of automatic retries.
-    func retryFailedLoad(restart: Bool) {
+    private func retryFailedLoad(restart: Bool) {
         guard let failure = loadFailure else { return }
-        if restart { failedLoads = nil }
+        if restart { failedInRow = 0 }
         retryTask?.cancel()
         retryTask = nil
         failureView.showRetrying()
         load(failure.url.absoluteString)
     }
 
+    /// Reload, `browser.reload` and `object.reload`: the page loads again; one that failed to
+    /// load asks its address again, from a fresh round of retries.
+    func reload() {
+        if loadFailure != nil { return retryFailedLoad(restart: true) }
+        track(ensureWebView().reload())
+    }
+
+    /// A failed page watches for its server only while someone can see it; back in view (its
+    /// tile, its window) after its retries ran out or its watch stopped, it tries again at once.
+    private func failedPageShown(_ shown: Bool) {
+        guard loadFailure != nil else { return }
+        if shown {
+            if retryTask == nil, webView?.isLoading != true { retryFailedLoad(restart: true) }
+        } else if loadFailure?.watches == true {
+            retryTask?.cancel()
+            retryTask = nil
+        }
+    }
+
     /// The page committed (or another address was asked for): the failure is over.
     private func clearLoadFailure() {
         retryTask?.cancel()
         retryTask = nil
-        failedLoads = nil
         guard loadFailure != nil else { return }
         loadFailure = nil
         failureView.isHidden = true
@@ -781,17 +805,11 @@ final class BrowserTile: NSView, TileContent {
         isLive = live
         if live {
             attach()
-            // Back in view after its retries ran out or its watch stopped: try again.
-            if loadFailure != nil, retryTask == nil, webView?.isLoading != true { retryFailedLoad(restart: true) }
         } else {
             readyWaiters.removeAll()
             placePage()
-            // Only a tile on screen watches for its server.
-            if loadFailure?.watches == true {
-                retryTask?.cancel()
-                retryTask = nil
-            }
         }
+        failedPageShown(pageOnScreen)
     }
 
     func whenLiveReady(_ ready: @escaping @MainActor () -> Void) {
@@ -816,7 +834,7 @@ final class BrowserTile: NSView, TileContent {
     func render(_ request: TileRenderRequest) async -> TileRender {
         await markDriven()
         // A page that failed is asked again (its server may be up by now) before it's drawn.
-        if loadFailure != nil, webView?.isLoading != true { retryFailedLoad(restart: true) }
+        if webView?.isLoading != true { retryFailedLoad(restart: true) }
         if let webView { await settle(webView) }
         return await capture(request)
     }
@@ -1016,19 +1034,18 @@ final class BrowserWebView: WKWebView {
     }
 }
 
-/// The script message handler for page activity. WebKit retains handlers strongly, so this
-/// holds the tile weakly to keep the web view from owning its tile.
+/// A script message handler for the tile's page. WebKit retains handlers strongly, so the tile's
+/// closures hold it weakly to keep the web view from owning its tile.
 @MainActor
 private final class PageMessages: NSObject, WKScriptMessageHandler {
-    weak var tile: BrowserTile?
+    private let receive: @MainActor (WKScriptMessage) -> Void
 
-    init(tile: BrowserTile) {
-        self.tile = tile
+    init(_ receive: @escaping @MainActor (WKScriptMessage) -> Void) {
+        self.receive = receive
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let kind = message.body as? String else { return }
-        tile?.pageMessage(kind)
+        receive(message)
     }
 }
 
@@ -1197,16 +1214,14 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
 }
 
 extension BrowserTile {
-    var surfaceLuminance: Double? { pageLuminance }
-
     /// Reads the loaded page's background (a transparent page is WebKit's white, or its dark
     /// default for a page that asks for dark colors) for drawings over the tile.
     fileprivate func probeSurface(_ webView: WKWebView) {
         Task { @MainActor [weak self] in
             guard let probe = await PageSurface.probe(webView), let self else { return }
             let luminance = probe.luminance ?? (probe.darkDefault ? 0.01 : 1)
-            guard luminance != self.pageLuminance else { return }
-            self.pageLuminance = luminance
+            guard luminance != self.surfaceLuminance else { return }
+            self.surfaceLuminance = luminance
             NotificationCenter.default.post(name: .tileSurfaceChanged, object: self)
         }
     }
@@ -1215,12 +1230,6 @@ extension BrowserTile {
 // MARK: Page problems (console errors, failed requests)
 
 extension BrowserTile {
-    /// The page's error count changed (`PageLogMessages`): a new document reports 0 first.
-    func pageReported(errors: Int) {
-        pageErrors = errors
-        problemsChanged()
-    }
-
     /// The badge shows the count, the quiet "Reloaded" pill the released page's log, and an
     /// open list refreshes.
     fileprivate func problemsChanged() {
@@ -1288,8 +1297,7 @@ extension BrowserTile {
             await self?.previousRead?.value
             let log = await self?.readPageLog()
             guard let self, let list = self.problemsList else { return }
-            let previous = self.previousLoad.map { PageProblemsView.Previous(problems: $0.log.problems, releasedAt: $0.at, reloaded: self.webView != nil) }
-            list.show(log?.problems ?? self.documentFailure.map { [$0] } ?? [], previous: previous)
+            list.show(log?.problems ?? self.documentFailure.map { [$0] } ?? [], previous: self.previousLoad, reloaded: self.webView != nil)
             self.placeProblems()
         }
     }
@@ -1361,24 +1369,6 @@ extension BrowserTile {
     var webAddress: URL? {
         guard let text = pageURL, let url = URL(string: text), ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         return url
-    }
-}
-
-/// The script message handler for the page's error count (`PageCapture`, in the page's world).
-/// WebKit retains handlers strongly, so this holds the tile weakly.
-@MainActor
-private final class PageLogMessages: NSObject, WKScriptMessageHandler {
-    weak var tile: BrowserTile?
-
-    init(tile: BrowserTile) {
-        self.tile = tile
-    }
-
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        // The page's world can post anything here: only a plausible count counts.
-        guard message.frameInfo.isMainFrame, let count = (message.body as? NSNumber)?.doubleValue,
-              count.isFinite, count >= 0, count < 1e9 else { return }
-        tile?.pageReported(errors: Int(count))
     }
 }
 

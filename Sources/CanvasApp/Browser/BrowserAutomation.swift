@@ -28,7 +28,7 @@ extension BrowserTile {
             if webView.canGoForward { track(webView.goForward()) }
             return .object(location(webView))
         case .reload:
-            track(webView.reload())
+            reload()
             return .object(location(webView))
         case .urlGet:
             var result = location(webView)
@@ -69,14 +69,13 @@ extension BrowserTile {
     /// retried), whether or not the tile is on screen, credited to `driver`; then up to
     /// `timeoutMs` for it to finish loading.
     func reloadPage(driver: ObjectID?, timeoutMs: Int) async throws -> JSONValue {
-        let webView = ensureWebView()
         await markDriven()
         credit.agent(driver)
         defer {
             credit.agent(driver)
             scheduleSnapshotRefresh()
         }
-        if loadFailure != nil { retryFailedLoad(restart: true) } else { track(webView.reload()) }
+        reload()
         var loaded = false
         if timeoutMs > 0 {
             do {

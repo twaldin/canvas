@@ -55,6 +55,9 @@ public enum RepoBoardMigration {
         public var anchor: String
         public var worktree: String?
         public var worktreeLive: Bool
+        /// The worktree is (was) in a temporary directory (`/tmp`, `/var/folders`): likely a
+        /// throwaway checkout whose region the user may want to delete.
+        public var temporary: Bool
         /// merged, alreadyMerged (backed up only), conflict (object ids already on the target: left as is).
         public var status: String
         public var objectsBefore: Int
@@ -281,7 +284,7 @@ public enum RepoBoardMigration {
                 anchor = legacy.url == base?.url || (legacy.identity == .path && isMainCheckout(legacy)) ? .main : .absolute
             }
             var entry = LegacyReport(board: snapshot.id, root: snapshot.root, label: label(of: legacy), branch: branch, anchor: anchor.name,
-                                     worktree: legacy.top, worktreeLive: legacy.live, status: "merged", objectsBefore: snapshot.objects.count,
+                                     worktree: legacy.top, worktreeLive: legacy.live, temporary: isTemporary(legacy.top), status: "merged", objectsBefore: snapshot.objects.count,
                                      objectsAfter: 0, region: nil, offset: nil, unanchored: [])
             if repo.merged?.contains(snapshot.id) == true {
                 entry.status = "alreadyMerged"
@@ -328,7 +331,14 @@ public enum RepoBoardMigration {
                 }
                 entry.offset = [dx, dy]
             }
-            if let region { objects.append(region) }
+            if let region {
+                objects.append(region)
+                // A throwaway checkout's region stays marked until the user has seen it.
+                if entry.temporary {
+                    target.attention = (target.attention ?? []) + [Attention(object: region.id, message: "From a temporary worktree (\(legacy.top)): delete this region if you don't need it",
+                                                                            raisedBy: nil, raisedAt: now)]
+                }
+            }
             for object in objects { sources[object.id] = (snapshot.id, legacy.modified, label(of: legacy)) }
             target.objects += objects
             placed = union([placed, extent(of: objects)].compactMap { $0 })
@@ -400,6 +410,11 @@ public enum RepoBoardMigration {
             }
         }
         return renames
+    }
+
+    static func isTemporary(_ path: String) -> Bool {
+        let real = GitDiffEngine.realPath(URL(fileURLWithPath: path)).path
+        return ["/private/tmp/", "/private/var/folders/"].contains { real.hasPrefix($0) }
     }
 
     static func label(of legacy: Legacy) -> String {
@@ -650,4 +665,18 @@ private extension Array {
 
 private extension Dictionary {
     var nilIfEmpty: Self? { isEmpty ? nil : self }
+}
+
+extension RepoBoardMigration.Report {
+    /// What to tell the user on repository board `board` after this run: the regions merged into
+    /// it, and those from temporary worktrees, to delete when not needed; nil when nothing was.
+    public func notice(for board: BoardID) -> String? {
+        guard let repo = repos.first(where: { $0.board == board }) else { return nil }
+        let regions = repo.legacy.filter { $0.status == "merged" && $0.region != nil }
+        guard !regions.isEmpty else { return nil }
+        var text = "Boards are per repository now: merged \(regions.map(\.label).joined(separator: ", ")) in as regions"
+        let temporary = regions.filter(\.temporary)
+        if !temporary.isEmpty { text += "; from temporary worktrees, delete if unneeded: \(temporary.map(\.label).joined(separator: ", "))" }
+        return text
+    }
 }

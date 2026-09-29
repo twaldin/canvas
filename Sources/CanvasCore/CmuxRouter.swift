@@ -119,7 +119,7 @@ public final class CmuxRouter {
             let id = raw.dropFirst(Self.tileScheme.count)
             return try adopt(String(id.hasPrefix("//") ? id.dropFirst(2) : id), anchor: anchor, connection: connection)
         }
-        guard let board = caller?.0 ?? workspace.flatMap({ registry.boards[$0] }) ?? registry.frontmost.flatMap({ registry.boards[$0] }) else {
+        guard let board = caller?.0 ?? workspace.flatMap({ registry.board(id: $0) }) ?? registry.frontmost.flatMap({ registry.boards[$0] }) else {
             throw CmuxError("not_found", "no open canvas for this surface or workspace")
         }
         guard let url = BrowserURL.normalize(raw) else { throw CmuxError.invalidParams("not a URL: \(raw)") }
@@ -158,7 +158,7 @@ public final class CmuxRouter {
             guard let owner = registry.board(containing: id) else { throw CmuxError("not_found", "surface \(id) not found") }
             board = owner
         } else if let workspace = try CmuxBrowserCommand.optional(params, "workspace_id", \.string) {
-            guard let owner = registry.boards[workspace] else { throw CmuxError("not_found", "workspace \(workspace) not found") }
+            guard let owner = registry.board(id: workspace) else { throw CmuxError("not_found", "workspace \(workspace) not found") }
             board = owner
         } else {
             guard let front = registry.frontmost.flatMap({ registry.boards[$0] }) else { throw CmuxError("not_found", "no open canvas") }

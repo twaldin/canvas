@@ -68,6 +68,13 @@ public final class BoardRegistry {
         }
     }
 
+    /// The open board `id` names: its own, or a legacy per-branch board's id that a repository
+    /// board merged (`RepoRecord.merged`), which terminals started before the migration still
+    /// carry in `CANVAS_BOARD_ID`.
+    public func board(id: BoardID) -> Board? {
+        boards[id] ?? boards.values.first { $0.repo?.merged?.contains(id) == true }
+    }
+
     public func close(_ id: BoardID) {
         if let board = boards.removeValue(forKey: id) { store.save(board) }
         if frontmost == id { frontmost = boards.keys.first }
@@ -196,7 +203,7 @@ public final class ApiRouter {
         do {
             try Self.checkParams(method, params)
             if method == "events.subscribe" {
-                registry.subscribe(connection, board: params["board"]?.string, events: params["events"]?.array?.compactMap(\.string))
+                registry.subscribe(connection, board: params["board"]?.string.map { registry.board(id: $0)?.id ?? $0 }, events: params["events"]?.array?.compactMap(\.string))
                 connection.send(.object(["id": id, "ok": .bool(true), "result": .object([:])]))
                 return nil
             }
@@ -1691,7 +1698,7 @@ public final class ApiRouter {
     /// Target board: explicit `board`, else the caller tile's board, else the frontmost board.
     func board(_ p: JSONValue) throws -> Board {
         if let id = p["board"]?.string {
-            guard let board = registry.boards[id] else { throw BoardError.notFound("board \(id)") }
+            guard let board = registry.board(id: id) else { throw BoardError.notFound("board \(id)") }
             return board
         }
         if let caller = p["caller"]?.string, let board = registry.board(containing: caller) { return board }

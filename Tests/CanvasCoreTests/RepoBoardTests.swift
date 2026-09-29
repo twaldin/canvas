@@ -69,6 +69,8 @@ struct RepoBoardTests {
         let id = BoardStore.repoID(commonDir: try #require(GitWorktree.containing(repo.root.path)).commonDir)
         #expect(report.repos.map(\.board) == [id])
         #expect(report.repos.first?.legacy.map(\.status) == ["merged", "merged"])
+        #expect(report.notice(for: id) == "Boards are per repository now: merged feature in as regions; from temporary worktrees, delete if unneeded: feature",
+                "the fixture's worktree is in the temporary directory")
         #expect(!FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(main.id).json").path))
         #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("pre-repo-migration/\(feature.id).json").path))
 
@@ -88,6 +90,7 @@ struct RepoBoardTests {
         // The feature board's objects form a region beside them, anchored to the branch.
         let region = try #require(board.objects.values.first { $0.props["key"] == .string("branch:feature") })
         #expect(region.props["title"] == .string("feature"))
+        #expect(board.attention[region.id] != nil, "a region from a temporary worktree is marked for the user")
         let mainExtent = try #require(RepoBoardMigration.extent(of: main.snapshot.objects))
         #expect(!region.frame.intersects(mainExtent))
         let featureCode = try #require(feature.snapshot.objects.first { $0.type == .code })
@@ -120,6 +123,8 @@ struct RepoBoardTests {
         #expect(entry["live"] == .bool(true))
         #expect(entry["region"] == .string(region.id))
         let part = try #require(try router.dispatch("board.get", .object(["board": .string(id), "branch": .string("feature")]))["objects"]?.array)
+        // Terminals started before the migration still name their old board (CANVAS_BOARD_ID).
+        #expect(try router.dispatch("board.get", .object(["board": .string(feature.id)]))["board"] == .string(id))
         #expect(Set(part.compactMap { $0["id"]?.string }) == Set(feature.snapshot.objects.map(\.id) + [region.id]))
     }
 

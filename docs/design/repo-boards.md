@@ -74,9 +74,13 @@ This is what makes the merge durable: a tile from a branch's worktree is anchore
    - Absolute paths are left alone. A terminal's `cwd` is made absolute.
 7. The target is written (atomically), then each merged legacy file moves to `boards/pre-repo-migration/<id>.json`. Page snapshots stay in `boards/<legacy id>/snapshots/` (image tiles name them by absolute path).
 
-**Report** (`migration.json`, and the dry-run): per repository, the target id and root, and per legacy board its id, root, branch or detached/unknown, live/deleted worktree, objects before, objects after (+1 for a region group), the region id and offset, and each path that couldn't be anchored (`unanchored`). Plus the key renames, the non-git boards left alone and the unresolved legacy boards.
+**Notice**: each repository board that gained regions shows a notice when it opens after the launch that merged them, naming the regions and, separately, those from worktrees in a temporary directory (`/tmp`, `/var/folders`: throwaway checkouts, which the user may delete); each of those regions also gets an attention marker saying so, which stays until the user has seen it. The launch log says the same.
+
+**Report** (`migration.json`, and the dry-run): per repository, the target id and root, and per legacy board its id, root, branch or detached/unknown, live/deleted worktree, whether that worktree is temporary, objects before, objects after (+1 for a region group), the region id and offset, and each path that couldn't be anchored (`unanchored`). Plus the key renames, the non-git boards left alone and the unresolved legacy boards.
 
 ## Compatibility
+
+- **Running terminals survive the migration.** zmx sessions are named by tile id (`canvas-<tileId>`), agent report spools by tile id, and resume ids (`props.agent`) and the tray's target (`promptTarget`) travel with the objects, so every terminal of a merged board reattaches to its running session. What is keyed by the board id: `CANVAS_BOARD_ID` in the environment of shells started before the migration, so an API call naming a merged legacy board's id is answered by the repository board that merged it (`BoardRegistry.board(id:)`, through `repo.merged`: `board` params, `events.subscribe`, the cmux workspace); the window's saved frame (`Canvas-<boardId>`), which starts at the default once; `boards/<legacy id>/snapshots/`, left in place (image tiles name those files by absolute path). The zmx session's informational `canvas.board` label is rewritten at the next attach.
 
 - `board.list`'s `root` is the canonical root; entries gain `repo` and `worktrees`. Legacy boards still in the store (unresolved) list as before.
 - `board.open` still takes an explicit absolute root; its result gains `worktree`.

@@ -161,8 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let getStarted = GetStarted.Store(url: AppPaths.getStarted).launch(boards: AppPaths.boards)
         // Boards are per repository now: legacy per-branch boards fold into theirs, once, before
         // any opens (docs/design/repo-boards.md).
-        if let report = registry.store.migrateToRepoBoards(knownRoots: saved + [Self.initialRoot()]), !report.repos.isEmpty || !report.unresolved.isEmpty {
-            NSLog("Canvas: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
+        let migration = registry.store.migrateToRepoBoards(knownRoots: saved + [Self.initialRoot()])
+        if let report = migration, !report.repos.isEmpty || !report.unresolved.isEmpty {
+            let temporary = report.repos.flatMap(\.legacy).filter { $0.temporary && $0.region != nil }.map { "\($0.label) (\($0.worktree ?? ""))" }
+            NSLog("Canvas: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were)\(temporary.isEmpty ? "" : "; regions from temporary worktrees: " + temporary.joined(separator: ", ")); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
         }
         let initial = open(root: Self.initialRoot())
         // The other boards that were open as tabs come back behind the initial one (one tab per
@@ -174,6 +176,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // After the window's first layout, so the practice note lands in view.
         if getStarted, let controller = controllers[initial.id] {
             DispatchQueue.main.async { controller.showGetStarted() }
+        }
+        if let migration {
+            for (id, controller) in controllers { migration.notice(for: id).map(controller.canvas.showNotice) }
         }
         // Testing on a shared machine: CANVAS_NO_ACTIVATE=1 keeps the app from taking focus.
         if ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] != "1" {

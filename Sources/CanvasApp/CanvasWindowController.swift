@@ -11,6 +11,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private let nothingHere = NothingHerePill(frame: .zero)
     private let emptyHint = EmptyBoardHint()
     private let basics = BasicsPanel()
+    private let getStarted = GetStartedPanel()
+    /// The walk-through's progress while Get Started is open.
+    private var guide: GetStarted.Progress?
     private let registry: BoardRegistry
     private var responderObservation: NSKeyValueObservation?
     private var drawing: ShapeLayer?
@@ -67,14 +70,16 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             emptyHint.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
         ])
         drawing = ShapeLayer.install(on: canvas, toolbarIn: container)
-        canvas.chromeInsets = { [weak container, weak tray, weak drawing] in
+        canvas.chromeInsets = { [weak container, weak tray, weak drawing, weak getStarted] in
             guard let container else { return NSEdgeInsets() }
             // The toolbar and tray sit at fixed offsets, so only a window never laid out needs a
             // pass here; attention pills ask on every pan step, sometimes from inside layout.
             if tray?.frame.isEmpty ?? false { container.layoutSubtreeIfNeeded() }
             let top = drawing?.toolbar.map { $0.isHidden ? 0 : container.bounds.maxY - $0.frame.minY } ?? 0
             let bottom = tray.map { $0.isHidden ? 0 : $0.frame.maxY } ?? 0
-            return NSEdgeInsets(top: top, left: 0, bottom: bottom, right: 0)
+            // Get Started's fixed width at its fixed leading offset, laid out or not.
+            let left = getStarted.map { $0.isOpen ? GetStartedPanel.leading + GetStartedPanel.width : 0 } ?? 0
+            return NSEdgeInsets(top: top, left: left, bottom: bottom, right: 0)
         }
         // Edge pills with no clear stretch of the view's edge go to the toolbar row beside the
         // toolbar (`PillLayout`), which only the chrome uses.
@@ -91,7 +96,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             self.tray.isHidden = self.canvas.chromeHidden
         }
         // Above the toolbar and tray, so the navigator is never covered.
-        for view in [nothingHere, basics, navigator] {
+        for view in [nothingHere, getStarted, basics, navigator] {
             view.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(view)
         }
@@ -114,6 +119,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             basicsHeight,
             basics.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
         ])
+        NSLayoutConstraint.activate([
+            getStarted.topAnchor.constraint(equalTo: container.topAnchor, constant: 60),
+            getStarted.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: GetStartedPanel.leading),
+            getStarted.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -64),
+        ])
         navigator.onGo = { [weak self] target in
             switch target {
             case .allContent: self?.canvas.zoomToFit()
@@ -127,6 +137,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         navigator.searchSymbols = { [weak self] name in await self?.workspaceSymbols(named: name) ?? NavigatorPanel.SymbolAnswer(rows: []) }
         nothingHere.onBack = { [weak self] in self?.canvas.zoomToFit() }
         basics.onHideChrome = { [weak self] in self?.toggleCanvasChrome(nil) }
+        getStarted.onClose = { [weak self] in self?.getStartedClosed() }
+        getStarted.onNewTerminal = { [weak self] in self?.newTerminal(nil) }
+        getStarted.onShowPractice = { [weak self] in self?.showPracticeNote() }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
@@ -140,7 +153,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         settlePromptTarget()
         refreshTray()
         refreshTab()
-        emptyHint.isHidden = !board.objects.isEmpty
+        refreshEmptyHint()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -156,7 +169,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             settlePromptTarget()
             refreshTray()
             refreshTab()
-            emptyHint.isHidden = !board.objects.isEmpty
+            refreshEmptyHint()
         case .objectUpdated(let object) where object.type == .terminal:
             // An agent starting or exiting in a terminal can move the target.
             settlePromptTarget()
@@ -174,6 +187,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         if let affinity, affinity.target == target?.id { title = title.map { "\($0) · works in \(affinity.checkout)" } }
         tray.show(board.tray, targetTitle: title, targetDrains: target.map(PromptTarget.drains) ?? false,
                   hasTerminal: board.objects.values.contains { $0.type == .terminal })
+        refreshGetStarted(target: target)
     }
 
     /// What the tab last showed (`NeedsYou`), so a terminal's frequent updates redraw nothing.
@@ -426,6 +440,64 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Help › Canvas Basics opens (or closes) the legend over this board.
     @objc func toggleBasics(_ sender: Any?) {
         if basics.isOpen { basics.close() } else { basics.open() }
+    }
+
+    /// Help › Get Started opens (or closes) the first-run walk-through over this board; at the
+    /// first launch of a new home the app opens it (`GetStarted.Store.launch`).
+    @objc func toggleGetStarted(_ sender: Any?) {
+        if getStarted.isOpen { getStarted.close() } else { showGetStarted() }
+    }
+
+    /// Opens Get Started with its practice note in view and selected (so ⇧⌘M works on it
+    /// straight away), counting from what the tray holds now.
+    func showGetStarted() {
+        guard !getStarted.isOpen else { return }
+        guide = GetStarted.Progress(delivered: board.delivered, trayCount: board.tray.count)
+        getStarted.open()
+        showPracticeNote()
+        refreshTray()
+        refreshEmptyHint()
+    }
+
+    /// Closing is final: it no longer opens at launch. The practice note goes with it unless
+    /// the user wrote in it.
+    private func getStartedClosed() {
+        guide = nil
+        GetStarted.Store(url: AppPaths.getStarted).dismiss()
+        if let note = practiceNote, note.props["markdown"]?.string == GetStarted.practiceMarkdown { try? board.delete(note.id) }
+        refreshEmptyHint()
+    }
+
+    private var practiceNote: CanvasObject? { try? board.holder(ofKey: GetStarted.practiceKey) }
+
+    /// The practice note, made if it's gone: placed like any new tile, in the view clear of
+    /// the panel (`chromeInsets`), then revealed and selected.
+    private func showPracticeNote() {
+        let note = practiceNote ?? board.create(
+            type: .note,
+            props: .object(["markdown": .string(GetStarted.practiceMarkdown), "key": .string(GetStarted.practiceKey)]),
+            frame: board.place(width: 380, height: 220, near: nil))
+        canvas.reveal(note.id)
+        canvas.setSelection([note.id])
+    }
+
+    /// The walk-through follows the tray: staged, then taken by a prompt; step 2 says what
+    /// the tray's target needs (a terminal, an agent in it, or Hyper-V).
+    private func refreshGetStarted(target: CanvasObject?) {
+        guard var progress = guide else { return }
+        progress.observe(trayCount: board.tray.count, delivered: board.delivered)
+        guide = progress
+        let shown: GetStartedPanel.Target = if let target {
+            PromptTarget.drains(target) ? .agent : .plain
+        } else {
+            board.objects.values.contains { $0.type == .terminal } ? .choose : .none
+        }
+        getStarted.show(progress.step, target: shown)
+    }
+
+    /// The empty-board hint shows on an empty board, unless Get Started is open over it.
+    private func refreshEmptyHint() {
+        emptyHint.isHidden = !board.objects.isEmpty || getStarted.isOpen
     }
 
     /// Go to's file, symbol and Recent rows: a code tile in view already showing the lines, else
@@ -759,6 +831,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(copyObjectIDs(_:)):
             item.title = selection.count > 1 ? "Copy Object IDs" : "Copy Object ID"
             return !selection.isEmpty
+        case #selector(toggleGetStarted(_:)):
+            item.state = getStarted.isOpen ? .on : .off
+            return true
         case #selector(toggleBasics(_:)):
             item.state = basics.isOpen ? .on : .off
             return true

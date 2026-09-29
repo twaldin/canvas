@@ -63,6 +63,7 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 - **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles.
 - **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so): the terminal the user last typed in that runs an agent, else the board's only agent terminal (a dev-server shell beside it never takes it), else the last terminal typed in.
   Clicking "→ name" opens a menu of the board's terminals (agents first) to pick another; it is kept across restarts. ⌃⌥⇧⌘V pastes them, for an agent without an integration, into the terminal the user is typing in, else into that target.
+- **Help › Get Started** walks a new user through a first mention on a practice note: Hyper-click it (or ⇧⌘M), then send it with a prompt; each step turns green when done. It opens by itself only on a first launch, until closed; a user who never set up Hyper can reopen it there.
 - **Drawing toolbar** at the top: select (V), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
   The default ink (Black) is drawn dark over light pages and images and light over the dark canvas; other colors stay as chosen.
 

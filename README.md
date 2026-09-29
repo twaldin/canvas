@@ -8,7 +8,7 @@ Canvas is a Mac app for coding agents: Claude Code, Codex and any CLI agent run 
 
 Native Mac app. Free, MIT.
 
-Requires macOS 14 or later on Apple silicon. [Download the latest release](https://github.com/twaldin/canvas/releases), then follow [Install](#install).
+Requires macOS 14 or later on Apple silicon. [Download the latest release](https://github.com/twaldin/canvas/releases), then follow [Install](#install) and [First steps](#first-steps).
 
 ## Show your agent the code
 
@@ -75,6 +75,14 @@ Requires macOS 14 or later on Apple silicon.
    ln -sf /Applications/Canvas.app/Contents/Resources/extensions/omp/canvas.ts ~/.omp/agent/extensions/canvas.ts
    ```
 5. Optional, for code navigation: install the language servers you want (sourcekit-lsp, pyright, typescript-language-server, gopls, rust-analyzer). Without one, Go to Definition, Find References and Outline answer by text search. Install commands, and how Canvas finds a server (`CANVAS_LSP_<LANGUAGE>` overrides one), are in [docs/install.md](docs/install.md#language-servers).
+
+## First steps
+
+1. Open Canvas. It opens a board on your home folder, with **Get Started** beside a practice note. Closed, it stays closed; Help › Get Started brings it back.
+2. Hyper-click the practice note: hold ⌃⌥⇧⌘ (Control, Option, Shift and Command) and click a paragraph. A purple chip, the mention, appears in the tray at the bottom of the window. No Hyper key yet? Select the note and press ⇧⌘M, or give yourself one key: in [Karabiner-Elements](https://karabiner-elements.pqrs.org), Complex Modifications › Add predefined rule › "Change caps_lock to command+control+option+shift".
+3. Press ⌘T for a terminal and run your agent: `claude`, `codex`, `opencode`, or `omp` with its extension (Install step 4). Codex first asks whether to trust the folder.
+4. Ask it something, like "what does this note say?". The chip goes with your prompt, and Get Started checks off both steps.
+5. Open your project with File › Open Board… (⇧⌘O), open a file as a code tile with ⌘O, and Hyper-click a line of it.
 
 ## Uninstall
 

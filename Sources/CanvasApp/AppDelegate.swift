@@ -148,10 +148,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hyper.install()
         let saved = Self.savedOpenBoards()
+        // Decided before any board opens, so a new home's first board doesn't count as a board
+        // an existing user had.
+        let getStarted = GetStarted.Store(url: AppPaths.getStarted).launch(boards: AppPaths.boards)
         let initial = open(root: Self.initialRoot())
         // The other boards that were open as tabs come back behind the initial one.
         for root in saved where root.standardizedFileURL != initial.root.standardizedFileURL && BoardStore.isDirectory(root.path) {
             open(root: root, select: false)
+        }
+        // After the window's first layout, so the practice note lands in view.
+        if getStarted, let controller = controllers[initial.id] {
+            DispatchQueue.main.async { controller.showGetStarted() }
         }
         // Testing on a shared machine: CANVAS_NO_ACTIVATE=1 keeps the app from taking focus.
         if ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] != "1" {
@@ -300,6 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func zoomToFit(_ sender: Any?) { keyController?.zoomToFit(sender) }
     @objc func showNavigator(_ sender: Any?) { keyController?.showNavigator(sender) }
     @objc func toggleBasics(_ sender: Any?) { keyController?.toggleBasics(sender) }
+    @objc func toggleGetStarted(_ sender: Any?) { keyController?.toggleGetStarted(sender) }
     @objc func toggleCanvasChrome(_ sender: Any?) { keyController?.toggleCanvasChrome(sender) }
     @objc func toggleLassoSelection(_ sender: Any?) { keyController?.toggleLassoSelection(sender) }
     @objc func exitGroup(_ sender: Any?) { keyController?.exitGroup(sender) }
@@ -511,9 +519,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .separator(),
             item("Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), ""),
         ])
-        // The Help menu gets AppKit's menu search (⌘?), which finds every item above, and the
-        // legend of what the canvas shows (`BasicsPanel`), ⌥⌘/ beside that search's ⌘?.
+        // The Help menu gets AppKit's menu search (⌘?), which finds every item above, the
+        // first-run walk-through (`GetStartedPanel`), and the legend of what the canvas shows
+        // (`BasicsPanel`), ⌥⌘/ beside that search's ⌘?.
         NSApp.helpMenu = submenu("Help", [
+            item("Get Started", #selector(toggleGetStarted(_:)), ""),
             item("Canvas Basics", #selector(toggleBasics(_:)), "/", [.option, .command]),
         ])
         return main

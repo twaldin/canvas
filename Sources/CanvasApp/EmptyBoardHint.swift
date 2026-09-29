@@ -1,8 +1,8 @@
 import AppKit
 
 /// Centred on a board with no objects: how to start (a terminal, then your agent), what Hyper
-/// does, and where the legend is (Help › Canvas Basics). A quiet panel, transparent to the mouse, so the canvas under it still takes
-/// clicks and the right-click menu.
+/// does, and where to try it and read more (Help › Get Started, Help › Canvas Basics). A quiet panel, transparent to the
+/// mouse, so the canvas under it still takes clicks and the right-click menu; hidden while Get Started is open.
 @MainActor
 final class EmptyBoardHint: NSVisualEffectView {
     init() {
@@ -24,7 +24,7 @@ final class EmptyBoardHint: NSVisualEffectView {
             ("Or right-click anywhere → New Terminal Here.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("Hyper is ⌃⌥⇧⌘: Hyper-click code, notes, shapes, or web pages to point your agent at them.", .systemFont(ofSize: 13), .secondaryLabelColor),
             ("⌃⌥⇧⌘ is Control+Option+Shift+Command; on a PC keyboard, Ctrl+Alt+Shift+Win.", .systemFont(ofSize: 12), .tertiaryLabelColor),
-            ("New here? Help › Canvas Basics explains the dots, markers, tray, and keys.", .systemFont(ofSize: 13), .tertiaryLabelColor),
+            ("New here? Help › Get Started walks you through a first Hyper-click; Help › Canvas Basics explains the rest.", .systemFont(ofSize: 13), .tertiaryLabelColor),
         ]
         for (text, font, color) in lines {
             let label = NSTextField(labelWithString: text)

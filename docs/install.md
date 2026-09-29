@@ -29,7 +29,7 @@ A server elsewhere (Zed's, a custom build) needs the variable, e.g. in `~/.zprof
 
 1. End the terminal sessions first, or they keep running: `zmx list`, then `zmx kill <name>` for each `canvas-obj_…` session.
 2. Delete `/Applications/Canvas.app`.
-3. Delete `~/Library/Application Support/Canvas/` (boards, including archived ones, `open-boards.json`).
+3. Delete `~/Library/Application Support/Canvas/` (boards, including archived ones, `open-boards.json`, `get-started.json`).
 4. Delete the browser profile: `~/Library/WebKit/net.waldin.canvas/`, `~/Library/Caches/net.waldin.canvas/`, `~/Library/HTTPStorages/net.waldin.canvas*` (or first use Canvas › Clear Browsing Data…).
 5. `defaults delete net.waldin.canvas` (export folder, lasso setting, window frames).
 6. Delete `$(getconf DARWIN_USER_CACHE_DIR)net.waldin.canvas` and, in `$(getconf DARWIN_USER_TEMP_DIR)`, `net.waldin.canvas`, `canvas-renders`, `canvas-exports`, `canvas-gemini`.

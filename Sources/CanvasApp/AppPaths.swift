@@ -25,6 +25,8 @@ enum AppPaths {
     static func pageSnapshots(of board: BoardID) -> URL {
         boards.appendingPathComponent(board, isDirectory: true).appendingPathComponent("snapshots", isDirectory: true)
     }
+    /// Whether Help › Get Started still opens at launch (`GetStarted.Store`).
+    static let getStarted = support.appendingPathComponent("get-started.json")
     /// Roots of the boards open as tabs, in tab order, reopened at the next launch.
     static let openBoards = support.appendingPathComponent("open-boards.json")
 

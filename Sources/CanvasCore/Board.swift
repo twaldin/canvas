@@ -80,6 +80,9 @@ public final class Board {
     public private(set) var objects: [ObjectID: CanvasObject] = [:]
     public private(set) var revision = 0
     public private(set) var tray: [Mention] = []
+    /// Mentions that left the tray with a prompt (`drain`) or Hyper-V (`commit`) since the board
+    /// opened, never by unstaging or a delete; in memory only (Help › Get Started's last step).
+    public private(set) var delivered = 0
     /// Unseen attention markers by object (see Attention.swift).
     public internal(set) var attention: [ObjectID: Attention] = [:]
     /// What the prompt target rule remembers; saved with the board, so the tray targets the
@@ -746,7 +749,9 @@ public final class Board {
         commitHandoffs(ids)
         let before = tray.count
         tray.removeAll { ids.contains($0.id) }
-        if tray.count != before { trayChanged() }
+        guard tray.count != before else { return }
+        delivered += before - tray.count
+        trayChanged()
     }
 
     /// Staged mentions of the object turn "edited" when the update changed what they hold

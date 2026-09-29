@@ -1414,7 +1414,8 @@ final class CanvasView: NSScrollView {
     // MARK: Navigation (user-initiated only)
 
     /// Floating window chrome over the canvas edges (the drawing toolbar at the top, the tray at
-    /// the bottom), in view points; the window controller measures it. Jumps land clear of it.
+    /// the bottom, Get Started at the left while it's open), in view points; the window
+    /// controller measures it. Jumps and new tiles land clear of it.
     var chromeInsets: () -> NSEdgeInsets = { NSEdgeInsets() }
 
     /// View › Hide Canvas Chrome, for presenting: the window hides the drawing toolbar and the
@@ -1443,14 +1444,16 @@ final class CanvasView: NSScrollView {
     /// Space kept between a jump's target and the floating chrome, in view points.
     static let chromeMargin: CGFloat = 12
 
-    /// The part of the viewport jumps aim at (view points, top-left origin): between the floating
-    /// toolbar and the tray, with a margin; never less than half the viewport.
+    /// The part of the viewport jumps aim at (view points, top-left origin): clear of the floating
+    /// chrome, with a margin; never less than half the viewport either way.
     private var clearArea: CGRect {
         let size = contentView.frame.size
         let insets = chromeInsets()
         let top = insets.top + Self.chromeMargin, bottom = insets.bottom + Self.chromeMargin
+        let left = insets.left > 0 ? insets.left + Self.chromeMargin : 0, right = insets.right > 0 ? insets.right + Self.chromeMargin : 0
         let height = max(size.height - top - bottom, size.height / 2)
-        return CGRect(x: 0, y: min(top, size.height - height), width: size.width, height: height)
+        let width = max(size.width - left - right, size.width / 2)
+        return CGRect(x: min(left, size.width - width), y: min(top, size.height - height), width: width, height: height)
     }
 
     /// Where a board opens: the top of its content, or of its largest cluster when the content

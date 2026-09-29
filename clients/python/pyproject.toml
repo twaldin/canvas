@@ -1,6 +1,6 @@
 [project]
 name = "canvas-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for the Canvas app socket API"
 requires-python = ">=3.11"
 dependencies = []

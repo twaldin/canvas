@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build Canvas and assemble .build/Canvas.app (ad-hoc signed) so macOS and window managers
 # treat it as a real application. Usage: scripts/bundle.sh [debug|release]
-# CANVAS_VERSION (default 0.1) and CANVAS_BUILD (default 1) set the bundle version (releases).
+# CANVAS_VERSION (default: the VERSION file) and CANVAS_BUILD (default 1) set the bundle version.
 # CANVAS_BUNDLE_APP assembles it elsewhere (a frozen copy for studies), leaving the bundle a
 # running dev instance launched from .build/Canvas.app untouched.
 # CANVAS_SIGN_IDENTITY signs for distribution (docs/releasing.md): a Developer ID Application
@@ -9,9 +9,9 @@
 # signs the same way ad hoc (no timestamp), to try the hardened runtime without a certificate.
 set -eu
 config="${1:-debug}"
-version="${CANVAS_VERSION:-0.1}"
-build="${CANVAS_BUILD:-1}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
+version="${CANVAS_VERSION:-$(cat "$repo/VERSION")}"
+build="${CANVAS_BUILD:-1}"
 cd "$repo"
 swift build -j 4 -c "$config" --product Canvas
 bin="$(swift build -c "$config" --show-bin-path)"
@@ -24,6 +24,8 @@ for bundle in "$bin"/*.bundle; do
 done
 # extensions/omp/canvas.ts imports ../../clients and ../../skills, which sit beside it here too.
 cp -R schema bin cli skills extensions LICENSE THIRD_PARTY_NOTICES.md "$app/Contents/Resources/"
+# The hooks' tests (`bun test extensions/agent-hooks`) stay in the checkout.
+find "$app/Contents/Resources/extensions" -name '*.test.ts' -delete
 [ -d resources ] && cp -R resources "$app/Contents/Resources/resources"
 cp -R clients/ts/src "$app/Contents/Resources/clients/ts/src"
 # Tiles put clients/python on PYTHONPATH: only the SDK, so no other package (its tests) shadows

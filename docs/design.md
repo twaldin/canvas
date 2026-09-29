@@ -2,8 +2,6 @@
 
 A native macOS infinite canvas where coding agents run unmodified in real terminal tiles, next to browser, code/diff, note, and HTML tiles that both you and the agents can read, create, and change. The transcript stays in the agent's own terminal UI; the canvas holds the current working state.
 
-Source: the original brainstorm (private) and the grilling session that produced this record.
-
 ## Principles
 
 - **Terminal-first.** Agents (omp first) run their real TUI in a terminal tile. We never rebuild the agent's UI; every omp command, login flow, and question tool keeps working.
@@ -196,7 +194,7 @@ Getting lost on a big board must always have a one-step way back.
 - Browser pages: a page nobody can see (tile not live, window minimized, covered, in a background tab, closed, app hidden) is hidden to WebKit and reports no activity, and WebKit's hidden-page timer throttling grows the longer it stays hidden (`hiddenPageDOMTimerThrottlingAutoIncreases`). A hidden page still commits a frame on every DOM change, each spinning WebKit's display link in the app for ~0.3 s, so a tile that isn't live and isn't driven is released after 2 minutes. `object.get` names which of these a page is in (`page.visibility`: `visible`, `hidden`, `driven`, `released`), because frame and timer numbers mean nothing without it: a driven page nobody sees runs requestAnimationFrame at an irregular 22–54 fps (window minimized), a hidden one not at all (game study, round 8: an agent blamed a tile half off screen for 30 fps that came from the minimized window). Browser tiles on a page with a 1 s clock, window minimized (Canvas's interrupt wakeups/s, `proc_pid_rusage`): before, 42–70 for three off-screen tiles (confirm6 F1), 18 for one tile an agent rendered a minute earlier, 32 for two tiles in view of the minimized window; after, three tiles created off screen with the window minimized 1–6 from the start, and ~1 once released (the app idle: ~1); tiles that were visible first 25 → 16 in the first minute (throttling), 2–3 after release.
 - Cards are 0.6 px/pt bitmaps, dropped as soon as the tile is live again; terminal cards read `zmx history` on GCD, not the main thread.
 - A tile that isn't live watches nothing (code tiles suspend their file watcher, changes tiles drop their FSEvents stream, notes their fences' files), so what `view.render` and `view.snapshot` show of a code, changes or note tile off screen or zoomed out is reloaded first (a note's fences resolved again: a source restored meanwhile shows fresh, not its old stale badge) (the file and its diff, the listing under new `paths`), never the last live drawing or card; only a live tile with nothing pending draws its model as it is. The same props at the same width reuse an HTML page's measured extent for 30 s (each measure loads the page, ~350 ms), so a `layout.check` loop re-measures only pages that changed.
-- Notes lay out their whole text once per content change (`NoteDisplayView`), and a note with a table again when its width changes (its cells wrap to it). TextKit 2 otherwise lays out a viewport around what's visible, and on the canvas that followed every pan and pinch step: each step re-laid out and resized every note on screen, sometimes never converging. One note on the astra replica stalled a pinch for 2 s (the "application not responding" beachball) and once raised AppKit's layout-loop exception.
+- Notes lay out their whole text once per content change (`NoteDisplayView`), and a note with a table again when its width changes (its cells wrap to it). TextKit 2 otherwise lays out a viewport around what's visible, and on the canvas that followed every pan and pinch step: each step re-laid out and resized every note on screen, sometimes never converging. One note on a replica of a large dogfood board stalled a pinch for 2 s (the "application not responding" beachball) and once raised AppKit's layout-loop exception.
 - `view.render` encodes its image off the main thread (a full-board PNG took ~300 ms of the canvas's main thread).
 - Blocking work (subprocess pipes, `waitUntilExit`, file reads) never runs inside a Swift task: parked cooperative threads starve the socket servers' request tasks. Use GCD plus a continuation.
 - Agent-built boards (the architecture explainer: one 128-op `object.batch` creating 67 fit code tiles, 3 notes, an HTML tile, 10 groups, 38 line-bound `avoid` arrows, 8 grids and a stack). `layout.check` judges a value snapshot of the board (`BoardGeometry`): it reads each file once and wraps it once per width, concurrently, only for tiles line-bound arrows attach to, and routes, labels, and code fit run off the main actor. New code, note, and HTML tiles that wouldn't be live start as their cards (no live view, no header controls, no load), code headers build their AppKit controls only in a window, background model and card installs run one per main turn (`MainTurns`), and `avoid` arrows touched during a burst route once in the settle instead of per change. Measured on a replica (debug build, `scripts/perf-replica.sh`, board zoomed to fit, a 1500-step scroll burst running during each call; `longest gap` is the main-thread stall):
@@ -223,7 +221,7 @@ Command Line Tools ship no Instruments, so the spike measured with `footprint`, 
 | Same, window shown, nothing focused (`top` idlew/s, CPU) | 24/s, 0.9% | 0.2/s, 0.0% |
 | Shell printing 50 lines/s, window minimized (interrupt wakeups/s, CPU) | 88/s, 2.6 ms/s | 28/s, 1.7 ms/s |
 
-Code tiles (astra-skyblock replica, 205 objects with 62 code tiles; every code tile visited at 100% and back to fit, then a fixed pan/zoom sequence with three ⌘9↔⌘0 transitions): the TextKit 2 tile left the app at 559 MB footprint (+267 MB over the fresh board, ~4.3 MB per code tile) and spent 5.19 s CPU on the sequence; drawing only visible rows from a compact model (no NSScrollView, nothing in the window while not live) leaves it at 319 MB (+19 MB, ~0.3 MB per tile) and 2.93 s CPU.
+Code tiles (a replica of a large dogfood board, 205 objects with 62 code tiles; every code tile visited at 100% and back to fit, then a fixed pan/zoom sequence with three ⌘9↔⌘0 transitions): the TextKit 2 tile left the app at 559 MB footprint (+267 MB over the fresh board, ~4.3 MB per code tile) and spent 5.19 s CPU on the sequence; drawing only visible rows from a compact model (no NSScrollView, nothing in the window while not live) leaves it at 319 MB (+19 MB, ~0.3 MB per tile) and 2.93 s CPU.
 
 Standing costs, measured: empty board 46 MB and ~0% idle CPU. The first Ghostty surface adds ~224 MB of GPU memory (28 × 8 MiB Metal allocations, independent of size; Ghostty.app shows the identical pattern), each further terminal ~12 MB plus ~23 MB of triple-buffered IOSurfaces while it renders (860×560 pt), released when not live. Code tile +20 MB (1,000-line Swift file), note +6 MB, HTML tile +13 MB in-app plus ~23 MB WebContent, browser tile ~18 MB WebContent. Heavy terminal output costs zmx (the session relay) far more CPU than Canvas: a 9M-line burst took 2.6–4.5 s of zmx CPU and ≤0.14 s of Canvas CPU.
 
@@ -235,8 +233,6 @@ Real use on real repos with the logged-in omp, not mocks:
 2. **Mention loop**: Hyper-click a change in a code tile, a DOM element, and a drawn box; dictate a question into the terminal; the prompt drains the tray; the agent answers by editing or annotating objects.
 3. **HTML explainer**: the agent (or a subagent) builds a sandboxed HTML tile with grounded `<canvas-code>` excerpts and file:line links that open code tiles.
 4. **Survive rebuild**: quit or rebuild mid-task; agents keep running under zmx; the board restores exactly; after a reboot omp, Claude Code and Codex tiles resume their sessions.
-
-Testing runs on an empty yabai workspace (or floating behind active windows), maximized rather than fullscreen, coordinated with other herdr agents.
 
 ## Build plan
 
@@ -262,7 +258,7 @@ Question cards (`canvas_ask`), MCP server, `canvas lsp-proxy`, multi-agent overv
 
 ## Acceptance findings
 
-Run on a clone of `3d-game` with omp 18.3: omp added an FPS/position HUD, followed by a mention-driven follow-up and an HTML explainer. Fixed along the way:
+Run on a clone of a small browser game with omp 18.3: omp added an FPS/position HUD, followed by a mention-driven follow-up and an HTML explainer. Fixed along the way:
 
 - Follow tiles re-aimed at scratch files (a `/tmp` screenshot the agent read). `follow.report` now ignores paths outside the board root and the terminal's cwd.
 - omp's browser check saw `document.hidden` and a stopped `requestAnimationFrame` (the tile was offscreen or the window on another Space). Agent-driven pages now stay visible to WebKit (window occlusion detection off, offscreen web views parked in a clipped stage view) for 60 s after the last command.

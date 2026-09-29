@@ -334,6 +334,7 @@ extension DevInput {
 
         /// A key down or up as the window server delivers it: `characters` with Control applied
         /// (⌃C is ETX), `charactersIgnoringModifiers` with only Shift.
+        @MainActor
         func event(_ type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags, window: NSWindow) -> NSEvent? {
             var flags = modifiers.union(extraFlags)
             if shift { flags.insert(.shift) }

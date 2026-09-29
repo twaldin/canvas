@@ -4,7 +4,9 @@ A release is `Canvas-<version>.zip` holding `Canvas.app`. Signed with a Develope
 
 - `scripts/bundle.sh release` builds and assembles the app. `CANVAS_SIGN_IDENTITY` switches its ad-hoc signature to a distribution one: nested code first, then the app, with the hardened runtime (`--options runtime`), `scripts/Canvas.entitlements` and a secure timestamp.
 - `scripts/notarize.sh <app> <zip>` checks the signature, zips the app, submits it with `notarytool submit --wait`, prints the notary log, staples the ticket to the app, checks it with `stapler validate` and `spctl`, and zips the stapled app.
-- `.github/workflows/release.yml` does both on a `v*` tag when the signing secrets exist, and makes the ad-hoc zip otherwise.
+- `.github/workflows/release.yml` does both on a `v*` tag when the signing secrets exist, and makes the ad-hoc zip otherwise. It fails when the tag isn't `v` + `VERSION`, and publishes nothing when the tag's release already exists (one made from a Mac).
+
+The version lives in `VERSION`. `scripts/bundle.sh` stamps it into Info.plist (`CANVAS_VERSION` overrides it), and `bun scripts/gen-clients.ts` writes it into the Python and TypeScript clients' manifests and the Claude Code plugin. To bump: edit `VERSION`, run `bun scripts/gen-clients.ts`, commit.
 
 ## One-time setup
 
@@ -25,11 +27,11 @@ A release is `Canvas-<version>.zip` holding `Canvas.app`. Signed with a Develope
 
 ## Release from this Mac
 
-Build into `.build/dist`, never `.build/Canvas.app` (the running instance); `gh release create` makes the tag:
+Bump `VERSION` first (above). Build into `.build/dist`, never `.build/Canvas.app` (the running instance); `gh release create` makes the tag, and the Release workflow it starts leaves the release alone:
 
 ```sh
 export CANVAS_SIGN_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
-CANVAS_VERSION=0.2.1 CANVAS_BUNDLE_APP="$PWD/.build/dist/Canvas.app" scripts/bundle.sh release
+CANVAS_BUNDLE_APP="$PWD/.build/dist/Canvas.app" scripts/bundle.sh release
 CANVAS_NOTARY_PROFILE=canvas-notary scripts/notarize.sh .build/dist/Canvas.app Canvas-0.2.1.zip
 gh release create v0.2.1 Canvas-0.2.1.zip --title "Canvas 0.2.1" --generate-notes
 ```
@@ -38,7 +40,7 @@ The first `codesign` asks for the key: choose Always Allow. Notarization usually
 
 ## Release from CI
 
-Add these repository secrets (Settings › Secrets and variables › Actions, or `gh secret set`), then push a `v*` tag:
+Add these repository secrets (Settings › Secrets and variables › Actions, or `gh secret set`), bump `VERSION`, then push a `v*` tag:
 
 | Secret | Value |
 | --- | --- |

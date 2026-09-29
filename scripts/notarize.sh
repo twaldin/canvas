@@ -31,7 +31,9 @@ esac
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 # The service takes a zip of the app, not the app; the ticket is stapled to the app afterwards.
-ditto -c -k --keepParent "$app" "$work/upload.zip"
+# No resource forks, extended attributes or ACLs: a signed bundle carries none that matter, and
+# ditto would store them as AppleDouble `._*` entries beside every file.
+ditto -c -k --norsrc --noextattr --noacl --keepParent "$app" "$work/upload.zip"
 # An Invalid submission may exit non-zero; its log says why, so read the verdict from the JSON.
 xcrun notarytool submit "$work/upload.zip" "$@" --wait --output-format json > "$work/submit.json" || true
 id="$(plutil -extract id raw "$work/submit.json")" || { cat "$work/submit.json" >&2; exit 1; }
@@ -44,5 +46,5 @@ xcrun stapler validate "$app"
 # Gatekeeper's verdict on the stapled app: "accepted, source=Notarized Developer ID".
 spctl --assess --type execute -vv "$app"
 rm -f "$out"
-ditto -c -k --keepParent "$app" "$out"
+ditto -c -k --norsrc --noextattr --noacl --keepParent "$app" "$out"
 echo "$out"

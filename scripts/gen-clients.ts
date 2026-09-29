@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// Generates typed clients (and the app's param table) from schema/canvas-api.json.
+// Generates typed clients (and the app's param table) from schema/canvas-api.json, and sets the
+// clients' and the Claude Code plugin's package versions to VERSION.
 //   bun scripts/gen-clients.ts          write generated files
 //   bun scripts/gen-clients.ts --check  exit 1 if generated files are stale
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -255,10 +256,25 @@ function genSwift(): string {
   return out.join("\n");
 }
 
+// ---------- Package versions (from VERSION, which scripts/bundle.sh also reads) ----------
+
+const version = readFileSync(join(root, "VERSION"), "utf8").trim();
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`VERSION must be MAJOR.MINOR.PATCH, not ${JSON.stringify(version)}`);
+
+/** `file` with its first match of `pattern` (whose one group is the version) set to VERSION. */
+function withVersion(rel: string, pattern: RegExp): string {
+  const current = readFileSync(join(root, rel), "utf8");
+  if (!pattern.test(current)) throw new Error(`no version in ${rel}`);
+  return current.replace(pattern, (whole, old: string) => whole.replace(old, version));
+}
+
 const targets: Array<[string, string]> = [
   ["clients/ts/src/generated.ts", genTs()],
   ["clients/python/canvas_sdk/_generated.py", genPy()],
   ["Sources/CanvasCore/ApiParams.swift", genSwift()],
+  ["clients/python/pyproject.toml", withVersion("clients/python/pyproject.toml", /^version = "([^"]+)"$/m)],
+  ["clients/ts/package.json", withVersion("clients/ts/package.json", /^  "version": "([^"]+)",$/m)],
+  ["extensions/claude/.claude-plugin/plugin.json", withVersion("extensions/claude/.claude-plugin/plugin.json", /^  "version": "([^"]+)",$/m)],
 ];
 
 const check = process.argv.includes("--check");

@@ -29,20 +29,30 @@ final class AccessibleTextElement: NSAccessibilityElement {
     }
 
     override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
-    override func accessibilityLabel() -> String? { label() }
-    override func accessibilityParent() -> Any? { view.flatMap { NSAccessibility.unignoredAncestor(of: $0) } }
+    override func accessibilityLabel() -> String? { onMain { $0.label() } }
+    override func accessibilityParent() -> Any? { onMain { $0.view.flatMap { NSAccessibility.unignoredAncestor(of: $0) } } }
     override func accessibilityFrame() -> NSRect {
-        guard let view, view.window != nil else { return .zero }
-        return NSAccessibility.screenRect(fromView: view, rect: view.bounds)
+        onMain { element in
+            guard let view = element.view, view.window != nil else { return .zero }
+            return NSAccessibility.screenRect(fromView: view, rect: view.bounds)
+        }
     }
     override func isAccessibilityFocused() -> Bool { false }
-    override func accessibilityValue() -> Any? { text.text }
-    override func accessibilityNumberOfCharacters() -> Int { text.length }
-    override func accessibilityVisibleCharacterRange() -> NSRange { NSRange(location: 0, length: text.length) }
+    override func accessibilityValue() -> Any? { onMain { $0.text.text } }
+    override func accessibilityNumberOfCharacters() -> Int { onMain { $0.text.length } }
+    override func accessibilityVisibleCharacterRange() -> NSRange { onMain { NSRange(location: 0, length: $0.text.length) } }
     override func accessibilitySelectedTextRange() -> NSRange { NSRange(location: 0, length: 0) }
     override func accessibilitySelectedText() -> String? { "" }
-    override func accessibilityString(for range: NSRange) -> String? { text.string(in: range) }
-    override func accessibilityLine(for index: Int) -> Int { text.line(at: index) }
-    override func accessibilityRange(forLine line: Int) -> NSRange { text.range(ofLine: line) }
+    override func accessibilityString(for range: NSRange) -> String? { onMain { $0.text.string(in: range) } }
+    override func accessibilityLine(for index: Int) -> Int { onMain { $0.text.line(at: index) } }
+    override func accessibilityRange(forLine line: Int) -> NSRange { onMain { $0.text.range(ofLine: line) } }
     override func accessibilityFrame(for range: NSRange) -> NSRect { accessibilityFrame() }
+
+    /// AppKit declares the accessibility methods nonisolated but calls them on the main thread.
+    private nonisolated func onMain<T>(_ body: @MainActor (AccessibleTextElement) -> T) -> T {
+        nonisolated(unsafe) let element = self
+        nonisolated(unsafe) var result: T?
+        MainActor.assumeIsolated { result = body(element) }
+        return result!
+    }
 }

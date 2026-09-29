@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in Canvas doesn't work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a folder…
+        2. Start `claude` in a terminal tile…
+  - type: input
+    id: canvas
+    attributes:
+      label: Canvas version
+      description: "`defaults read /Applications/Canvas.app/Contents/Info.plist CFBundleShortVersionString`, or the release zip's name. For a source build, also the commit (`git rev-parse --short HEAD`)."
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac
+      placeholder: macOS 15.6, MacBook Air M2
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and version
+      description: The agent in the tile, if one is involved (`omp --version`, `claude --version`, `codex --version`, `gemini --version`, `opencode --version`).
+      placeholder: Claude Code 2.1.283
+  - type: input
+    id: zmx
+    attributes:
+      label: zmx version
+      description: "`zmx version`"
+      placeholder: "0.8.1"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        Canvas's log around the problem. Quit Canvas, start it from a terminal with `/Applications/Canvas.app/Contents/MacOS/Canvas 2>&1 | tee ~/canvas.log`, reproduce, and paste the relevant part of `~/canvas.log`. A development instance (`scripts/dev.sh`) writes `.canvas-home/app.log`. Check it for paths or text you'd rather not share.
+      render: text

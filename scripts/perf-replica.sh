@@ -10,7 +10,13 @@
 set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="${PERF_HOME:-/tmp/canvas-perf-home}"
+# Places the replica's window with yabai, like scripts/dev.sh (docs/testing.md).
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
+[ -x "$yabai" ] || yabai="$(command -v yabai || echo "$yabai")"
+need_yabai() {
+  [ -x "$yabai" ] || { echo "scripts/perf-replica.sh $1 needs yabai (https://github.com/koekeishiya/yabai): install it, or set YABAI to its path" >&2; exit 1; }
+}
+park="${CANVAS_DEV_PARK_SPACE:-7}"
 
 # The pid file counts only while that process owns this home's socket (see scripts/dev.sh).
 pid() { [ -f "$home/pid" ] && kill -0 "$(cat "$home/pid")" 2>/dev/null && lsof -t "$home/canvas.sock" 2>/dev/null | grep -qx "$(cat "$home/pid")" && cat "$home/pid"; }
@@ -18,6 +24,7 @@ window() { "$yabai" -m query --windows | python3 -c "import json,sys; print(next
 
 case "${1:-}" in
   start)
+    need_yabai start
     source="$2"; app="${3:-$repo/.build/Canvas.app}"
     [ -f "$source" ] || source="$repo/.canvas-home/boards/$source.json"
     board="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['id'])" "$source")"
@@ -34,11 +41,11 @@ json.dump(board, open(sys.argv[2], "w"))
 print(f"{len(kept)} objects ({len(drop)} terminals dropped)")
 EOF
     root="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['root'])" "$home/boards/$board.json")"
-    # The testing Space lives on the virtual screen; park the first window on Space 7 with a
-    # one-shot rule, removed once placed (see scripts/dev.sh launch).
+    # The testing Space lives on the virtual screen; park the first window on an unviewed Space
+    # with a one-shot rule, removed once placed (see scripts/dev.sh launch).
     rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-    "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space=7 manage=off grid=1:1:0:0:1:1 >/dev/null
+    "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
     # PERF_MALLOC_STACKS=1 records allocation stacks for `malloc_history <pid> <address>`.
     open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
       ${PERF_MALLOC_STACKS:+--env MallocStackLogging=1} --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_DEV_PERF=1 --env CANVAS_ROOT="$root" "$app"
@@ -56,6 +63,6 @@ EOF
     rm -rf "$home"
     ;;
   pid) pid ;;
-  window) window ;;
+  window) need_yabai window; window ;;
   *) sed -n '2,10p' "$0" >&2; exit 2 ;;
 esac

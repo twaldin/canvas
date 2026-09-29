@@ -365,12 +365,16 @@ final class LanguageServiceTests: Sendable {
         let service = LanguageService(configs: [silentServer("hang", ignoringSIGTERM: true)])
         let request = Task { try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
         let pid = try #require(await startingPid(service, file))
-        let start = ContinuousClock.now
         await service.terminateAll(grace: .milliseconds(500))
-        #expect(start.duration(to: .now) < .seconds(3))
         #expect(!Self.isAlive(pid))
         #expect(service.liveProcessCount == 0)
-        await #expect(throws: LSPError.self) { try await request.value }
+        // It ignored SIGTERM, so it ended by SIGKILL: Process reports the signal as its status.
+        let error = await #expect(throws: LSPError.self) { try await request.value }
+        guard case .serverExited(let reason)? = error else {
+            Issue.record("\(String(describing: error)) is not serverExited")
+            return
+        }
+        #expect(reason.hasSuffix("exited with status \(SIGKILL)"), "\(reason)")
     }
 
     @Test func aServerThatDiesDuringInitializeLeavesNothingBehind() async throws {

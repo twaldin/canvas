@@ -57,8 +57,7 @@ public final class SocketServer: @unchecked Sendable {
         }
 
         private func write(_ line: Data) -> Bool {
-            var data = line
-            data.append(0x0A)
+            let data = line + [0x0A]
             writeLock.lock()
             guard isOpen else {
                 writeLock.unlock()

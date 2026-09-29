@@ -7,9 +7,9 @@
 #   scripts/dev.sh restart [root]   rebuild and relaunch, keeping terminal sessions (zmx) alive
 #   scripts/dev.sh stop             quit and kill this instance's zmx sessions
 #   scripts/dev.sh cli <args…>      run the canvas CLI against this instance
-#   scripts/dev.sh shot [file]      real pixels: WindowServer capture of the window (default .canvas-home/shot.png)
+#   scripts/dev.sh shot [file]      real pixels: WindowServer capture of the window (default .canvas-home/shot.png; yabai)
 #   scripts/dev.sh snapshot [file]  view.snapshot (in-process render, the agent-facing view) to a PNG
-#   scripts/dev.sh move [space]     move the window to a Space (default: the testing Space) and maximize it
+#   scripts/dev.sh move [space]     move the window to a Space (default: the testing Space) and maximize it (yabai)
 #   scripts/dev.sh input <args…>    replay input (scripts/dev-input.swift) into this instance
 #   scripts/dev.sh sessions         list this instance's zmx sessions
 #
@@ -20,11 +20,18 @@ set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="${CANVAS_DEV_HOME:-$repo/.canvas-home}"
 app="${CANVAS_DEV_APP:-$repo/.build/Canvas.app}"
+# Window placement is optional and needs yabai (docs/testing.md, "Optional: a machine shared with
+# other agents"): YABAI, else ~/Applications/Yabai.app, else yabai on PATH.
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
+[ -x "$yabai" ] || yabai="$(command -v yabai || echo "$yabai")"
+need_yabai() {
+  [ -x "$yabai" ] || { echo "scripts/dev.sh $1 needs yabai (https://github.com/koekeishiya/yabai): install it, or set YABAI to its path" >&2; exit 1; }
+}
+# The unviewed Space a launch's first window is parked on until it's placed.
+park="${CANVAS_DEV_PARK_SPACE:-7}"
 # The testing Space: CANVAS_DEV_SPACE, else the first Space of the BetterDisplay virtual screen
 # named CANVAS_DEV_DISPLAY (default "CanvasTest"; a headless monitor, so the window renders while
 # nobody looks at it), else Space 8. Parallel agents each get their own screen (CanvasTest2, …).
-# CANVAS_DEV_SPACE=8 puts the window where Tim watches.
 test_space() {
   if [ -n "${CANVAS_DEV_SPACE:-}" ]; then echo "$CANVAS_DEV_SPACE"; return; fi
   id="$(betterdisplaycli get --name="${CANVAS_DEV_DISPLAY:-CanvasTest}" --identifiers 2>/dev/null | sed -n 's/.*"displayID" : "\([0-9]*\)".*/\1/p' | head -n 1)"
@@ -41,7 +48,7 @@ export CANVAS_SOCKET="$home/canvas.sock"
 zmx_env() { TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)" "$@"; }
 
 # The pid file counts only while that process owns this home's socket. A home copied from
-# another instance's carries its pid file, and trusting it quit Tim's live instance.
+# another instance's carries its pid file, and trusting it quit the user's own instance.
 running_pid() {
   [ -f "$home/pid" ] || return 1
   pid="$(cat "$home/pid")"
@@ -85,14 +92,14 @@ launch() {
   mkdir -p "$home"
   rm -f "$CANVAS_SOCKET"
   # yabai can't place a new window on another display's Space (it lands on the Space being
-  # viewed), so a one-shot rule parks this launch's first window on Space 7, an unviewed Space on
-  # the built-in display (8 is where Tim watches), and it moves to the testing Space once it
-  # exists. One-shot and removed afterwards: a standing rule on app=Canvas also grabbed every later
-  # window (tabs, other instances, Tim's own boards) and hid them on Space 7.
+  # viewed), so a one-shot rule parks this launch's first window on an unviewed Space of the
+  # built-in display, and it moves to the testing Space once it exists. One-shot and removed
+  # afterwards: a standing rule on app=Canvas also grabbed every later window (tabs, other
+  # instances, the user's own boards) and hid them on the parking Space.
   rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
   if [ -x "$yabai" ]; then
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-    "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space=7 manage=off grid=1:1:0:0:1:1 >/dev/null
+    "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
   # XDG_CONFIG_HOME passes through so a scratch Ghostty config can be tried (docs/testing.md).
   open -g -n --stdout "$home/app.log" --stderr "$home/app.log" ${XDG_CONFIG_HOME:+--env "XDG_CONFIG_HOME=$XDG_CONFIG_HOME"} \
@@ -102,14 +109,18 @@ launch() {
   [ -S "$CANVAS_SOCKET" ] || { echo "Canvas did not open its socket; see $home/app.log" >&2; exit 1; }
   # The socket's owner, not the newest process of this bundle: parallel launches of one bundle race.
   lsof -t "$CANVAS_SOCKET" | head -n 1 > "$home/pid"
+  if [ ! -x "$yabai" ]; then
+    echo "Canvas pid $(cat "$home/pid"), CANVAS_SOCKET=$CANVAS_SOCKET"
+    return
+  fi
   target="$(test_space)"
-  if [ -x "$yabai" ] && [ "$target" != 7 ]; then
+  if [ "$target" != "$park" ]; then
     i=0
     while [ -z "$(window_id)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
     wid="$(window_id)"
     [ -n "$wid" ] && "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
   fi
-  [ -x "$yabai" ] && { "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true; }
+  "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
   echo "Canvas pid $(cat "$home/pid") on Space $target, CANVAS_SOCKET=$CANVAS_SOCKET"
 }
 
@@ -122,6 +133,7 @@ case "${1:-}" in
     ;;
   cli) shift; exec bun "$repo/cli/canvas.ts" "$@" ;;
   shot)
+    need_yabai shot
     out="${2:-$home/shot.png}"
     wid="$(window_id)"
     [ -n "$wid" ] || { echo "no Canvas window" >&2; exit 1; }
@@ -131,6 +143,7 @@ case "${1:-}" in
     screencapture -x -o -l "$wid" "$out" && echo "$out"
     ;;
   move)
+    need_yabai move
     wid="$(window_id)"
     [ -n "$wid" ] || { echo "no Canvas window" >&2; exit 1; }
     "$yabai" -m window "$wid" --space "${2:-$(test_space)}"

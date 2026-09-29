@@ -28,6 +28,21 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }.first
     }
 
+    /// A repository board opened from one of its worktrees (`Board.opened(from:)`): the
+    /// subtitle names that worktree and its branch, and the view goes to the worktree's region
+    /// when it has one. Opened from the main checkout, the subtitle is the board root again.
+    func showWorktree(openedAt directory: URL) {
+        if let worktree = board.workingWorktree {
+            window?.subtitle = "\(worktree.toplevel) · \(worktree.branch ?? "detached HEAD")"
+        } else {
+            window?.subtitle = board.root.path
+        }
+        guard let worktree = GitWorktree.containing(directory.standardizedFileURL.path), worktree.commonDir == board.repo?.commonDir,
+              !worktree.isMain, let region = board.region(for: worktree) else { return }
+        // After the window's first layout, which restores the saved viewport.
+        DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
+    }
+
     init(board: Board, registry: BoardRegistry) {
         self.board = board
         self.registry = registry

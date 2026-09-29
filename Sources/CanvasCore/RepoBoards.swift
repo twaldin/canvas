@@ -1,0 +1,172 @@
+import CryptoKit
+import Foundation
+
+/// One board per git repository (docs/design/repo-boards.md): the repository's common git
+/// directory is the board's identity, and the worktrees and branches it was opened from, or that
+/// its terminals started in, are attributes of it.
+public struct RepoRecord: Codable, Equatable, Sendable {
+    /// The repository's common git directory, as `GitWorktree` finds it.
+    public var commonDir: String
+    /// Every linked worktree the board has seen, with the branch it had, one entry per worktree
+    /// and branch (a worktree that switched branch has one per branch).
+    public var worktrees: [WorktreeRecord]
+    /// Legacy per-branch boards merged into this one (`RepoBoardMigration`).
+    public var merged: [BoardID]?
+
+    public init(commonDir: String, worktrees: [WorktreeRecord] = [], merged: [BoardID]? = nil) {
+        self.commonDir = commonDir
+        self.worktrees = worktrees
+        self.merged = merged
+    }
+}
+
+public struct WorktreeRecord: Codable, Equatable, Sendable {
+    /// The worktree's top level.
+    public var path: String
+    /// The branch checked out there when seen; nil on a detached HEAD or when unknown.
+    public var branch: String?
+    /// The group holding what a merged legacy board of this worktree and branch held.
+    public var region: ObjectID?
+
+    public init(path: String, branch: String?, region: ObjectID? = nil) {
+        self.path = path
+        self.branch = branch
+        self.region = region
+    }
+}
+
+/// A worktree as `board.list` and `board.open` report it.
+public struct WorktreeInfo: Equatable, Sendable {
+    public var path: String
+    public var branch: String?
+    /// The directory is a worktree of this repository with `branch` checked out (for a record
+    /// without a branch: the directory is still a worktree of it).
+    public var live: Bool
+    /// The repository's main checkout (the board root).
+    public var main: Bool
+    public var region: ObjectID?
+
+    public var json: JSONValue {
+        var info: [String: JSONValue] = ["path": .string(path), "live": .bool(live), "main": .bool(main)]
+        if let branch { info["branch"] = .string(branch) }
+        if let region { info["region"] = .string(region) }
+        return .object(info)
+    }
+}
+
+extension RepoRecord {
+    /// The worktrees to report: the live ones of the repository (main checkout first) and every
+    /// recorded one, without repeats; `objects` are the board's (a record's region must exist).
+    public func worktreeList(objects: [ObjectID: CanvasObject]) -> [WorktreeInfo] {
+        let live = GitWorktree.worktrees(commonDir: commonDir)
+        var list = live.map { worktree in
+            let path = GitWorktree.normalized(worktree.toplevel)
+            return WorktreeInfo(path: path, branch: worktree.branch, live: true, main: worktree.isMain,
+                                region: region(branch: worktree.branch, path: path, objects: objects))
+        }
+        for record in worktrees where !list.contains(where: { $0.path == record.path && $0.branch == record.branch }) {
+            let region = record.region.flatMap { objects[$0] != nil ? $0 : nil }
+            let checkout = GitWorktree.containing(record.path).flatMap { $0.commonDir == commonDir && GitWorktree.normalized($0.toplevel) == record.path ? $0 : nil }
+            list.append(WorktreeInfo(path: record.path, branch: record.branch, live: checkout != nil && record.branch == nil, main: false, region: region))
+        }
+        return list
+    }
+
+    /// The region of `branch` (any worktree it was in), else of the worktree at `path` when
+    /// detached; nil when there's none on the board.
+    public func region(branch: String?, path: String, objects: [ObjectID: CanvasObject]) -> ObjectID? {
+        let candidates = branch.map { name in worktrees.filter { $0.branch == name } } ?? worktrees.filter { $0.path == path && $0.branch == nil }
+        return candidates.compactMap(\.region).first { objects[$0] != nil }
+    }
+
+    /// Records the worktree at `path` (`GitWorktree.normalized`) with the branch it has now;
+    /// false when it was already recorded so.
+    mutating func record(path: String, branch: String?) -> Bool {
+        let path = GitWorktree.normalized(path)
+        guard !worktrees.contains(where: { $0.path == path && $0.branch == branch }) else { return false }
+        worktrees.append(WorktreeRecord(path: path, branch: branch))
+        return true
+    }
+}
+
+extension Board {
+    /// The board was opened from `worktree` (a directory in it): a linked worktree becomes the
+    /// working worktree and is recorded; the main checkout clears the working worktree.
+    public func opened(from worktree: GitWorktree) {
+        guard repo?.commonDir == worktree.commonDir else { return }
+        workingWorktree = worktree.isMain ? nil : worktree
+        if !worktree.isMain { record(worktree) }
+    }
+
+    /// The directory New Terminal starts in: the working worktree (at the board root's place in
+    /// it), else the board root.
+    public var defaultTerminalDirectory: String {
+        guard let worktree = workingWorktree else { return root.path }
+        if let place = GitWorktree.containing(root.path)?.relativePath(of: root.path) {
+            return URL(fileURLWithPath: worktree.toplevel).appendingPathComponent(place).path
+        }
+        return worktree.toplevel
+    }
+
+    /// The region to show for the worktree the board was opened from (`opened(from:)`).
+    public func region(for worktree: GitWorktree) -> ObjectID? {
+        repo?.region(branch: worktree.branch, path: GitWorktree.normalized(worktree.toplevel), objects: objects)
+    }
+
+    /// Worktree and branch a terminal created with `props` starts in, stamped on its props
+    /// (`worktree`, `branch`) when its `cwd` lies in the board's repository; a linked worktree is
+    /// recorded on the board.
+    func stampingWorktree(_ props: JSONValue) -> JSONValue {
+        guard var fields = props.object else { return props }
+        fields.removeValue(forKey: "worktree")
+        fields.removeValue(forKey: "branch")
+        guard let repo, let cwd = fields["cwd"]?.string, !cwd.isEmpty,
+              let worktree = GitWorktree.containing(absoluteURL(cwd).standardizedFileURL.path), worktree.commonDir == repo.commonDir else { return .object(fields) }
+        fields["worktree"] = .string(GitWorktree.normalized(worktree.toplevel))
+        if let branch = worktree.branch { fields["branch"] = .string(branch) }
+        if !worktree.isMain { record(worktree) }
+        return .object(fields)
+    }
+
+    private func record(_ worktree: GitWorktree) {
+        guard var record = repo, record.record(path: worktree.toplevel, branch: worktree.branch) else { return }
+        repo = record
+        onChange?()
+    }
+
+    /// The objects of branch `name` (`board.get` `branch`): every region keyed `branch:<name>`
+    /// and what it holds (nested groups too), objects whose `ref` is the branch, terminals that
+    /// started on it, and arrows between those.
+    public func objects(ofBranch name: String) -> Set<ObjectID> {
+        var found = Set<ObjectID>()
+        var pending = objects.values.filter { object in
+            (object.type == .group && object.props["key"]?.string == "branch:\(name)")
+                || object.props["ref"]?.string == name
+                || (object.type == .terminal && object.props["branch"]?.string == name)
+        }.map(\.id)
+        while let id = pending.popLast() {
+            guard found.insert(id).inserted, let object = objects[id] else { continue }
+            if object.type == .group { pending += GroupSpec(object.props)?.members ?? [] }
+        }
+        for arrow in objects.values where arrow.type == .arrow {
+            // Every bound end among them (a free end is a point, anywhere).
+            let ends = [arrow.props["from"]?["object"]?.string, arrow.props["to"]?["object"]?.string].compactMap { $0 }
+            if !ends.isEmpty, ends.allSatisfy(found.contains) { found.insert(arrow.id) }
+        }
+        return found.filter { objects[$0] != nil }
+    }
+}
+
+extension BoardStore {
+    /// `brd_` + 20 hex digits of SHA-256 of `identity`.
+    nonisolated static func hashedID(_ identity: String) -> BoardID {
+        let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "brd_\(digest.prefix(20))"
+    }
+
+    /// The board id of a repository: its common git directory.
+    nonisolated public static func repoID(commonDir: String) -> BoardID { hashedID(commonDir) }
+
+    /// The board id of a directory outside git: its path.
+    nonisolated public static func pathID(_ root: URL) -> BoardID { hashedID(root.standardizedFileURL.path) }
+}

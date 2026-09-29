@@ -5,7 +5,7 @@
 enum ApiParams {
     static let methods: [String: (accepted: [String], required: [String])] = [
         "system.ping": ([], []),
-        "board.get": (["board", "since"], []),
+        "board.get": (["board", "since", "branch"], []),
         "board.history": (["board", "since", "limit", "kinds"], []),
         "board.list": ([], []),
         "board.open": (["root", "select"], ["root"]),

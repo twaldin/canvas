@@ -1,12 +1,15 @@
-import CryptoKit
 import Foundation
 
-/// Persists boards under Application Support, keyed by repo (shared git dir) + branch/worktree,
-/// so a board survives worktree deletion and each worktree/branch gets its own board.
+/// Persists boards under Application Support: one per git repository (its common git
+/// directory, whichever worktree or branch opens it; docs/design/repo-boards.md), one per
+/// directory outside git.
 @MainActor
 public final class BoardStore {
     public let directory: URL
     private var pendingSaves: [BoardID: DispatchWorkItem] = [:]
+    /// Legacy boards the migration left unresolved, re-tried when a repository's board loads;
+    /// nil until read.
+    private var unresolvedLegacy: [BoardID]?
     private let debounce: TimeInterval
 
     public static var defaultDirectory: URL {
@@ -20,51 +23,31 @@ public final class BoardStore {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
-    /// Stable board id for a root directory.
+    /// Stable board id for a root directory: its repository's (`repoID`), else its path's.
     public static func boardID(for root: URL) -> BoardID {
-        let identity = gitIdentity(root) ?? root.standardizedFileURL.path
-        let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-        return "brd_\(digest.prefix(20))"
+        GitWorktree.containing(root.standardizedFileURL.path).map { repoID(commonDir: $0.commonDir) } ?? pathID(root)
     }
 
-    /// "<git common dir>\n<branch or detached worktree path>", or nil outside git. A root with no
-    /// `.git` in it or above it answers nil without starting git (board opens run on the main actor).
-    static func gitIdentity(_ root: URL) -> String? {
-        guard insideGit(root) else { return nil }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-C", root.path, "rev-parse", "--path-format=absolute", "--git-common-dir", "--abbrev-ref", "HEAD", "--show-toplevel"]
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0, let text = String(data: data, encoding: .utf8) else { return nil }
-        let lines = text.split(separator: "\n").map(String.init)
-        guard lines.count == 3 else { return nil }
-        let branch = lines[1] == "HEAD" ? lines[2] : lines[1]
-        return "\(lines[0])\n\(branch)"
-    }
-
-    /// Whether `root` or a directory above it holds `.git` (a repository or a worktree's file).
-    static func insideGit(_ root: URL) -> Bool {
-        var directory = root.standardizedFileURL
-        while true {
-            if FileManager.default.fileExists(atPath: directory.appendingPathComponent(".git").path) { return true }
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path { return false }
-            directory = parent
-        }
+    /// Where a board opened at `root` is rooted: the repository's canonical root
+    /// (`GitWorktree.canonicalRoot`), else `root`.
+    public static func boardRoot(for root: URL) -> URL {
+        GitWorktree.containing(root.standardizedFileURL.path).map { URL(fileURLWithPath: $0.canonicalRoot) } ?? root
     }
 
     public func url(for id: BoardID) -> URL {
         directory.appendingPathComponent("\(id).json")
     }
 
-    /// The board for `root`; `id` when the caller already worked it out (`BoardStore.boardID`).
-    public func load(root: URL, id known: BoardID? = nil) -> Board {
-        let id = known ?? Self.boardID(for: root)
+    /// The board for a directory: a repository's board, rooted at its canonical root
+    /// (`boardRoot`), else the directory's. The registry passes what it already worked out: the
+    /// board root, `id`, and the repository's common git directory (`repo`). A repository board
+    /// that isn't stored yet first takes in legacy boards the launch migration couldn't place.
+    public func load(root opened: URL, id known: BoardID? = nil, repo knownRepo: String? = nil) -> Board {
+        let worktree = knownRepo == nil ? GitWorktree.containing(opened.standardizedFileURL.path) : nil
+        let commonDir = knownRepo ?? worktree?.commonDir
+        let root = worktree.map { URL(fileURLWithPath: $0.canonicalRoot) } ?? opened
+        let id = known ?? commonDir.map(Self.repoID(commonDir:)) ?? Self.pathID(root)
+        if let commonDir, !FileManager.default.fileExists(atPath: url(for: id).path) { migratePending(commonDir: commonDir) }
         let board: Board
         if let data = try? Data(contentsOf: url(for: id)), var snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) {
             // The root may have moved (renamed checkout); the board follows its identity.
@@ -73,11 +56,36 @@ public final class BoardStore {
         } else {
             board = Board(id: id, root: root)
         }
+        if let commonDir, board.repo?.commonDir != commonDir {
+            board.repo = RepoRecord(commonDir: commonDir, worktrees: board.repo?.worktrees ?? [], merged: board.repo?.merged)
+        }
         board.onChange = { [weak self, weak board] in
             guard let self, let board else { return }
             self.scheduleSave(board)
         }
         return board
+    }
+
+    /// Folds the store's legacy per-branch boards into repository boards (`RepoBoardMigration`),
+    /// once: later calls only re-try the ones it left unresolved, when a repository they may
+    /// belong to loads. `knownRoots`: directories whose repositories to try beyond the stored
+    /// boards' roots (the saved tabs).
+    @discardableResult
+    public func migrateToRepoBoards(knownRoots: [URL] = []) -> RepoBoardMigration.Report? {
+        let pending = RepoBoardMigration.pending(in: directory)
+        guard !pending.ran else {
+            unresolvedLegacy = pending.unresolved
+            return nil
+        }
+        let report = RepoBoardMigration.run(directory: directory, knownRoots: knownRoots)
+        unresolvedLegacy = report.unresolved.map(\.board)
+        return report
+    }
+
+    private func migratePending(commonDir: String) {
+        if unresolvedLegacy == nil { unresolvedLegacy = RepoBoardMigration.pending(in: directory).unresolved }
+        guard unresolvedLegacy?.isEmpty == false else { return }
+        unresolvedLegacy = RepoBoardMigration.run(directory: directory, only: commonDir).unresolved.map(\.board)
     }
 
     public func scheduleSave(_ board: Board) {
@@ -108,6 +116,9 @@ public final class BoardStore {
         public var archived: Bool
         public var updatedAt: Date?
         public var objectCount: Int
+        /// A repository board's common git directory and worktrees (`RepoRecord.worktreeList`).
+        public var repo: String?
+        public var worktrees: [WorktreeInfo]?
     }
 
     /// Every board file in the store, sorted by id. Unreadable files are skipped.
@@ -116,11 +127,13 @@ public final class BoardStore {
         return files.filter { $0.pathExtension == "json" }.compactMap { file -> Stored? in
             guard let data = try? Data(contentsOf: file), let snapshot = try? Self.decoder.decode(BoardSnapshot.self, from: data) else { return nil }
             let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            return Stored(id: snapshot.id, root: snapshot.root, archived: !Self.isDirectory(snapshot.root), updatedAt: modified, objectCount: snapshot.objects.count)
+            let objects = Dictionary(snapshot.objects.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            return Stored(id: snapshot.id, root: snapshot.root, archived: !Self.isDirectory(snapshot.root), updatedAt: modified, objectCount: snapshot.objects.count,
+                          repo: snapshot.repo?.commonDir, worktrees: snapshot.repo?.worktreeList(objects: objects))
         }.sorted { $0.id < $1.id }
     }
 
-    public static func isDirectory(_ path: String) -> Bool {
+    nonisolated public static func isDirectory(_ path: String) -> Bool {
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
@@ -135,6 +148,7 @@ public final class BoardStore {
         snapshot.finalAnswers = nil
         snapshot.turnErrors = nil
         snapshot.lifecycleSeq = nil
+        snapshot.repo = nil
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]

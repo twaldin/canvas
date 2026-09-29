@@ -159,9 +159,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Decided before any board opens, so a new home's first board doesn't count as a board
         // an existing user had.
         let getStarted = GetStarted.Store(url: AppPaths.getStarted).launch(boards: AppPaths.boards)
+        // Boards are per repository now: legacy per-branch boards fold into theirs, once, before
+        // any opens (docs/design/repo-boards.md).
+        if let report = registry.store.migrateToRepoBoards(knownRoots: saved + [Self.initialRoot()]), !report.repos.isEmpty || !report.unresolved.isEmpty {
+            NSLog("Canvas: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
+        }
         let initial = open(root: Self.initialRoot())
-        // The other boards that were open as tabs come back behind the initial one.
-        for root in saved where root.standardizedFileURL != initial.root.standardizedFileURL && BoardStore.isDirectory(root.path) {
+        // The other boards that were open as tabs come back behind the initial one (one tab per
+        // board: two saved worktrees of one repository are one board).
+        var reopened: Set<BoardID> = [initial.id]
+        for root in saved where BoardStore.isDirectory(root.path) && reopened.insert(BoardStore.boardID(for: root)).inserted {
             open(root: root, select: false)
         }
         // After the window's first layout, so the practice note lands in view.
@@ -212,6 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let board = registry.open(root: root)
         let controller = controllers[board.id] ?? CanvasWindowController(board: board, registry: registry)
         controllers[board.id] = controller
+        controller.showWorktree(openedAt: root)
         controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }
         guard let window = controller.window else { return board }
         defer { saveOpenBoards() }

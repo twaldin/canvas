@@ -167,7 +167,7 @@ final class AgentBoardApiTests {
         #expect(byID[fresh.id]?["archived"] == .bool(false))
     }
 
-    @Test func listReportsAnOpenBoardAtItsCurrentRootAfterItsWorktreeMoved() async throws {
+    @Test func aWorktreeOpensItsRepositorysBoardAndIsListedWhereItIsNow() async throws {
         let repo = dir.appendingPathComponent("repo")
         let before = dir.appendingPathComponent("wt-before")
         let after = dir.appendingPathComponent("wt-after")
@@ -175,6 +175,7 @@ final class AgentBoardApiTests {
         try git("-C", repo.path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
         try git("-C", repo.path, "worktree", "add", "-q", "-b", "feature", before.path)
         let original = registry.open(root: before)
+        #expect(original.root.path == repo.path, "rooted at the main checkout")
         original.create(type: .note, props: .object(["markdown": .string("n")]))
         registry.store.flush([original])
         registry.close(original.id)
@@ -182,15 +183,21 @@ final class AgentBoardApiTests {
 
         try git("-C", repo.path, "worktree", "move", before.path, after.path)
         let moved = registry.open(root: after)
-        #expect(moved.id == original.id, "a board follows its branch, not its path")
+        #expect(moved.id == original.id, "a board follows its repository, not a worktree's path")
+        #expect(registry.open(root: repo) === moved)
 
         let boards = try #require(try await call("board.list")["result"]?["boards"]?.array)
         let entry = try #require(boards.first { $0["board"] == .string(moved.id) })
-        #expect(entry["root"] == .string(after.path))
+        #expect(entry["root"] == .string(repo.path))
         #expect(entry["archived"] == .bool(false))
         #expect(entry["open"] == .bool(true))
         #expect(entry["objects"] == .number(1))
         #expect(entry["updatedAt"] == .string(savedAt.formatted(.iso8601)), "the save time is the disk's")
+        let worktrees = try #require(entry["worktrees"]?.array)
+        #expect(worktrees.first { $0["path"] == .string(after.path) }?["branch"] == .string("feature"))
+        #expect(worktrees.first { $0["path"] == .string(after.path) }?["live"] == .bool(true))
+        #expect(worktrees.first { $0["path"] == .string(before.path) }?["live"] == .bool(false), "seen there, gone since")
+        #expect(worktrees.first { $0["main"] == .bool(true) }?["path"] == .string(repo.path))
     }
 
     func git(_ arguments: String...) throws {

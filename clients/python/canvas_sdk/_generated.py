@@ -82,6 +82,8 @@ class TerminalProps(TypedDict):
     follow: NotRequired[bool]
     scale: NotRequired["Scale"]
     key: NotRequired["ObjectKey"]
+    worktree: NotRequired[str]
+    branch: NotRequired[str]
 
 class BrowserProps(TypedDict):
     url: Required[str]
@@ -294,6 +296,15 @@ class BoardInfo(TypedDict):
     open: Required[bool]
     updatedAt: NotRequired[str]
     objects: Required[int]
+    repo: NotRequired[str]
+    worktrees: NotRequired[list["WorktreeInfo"]]
+
+class WorktreeInfo(TypedDict):
+    path: Required[str]
+    branch: NotRequired[str]
+    live: Required[bool]
+    main: Required[bool]
+    region: NotRequired["Id"]
 
 class Viewport(TypedDict):
     """What the board's window shows: `rect` is the visible canvas area in canvas coordinates, `zoom` the magnification (1 = 100%, one point per canvas unit)."""
@@ -338,9 +349,9 @@ class BoardApi:
     def __init__(self, call: Callable[[str, dict[str, Any], list[str]], Any]) -> None:
         self._call = call
 
-    def get(self, *, board: "Id" | None = None, since: int | None = None) -> dict[str, Any]:
+    def get(self, *, board: "Id" | None = None, since: int | None = None, branch: str | None = None) -> dict[str, Any]:
         """Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged."""
-        params = {"board": board, "since": since}
+        params = {"board": board, "since": since, "branch": branch}
         return self._call("board.get", params, ["board"])
 
     def history(self, *, board: "Id" | None = None, since: Union[int, str] | None = None, limit: int | None = None, kinds: list[Literal["created", "updated", "deleted", "viewport", "selection", "follow", "restart"]] | None = None) -> dict[str, Any]:
@@ -354,7 +365,7 @@ class BoardApi:
         return self._call("board.list", params, [])
 
     def open(self, *, root: str, select: bool | None = None) -> dict[str, Any]:
-        """Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true."""
+        """Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). A directory in a git repository opens the repository's board (one per repository, rooted at its main checkout), tagged with the worktree it is in: the window names it, New Terminal starts there, and the view goes to its region. The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true."""
         params = {"root": root, "select": select}
         return self._call("board.open", params, [])
 

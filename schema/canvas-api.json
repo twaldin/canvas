@@ -98,7 +98,9 @@
         "lifecycle": { "$ref": "#/definitions/Lifecycle" },
         "follow": { "type": "boolean", "default": true, "description": "follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again" },
         "scale": { "$ref": "#/definitions/Scale" },
-        "key": { "$ref": "#/definitions/ObjectKey" }
+        "key": { "$ref": "#/definitions/ObjectKey" },
+        "worktree": { "type": "string", "description": "written by Canvas: the top level of the worktree of the board's repository the terminal was created in (its `cwd`'s); what it started in, not updated when the shell moves" },
+        "branch": { "type": "string", "description": "written by Canvas with `worktree`: the branch checked out there when the terminal was created; absent on a detached HEAD" }
       },
       "additionalProperties": false
     },
@@ -629,11 +631,25 @@
       "required": ["board", "root", "archived", "open", "objects"],
       "properties": {
         "board": { "$ref": "#/definitions/Id" },
-        "root": { "type": "string", "description": "root directory the board was last opened at" },
-        "archived": { "type": "boolean", "description": "the root directory no longer exists (e.g. a deleted worktree); the board is kept" },
+        "root": { "type": "string", "description": "the board's root: a repository board's is its main checkout, whichever worktree opened it; otherwise the directory the board was last opened at" },
+        "archived": { "type": "boolean", "description": "the root directory no longer exists (e.g. a removed checkout); the board is kept" },
         "open": { "type": "boolean", "description": "the board has a window in the app (only open boards accept `board` params)" },
         "updatedAt": { "type": "string", "description": "ISO 8601 time the board was last saved; absent for a board never saved" },
-        "objects": { "type": "integer", "description": "object count" }
+        "objects": { "type": "integer", "description": "object count" },
+        "repo": { "type": "string", "description": "a repository board's common git directory (its identity: one board per repository)" },
+        "worktrees": { "type": "array", "description": "a repository board's worktrees: its repository's live ones (main checkout first) and every one the board has seen (opened from, a terminal started in, a merged per-branch board's), one entry per worktree and branch", "items": { "$ref": "#/definitions/WorktreeInfo" } }
+      },
+      "additionalProperties": false
+    },
+    "WorktreeInfo": {
+      "type": "object",
+      "required": ["path", "live", "main"],
+      "properties": {
+        "path": { "type": "string", "description": "the worktree's top level" },
+        "branch": { "type": "string", "description": "the branch checked out there (live), or last seen there; absent on a detached HEAD" },
+        "live": { "type": "boolean", "description": "the worktree exists with this branch checked out" },
+        "main": { "type": "boolean", "description": "the repository's main checkout (the board root)" },
+        "region": { "$ref": "#/definitions/Id", "description": "the group holding what this branch's board held before boards were per repository (props.key `branch:<name>`)" }
       },
       "additionalProperties": false
     },
@@ -687,7 +703,11 @@
       "description": "Board manifest: all objects plus a change cursor. Heavy props are summarized (use object.get for them whole): HTML `html` and a follow tile's `history` become a short string, note `markdown` past 400 characters is cut. Objects created or changed since `since` are flagged.",
       "params": {
         "type": "object",
-        "properties": { "board": { "$ref": "#/definitions/Id" }, "since": { "type": "integer", "description": "board revision cursor from a previous call" } },
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "since": { "type": "integer", "description": "board revision cursor from a previous call" },
+          "branch": { "type": "string", "description": "only branch `branch`'s part of a repository board: the regions keyed `branch:<branch>` and what they hold, objects whose `ref` is the branch, terminals that started on it (`branch`), and arrows between those" }
+        },
         "additionalProperties": false
       },
       "result": {
@@ -732,12 +752,12 @@
       "result": { "type": "object", "required": ["boards"], "properties": { "boards": { "type": "array", "items": { "$ref": "#/definitions/BoardInfo" } } } }
     },
     "board.open": {
-      "description": "Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true.",
+      "description": "Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). A directory in a git repository opens the repository's board (one per repository, rooted at its main checkout), tagged with the worktree it is in: the window names it, New Terminal starts there, and the view goes to its region. The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true.",
       "params": {
         "type": "object",
         "required": ["root"],
         "properties": {
-          "root": { "type": "string", "description": "absolute directory path (`~` allowed); one board per directory" },
+          "root": { "type": "string", "description": "absolute directory path (`~` allowed): a directory in a git repository opens its repository's board; any other directory its own" },
           "select": { "type": "boolean", "default": false, "description": "bring the board's tab to the front: this switches the user's tab, so only when they asked to see that board" }
         },
         "additionalProperties": false
@@ -745,7 +765,23 @@
       "result": {
         "type": "object",
         "required": ["board", "root", "objects"],
-        "properties": { "board": { "$ref": "#/definitions/Id" }, "root": { "type": "string" }, "objects": { "type": "integer" } }
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "root": { "type": "string" },
+          "objects": { "type": "integer" },
+          "worktree": {
+            "type": "object",
+            "description": "the worktree of the board's repository `root` is in",
+            "required": ["path", "main"],
+            "properties": {
+              "path": { "type": "string" },
+              "branch": { "type": "string", "description": "absent on a detached HEAD" },
+              "main": { "type": "boolean" },
+              "region": { "$ref": "#/definitions/Id", "description": "its branch's region, which the view went to" }
+            },
+            "additionalProperties": false
+          }
+        }
       }
     },
     "board.export": {

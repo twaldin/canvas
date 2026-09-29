@@ -69,6 +69,10 @@ public struct BoardSnapshot: Codable, Sendable {
     public var finalAnswers: [ObjectID: String]?
     public var turnErrors: [ObjectID: String]?
     public var lifecycleSeq: [String: Int]?
+    /// The repository this board is for and the worktrees it has seen (RepoBoards.swift); absent
+    /// on a board for a directory outside git, and on boards saved before boards were per
+    /// repository (legacy boards, `RepoBoardMigration`).
+    public var repo: RepoRecord?
 }
 
 /// One canvas: all objects for one root directory, the selection tray, and agent lifecycle.
@@ -85,6 +89,11 @@ public final class Board {
     public private(set) var delivered = 0
     /// Unseen attention markers by object (see Attention.swift).
     public internal(set) var attention: [ObjectID: Attention] = [:]
+    /// The repository this board is for (RepoBoards.swift); nil outside git. Saved with the board.
+    public internal(set) var repo: RepoRecord?
+    /// The worktree the board was last opened from when that isn't the main checkout (in memory):
+    /// New Terminal starts there, the window names it (RepoBoards.swift).
+    public internal(set) var workingWorktree: GitWorktree?
     /// What the prompt target rule remembers; saved with the board, so the tray targets the
     /// same terminal after a restart. Set by the board's window.
     public var promptTarget = PromptTarget.State() {
@@ -190,7 +199,7 @@ public final class Board {
 
     /// Board format written by `snapshot`. 2: a tile's frame is its whole drawn box, title bar
     /// included (format 1 stored the body below the title bar).
-    public static let format = 2
+    nonisolated public static let format = 2
 
     public init(snapshot: BoardSnapshot) {
         id = snapshot.id
@@ -235,6 +244,7 @@ public final class Board {
         finalAnswers = (snapshot.finalAnswers ?? [:]).filter { objects[$0.key] != nil }
         turnErrors = (snapshot.turnErrors ?? [:]).filter { objects[$0.key] != nil }
         lifecycleSeq = (snapshot.lifecycleSeq ?? [:]).filter { objects[String($0.key.prefix { $0 != "|" })] != nil }
+        repo = snapshot.repo
     }
 
     public var snapshot: BoardSnapshot {
@@ -242,7 +252,7 @@ public final class Board {
                       attention: attention.isEmpty ? nil : attention.values.sorted { $0.object < $1.object },
                       promptTarget: promptTarget == PromptTarget.State() ? nil : promptTarget,
                       finalAnswers: finalAnswers.isEmpty ? nil : finalAnswers, turnErrors: turnErrors.isEmpty ? nil : turnErrors,
-                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq)
+                      lifecycleSeq: lifecycleSeq.isEmpty ? nil : lifecycleSeq, repo: repo)
     }
 
     public func object(_ id: ObjectID) throws -> CanvasObject {
@@ -260,7 +270,8 @@ public final class Board {
     public func create(type: ObjectType, props: JSONValue, frame: Frame? = nil, parent: ObjectID? = nil, caller: ObjectID? = nil) -> CanvasObject {
         let size = Self.defaultSize(type)
         let z = (objects.values.map(\.z).max() ?? 0) + 1
-        var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(), props: props)
+        var object = CanvasObject(id: IDs.make("obj"), type: type, frame: frame ?? Frame(x: 0, y: 0, w: size.w, h: size.h), z: z, parent: parent, createdBy: Actor(caller: caller), createdAt: Date(),
+                                  props: type == .terminal ? stampingWorktree(props) : props)
         if let fitted = fittedFrame(ofGroup: object) {
             object.frame = fitted
         } else if frame == nil {

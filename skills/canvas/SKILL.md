@@ -11,7 +11,7 @@ You and the user read and change the same objects: the canvas is the shared work
 
 You are in Canvas when `CANVAS_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
 (lifecycle, mentions, follow mode, this skill; `CANVAS_AGENT_HOOKS=0` turns it off for Claude and Codex).
-Your tile's environment also has `CANVAS_TILE_ID` (you), `CANVAS_BOARD_ID`, `CANVAS_BOARD_ROOT` (the repo/worktree this canvas belongs to), and `CANVAS_SOCKET`.
+Your tile's environment also has `CANVAS_TILE_ID` (you), `CANVAS_BOARD_ID`, `CANVAS_BOARD_ROOT` (the directory this canvas belongs to: a repo's main checkout, whichever worktree you are in), and `CANVAS_SOCKET`.
 
 ## Known surprises
 
@@ -326,10 +326,12 @@ When you catch yourself repeating a multi-call canvas pattern, write it as a com
 
 ## Boards
 
-One canvas per directory (repo or worktree, keyed by branch). Boards open as tabs of one window.
+One canvas per git repository, whichever worktree or branch opens it (rooted at the main checkout); one per directory outside git. Boards open as tabs of one window.
 `canvas board.open --root <absolute dir>` opens a directory's board as a tab (creating it if new) behind the user's current tab; pass `--select true` only when the user asked to see it.
-Then address it with `board: <id>` (from the result) on every call, and start agents there by creating terminal tiles on that board.
-`canvas board.list` shows every stored board, including archived ones whose worktree is gone.
+A worktree opens its repository's board: the result's `worktree` names it (path, branch, and `region`, the group that holds that branch's objects when there is one), and New Terminal starts there.
+Then address it with `board: <id>` (from the result) on every call, and start agents there by creating terminal tiles on that board; a terminal started in a worktree records `worktree` and `branch` in its props.
+Give each branch's work its own region: a group titled with the branch (`props.key: "branch:<name>"`), and `canvas board.get --branch <name>` returns just that part of the board.
+`canvas board.list` shows every stored board, and a repository board's `worktrees` (path, branch, `live`: still checked out there).
 `canvas board.export` writes a readable snapshot to `<root>/.canvas/board.json` for committing when the user asks to save the board with the repo.
 
 ## When the user asks how to use Canvas

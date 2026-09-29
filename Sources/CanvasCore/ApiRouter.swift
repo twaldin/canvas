@@ -23,11 +23,19 @@ public final class BoardRegistry {
         self.agentReports = agentReports
     }
 
+    /// The board for a directory: its repository's board (rooted at the repository's canonical
+    /// root) when it is in git, tagged with the worktree it was opened from
+    /// (`Board.opened(from:)`), else the directory's own board.
     @discardableResult
     public func open(root: URL) -> Board {
-        let id = BoardStore.boardID(for: root)
-        if let existing = boards[id] { return existing }
-        let board = store.load(root: root, id: id)
+        let worktree = GitWorktree.containing(root.standardizedFileURL.path)
+        let id = worktree.map { BoardStore.repoID(commonDir: $0.commonDir) } ?? BoardStore.pathID(root)
+        if let existing = boards[id] {
+            if let worktree { existing.opened(from: worktree) }
+            return existing
+        }
+        let board = store.load(root: worktree.map { URL(fileURLWithPath: $0.canonicalRoot) } ?? root, id: id, repo: worktree?.commonDir)
+        if let worktree { board.opened(from: worktree) }
         board.onEvent = { [weak self, weak board] event in
             guard let self, let board else { return }
             self.onEvent?(board, event)
@@ -675,7 +683,13 @@ public final class ApiRouter {
 
         case "board.get":
             let board = try board(p)
-            let objects = board.reported(board.snapshot.objects).map(summarized)
+            var snapshot = board.snapshot.objects
+            if let branch = p["branch"]?.string {
+                // One branch's part of a repository board (docs/design/repo-boards.md "Per-branch filter").
+                let ids = board.objects(ofBranch: branch)
+                snapshot = snapshot.filter { ids.contains($0.id) }
+            }
+            let objects = board.reported(snapshot).map(summarized)
             var result: [String: JSONValue] = [
                 "board": .string(board.id), "root": .string(board.root.path),
                 "revision": .number(Double(board.revision)), "objects": try JSONValue.encode(objects),
@@ -723,6 +737,8 @@ public final class ApiRouter {
                 stored[index].root = board.root.path
                 stored[index].archived = !BoardStore.isDirectory(board.root.path)
                 stored[index].objectCount = board.objects.count
+                stored[index].repo = board.repo?.commonDir
+                stored[index].worktrees = board.repo?.worktreeList(objects: board.objects)
             }
             let boards = stored.map { entry -> JSONValue in
                 var info: [String: JSONValue] = [
@@ -730,6 +746,8 @@ public final class ApiRouter {
                     "open": .bool(registry.boards[entry.id] != nil), "objects": .number(Double(entry.objectCount)),
                 ]
                 if let updatedAt = entry.updatedAt { info["updatedAt"] = .string(updatedAt.formatted(.iso8601)) }
+                if let repo = entry.repo { info["repo"] = .string(repo) }
+                if let worktrees = entry.worktrees { info["worktrees"] = .array(worktrees.map(\.json)) }
                 return .object(info)
             }
             return .object(["boards": .array(boards)])
@@ -741,7 +759,14 @@ public final class ApiRouter {
             let root = URL(fileURLWithPath: expanded).standardizedFileURL
             guard BoardStore.isDirectory(root.path) else { throw Failure("not_found", "no directory at \(root.path)") }
             let board = openBoard?(root, p["select"]?.bool ?? false) ?? registry.open(root: root)
-            return .object(["board": .string(board.id), "root": .string(board.root.path), "objects": .number(Double(board.objects.count))])
+            var result: [String: JSONValue] = ["board": .string(board.id), "root": .string(board.root.path), "objects": .number(Double(board.objects.count))]
+            if let worktree = GitWorktree.containing(root.path), worktree.commonDir == board.repo?.commonDir {
+                var info: [String: JSONValue] = ["path": .string(worktree.toplevel), "main": .bool(worktree.isMain)]
+                if let branch = worktree.branch { info["branch"] = .string(branch) }
+                if let region = board.region(for: worktree) { info["region"] = .string(region) }
+                result["worktree"] = .object(info)
+            }
+            return .object(result)
 
         case "board.export":
             let board = try board(p)

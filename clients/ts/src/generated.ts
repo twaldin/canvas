@@ -75,6 +75,10 @@ export type TerminalProps = {
   follow?: boolean;
   scale?: Scale;
   key?: ObjectKey;
+  /** written by Canvas: the top level of the worktree of the board's repository the terminal was created in (its `cwd`'s); what it started in, not updated when the shell moves */
+  worktree?: string;
+  /** written by Canvas with `worktree`: the branch checked out there when the terminal was created; absent on a detached HEAD */
+  branch?: string;
 };
 
 export type BrowserProps = {
@@ -577,9 +581,9 @@ export type TerminalCommand = {
 
 export type BoardInfo = {
   board: Id;
-  /** root directory the board was last opened at */
+  /** the board's root: a repository board's is its main checkout, whichever worktree opened it; otherwise the directory the board was last opened at */
   root: string;
-  /** the root directory no longer exists (e.g. a deleted worktree); the board is kept */
+  /** the root directory no longer exists (e.g. a removed checkout); the board is kept */
   archived: boolean;
   /** the board has a window in the app (only open boards accept `board` params) */
   open: boolean;
@@ -587,6 +591,23 @@ export type BoardInfo = {
   updatedAt?: string;
   /** object count */
   objects: number;
+  /** a repository board's common git directory (its identity: one board per repository) */
+  repo?: string;
+  /** a repository board's worktrees: its repository's live ones (main checkout first) and every one the board has seen (opened from, a terminal started in, a merged per-branch board's), one entry per worktree and branch */
+  worktrees?: WorktreeInfo[];
+};
+
+export type WorktreeInfo = {
+  /** the worktree's top level */
+  path: string;
+  /** the branch checked out there (live), or last seen there; absent on a detached HEAD */
+  branch?: string;
+  /** the worktree exists with this branch checked out */
+  live: boolean;
+  /** the repository's main checkout (the board root) */
+  main: boolean;
+  /** the group holding what this branch's board held before boards were per repository (props.key `branch:<name>`) */
+  region?: Id;
 };
 
 /** What the board's window shows: `rect` is the visible canvas area in canvas coordinates, `zoom` the magnification (1 = 100%, one point per canvas unit). */
@@ -648,6 +669,8 @@ export type BoardGetParams = {
   board?: Id;
   /** board revision cursor from a previous call */
   since?: number;
+  /** only branch `branch`'s part of a repository board: the regions keyed `branch:<branch>` and what they hold, objects whose `ref` is the branch, terminals that started on it (`branch`), and arrows between those */
+  branch?: string;
 };
 export type BoardGetResult = {
   board: Id;
@@ -684,7 +707,7 @@ export type BoardListResult = {
 };
 
 export type BoardOpenParams = {
-  /** absolute directory path (`~` allowed); one board per directory */
+  /** absolute directory path (`~` allowed): a directory in a git repository opens its repository's board; any other directory its own */
   root: string;
   /** bring the board's tab to the front: this switches the user's tab, so only when they asked to see that board */
   select?: boolean;
@@ -693,6 +716,15 @@ export type BoardOpenResult = {
   board: Id;
   root: string;
   objects: number;
+  /** the worktree of the board's repository `root` is in */
+  worktree?: {
+    path: string;
+    /** absent on a detached HEAD */
+    branch?: string;
+    main: boolean;
+    /** its branch's region, which the view went to */
+    region?: Id;
+  };
 };
 
 export type BoardExportParams = {
@@ -1312,7 +1344,7 @@ export interface CanvasApi {
     history(params?: BoardHistoryParams): Promise<BoardHistoryResult>;
     /** Every stored board, open or not, including archived boards whose root directory is gone. */
     list(params?: BoardListParams): Promise<BoardListResult>;
-    /** Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true. */
+    /** Open the board for a directory (creating it if new) as a tab of the frontmost board window, also when that window is minimized (the tab waits there). A directory in a git repository opens the repository's board (one per repository, rooted at its main checkout), tagged with the worktree it is in: the window names it, New Terminal starts there, and the view goes to its region. The user's current tab stays in front unless `select` is true, which also brings a minimized window back. Opening an already-open board only selects it when `select` is true. */
     open(params: BoardOpenParams): Promise<BoardOpenResult>;
     /** Write a pretty-printed JSON snapshot of an open board (objects, frames, props; not the personal selection tray) into the repo. Committing it is left to the caller. */
     export(params?: BoardExportParams): Promise<BoardExportResult>;

@@ -1,0 +1,236 @@
+import Foundation
+import Testing
+@testable import CanvasCore
+
+/// One board per repository (docs/design/repo-boards.md): legacy per-branch boards merge into it
+/// once, re-rooted, and a worktree opens its repository's board.
+@MainActor
+struct RepoBoardTests {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-repo-boards-\(UUID().uuidString)")
+    var boards: URL { dir.appendingPathComponent("boards") }
+
+    /// A repository with `src/a.txt` committed on main and a worktree on `feature`.
+    func fixture() async throws -> (repo: TempRepo, worktree: URL) {
+        let repo = try await TempRepo()
+        try await repo.write("src/a.txt", "a\n")
+        try await repo.commit("init")
+        let worktree = dir.appendingPathComponent("wt-feature")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try await repo.git("worktree", "add", "-q", "-b", "feature", worktree.path)
+        return (repo, worktree)
+    }
+
+    /// The id Canvas gave a board opened at `root` before boards were per repository: git's
+    /// common dir and branch (or, detached, its top level), as the old `BoardStore` asked git.
+    func legacyID(_ root: URL) async throws -> BoardID {
+        let lines = try await TempRepo.run(["rev-parse", "--path-format=absolute", "--git-common-dir", "--abbrev-ref", "HEAD", "--show-toplevel"], in: root)
+            .split(separator: "\n").map(String.init)
+        return BoardStore.hashedID("\(lines[0])\n\(lines[1] == "HEAD" ? lines[2] : lines[1])")
+    }
+
+    /// Writes a legacy board file (no `repo`) the way the old store saved it.
+    func legacyBoard(_ root: URL, _ build: (Board) throws -> Void) async throws -> Board {
+        let board = Board(id: try await legacyID(root), root: root)
+        try build(board)
+        BoardStore(directory: boards).save(board)
+        return board
+    }
+
+    func arrow(_ board: Board, from: ObjectID, to: ObjectID) -> CanvasObject {
+        board.create(type: .arrow, props: .object(["from": .object(["object": .string(from)]), "to": .object(["object": .string(to)])]))
+    }
+
+    func stored(_ id: BoardID) throws -> BoardSnapshot {
+        try RepoBoardMigration.decoder.decode(BoardSnapshot.self, from: Data(contentsOf: boards.appendingPathComponent("\(id).json")))
+    }
+
+    func real(_ path: String) -> String { GitDiffEngine.realPath(URL(fileURLWithPath: path)).path }
+
+    @Test func twoBranchBoardsMergeIntoOneRepositoryBoardWithTheirArrowsAndARegionForTheBranch() async throws {
+        let (repo, worktree) = try await fixture()
+        // The main checkout's board was opened at a subdirectory: its paths are relative to it.
+        let main = try await legacyBoard(repo.url("src")) { board in
+            let code = board.create(type: .code, props: .object(["path": .string("a.txt")]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
+            let note = board.create(type: .note, props: .object(["markdown": .string("main")]), frame: Frame(x: 500, y: 0, w: 200, h: 100))
+            _ = arrow(board, from: code.id, to: note.id)
+        }
+        let feature = try await legacyBoard(worktree) { board in
+            let code = board.create(type: .code, props: .object(["path": .string("src/a.txt")]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
+            let note = board.create(type: .note, props: .object(["markdown": .string("feature")]), frame: Frame(x: 0, y: 400, w: 200, h: 100))
+            board.create(type: .group, props: .object(["members": .array([.string(note.id)]), "title": .string("inner")]))
+            _ = arrow(board, from: code.id, to: note.id)
+            board.create(type: .arrow, props: .object(["from": .object(["object": .string(code.id)]), "to": .object(["point": .array([.number(900), .number(50)])])]))
+            board.create(type: .terminal, props: .object(["cwd": .string(worktree.path)]), frame: Frame(x: 500, y: 0, w: 300, h: 200))
+        }
+        let before = main.snapshot.objects + feature.snapshot.objects
+
+        let store = BoardStore(directory: boards)
+        let report = try #require(store.migrateToRepoBoards())
+        let id = BoardStore.repoID(commonDir: try #require(GitWorktree.containing(repo.root.path)).commonDir)
+        #expect(report.repos.map(\.board) == [id])
+        #expect(report.repos.first?.legacy.map(\.status) == ["merged", "merged"])
+        #expect(!FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(main.id).json").path))
+        #expect(FileManager.default.fileExists(atPath: boards.appendingPathComponent("pre-repo-migration/\(feature.id).json").path))
+
+        let registry = BoardRegistry(store: store)
+        let board = registry.open(root: worktree)
+        #expect(board.id == id)
+        #expect(real(board.root.path) == real(repo.root.path), "rooted at the main checkout, whichever worktree opens it")
+        #expect(Set(board.objects.keys).isSuperset(of: before.map(\.id)), "every object keeps its id")
+        #expect(board.objects.count == before.count + 1, "one region for the feature branch")
+
+        // The main checkout's objects stay where they were, their paths now relative to the repository.
+        for object in main.snapshot.objects where object.type != .arrow { #expect(board.objects[object.id]?.frame == object.frame) }
+        let mainCode = try #require(main.snapshot.objects.first { $0.type == .code })
+        #expect(board.objects[mainCode.id]?.props["path"] == .string("src/a.txt"))
+        #expect(board.objects[mainCode.id]?.props["ref"] == nil)
+
+        // The feature board's objects form a region beside them, anchored to the branch.
+        let region = try #require(board.objects.values.first { $0.props["key"] == .string("branch:feature") })
+        #expect(region.props["title"] == .string("feature"))
+        let mainExtent = try #require(RepoBoardMigration.extent(of: main.snapshot.objects))
+        #expect(!region.frame.intersects(mainExtent))
+        let featureCode = try #require(feature.snapshot.objects.first { $0.type == .code })
+        let inner = try #require(feature.snapshot.objects.first { $0.type == .group })
+        let terminal = try #require(feature.snapshot.objects.first { $0.type == .terminal })
+        #expect(Set(GroupSpec(region.props)?.members ?? []) == [featureCode.id, inner.id, terminal.id], "top-level objects, not what an inner group holds or arrows")
+        let moved = try #require(board.objects[featureCode.id])
+        let dx = moved.frame.x - featureCode.frame.x, dy = moved.frame.y - featureCode.frame.y
+        #expect(moved.props["path"] == .string("src/a.txt"))
+        #expect(moved.props["ref"] == .string("feature"))
+        #expect(moved.props["refSha"] == .string(try await repo.git("rev-parse", "feature")))
+        #expect(board.objects[terminal.id]?.props["branch"] == .string("feature"))
+
+        // Arrows keep their ends; a free end moves with its region.
+        for arrow in before where arrow.type == .arrow {
+            let merged = try #require(board.objects[arrow.id])
+            #expect(merged.props["from"] == arrow.props["from"])
+            if let point = arrow.props["to"]?["point"]?.array {
+                #expect(merged.props["to"]?["point"] == .array([.number(point[0].number! + dx), .number(point[1].number! + dy)]))
+            } else {
+                #expect(merged.props["to"] == arrow.props["to"])
+            }
+        }
+
+        // The worktree is an attribute of the board: listed with its branch and region, and the
+        // branch filter answers its part of the board.
+        let router = ApiRouter(registry: registry)
+        let listed = try #require(try router.dispatch("board.list", .object([:]))["boards"]?.array?.first { $0["board"] == .string(id) })
+        let entry = try #require(listed["worktrees"]?.array?.first { $0["branch"] == .string("feature") })
+        #expect(entry["live"] == .bool(true))
+        #expect(entry["region"] == .string(region.id))
+        let part = try #require(try router.dispatch("board.get", .object(["board": .string(id), "branch": .string("feature")]))["objects"]?.array)
+        #expect(Set(part.compactMap { $0["id"]?.string }) == Set(feature.snapshot.objects.map(\.id) + [region.id]))
+    }
+
+    @Test func runningAgainMergesNothingTwice() async throws {
+        let (_, worktree) = try await fixture()
+        let feature = try await legacyBoard(worktree) { board in
+            board.create(type: .note, props: .object(["markdown": .string("feature")]))
+        }
+        let store = BoardStore(directory: boards)
+        let first = try #require(store.migrateToRepoBoards())
+        let id = try #require(first.repos.first?.board)
+        let merged = try stored(id)
+
+        #expect(BoardStore(directory: boards).migrateToRepoBoards() == nil, "a store migrates once")
+        // A legacy file back in the store (a run interrupted after writing the repository board)
+        // is only backed up again.
+        try FileManager.default.copyItem(at: boards.appendingPathComponent("pre-repo-migration/\(feature.id).json"),
+                                         to: boards.appendingPathComponent("\(feature.id).json"))
+        let again = RepoBoardMigration.run(directory: boards)
+        #expect(again.repos.first?.legacy.map(\.status) == ["alreadyMerged"])
+        #expect(try stored(id).objects.map(\.id).sorted() == merged.objects.map(\.id).sorted())
+        #expect(!FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(feature.id).json").path))
+    }
+
+    @Test func aDetachedWorktreesBoardKeepsItsPathsInThatWorktree() async throws {
+        let (repo, worktree) = try await fixture()
+        try await TempRepo.run(["checkout", "-q", "--detach"], in: worktree)
+        let detached = try await legacyBoard(worktree) { board in
+            board.create(type: .code, props: .object(["path": .string("src/a.txt")]))
+            board.create(type: .note, props: .object(["markdown": .string("detached")]))
+        }
+        let report = BoardStore(directory: boards).migrateToRepoBoards()
+        let legacy = try #require(report?.repos.first?.legacy.first)
+        #expect(legacy.board == detached.id)
+        #expect(legacy.anchor == "worktree")
+        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
+        let code = try #require(board.objects.values.first { $0.type == .code })
+        #expect(code.props["path"] == .string(worktree.appendingPathComponent("src/a.txt").path))
+        #expect(code.props["ref"] == nil)
+        #expect(board.objects.values.first { $0.type == .note }?.props["root"] == .string(worktree.path))
+        #expect(board.objects.values.contains { $0.props["key"] == .string("detached:wt-feature") })
+    }
+
+    @Test func aDeletedWorktreesBoardIsFoundByItsBranchAndReadsTheBranch() async throws {
+        let (repo, worktree) = try await fixture()
+        _ = try await legacyBoard(repo.root) { $0.create(type: .note, props: .object(["markdown": .string("main")])) }
+        let gone = try await legacyBoard(worktree) { board in
+            board.create(type: .code, props: .object(["path": .string("src/a.txt")]))
+            board.create(type: .image, props: .object(["path": .string("shot.png")]))
+        }
+        try await repo.git("worktree", "remove", "--force", worktree.path)
+
+        let report = try #require(BoardStore(directory: boards).migrateToRepoBoards())
+        let legacy = try #require(report.repos.first?.legacy.first { $0.board == gone.id })
+        #expect(legacy.branch == "feature")
+        #expect(legacy.worktreeLive == false)
+        #expect(legacy.unanchored == ["\(gone.snapshot.objects.first { $0.type == .image }!.id) image: \(worktree.appendingPathComponent("shot.png").path)"],
+                "the image has no branch to read instead")
+        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
+        let code = try #require(board.objects.values.first { $0.type == .code })
+        #expect(code.props["path"] == .string("src/a.txt"))
+        #expect(code.props["ref"] == .string("feature"))
+        let entry = try #require(board.repo?.worktreeList(objects: board.objects).first { $0.branch == "feature" })
+        #expect(entry.live == false)
+        #expect(entry.path == worktree.path)
+    }
+
+    @Test func boardsOutsideGitAreLeftAlone() async throws {
+        let plain = dir.appendingPathComponent("plain")
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        let store = BoardStore(directory: boards)
+        let board = store.load(root: plain)
+        board.create(type: .note, props: .object(["markdown": .string("kept")]))
+        store.save(board)
+        let file = boards.appendingPathComponent("\(board.id).json")
+        let bytes = try Data(contentsOf: file)
+
+        let report = try #require(BoardStore(directory: boards).migrateToRepoBoards())
+        #expect(report.nonGit == [board.id])
+        #expect(report.repos.isEmpty)
+        #expect(try Data(contentsOf: file) == bytes)
+        #expect(BoardRegistry(store: BoardStore(directory: boards)).open(root: plain).id == board.id)
+    }
+
+    /// Before its first commit git named no branch, so the old store keyed the board by path.
+    @Test func aBoardOfARepositoryWithoutCommitsBecomesItsRepositoryBoard() async throws {
+        let repo = try await TempRepo()
+        let store = BoardStore(directory: boards)
+        let old = Board(id: BoardStore.pathID(repo.root), root: repo.root)
+        let note = old.create(type: .note, props: .object(["markdown": .string("before the first commit")]))
+        store.save(old)
+
+        let report = try #require(BoardStore(directory: boards).migrateToRepoBoards())
+        #expect(report.nonGit.isEmpty)
+        #expect(report.repos.first?.legacy.map(\.anchor) == ["main"])
+        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
+        #expect(board.id != old.id)
+        #expect(board.objects[note.id]?.frame == note.frame, "placed as it was: it is the main checkout's board")
+    }
+
+    @Test func aTerminalRecordsTheWorktreeAndBranchItStartsIn() async throws {
+        let (repo, worktree) = try await fixture()
+        let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))
+        let board = registry.open(root: worktree)
+        #expect(board.defaultTerminalDirectory == worktree.path, "opened from the worktree, New Terminal starts there")
+        let there = board.create(type: .terminal, props: .object(["cwd": .string(worktree.appendingPathComponent("src").path)]))
+        #expect(there.props["worktree"] == .string(worktree.path))
+        #expect(there.props["branch"] == .string("feature"))
+        let home = board.create(type: .terminal, props: .object(["cwd": .string(repo.root.path)]))
+        #expect(home.props["branch"] == .string("main"))
+        #expect(registry.open(root: repo.root) === board)
+        #expect(board.defaultTerminalDirectory == board.root.path)
+    }
+}

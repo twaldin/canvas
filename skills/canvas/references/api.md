@@ -38,6 +38,7 @@ If the app restarts, the next call reconnects on its own (waiting up to 15 s). `
 
 - `board.get` returns every object with heavy props trimmed (long markdown, HTML source); `object.get` returns one object whole.
 - Poll cheaply: keep `revision` from one `board.get` and pass it as `since` next time; `changed` lists ids created or changed after it.
+- A repository's board holds every branch's work: `board.get --branch <name>` returns one branch's part (its regions keyed `branch:<name>` with what they hold, tiles whose `ref` is the branch, terminals started on it, arrows between them).
 - `object.get --as graph` gives `encloses`, `enclosedBy`, `overlaps`, `arrowsOut`, `arrowsIn`. To look at an object use `view.render` (`canvas render <id> --out file.png`).
 - `object.get` on a note adds `fences`: per anchored fence its `info`, `markdownLines`, `path`, `symbol`, `propose`, and `state` (`live`, `relocated`, `stale`, `applied`, `missing`) with the resolved `range`, the `written` range when relocated, and the stale `reason`, resolved against disk now; on a code tile showing a range, `rangeStatus` (the same fields). Check these instead of rendering to see whether excerpts are still true.
   Symbol anchors survive edits (`symbol=Class.method` finds methods deep in long classes and defs with multi-line signatures); line anchors are re-found by content and go stale when lost.

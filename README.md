@@ -2,6 +2,8 @@
 
 **Stop describing code to your agent.**
 
+![A description typed to the agent is deleted. The line is clicked instead, the chip goes with a short question, and the agent's answer starts with that line.](docs/media/stop-describing.gif)
+
 Canvas is a Mac app for coding agents: Claude Code, Codex and any CLI agent run unmodified in real terminals next to the whole file, with your language server and a git gutter against your branch. Hyper-click (⌃⌥⇧⌘-click) a line of code, a DOM element, a note paragraph or a command's output, and it goes with your next prompt, instead of "around line 90". Quit, crash or rebuild the app and your agents keep running in their [zmx](https://github.com/neurosnap/zmx) sessions. Claude Code, Codex, opencode and Gemini CLI (before 0.60) need no setup; [omp](https://github.com/can1357/oh-my-pi) is the first-class agent.
 
 Native Mac app. Free, MIT.

@@ -72,6 +72,13 @@ public enum ObjectMeasure {
             let picture = LocalImage.fitted(pixels, maxWidth: natural ?? LocalImage.defaultMaxWidth)
             let caption = props["caption"]?.string.map { $0.isEmpty ? 0 : LocalImage.captionHeight } ?? 0
             size = CGSize(width: picture.width, height: RenderMath.tileTitleHeight + picture.height + caption)
+        case .diagram:
+            // The graph as last computed, drawn at full size under its status strip.
+            guard let graph = DiagramGraph(props["graph"]) else {
+                throw Failure.unavailable("the diagram isn't computed yet: object.reload it (it waits for the language server), then measure or fit")
+            }
+            let body = DiagramLayout(graph).bodySize
+            size = CGSize(width: body.width, height: RenderMath.tileTitleHeight + body.height)
         case .browser, .terminal, .arrow, .group:
             throw Failure.unsupported("\(type.rawValue) objects have no intrinsic size")
         }

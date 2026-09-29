@@ -668,7 +668,7 @@ extension BoardGeometry {
             var endIDs: Set<ObjectID> = []
             for binding in [spec.from, spec.to] {
                 switch binding {
-                case .object(let id, _, _):
+                case .object(let id, _, _, _):
                     endIDs.insert(id)
                     if let frame = objects[id]?.frame.rect { endRects.append(frame) }
                 case .point(let point):

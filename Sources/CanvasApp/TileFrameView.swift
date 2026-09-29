@@ -324,6 +324,7 @@ final class TileFrameView: NSView {
         case .html: return props["title"]?.string ?? "HTML"
         // The file name wherever the file is (`ImageProps.title`); the path is the tooltip's.
         case .image: return props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? props["path"].flatMap(\.string).map { ($0 as NSString).lastPathComponent } ?? "Image"
+        case .diagram: return DiagramSpec.title(props)
         case .changes:
             let spec = ChangesSpec(props)
             if let title = props["title"]?.string { return title }

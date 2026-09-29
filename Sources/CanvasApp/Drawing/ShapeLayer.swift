@@ -133,7 +133,8 @@ final class ShapeLayer: NSView {
         // Tiles move live while dragged but commit their frame only on drop; follow them live.
         NotificationCenter.default.addObserver(self, selector: #selector(viewFrameChanged(_:)), name: NSView.frameDidChangeNotification, object: nil)
         // A code tile's rows scroll under arrows bound to its lines.
-        NotificationCenter.default.addObserver(self, selector: #selector(codeRowsMoved(_:)), name: CodeTile.rowsMoved, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(anchorsMoved(_:)), name: CodeTile.rowsMoved, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(anchorsMoved(_:)), name: DiagramTile.laidOut, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(tileSurfaceChanged(_:)), name: .tileSurfaceChanged, object: nil)
     }
 
@@ -145,13 +146,18 @@ final class ShapeLayer: NSView {
         reroute(boundTo: tile.objectID)
     }
 
-    @objc private func codeRowsMoved(_ note: Notification) {
-        guard let code = note.object as? CodeTile, let tile = code.superview as? TileFrameView, tile.superview === canvas.document,
+    /// A code tile's rows or a diagram's nodes moved inside it: arrows bound to its lines or
+    /// nodes follow.
+    @objc private func anchorsMoved(_ note: Notification) {
+        guard let content = note.object as? NSView, let tile = content.superview as? TileFrameView, tile.superview === canvas.document,
               let arrows = arrowsBound[tile.objectID] else { return }
         for id in arrows {
             guard let spec = items[id]?.arrow?.spec else { continue }
-            let boundLines = [spec.from, spec.to].contains { if case .object(tile.objectID, .some, _) = $0 { return true } else { return false } }
-            if boundLines { reroute(arrow: id) }
+            let boundInside = [spec.from, spec.to].contains { binding in
+                guard case .object(tile.objectID, let lines, _, let node) = binding else { return false }
+                return lines != nil || node != nil
+            }
+            if boundInside { reroute(arrow: id) }
         }
     }
 
@@ -350,8 +356,8 @@ final class ShapeLayer: NSView {
             case .point(let point):
                 let doc = Self.docPoint(point)
                 return .point(CGPoint(x: doc.x + shift.width, y: doc.y + shift.height))
-            case .object(let id, let lines, _):
-                return self.end(of: id, lines: lines)
+            case .object(let id, let lines, _, let node):
+                return self.end(of: id, lines: lines, node: node)
             }
         }
         let ends = Set([spec.from.objectID, spec.to.objectID].compactMap { $0 })
@@ -375,13 +381,18 @@ final class ShapeLayer: NSView {
         return DrawnItem.arrow(object, spec, path: [NSPoint(x: rect.minX, y: rect.minY), NSPoint(x: rect.maxX, y: rect.maxY)])
     }
 
-    /// Where an arrow bound to `id` (and to `lines` of it) attaches, as currently shown (tiles
-    /// mid-drag included): a code tile's line at its row as scrolled now (`CodeTile.lineY`),
-    /// anything else by its outline. Lines of other tiles bind the whole tile.
-    func end(of id: ObjectID, lines: LineRange?) -> DrawingGeometry.ArrowEnd? {
+    /// Where an arrow bound to `id` (and to `lines` or a `node` of it) attaches, as currently
+    /// shown (tiles mid-drag included): a code tile's line at its row as scrolled now
+    /// (`CodeTile.lineY`), a diagram node's box as drawn, anything else by its outline. Lines or
+    /// nodes of other tiles bind the whole tile.
+    func end(of id: ObjectID, lines: LineRange?, node: String? = nil) -> DrawingGeometry.ArrowEnd? {
         if let lines, let tile = canvas.tiles[id], let code = tile.content as? CodeTile {
             let scale = tile.scale
             return .row(tile.frame, y: tile.frame.minY + scale * code.lineY(lines.start, frameHeight: tile.frame.height / scale))
+        }
+        if let node, let tile = canvas.tiles[id], let diagram = tile.content as? DiagramTile, let box = diagram.rect(ofNode: node) {
+            let scale = tile.scale, top = tile.frame.minY + scale * TileFrameView.titleHeight
+            return .bound(.rect(CGRect(x: tile.frame.minX + scale * box.minX, y: top + scale * box.minY, width: scale * box.width, height: scale * box.height)))
         }
         return outline(of: id).map { .bound($0) }
     }

@@ -210,6 +210,75 @@ export type ImageProps = {
   key?: ObjectKey;
 };
 
+/** A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the board's files are nodes. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
+export type DiagramProps = {
+  /** what the diagram is of; more kinds (types, pipelines) will come */
+  kind?: "calls";
+  /** the root function: `Type.member` or a bare name, parameter labels optional (`SocketServer.start`, `AgentReportSpool.read`, `read(from:tiles:)`). Without `path`, the board's files are searched for its declaration */
+  symbol?: string;
+  /** the file declaring the root, board-relative or absolute */
+  path?: string;
+  /** without `symbol`: the root's declaration line (or a line inside its body) in `path`. Only the first computation reads it: after that the root is re-found by the symbol found there */
+  line?: number;
+  /** incoming: who calls it (callers left of it); outgoing: what it calls (right of it); both */
+  direction?: "incoming" | "outgoing" | "both";
+  /** levels shown each side of the root without clicking; nodes on the last level show + when not yet expanded */
+  depth?: number;
+  /** node ids (`graph.nodes[].id`) opened one level past `depth`; a click toggles one */
+  expanded?: string[];
+  /** default: `Callers of <symbol>` (`Calls from`, `Calls around`) */
+  title?: string;
+  /** written by the app (never an undo step, no rev): the graph as last computed. Agents read it; writing it changes nothing (the next computation replaces it) */
+  graph?: {
+    /** the kind, path, symbol, line and direction it was computed for */
+    aim?: Record<string, unknown>;
+    /** the root node's id */
+    root?: string;
+    nodes?: {
+      /** `path#Container.name`, stable while the symbol exists (not its line); what `expanded` and arrow ends name */
+      id: string;
+      name: string;
+      container?: string;
+      /** LSP symbol kind: method, function, constructor, … */
+      kind: string;
+      /** board-relative */
+      path: string;
+      /** 1-based line of its name */
+      line: number;
+      /** its whole declaration */
+      lines: LineRange;
+      excerpt: {
+        line?: number;
+        text?: string;
+      }[];
+      /** columns from the root (0): callers negative, callees positive */
+      level: number;
+      /** its symbol is gone from its file: shown as it last was, badged */
+      stale?: boolean;
+      /** its next level hasn't been asked for: a click (or adding its id to `expanded`) opens it */
+      expandable?: boolean;
+      /** opened past `depth` (`expanded`) */
+      expanded?: boolean;
+    }[];
+    edges?: {
+      /** the caller's node id */
+      from: string;
+      /** the callee's node id */
+      to: string;
+      /** 1-based lines of the calls, in the caller's file */
+      lines: number[];
+      stale?: boolean;
+    }[];
+    /** why the graph is empty or old: no language server for the file, the symbol isn't found, the server failed or has no call hierarchy. The last good graph stays */
+    error?: string;
+    /** nodes left out past 60 */
+    omitted?: number;
+    computedAt?: string;
+  };
+  scale?: Scale;
+  key?: ObjectKey;
+};
+
 export type ShapeProps = {
   kind: "rect" | "ellipse" | "text" | "ink";
   text?: string;
@@ -229,6 +298,8 @@ export type Binding = {
   /** on a code tile, the end attaches to the tile's left or right edge at the row of `lines.start` as the tile shows it (scrolled to its range: up to 3 rows of context above it); a line scrolled out of view attaches at the top of the code or the bottom of the tile. Other tiles: the whole tile */
   lines?: LineRange;
   selector?: string;
+  /** on a diagram tile, a node id (`graph.nodes[].id`): the end attaches to that node's box as the tile draws it, and follows it when the graph is computed again. Other tiles: the whole tile */
+  node?: string;
 } | {
   point: number[];
 };
@@ -286,7 +357,7 @@ export type Size = {
   h: number;
 };
 
-export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "shape" | "arrow" | "group";
+export type ObjectType = "terminal" | "browser" | "code" | "note" | "html" | "changes" | "image" | "diagram" | "shape" | "arrow" | "group";
 
 export type CanvasObject = {
   id: Id;
@@ -300,7 +371,7 @@ export type CanvasObject = {
   updatedBy?: Actor;
   createdAt: string;
   updatedAt: string;
-  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one) */
+  /** one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one) */
   props: Record<string, unknown>;
 };
 
@@ -753,7 +824,7 @@ export type ObjectFindResult = {
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props: Record<string, unknown>;
   frame?: Frame | FitFrame | SizeFrame;
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
@@ -778,7 +849,7 @@ export type ObjectUpdateParams = {
   frame?: FramePatch;
   /** measure the frame's size from the content */
   size?: "fit";
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props?: Record<string, unknown>;
   caller?: Id;
 };
@@ -821,7 +892,7 @@ export type ObjectDeleteResult = Record<string, unknown>;
 export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
   props: Record<string, unknown>;
   /** wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640) */
   width?: number;
@@ -831,16 +902,26 @@ export type ObjectMeasureResult = Size;
 
 export type ObjectReloadParams = {
   id: Id;
-  /** how long to wait for the page to finish loading; 0 returns as soon as the reload has started */
+  /** how long to wait for the page to finish loading (a diagram: to be computed, default 60000); 0 returns as soon as the reload has started */
   timeoutMs?: number;
   caller?: Id;
 };
 export type ObjectReloadResult = {
   id: Id;
-  /** the address the page shows */
-  url: string;
-  /** the page finished loading within `timeoutMs` */
+  /** browser tiles: the address the page shows */
+  url?: string;
+  /** the page finished loading (a diagram: was computed) within `timeoutMs` */
   loaded: boolean;
+  /** diagram tiles: the root node's id */
+  root?: string;
+  /** diagram tiles: nodes in the graph, the root and stale ones included */
+  nodes?: number;
+  /** diagram tiles: calls drawn */
+  edges?: number;
+  /** diagram tiles: ids of nodes whose symbol is gone */
+  stale?: string[];
+  /** diagram tiles: why the graph couldn't be computed (it keeps the last good one) */
+  error?: string;
   /** the page couldn't load: why, in a few words ("connection refused"); the tile shows it and retries a local address itself */
   failed?: string;
 };
@@ -1251,7 +1332,7 @@ export interface CanvasApi {
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
     /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
-    /** Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so a `canvas get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. Only browser tiles reload: code, note and changes tiles follow their files by themselves. */
+    /** Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so a `canvas get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves. */
     reload(params: ObjectReloadParams): Promise<ObjectReloadResult>;
     /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/upsert/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id op n created (or, an upsert, created or updated) (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;

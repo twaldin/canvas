@@ -20,7 +20,7 @@ public struct BoardGeometry: Sendable {
     /// groups never block.
     public static func blocksRoutes(_ object: CanvasObject) -> Bool {
         switch object.type {
-        case .terminal, .browser, .code, .note, .html, .changes, .image: return true
+        case .terminal, .browser, .code, .note, .html, .changes, .image, .diagram: return true
         case .shape:
             guard let spec = ShapeSpec(object.props) else { return false }
             return spec.kind == .text || (spec.kind != .ink && spec.fill != .none)
@@ -63,15 +63,18 @@ public struct BoardGeometry: Sendable {
         return result
     }
 
-    /// What a binding attaches to: a point, an object's frame (an ellipse's curve), or the row
-    /// of the first of `lines` on a code tile. Nil when the object is gone.
+    /// What a binding attaches to: a point, an object's frame (an ellipse's curve), the row of
+    /// the first of `lines` on a code tile, or a diagram node's box. Nil when the object is gone.
     func arrowEnd(_ binding: ArrowBinding, rows: [ObjectID: CodeRows]) -> DrawingGeometry.ArrowEnd? {
         switch binding {
         case .point(let point): return .point(point)
-        case .object(let id, let lines, _):
+        case .object(let id, let lines, _, let node):
             guard let object = objects[id] else { return nil }
             if let lines, object.type == .code {
                 return .row(object.frame.rect, y: CodeMetrics.lineY(line: lines.start, frame: object.frame, props: object.props, rows: rows[id]))
+            }
+            if let node, object.type == .diagram, let rect = DiagramLayout.canvasRect(of: node, frame: object.frame, props: object.props) {
+                return .bound(.rect(rect))
             }
             let isEllipse = object.type == .shape && ShapeSpec(object.props)?.kind == .ellipse
             return .bound(isEllipse ? .ellipse(object.frame.rect) : .rect(object.frame.rect))

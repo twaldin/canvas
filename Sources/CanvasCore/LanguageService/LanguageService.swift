@@ -55,6 +55,27 @@ public actor LanguageService {
         return try await server.documentSymbols(file)
     }
 
+    public func typeDefinition(file: URL, boardRoot: URL, at position: LSPPosition) async throws -> [LSPLocation] {
+        let (server, file) = try await server(for: file, boardRoot: boardRoot)
+        return try await server.typeDefinition(file, at: position)
+    }
+
+    public func prepareCallHierarchy(file: URL, boardRoot: URL, at position: LSPPosition) async throws -> [LSPCallHierarchyItem] {
+        let (server, file) = try await server(for: file, boardRoot: boardRoot)
+        return try await server.prepareCallHierarchy(file, at: position)
+    }
+
+    /// Asked of the server of the item's file, which is the server that named it.
+    public func incomingCalls(_ item: LSPCallHierarchyItem, boardRoot: URL) async throws -> [LSPCallHierarchyCall] {
+        let (server, _) = try await server(for: item.url, boardRoot: boardRoot)
+        return try await server.incomingCalls(item)
+    }
+
+    public func outgoingCalls(_ item: LSPCallHierarchyItem, boardRoot: URL) async throws -> [LSPCallHierarchyCall] {
+        let (server, _) = try await server(for: item.url, boardRoot: boardRoot)
+        return try await server.outgoingCalls(item)
+    }
+
     /// Workspace symbols matching `query` from the server of each project `files` fall in (one
     /// request per language and project root, started if needed), in the servers' order. A
     /// project whose server is missing or fails adds nothing; only when every one failed is the
@@ -92,14 +113,14 @@ public actor LanguageService {
     /// A code view shows `file`: keep it open in its server between requests (re-synced from
     /// disk before each one) until every view that retained it releases it.
     public func retain(file: URL, boardRoot: URL) async {
-        let file = file.resolvingSymlinksInPath()
+        let file = GitDiffEngine.realPath(file)
         retained[file, default: 0] += 1
         guard retained[file] == 1, let server = existingServer(for: file, boardRoot: boardRoot) else { return }
         await server.pin(file)
     }
 
     public func release(file: URL, boardRoot: URL) async {
-        let file = file.resolvingSymlinksInPath()
+        let file = GitDiffEngine.realPath(file)
         guard let count = retained[file] else { return }
         guard count <= 1 else {
             retained[file] = count - 1
@@ -129,13 +150,13 @@ public actor LanguageService {
     // MARK: Registry
 
     private func config(for file: URL) -> (LanguageServerConfig, URL)? {
-        let file = file.resolvingSymlinksInPath()
+        let file = GitDiffEngine.realPath(file)
         return configs.first { $0.languageID(for: file) != nil }.map { ($0, file) }
     }
 
     private func key(for file: URL, boardRoot: URL) -> Key? {
         guard let (config, file) = config(for: file) else { return nil }
-        return Key(language: config.language, root: config.projectRoot(for: file, within: boardRoot.resolvingSymlinksInPath()))
+        return Key(language: config.language, root: config.projectRoot(for: file, within: GitDiffEngine.realPath(boardRoot)))
     }
 
     private func server(for file: URL, boardRoot: URL) async throws -> (LanguageServer, URL) {

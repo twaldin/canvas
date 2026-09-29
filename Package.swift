@@ -61,6 +61,8 @@ let package = Package(
             name: "CanvasCoreTests",
             dependencies: ["CanvasCore", .product(name: "Markdown", package: "swift-markdown")],
             path: "Tests/CanvasCoreTests",
+            // Recorded language-server answers the tests replay, read from the checkout.
+            exclude: ["Fixtures"],
             swiftSettings: [.unsafeFlags(["-F", cltFrameworks])],
             linkerSettings: [.unsafeFlags(["-F", cltFrameworks, "-framework", "Testing", "-Xlinker", "-rpath", "-Xlinker", cltFrameworks, "-Xlinker", "-rpath", "-Xlinker", cltLibs])]
         ),

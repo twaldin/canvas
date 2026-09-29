@@ -377,6 +377,7 @@ final class CanvasView: NSScrollView {
         (content as? HtmlTile)?.onOpenedCode = showCode
         (content as? NoteTile)?.onOpenedCode = showCode
         (content as? BrowserTile)?.onOpenedCode = showCode
+        (content as? DiagramTile)?.onOpenedCode = showCode
         // A clicked line: user navigation. The changes tile keeps the selection and the keyboard
         // (j/k go on through the hunks; a selected code tile would take the keyboard from it);
         // the least pan that shows the code tile keeps the diff in view too.

@@ -24,6 +24,8 @@ public actor LanguageServer {
     private var documents: [URL: Document] = [:]
     private var pinned: Set<URL>
     private var inFlight = 0
+    /// What the running server said it can answer (`initialize` result `capabilities`).
+    private var capabilities: JSONValue = .object([:])
     public private(set) var status: LanguageServerStatus = .stopped
 
     static let requestTimeout: Duration = .seconds(60)
@@ -77,6 +79,48 @@ public actor LanguageServer {
             .object(["textDocument": .object(["uri": .string(uri)]), "position": position.json,
                      "context": .object(["includeDeclaration": .bool(true)])])
         })
+    }
+
+    /// Where the type of the value at `position` is declared.
+    public func typeDefinition(_ file: URL, at position: LSPPosition) async throws -> [LSPLocation] {
+        try await require("typeDefinitionProvider", "type definitions")
+        return LSPLocation.list(try await request("textDocument/typeDefinition", file) { uri in
+            .object(["textDocument": .object(["uri": .string(uri)]), "position": position.json])
+        })
+    }
+
+    /// The callable declared at `position` (its name), as the server's call hierarchy knows it:
+    /// empty when nothing callable is there.
+    public func prepareCallHierarchy(_ file: URL, at position: LSPPosition) async throws -> [LSPCallHierarchyItem] {
+        try await require("callHierarchyProvider", "call hierarchy")
+        let result = try await request("textDocument/prepareCallHierarchy", file) { uri in
+            .object(["textDocument": .object(["uri": .string(uri)]), "position": position.json])
+        }
+        return (result.array ?? []).compactMap(LSPCallHierarchyItem.init)
+    }
+
+    /// What calls `item`, each caller with the ranges of its calls (in the caller's file).
+    public func incomingCalls(_ item: LSPCallHierarchyItem) async throws -> [LSPCallHierarchyCall] {
+        try await require("callHierarchyProvider", "call hierarchy")
+        let result = try await request("callHierarchy/incomingCalls", item.url) { _ in .object(["item": item.json]) }
+        return (result.array ?? []).compactMap { LSPCallHierarchyCall($0, end: "from") }
+    }
+
+    /// What `item` calls, each callee with the ranges of the calls (in `item`'s file).
+    public func outgoingCalls(_ item: LSPCallHierarchyItem) async throws -> [LSPCallHierarchyCall] {
+        try await require("callHierarchyProvider", "call hierarchy")
+        let result = try await request("callHierarchy/outgoingCalls", item.url) { _ in .object(["item": item.json]) }
+        return (result.array ?? []).compactMap { LSPCallHierarchyCall($0, end: "to") }
+    }
+
+    /// Starts the server if needed and throws `unsupportedRequest` unless its capabilities list
+    /// `provider` (present and not false).
+    private func require(_ provider: String, _ what: String) async throws {
+        _ = try await connected()
+        switch capabilities[provider] {
+        case nil, .null?, .bool(false)?: throw LSPError.unsupportedRequest("\(config.command) does not answer \(what) requests (no \(provider) in its capabilities)")
+        default: return
+        }
     }
 
     public func documentSymbols(_ file: URL) async throws -> [LSPSymbol] {
@@ -219,8 +263,9 @@ public actor LanguageServer {
         live.insert(connection)
         launching = connection
         defer { if launching === connection { launching = nil } }
+        let initialized: JSONValue
         do {
-            _ = try await connection.request("initialize", initializeParams, timeout: Self.requestTimeout)
+            initialized = try await connection.request("initialize", initializeParams, timeout: Self.requestTimeout)
         } catch {
             live.remove(connection)
             connection.kill()
@@ -234,6 +279,7 @@ public actor LanguageServer {
         }
         connection.notify("initialized", .object([:]))
         documents = [:]
+        capabilities = initialized["capabilities"] ?? .object([:])
         self.connection = connection
         status = .running(pid: connection.pid)
         return connection
@@ -287,6 +333,8 @@ public actor LanguageServer {
                     "definition": .object(["linkSupport": .bool(true)]),
                     "references": .object([:]),
                     "documentSymbol": .object(["hierarchicalDocumentSymbolSupport": .bool(true)]),
+                    "typeDefinition": .object(["linkSupport": .bool(true)]),
+                    "callHierarchy": .object(["dynamicRegistration": .bool(false)]),
                 ]),
             ]),
         ]

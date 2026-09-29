@@ -18,7 +18,7 @@ extension Board {
         let region = object.frame.rect
         func within(_ binding: ArrowBinding) -> Bool {
             switch binding {
-            case .object(let id, _, _): inside.contains(id)
+            case .object(let id, _, _, _): inside.contains(id)
             case .point(let point): region.contains(point)
             }
         }

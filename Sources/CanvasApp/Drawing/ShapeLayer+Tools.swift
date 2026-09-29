@@ -235,7 +235,7 @@ extension ShapeLayer {
     private func arrowEnd(_ binding: ArrowBinding) -> DrawingGeometry.ArrowEnd {
         switch binding {
         case .point(let point): .point(Self.docPoint(point))
-        case .object(let id, _, _): outline(of: id).map { .bound($0) } ?? .point(.zero)
+        case .object(let id, _, _, _): outline(of: id).map { .bound($0) } ?? .point(.zero)
         }
     }
 

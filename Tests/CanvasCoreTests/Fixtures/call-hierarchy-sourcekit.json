@@ -1,0 +1,1354 @@
+{
+ "capabilities": {
+  "callHierarchyProvider": true
+ },
+ "epochs": {
+  "a": {
+   "documentSymbol Sources/Lib/Registry.swift": [
+    {
+     "children": [
+      {
+       "children": [],
+       "kind": 9,
+       "name": "init()",
+       "range": {
+        "end": {
+         "character": 20,
+         "line": 1
+        },
+        "start": {
+         "character": 4,
+         "line": 1
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 17,
+         "line": 1
+        },
+        "start": {
+         "character": 11,
+         "line": 1
+        }
+       }
+      },
+      {
+       "children": [],
+       "kind": 6,
+       "name": "open(root:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 5
+        },
+        "start": {
+         "character": 4,
+         "line": 3
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 34,
+         "line": 3
+        },
+        "start": {
+         "character": 16,
+         "line": 3
+        }
+       }
+      },
+      {
+       "children": [],
+       "kind": 6,
+       "name": "replay(on:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 9
+        },
+        "start": {
+         "character": 4,
+         "line": 7
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 32,
+         "line": 7
+        },
+        "start": {
+         "character": 9,
+         "line": 7
+        }
+       }
+      }
+     ],
+     "kind": 23,
+     "name": "Registry",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 10
+      },
+      "start": {
+       "character": 0,
+       "line": 0
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 22,
+       "line": 0
+      },
+      "start": {
+       "character": 14,
+       "line": 0
+      }
+     }
+    },
+    {
+     "children": [],
+     "kind": 12,
+     "name": "relaunch()",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 14
+      },
+      "start": {
+       "character": 0,
+       "line": 12
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 15,
+       "line": 12
+      },
+      "start": {
+       "character": 5,
+       "line": 12
+      }
+     }
+    },
+    {
+     "children": [],
+     "kind": 12,
+     "name": "warm()",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 18
+      },
+      "start": {
+       "character": 0,
+       "line": 16
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 11,
+       "line": 16
+      },
+      "start": {
+       "character": 5,
+       "line": 16
+      }
+     }
+    }
+   ],
+   "documentSymbol Sources/Lib/Spool.swift": [
+    {
+     "children": [
+      {
+       "children": [],
+       "kind": 6,
+       "name": "read(from:limit:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 5
+        },
+        "start": {
+         "character": 4,
+         "line": 2
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 39,
+         "line": 3
+        },
+        "start": {
+         "character": 23,
+         "line": 2
+        }
+       }
+      }
+     ],
+     "kind": 10,
+     "name": "Spool",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 6
+      },
+      "start": {
+       "character": 0,
+       "line": 0
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 17,
+       "line": 0
+      },
+      "start": {
+       "character": 12,
+       "line": 0
+      }
+     }
+    }
+   ],
+   "incoming Registry.open(root:)": [],
+   "incoming Registry.replay(on:)": [
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib8RegistryV4open4rootSiSS_tF"
+      },
+      "kind": 6,
+      "name": "Registry.open(root:)",
+      "range": {
+       "end": {
+        "character": 16,
+        "line": 3
+       },
+       "start": {
+        "character": 16,
+        "line": 3
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 16,
+        "line": 3
+       },
+       "start": {
+        "character": 16,
+        "line": 3
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 8,
+        "line": 4
+       },
+       "start": {
+        "character": 8,
+        "line": 4
+       }
+      }
+     ]
+    }
+   ],
+   "incoming Spool.read(from:limit:)": [
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib8RegistryV6replay2onSiSS_tF"
+      },
+      "kind": 6,
+      "name": "Registry.replay(on:)",
+      "range": {
+       "end": {
+        "character": 9,
+        "line": 7
+       },
+       "start": {
+        "character": 9,
+        "line": 7
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 9,
+        "line": 7
+       },
+       "start": {
+        "character": 9,
+        "line": 7
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 14,
+        "line": 8
+       },
+       "start": {
+        "character": 14,
+        "line": 8
+       }
+      }
+     ]
+    },
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib8relaunchSiyF"
+      },
+      "kind": 12,
+      "name": "relaunch()",
+      "range": {
+       "end": {
+        "character": 5,
+        "line": 12
+       },
+       "start": {
+        "character": 5,
+        "line": 12
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 5,
+        "line": 12
+       },
+       "start": {
+        "character": 5,
+        "line": 12
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 10,
+        "line": 13
+       },
+       "start": {
+        "character": 10,
+        "line": 13
+       }
+      },
+      {
+       "end": {
+        "character": 53,
+        "line": 13
+       },
+       "start": {
+        "character": 53,
+        "line": 13
+       }
+      }
+     ]
+    },
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib4warmSiyF"
+      },
+      "kind": 12,
+      "name": "warm()",
+      "range": {
+       "end": {
+        "character": 5,
+        "line": 16
+       },
+       "start": {
+        "character": 5,
+        "line": 16
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 5,
+        "line": 16
+       },
+       "start": {
+        "character": 5,
+        "line": 16
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 10,
+        "line": 17
+       },
+       "start": {
+        "character": 10,
+        "line": 17
+       }
+      }
+     ]
+    }
+   ],
+   "incoming relaunch()": [],
+   "incoming warm()": [],
+   "outgoing Spool.read(from:limit:)": [],
+   "prepare Sources/Lib/Spool.swift:2:23": [
+    {
+     "data": {
+      "uri": "file://ROOT/Sources/Lib/Spool.swift",
+      "usr": "s:3Lib5SpoolO4read4from5limitSaySSGSS_SitFZ"
+     },
+     "kind": 6,
+     "name": "Spool.read(from:limit:)",
+     "range": {
+      "end": {
+       "character": 23,
+       "line": 2
+      },
+      "start": {
+       "character": 23,
+       "line": 2
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 23,
+       "line": 2
+      },
+      "start": {
+       "character": 23,
+       "line": 2
+      }
+     },
+     "uri": "file://ROOT/Sources/Lib/Spool.swift"
+    }
+   ]
+  },
+  "b": {
+   "documentSymbol Sources/Lib/Registry.swift": [
+    {
+     "children": [
+      {
+       "children": [],
+       "kind": 9,
+       "name": "init()",
+       "range": {
+        "end": {
+         "character": 20,
+         "line": 4
+        },
+        "start": {
+         "character": 4,
+         "line": 4
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 17,
+         "line": 4
+        },
+        "start": {
+         "character": 11,
+         "line": 4
+        }
+       }
+      },
+      {
+       "children": [],
+       "kind": 6,
+       "name": "open(root:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 8
+        },
+        "start": {
+         "character": 4,
+         "line": 6
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 34,
+         "line": 6
+        },
+        "start": {
+         "character": 16,
+         "line": 6
+        }
+       }
+      },
+      {
+       "children": [],
+       "kind": 6,
+       "name": "replay(on:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 12
+        },
+        "start": {
+         "character": 4,
+         "line": 10
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 32,
+         "line": 10
+        },
+        "start": {
+         "character": 9,
+         "line": 10
+        }
+       }
+      }
+     ],
+     "kind": 23,
+     "name": "Registry",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 13
+      },
+      "start": {
+       "character": 0,
+       "line": 3
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 22,
+       "line": 3
+      },
+      "start": {
+       "character": 14,
+       "line": 3
+      }
+     }
+    },
+    {
+     "children": [],
+     "kind": 12,
+     "name": "warm()",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 17
+      },
+      "start": {
+       "character": 0,
+       "line": 15
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 11,
+       "line": 15
+      },
+      "start": {
+       "character": 5,
+       "line": 15
+      }
+     }
+    }
+   ],
+   "documentSymbol Sources/Lib/Spool.swift": [
+    {
+     "children": [
+      {
+       "children": [],
+       "kind": 6,
+       "name": "read(from:limit:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 5
+        },
+        "start": {
+         "character": 4,
+         "line": 2
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 39,
+         "line": 3
+        },
+        "start": {
+         "character": 23,
+         "line": 2
+        }
+       }
+      }
+     ],
+     "kind": 10,
+     "name": "Spool",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 6
+      },
+      "start": {
+       "character": 0,
+       "line": 0
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 17,
+       "line": 0
+      },
+      "start": {
+       "character": 12,
+       "line": 0
+      }
+     }
+    }
+   ],
+   "incoming Registry.open(root:)": [],
+   "incoming Registry.replay(on:)": [
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib8RegistryV4open4rootSiSS_tF"
+      },
+      "kind": 6,
+      "name": "Registry.open(root:)",
+      "range": {
+       "end": {
+        "character": 16,
+        "line": 6
+       },
+       "start": {
+        "character": 16,
+        "line": 6
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 16,
+        "line": 6
+       },
+       "start": {
+        "character": 16,
+        "line": 6
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 8,
+        "line": 7
+       },
+       "start": {
+        "character": 8,
+        "line": 7
+       }
+      }
+     ]
+    }
+   ],
+   "incoming Spool.read(from:limit:)": [
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib8RegistryV6replay2onSiSS_tF"
+      },
+      "kind": 6,
+      "name": "Registry.replay(on:)",
+      "range": {
+       "end": {
+        "character": 9,
+        "line": 10
+       },
+       "start": {
+        "character": 9,
+        "line": 10
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 9,
+        "line": 10
+       },
+       "start": {
+        "character": 9,
+        "line": 10
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 14,
+        "line": 11
+       },
+       "start": {
+        "character": 14,
+        "line": 11
+       }
+      }
+     ]
+    }
+   ],
+   "outgoing Spool.read(from:limit:)": [],
+   "prepare Sources/Lib/Spool.swift:2:23": [
+    {
+     "data": {
+      "uri": "file://ROOT/Sources/Lib/Spool.swift",
+      "usr": "s:3Lib5SpoolO4read4from5limitSaySSGSS_SitFZ"
+     },
+     "kind": 6,
+     "name": "Spool.read(from:limit:)",
+     "range": {
+      "end": {
+       "character": 23,
+       "line": 2
+      },
+      "start": {
+       "character": 23,
+       "line": 2
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 23,
+       "line": 2
+      },
+      "start": {
+       "character": 23,
+       "line": 2
+      }
+     },
+     "uri": "file://ROOT/Sources/Lib/Spool.swift"
+    }
+   ]
+  },
+  "c": {
+   "documentSymbol Sources/Lib/Registry.swift": [
+    {
+     "children": [
+      {
+       "children": [],
+       "kind": 9,
+       "name": "init()",
+       "range": {
+        "end": {
+         "character": 20,
+         "line": 1
+        },
+        "start": {
+         "character": 4,
+         "line": 1
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 17,
+         "line": 1
+        },
+        "start": {
+         "character": 11,
+         "line": 1
+        }
+       }
+      },
+      {
+       "children": [],
+       "kind": 6,
+       "name": "open(root:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 5
+        },
+        "start": {
+         "character": 4,
+         "line": 3
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 34,
+         "line": 3
+        },
+        "start": {
+         "character": 16,
+         "line": 3
+        }
+       }
+      },
+      {
+       "children": [],
+       "kind": 6,
+       "name": "replay(on:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 9
+        },
+        "start": {
+         "character": 4,
+         "line": 7
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 32,
+         "line": 7
+        },
+        "start": {
+         "character": 9,
+         "line": 7
+        }
+       }
+      }
+     ],
+     "kind": 23,
+     "name": "Registry",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 10
+      },
+      "start": {
+       "character": 0,
+       "line": 0
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 22,
+       "line": 0
+      },
+      "start": {
+       "character": 14,
+       "line": 0
+      }
+     }
+    },
+    {
+     "children": [],
+     "kind": 12,
+     "name": "relaunch()",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 14
+      },
+      "start": {
+       "character": 0,
+       "line": 12
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 15,
+       "line": 12
+      },
+      "start": {
+       "character": 5,
+       "line": 12
+      }
+     }
+    },
+    {
+     "children": [],
+     "kind": 12,
+     "name": "warm()",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 18
+      },
+      "start": {
+       "character": 0,
+       "line": 16
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 11,
+       "line": 16
+      },
+      "start": {
+       "character": 5,
+       "line": 16
+      }
+     }
+    }
+   ],
+   "documentSymbol Sources/Lib/Spool.swift": [
+    {
+     "children": [],
+     "kind": 10,
+     "name": "Spool",
+     "range": {
+      "end": {
+       "character": 20,
+       "line": 0
+      },
+      "start": {
+       "character": 0,
+       "line": 0
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 17,
+       "line": 0
+      },
+      "start": {
+       "character": 12,
+       "line": 0
+      }
+     }
+    }
+   ]
+  },
+  "d": {
+   "documentSymbol Sources/Lib/Registry.swift": [
+    {
+     "children": [
+      {
+       "children": [],
+       "kind": 9,
+       "name": "init()",
+       "range": {
+        "end": {
+         "character": 20,
+         "line": 4
+        },
+        "start": {
+         "character": 4,
+         "line": 4
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 17,
+         "line": 4
+        },
+        "start": {
+         "character": 11,
+         "line": 4
+        }
+       }
+      },
+      {
+       "children": [],
+       "kind": 6,
+       "name": "open(root:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 8
+        },
+        "start": {
+         "character": 4,
+         "line": 6
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 34,
+         "line": 6
+        },
+        "start": {
+         "character": 16,
+         "line": 6
+        }
+       }
+      },
+      {
+       "children": [],
+       "kind": 6,
+       "name": "replay(on:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 12
+        },
+        "start": {
+         "character": 4,
+         "line": 10
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 32,
+         "line": 10
+        },
+        "start": {
+         "character": 9,
+         "line": 10
+        }
+       }
+      }
+     ],
+     "kind": 23,
+     "name": "Registry",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 13
+      },
+      "start": {
+       "character": 0,
+       "line": 3
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 22,
+       "line": 3
+      },
+      "start": {
+       "character": 14,
+       "line": 3
+      }
+     }
+    },
+    {
+     "children": [],
+     "kind": 12,
+     "name": "relaunch()",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 17
+      },
+      "start": {
+       "character": 0,
+       "line": 15
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 15,
+       "line": 15
+      },
+      "start": {
+       "character": 5,
+       "line": 15
+      }
+     }
+    },
+    {
+     "children": [],
+     "kind": 12,
+     "name": "warm()",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 21
+      },
+      "start": {
+       "character": 0,
+       "line": 19
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 11,
+       "line": 19
+      },
+      "start": {
+       "character": 5,
+       "line": 19
+      }
+     }
+    }
+   ],
+   "documentSymbol Sources/Lib/Spool.swift": [
+    {
+     "children": [
+      {
+       "children": [],
+       "kind": 6,
+       "name": "read(from:limit:)",
+       "range": {
+        "end": {
+         "character": 5,
+         "line": 5
+        },
+        "start": {
+         "character": 4,
+         "line": 2
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 39,
+         "line": 3
+        },
+        "start": {
+         "character": 23,
+         "line": 2
+        }
+       }
+      }
+     ],
+     "kind": 10,
+     "name": "Spool",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 6
+      },
+      "start": {
+       "character": 0,
+       "line": 0
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 17,
+       "line": 0
+      },
+      "start": {
+       "character": 12,
+       "line": 0
+      }
+     }
+    }
+   ],
+   "incoming Registry.open(root:)": [],
+   "incoming Registry.replay(on:)": [
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib8RegistryV4open4rootSiSS_tF"
+      },
+      "kind": 6,
+      "name": "Registry.open(root:)",
+      "range": {
+       "end": {
+        "character": 16,
+        "line": 3
+       },
+       "start": {
+        "character": 16,
+        "line": 3
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 16,
+        "line": 3
+       },
+       "start": {
+        "character": 16,
+        "line": 3
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 8,
+        "line": 4
+       },
+       "start": {
+        "character": 8,
+        "line": 4
+       }
+      }
+     ]
+    }
+   ],
+   "incoming Spool.read(from:limit:)": [
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib8RegistryV6replay2onSiSS_tF"
+      },
+      "kind": 6,
+      "name": "Registry.replay(on:)",
+      "range": {
+       "end": {
+        "character": 9,
+        "line": 7
+       },
+       "start": {
+        "character": 9,
+        "line": 7
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 9,
+        "line": 7
+       },
+       "start": {
+        "character": 9,
+        "line": 7
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 14,
+        "line": 8
+       },
+       "start": {
+        "character": 14,
+        "line": 8
+       }
+      }
+     ]
+    },
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib8relaunchSiyF"
+      },
+      "kind": 12,
+      "name": "relaunch()",
+      "range": {
+       "end": {
+        "character": 5,
+        "line": 12
+       },
+       "start": {
+        "character": 5,
+        "line": 12
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 5,
+        "line": 12
+       },
+       "start": {
+        "character": 5,
+        "line": 12
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 10,
+        "line": 13
+       },
+       "start": {
+        "character": 10,
+        "line": 13
+       }
+      },
+      {
+       "end": {
+        "character": 53,
+        "line": 13
+       },
+       "start": {
+        "character": 53,
+        "line": 13
+       }
+      }
+     ]
+    },
+    {
+     "from": {
+      "data": {
+       "uri": "file://ROOT/Sources/Lib/Registry.swift",
+       "usr": "s:3Lib4warmSiyF"
+      },
+      "kind": 12,
+      "name": "warm()",
+      "range": {
+       "end": {
+        "character": 5,
+        "line": 16
+       },
+       "start": {
+        "character": 5,
+        "line": 16
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 5,
+        "line": 16
+       },
+       "start": {
+        "character": 5,
+        "line": 16
+       }
+      },
+      "uri": "file://ROOT/Sources/Lib/Registry.swift"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 10,
+        "line": 17
+       },
+       "start": {
+        "character": 10,
+        "line": 17
+       }
+      }
+     ]
+    }
+   ],
+   "incoming relaunch()": [],
+   "incoming warm()": [],
+   "outgoing Spool.read(from:limit:)": [],
+   "prepare Sources/Lib/Spool.swift:2:23": [
+    {
+     "data": {
+      "uri": "file://ROOT/Sources/Lib/Spool.swift",
+      "usr": "s:3Lib5SpoolO4read4from5limitSaySSGSS_SitFZ"
+     },
+     "kind": 6,
+     "name": "Spool.read(from:limit:)",
+     "range": {
+      "end": {
+       "character": 23,
+       "line": 2
+      },
+      "start": {
+       "character": 23,
+       "line": 2
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 23,
+       "line": 2
+      },
+      "start": {
+       "character": 23,
+       "line": 2
+      }
+     },
+     "uri": "file://ROOT/Sources/Lib/Spool.swift"
+    }
+   ]
+  }
+ },
+ "recordedWith": "sourcekit-lsp (Swift 6.3.3) on the package the test writes: epoch a, then epoch b after its edit and a rebuild. Derived by hand: epoch c is a with Spool.read deleted (its document symbols trimmed); epoch d is a with three lines added atop Registry.swift but not rebuilt (its document symbols moved, the index's call hierarchy not)"
+}

@@ -139,6 +139,9 @@ public final class ApiRouter {
     /// crediting what follows to the terminal given, and waits up to `timeoutMs` for it to load:
     /// its `url`, whether it `loaded` in time, and a load failure's reason (`failed`).
     public var reloadBrowser: ((Board, ObjectID, _ caller: ObjectID?, _ timeoutMs: Int) async throws -> JSONValue)?
+    /// Computes a diagram tile's graph afresh from the code (`DiagramRefresh`) and waits up to
+    /// `timeoutMs` for it: `DiagramRefresh.summary`.
+    public var refreshDiagram: ((Board, ObjectID, _ timeoutMs: Int) async throws -> JSONValue)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
@@ -782,6 +785,7 @@ public final class ApiRouter {
                 }
             }
             try board.checkKey(props, for: nil)
+            if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], type.unknownPropWarnings(props))
 
@@ -790,6 +794,9 @@ public final class ApiRouter {
             let board = try board(forObject: id)
             let frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
             if let root = p["props"]?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
+            if let patch = p["props"], try board.object(id).type == .diagram, let problem = DiagramSpec.problem(try board.object(id).props.merging(patch)) {
+                throw Failure("invalid_params", problem)
+            }
             let object = try board.update(id, rev: p["rev"]?.int, frame: frame, props: p["props"], caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], object.type.unknownPropWarnings(p["props"]))
 
@@ -943,21 +950,29 @@ public final class ApiRouter {
     }
 
     /// `object.reload`: a browser tile's page loaded again (`reloadBrowser`), any browser tile on
-    /// any open board, whoever opened it; other tiles reload what they show by themselves.
+    /// any open board, whoever opened it; a diagram computed afresh from the code
+    /// (`refreshDiagram`). Other tiles reload what they show by themselves.
     private func reload(_ p: JSONValue) async throws -> JSONValue {
         let id = try string(p, "id")
         let board = try board(forObject: id)
         guard let object = board.objects[id] else { throw Failure("not_found", "no object \(id)") }
-        guard object.type == .browser else {
-            throw Failure("invalid_params", "\(id) is a \(object.type.rawValue) tile: only browser tiles reload (code, note and changes tiles follow their files by themselves; an HTML tile re-renders when its props change)")
+        guard object.type == .browser || object.type == .diagram else {
+            throw Failure("invalid_params", "\(id) is a \(object.type.rawValue) tile: only browser and diagram tiles reload (code, note and changes tiles follow their files by themselves; an HTML tile re-renders when its props change)")
         }
-        let timeout = p["timeoutMs"]?.int ?? Self.reloadTimeoutMs
+        let timeout = p["timeoutMs"]?.int ?? (object.type == .diagram ? Self.diagramTimeoutMs : Self.reloadTimeoutMs)
         guard timeout >= 0 else { throw Failure("invalid_params", "timeoutMs must be 0 or more") }
+        if object.type == .diagram {
+            guard let refreshDiagram else { throw Failure("unsupported", "computing diagrams needs the app") }
+            return try await refreshDiagram(board, id, timeout)
+        }
         guard let reloadBrowser else { throw Failure("unsupported", "reloading pages needs the app UI") }
         return try await reloadBrowser(board, id, p["caller"]?.string, timeout)
     }
 
     static let reloadTimeoutMs = 15_000
+    /// A language server's first answers in a project can take a while (sourcekit-lsp loading
+    /// the package and its index).
+    static let diagramTimeoutMs = 60_000
 
     /// `object.measure`: the intrinsic frame size for a type and props (notes and text wrap at
     /// `width`). Paths resolve against the caller's (or the given) board.
@@ -1485,14 +1500,14 @@ public final class ApiRouter {
             if let scope, !scope.contains(object.id) {
                 let ends = [spec.from, spec.to].compactMap { binding -> CGRect? in
                     switch binding {
-                    case .object(let id, _, _): objects[id]?.frame.rect
+                    case .object(let id, _, _, _): objects[id]?.frame.rect
                     case .point(let point): CGRect(origin: point, size: .zero)
                     }
                 }
                 guard let reach = ends.dropFirst().reduce(ends.first, { $0?.union($1) })?.insetBy(dx: -300, dy: -300),
                       scoped?.contains(where: { $0.intersects(reach) }) == true else { continue }
             }
-            for case .object(let id, .some, _) in [spec.from, spec.to] { lineBound.insert(id) }
+            for case .object(let id, .some, _, _) in [spec.from, spec.to] { lineBound.insert(id) }
         }
         let read = objects.values.filter { $0.type == .code && ((scope?.contains($0.id) ?? true) || lineBound.contains($0.id)) }
         let excerpts = await withTaskGroup(of: (ObjectID, NoteExcerpt?).self) { group in

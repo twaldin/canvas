@@ -84,17 +84,20 @@ public struct LanguageServerConfig: Sendable, Equatable {
     }
 
     /// Nearest directory containing a root marker, walking up from the file but never above
-    /// `boundary` (the board root); the boundary itself when nothing marks a project.
+    /// `boundary` (the board root); the boundary itself when nothing marks a project. Both are
+    /// real paths (`GitDiffEngine.realPath`), kept as they are: standardizing would turn
+    /// /private/tmp back into /tmp, a spelling sourcekit-lsp doesn't match to its package's
+    /// files (fallback settings: no index answers).
     public func projectRoot(for file: URL, within boundary: URL) -> URL {
-        let limit = boundary.standardizedFileURL.path
-        var directory = file.deletingLastPathComponent().standardizedFileURL
+        let limit = boundary.path
+        var directory = URL(fileURLWithPath: file.deletingLastPathComponent().path)
         let fileManager = FileManager.default
         while directory.path.hasPrefix(limit) {
             if rootMarkers.contains(where: { fileManager.fileExists(atPath: directory.appendingPathComponent($0).path) }) { return directory }
             if directory.path == limit { break }
-            directory = directory.deletingLastPathComponent()
+            directory = URL(fileURLWithPath: directory.deletingLastPathComponent().path)
         }
-        return file.path.hasPrefix(limit + "/") ? boundary.standardizedFileURL : file.deletingLastPathComponent().standardizedFileURL
+        return file.path.hasPrefix(limit + "/") ? URL(fileURLWithPath: limit) : URL(fileURLWithPath: file.deletingLastPathComponent().path)
     }
 }
 

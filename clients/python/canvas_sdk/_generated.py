@@ -147,6 +147,20 @@ class ImageProps(TypedDict):
     scale: NotRequired["Scale"]
     key: NotRequired["ObjectKey"]
 
+class DiagramProps(TypedDict):
+    """A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the board's files are nodes. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`."""
+    kind: NotRequired[Literal["calls"]]
+    symbol: NotRequired[str]
+    path: NotRequired[str]
+    line: NotRequired[int]
+    direction: NotRequired[Literal["incoming", "outgoing", "both"]]
+    depth: NotRequired[int]
+    expanded: NotRequired[list[str]]
+    title: NotRequired[str]
+    graph: NotRequired[dict[str, Any]]
+    scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
+
 class ShapeProps(TypedDict):
     kind: Required[Literal["rect", "ellipse", "text", "ink"]]
     text: NotRequired[str]
@@ -190,7 +204,7 @@ class Size(TypedDict):
     w: Required[float]
     h: Required[float]
 
-ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "image", "shape", "arrow", "group"]
+ObjectType = Literal["terminal", "browser", "code", "note", "html", "changes", "image", "diagram", "shape", "arrow", "group"]
 
 class CanvasObject(TypedDict):
     id: Required["Id"]
@@ -390,7 +404,7 @@ class ObjectApi:
         return self._call("object.measure", params, ["board","caller"])
 
     def reload(self, *, id: "Id", timeout_ms: int | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so a `canvas get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. Only browser tiles reload: code, note and changes tiles follow their files by themselves."""
+        """Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so a `canvas get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves."""
         params = {"id": id, "timeoutMs": timeout_ms, "caller": caller}
         return self._call("object.reload", params, ["caller"])
 

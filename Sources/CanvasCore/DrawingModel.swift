@@ -73,15 +73,15 @@ public struct InkPoint: Equatable, Sendable {
     }
 }
 
-/// One end of an arrow: bound to an object (optionally to lines or a DOM selector inside it), or
-/// a free point in canvas coordinates.
+/// One end of an arrow: bound to an object (optionally to lines or a DOM selector inside it, or
+/// to a node of a diagram), or a free point in canvas coordinates.
 public enum ArrowBinding: Equatable, Sendable {
-    case object(ObjectID, lines: LineRange? = nil, selector: String? = nil)
+    case object(ObjectID, lines: LineRange? = nil, selector: String? = nil, node: String? = nil)
     case point(CGPoint)
 
     public init?(_ json: JSONValue) {
         if let id = json["object"]?.string {
-            self = .object(id, lines: try? json["lines"]?.decode(LineRange.self), selector: json["selector"]?.string)
+            self = .object(id, lines: try? json["lines"]?.decode(LineRange.self), selector: json["selector"]?.string, node: json["node"]?.string)
         } else if let values = json["point"]?.array?.compactMap(\.number), values.count == 2 {
             self = .point(CGPoint(x: values[0], y: values[1]))
         } else {
@@ -90,16 +90,17 @@ public enum ArrowBinding: Equatable, Sendable {
     }
 
     public var objectID: ObjectID? {
-        if case .object(let id, _, _) = self { return id }
+        if case .object(let id, _, _, _) = self { return id }
         return nil
     }
 
     public var json: JSONValue {
         switch self {
-        case .object(let id, let lines, let selector):
+        case .object(let id, let lines, let selector, let node):
             var binding: [String: JSONValue] = ["object": .string(id)]
             if let lines { binding["lines"] = .object(["start": .number(Double(lines.start)), "end": .number(Double(lines.end))]) }
             if let selector { binding["selector"] = .string(selector) }
+            if let node { binding["node"] = .string(node) }
             return .object(binding)
         case .point(let point):
             return .object(["point": .array([.number(point.x), .number(point.y)])])

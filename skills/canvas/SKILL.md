@@ -6,7 +6,7 @@ description: You are running inside Canvas (CANVAS_ENV=1), an infinite canvas wh
 # Working in Canvas
 
 Your terminal is one tile on an infinite canvas the user is looking at.
-Next to it live code tiles, changes (review) tiles, markdown notes, image tiles, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
+Next to it live code tiles, changes (review) tiles, diagram tiles computed from the code, markdown notes, image tiles, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
 You and the user read and change the same objects: the canvas is the shared working state; your transcript stays in your terminal.
 
 You are in Canvas when `CANVAS_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
@@ -139,6 +139,7 @@ Details and an example: `references/api.md` "Layout".
 | Point at real code | `code` tile: `{"path": "src/store.ts", "range": {"start": 41, "end": 60}, "caption": "restore replays the log"}` (`path` relative to the board root; see Code tiles) |
 | Several locations at once | `canvas.compositions.locations.open(["src/a.ts:10-40", "src/b.ts:7"])` |
 | Durable notes, plans, findings | `note`: `{"markdown": "…"}` |
+| Who calls a function, what it calls | `diagram`: `{"symbol": "SocketServer.start", "direction": "incoming"}`, see Diagram tiles |
 | A chart or figure | `image`: `{"path": "out/fig.png", "caption": "…"}`: save the figure to a file and show it; re-save to the same path and the tile reloads. No base64 PNGs in HTML |
 | A rich explainer, comparison, decision | `html` tile, see below |
 | Structure: boxes, labels, relations | `shape` / `arrow`, see below |
@@ -191,6 +192,18 @@ A branch's or PR's diff without checking it out: `{"base": "origin/main", "head"
 `{"ref": "<branch>"}` instead of `root`: the worktree that has that branch checked out while one does (live, stageable), else its commits as with `head`; once the branch is deleted it keeps showing the last commit it read (`props.refSha`), marked `merged in <sha>` or `branch gone`.
 The user stages, unstages or discards per file, hunk, or selected lines; Stage/Unstage never change files: tell a user unsure of git so when they review your work.
 Read what they kept with `object.get` (`changes.files[].hunks[]` with `status` and `lines`; `props.reviewed[]`), no render needed. Every field: `references/api.md` "Objects".
+
+### Diagram tiles
+
+For "show me who calls X" (or what X calls), create a live call graph from the language server instead of drawing one:
+`canvas object.create --type diagram --json '{"props": {"symbol": "AgentReportSpool.read", "direction": "incoming", "depth": 2}}'`.
+
+- `symbol` is `Type.member` or a bare name (labels optional); add `path` when the name is ambiguous or `line` instead of `symbol`. `direction`: `incoming` (callers), `outgoing` (callees) or `both`; `depth` 1–4 (default 2).
+- The graph is computed by the language server (sourcekit-lsp answers from the index of the user's last `swift build`; its first answer in a project takes ~20 s). `canvas object.reload --id <tile>` computes it again and waits (up to 60 s); then read `props.graph` with `object.get`: `nodes[]` (`id`, `name`, `container`, `path`, `line`, `lines`, `excerpt`, `level`, `stale`, `expandable`), `edges[]` (`from` caller → `to` callee, call `lines`), `error`.
+- It stays live: a file it shows changing recomputes it; nodes are re-found by symbol, and one whose symbol was deleted stays with a stale badge (`stale: true`). Only functions in the board's files are nodes.
+- Open a node's next level by adding its id to `props.expanded` (the user clicks the node's +). The tile sizes itself to its first graph and grows when a node opens; `size: "fit"` works once it has one.
+- Bind an arrow to a node with `{"object": "<diagram>", "node": "<node id>"}` (e.g. from a note explaining that caller).
+- `error` says why a graph is empty or old (no server for the language, the symbol isn't declared there, an unindexed project); the last good graph stays.
 
 ### HTML explainers
 

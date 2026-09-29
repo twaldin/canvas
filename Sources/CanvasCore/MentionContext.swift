@@ -287,8 +287,8 @@ public enum MentionContext {
 
     static func endName(_ binding: ArrowBinding) -> String {
         switch binding {
-        case .object(let id, let lines, let selector):
-            let detail = lines.map { ":\($0.start)-\($0.end)" } ?? selector.map { " \($0)" } ?? ""
+        case .object(let id, let lines, let selector, let node):
+            let detail = lines.map { ":\($0.start)-\($0.end)" } ?? node.map { " node \($0)" } ?? selector.map { " \($0)" } ?? ""
             return id + detail
         case .point(let point):
             // Coordinates are any JSON number; an Int conversion would trap on huge ones.
@@ -320,6 +320,7 @@ public enum MentionContext {
         case .html: return props["title"]?.string ?? "html"
         case .changes: return props["title"]?.string ?? ChangesSpec(props).name
         case .image: return props["title"]?.string ?? props["path"]?.string ?? "image"
+        case .diagram: return DiagramSpec.title(props)
         case .shape: return props["text"]?.string ?? props["kind"]?.string ?? ""
         case .arrow: return props["label"]?.string ?? props["relation"]?.string ?? ""
         case .group: return props["title"]?.string ?? ""

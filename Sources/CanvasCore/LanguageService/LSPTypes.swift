@@ -109,6 +109,9 @@ public struct LSPSymbol: Sendable, Hashable {
     public var kind: Int
     /// Where the symbol's name is; what "reveal" jumps to.
     public var selectionRange: LSPRange
+    /// The whole declaration (body and leading comments included); `selectionRange` for flat
+    /// SymbolInformation answers, which have only the location.
+    public var range: LSPRange
     public var children: [LSPSymbol]
 
     /// DocumentSymbol (hierarchical) or SymbolInformation (flat, location-based).
@@ -119,6 +122,7 @@ public struct LSPSymbol: Sendable, Hashable {
         self.kind = kind
         detail = json["detail"]?.string
         selectionRange = range
+        self.range = LSPRange(json["range"]) ?? range
         children = (json["children"]?.array ?? []).compactMap(LSPSymbol.init)
     }
 
@@ -185,6 +189,55 @@ public struct LSPWorkspaceSymbol: Sendable, Hashable {
     public var kindName: String { LSPSymbol.kindName(kind) }
 }
 
+/// A callable as `textDocument/prepareCallHierarchy` names it, the handle of the incoming and
+/// outgoing calls requests (sent back verbatim: servers keep their own `data` in it).
+public struct LSPCallHierarchyItem: Sendable, Equatable {
+    public var name: String
+    public var kind: Int
+    /// Servers put the container here (sourcekit-lsp: the enclosing type) or a signature.
+    public var detail: String?
+    public var url: URL
+    /// The whole declaration.
+    public var range: LSPRange
+    /// The name.
+    public var selectionRange: LSPRange
+    /// The item as the server sent it.
+    public var json: JSONValue
+
+    public init?(_ json: JSONValue) {
+        guard let name = json["name"]?.string, let kind = json["kind"]?.int, let uri = json["uri"]?.string, let url = URL(string: uri), url.isFileURL,
+              let range = LSPRange(json["range"]), let selection = LSPRange(json["selectionRange"]) else { return nil }
+        self.name = name
+        self.kind = kind
+        detail = json["detail"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+        self.url = url
+        self.range = range
+        selectionRange = selection
+        self.json = json
+    }
+
+    public var kindName: String { LSPSymbol.kindName(kind) }
+}
+
+/// One answer of `callHierarchy/incomingCalls` (the caller, and its calls' ranges in its own
+/// file) or `callHierarchy/outgoingCalls` (the callee, and the calls' ranges in the asking
+/// item's file).
+public struct LSPCallHierarchyCall: Sendable, Equatable {
+    public var item: LSPCallHierarchyItem
+    public var fromRanges: [LSPRange]
+
+    public init(item: LSPCallHierarchyItem, fromRanges: [LSPRange]) {
+        self.item = item
+        self.fromRanges = fromRanges
+    }
+
+    /// `end`: "from" (incoming) or "to" (outgoing).
+    public init?(_ json: JSONValue, end: String) {
+        guard let item = json[end].flatMap(LSPCallHierarchyItem.init) else { return nil }
+        self.init(item: item, fromRanges: (json["fromRanges"]?.array ?? []).compactMap(LSPRange.init))
+    }
+}
+
 public enum LanguageServerStatus: Sendable, Equatable {
     case stopped
     case starting
@@ -199,6 +252,8 @@ public enum LSPError: Error, Equatable, LocalizedError {
     case unavailable(String)
     case startFailed(String)
     case unreadable(String)
+    /// The server doesn't answer this kind of request (not in its capabilities).
+    case unsupportedRequest(String)
     /// The server exited while the request was outstanding.
     case serverExited(String)
     case response(code: Int, message: String)
@@ -210,6 +265,7 @@ public enum LSPError: Error, Equatable, LocalizedError {
         case .unavailable(let what): what
         case .startFailed(let why): "Language server failed to start: \(why)"
         case .unreadable(let path): "Cannot read \(path)"
+        case .unsupportedRequest(let why): why
         case .serverExited(let why): "\(why). It restarts on the next request."
         case .response(_, let message): message
         case .timedOut(let method): "Language server did not answer \(method) in time"

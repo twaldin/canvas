@@ -22,3 +22,73 @@ public enum LoginSession {
         }.sorted()
     }
 }
+
+extension LoginSession {
+    /// A terminal tile's shell-integration variables for the app's resources at `resources`
+    /// (docs/contracts.md "Terminal tile environment"): Canvas's `bin/` first on `PATH`, its
+    /// `clients/python` on `PYTHONPATH`, `ZDOTDIR` its zsh integration with the user's own in
+    /// `CANVAS_ZSH_ZDOTDIR`, and its bash integration in `PROMPT_COMMAND`, each before what the
+    /// app inherited.
+    ///
+    /// An app launched from inside a Canvas tile (an agent's `scripts/dev.sh restart`, `open` in a
+    /// tile) inherits that tile's integration, possibly of another bundle: taken as the user's own,
+    /// its `ZDOTDIR` made every new tile source Canvas's startup files instead of the user's
+    /// (`_canvas_finish: command not found`, no `~/.zshrc`). So every Canvas integration found in
+    /// `inherited` is taken out first (`canvasResources`), and the user's `ZDOTDIR` is what that
+    /// tile kept aside in `CANVAS_ZSH_ZDOTDIR`, else none (their startup files are in `HOME`).
+    public static func tileShellIntegration(resources: String, inherited: [String: String]) -> [String: String] {
+        let foreign = canvasResources(in: inherited).union([resources])
+        func kept(_ list: String?, dropping entry: (String) -> String) -> [String] {
+            let dropped = Set(foreign.map(entry))
+            return (list ?? "").split(separator: ":", omittingEmptySubsequences: true).map(String.init).filter { !dropped.contains($0) }
+        }
+        let bin = resources + "/bin", python = resources + "/clients/python"
+        let path = kept(inherited["PATH"]) { $0 + "/bin" }
+        var env = [
+            "PATH": ([bin] + (path.isEmpty ? ["/usr/bin", "/bin"] : path)).joined(separator: ":"),
+            "PYTHONPATH": ([python] + kept(inherited["PYTHONPATH"]) { $0 + "/clients/python" }).joined(separator: ":"),
+            "ZDOTDIR": resources + "/extensions/shell/zsh",
+        ]
+        let zdotdir = [inherited["ZDOTDIR"], inherited["CANVAS_ZSH_ZDOTDIR"]].compactMap { $0 }.first { integrationRoot(zsh: $0) == nil }
+        if let zdotdir { env["CANVAS_ZSH_ZDOTDIR"] = zdotdir }
+        let bash = bashIntegration(resources)
+        let commands = (inherited["PROMPT_COMMAND"] ?? "").components(separatedBy: "; ").filter { !$0.isEmpty && bashIntegrationRoot($0) == nil }
+        env["PROMPT_COMMAND"] = ([bash] + commands).joined(separator: "; ")
+        return env
+    }
+
+    /// What `PROMPT_COMMAND` runs first in a tile: source the bash integration.
+    static func bashIntegration(_ resources: String) -> String {
+        ". '" + (resources + bashScript).replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+    }
+
+    private static let zshDirectory = "/extensions/shell/zsh"
+    private static let bashScript = "/extensions/shell/bash/canvas.bash"
+
+    /// The resource directories of the Canvas integrations `inherited` carries: a tile's
+    /// `ZDOTDIR` (kept by non-interactive shells and the programs they start), a `CANVAS_ZSH_ZDOTDIR`
+    /// an older Canvas set from one, and `PROMPT_COMMAND`'s sourcing of `canvas.bash` (kept by every
+    /// shell), whichever are there.
+    static func canvasResources(in inherited: [String: String]) -> Set<String> {
+        var found = Set([inherited["ZDOTDIR"], inherited["CANVAS_ZSH_ZDOTDIR"]].compactMap { $0.flatMap(integrationRoot(zsh:)) })
+        for command in (inherited["PROMPT_COMMAND"] ?? "").components(separatedBy: "; ") {
+            if let root = bashIntegrationRoot(command) { found.insert(root) }
+        }
+        return found
+    }
+
+    /// `<resources>` when `dir` is `<resources>/extensions/shell/zsh`, Canvas's zsh integration.
+    static func integrationRoot(zsh dir: String) -> String? {
+        let trimmed = dir.hasSuffix("/") ? String(dir.dropLast()) : dir
+        guard trimmed.hasSuffix(zshDirectory), trimmed.count > zshDirectory.count else { return nil }
+        return String(trimmed.dropLast(zshDirectory.count))
+    }
+
+    /// `<resources>` when `command` is `bashIntegration(<resources>)`.
+    static func bashIntegrationRoot(_ command: String) -> String? {
+        guard command.hasPrefix(". '"), command.hasSuffix(bashScript + "'") else { return nil }
+        let quoted = command.dropFirst(3).dropLast(bashScript.count + 1)
+        let root = quoted.replacingOccurrences(of: "'\"'\"'", with: "'")
+        return root.isEmpty ? nil : root
+    }
+}

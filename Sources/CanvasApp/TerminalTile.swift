@@ -77,17 +77,10 @@ final class TerminalTile: NSView, TileContent {
         ]
         if let password = AppPaths.cmuxPassword { env["CMUX_SOCKET_PASSWORD"] = password }
         if let resources = AppPaths.resources {
-            let inherited = ProcessInfo.processInfo.environment
-            env["PATH"] = resources.appendingPathComponent("bin").path + ":" + (inherited["PATH"] ?? "/usr/bin:/bin")
-            let python = resources.appendingPathComponent("clients/python").path
-            env["PYTHONPATH"] = inherited["PYTHONPATH"].map { "\(python):\($0)" } ?? python
             // Shell integration (extensions/shell): after the user's startup files, Canvas's bin
-            // goes back to the front of PATH so its claude/codex wrappers aren't shadowed.
-            let shell = resources.appendingPathComponent("extensions/shell")
-            env["ZDOTDIR"] = shell.appendingPathComponent("zsh").path
-            if let zdotdir = inherited["ZDOTDIR"] { env["CANVAS_ZSH_ZDOTDIR"] = zdotdir }
-            let bash = ". " + quote([shell.appendingPathComponent("bash/canvas.bash").path])
-            env["PROMPT_COMMAND"] = inherited["PROMPT_COMMAND"].map { "\(bash); \($0)" } ?? bash
+            // goes back to the front of PATH so its claude/codex wrappers aren't shadowed. An
+            // integration the app inherited from a tile it was launched in is not the user's.
+            env.merge(LoginSession.tileShellIntegration(resources: resources.path, inherited: ProcessInfo.processInfo.environment)) { _, new in new }
             // Ghostty's own shell integration (prompt marks), which the scripts above load.
             if let integration = TerminalConfig.shared.shellIntegration { env["CANVAS_GHOSTTY_INTEGRATION"] = integration }
         }

@@ -485,6 +485,41 @@ struct LoginSessionTests {
         let stripped = LoginSession.strippedForTile(inherited, keep: ["PATH", "CANVAS_SOCKET", "CANVAS_TILE_ID"])
         #expect(stripped == ["CI", "CLAUDECODE", "EDITOR", "GEMINI_API_KEY", "GIT_EDITOR", "HERDR_PANE_ID", "NO_COLOR", "PAGER", "npm_config_yes"])
     }
+
+    @Test func aCanvasLaunchedFromATileTakesTheUsersStartupFilesNotThatTilesIntegration() {
+        let app = "/tmp/cap/Canvas-next.app/Contents/Resources", old = "/tmp/cap/Canvas.app/Contents/Resources"
+        let fresh = LoginSession.tileShellIntegration(resources: app, inherited: ["PATH": "/opt/homebrew/bin:/usr/bin", "ZDOTDIR": "/Users/u/.config/zsh"])
+        #expect(fresh == [
+            "PATH": "\(app)/bin:/opt/homebrew/bin:/usr/bin", "PYTHONPATH": "\(app)/clients/python", "ZDOTDIR": "\(app)/extensions/shell/zsh",
+            "CANVAS_ZSH_ZDOTDIR": "/Users/u/.config/zsh", "PROMPT_COMMAND": ". '\(app)/extensions/shell/bash/canvas.bash'",
+        ], "launched from the Dock or a terminal")
+
+        // Launched by an agent in a tile of another bundle (`dev.sh restart`, a non-interactive
+        // shell): the tile's ZDOTDIR was its zsh integration, and new tiles sourced that instead
+        // of ~/.zshrc (`_canvas_finish: command not found`).
+        let tile = [
+            "PATH": "\(old)/bin:/Users/u/.nvm/versions/node/v22/bin:\(old)/bin:/usr/bin", "PYTHONPATH": "\(old)/clients/python:/Users/u/py",
+            "ZDOTDIR": "\(old)/extensions/shell/zsh", "PROMPT_COMMAND": ". '\(old)/extensions/shell/bash/canvas.bash'; history -a",
+        ]
+        let nested = LoginSession.tileShellIntegration(resources: app, inherited: tile)
+        #expect(nested["CANVAS_ZSH_ZDOTDIR"] == nil, "the user has none: their startup files are in HOME")
+        #expect(nested["ZDOTDIR"] == "\(app)/extensions/shell/zsh")
+        #expect(nested["PATH"] == "\(app)/bin:/Users/u/.nvm/versions/node/v22/bin:/usr/bin")
+        #expect(nested["PYTHONPATH"] == "\(app)/clients/python:/Users/u/py")
+        #expect(nested["PROMPT_COMMAND"] == ". '\(app)/extensions/shell/bash/canvas.bash'; history -a")
+
+        // The user's own ZDOTDIR, kept aside by that tile, is theirs again; an interactive shell
+        // had already restored it, and only PROMPT_COMMAND still names the old bundle.
+        let kept = LoginSession.tileShellIntegration(resources: app, inherited: tile.merging(["CANVAS_ZSH_ZDOTDIR": "/Users/u/.config/zsh"]) { $1 })
+        #expect(kept["CANVAS_ZSH_ZDOTDIR"] == "/Users/u/.config/zsh")
+        let restored = LoginSession.tileShellIntegration(resources: app, inherited: ["PATH": "\(old)/bin:/usr/bin", "ZDOTDIR": "/Users/u/.config/zsh",
+                                                                                    "PROMPT_COMMAND": tile["PROMPT_COMMAND"]!])
+        #expect(restored["CANVAS_ZSH_ZDOTDIR"] == "/Users/u/.config/zsh")
+        #expect(restored["PATH"] == "\(app)/bin:/usr/bin")
+
+        // Relaunched from a tile of this same bundle: nothing doubles.
+        #expect(LoginSession.tileShellIntegration(resources: app, inherited: fresh) == fresh)
+    }
 }
 
 struct GhosttyConfigTests {

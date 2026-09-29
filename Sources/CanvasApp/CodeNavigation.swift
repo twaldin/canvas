@@ -585,7 +585,7 @@ final class CodeNavigation: NSObject {
         }
     }
 
-    private func showMessage(_ text: String, anchor: NSPoint) {
+    func showMessage(_ text: String, anchor: NSPoint) {
         present(NavigationPanel.message(text), anchor: anchor)
     }
 

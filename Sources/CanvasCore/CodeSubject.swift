@@ -2,7 +2,9 @@ import Foundation
 
 /// What Go to Definition and Find References act on from the keyboard (the menu bar), where no
 /// pointer names a symbol: the first name on a line that isn't a declaration keyword, so a tile
-/// aimed at `def write_usage(self, …)` or `public func neighbor(of:…)` means that symbol.
+/// aimed at `def write_usage(self, …)` or `public func neighbor(of:…)` means that symbol, and
+/// one aimed at a line naming nothing (a closing brace, a comment, `@MainActor`) the next line
+/// that names something.
 public enum CodeSubject {
     /// Declaration keywords (`DeclarationKeywords`, as words: `macro_rules`), bar those as common
     /// as names, and the modifiers and words that come before a declared name.
@@ -11,8 +13,28 @@ public enum CodeSubject {
         "export", "default", "import", "from", "return", "abstract", "readonly", "declare", "unsafe", "extern", "virtual", "inline", "void", "self",
     ])
 
+    /// A 1-based line and the UTF-16 offset of a name on it.
+    public struct Position: Equatable, Sendable {
+        public var line: Int
+        public var character: Int
+
+        public init(line: Int, character: Int) {
+            self.line = line
+            self.character = character
+        }
+    }
+
+    /// The first name on lines `anchor` through `last` (1-based; `line` gives each one's text);
+    /// nil when none of them names anything.
+    public static func first(from anchor: Int, through last: Int, line text: (Int) -> String) -> Position? {
+        for line in anchor...max(anchor, last) {
+            if let character = firstName(in: text(line)) { return Position(line: line, character: character) }
+        }
+        return nil
+    }
+
     /// The UTF-16 offset of the first non-keyword identifier in `line`; nil when it has none.
-    public static func firstName(in line: String) -> Int? {
+    static func firstName(in line: String) -> Int? {
         let units = Array(line.utf16)
         func isStart(_ unit: UInt16) -> Bool {
             unit == 0x5F || (0x41...0x5A).contains(unit) || (0x61...0x7A).contains(unit) || unit > 0x7F

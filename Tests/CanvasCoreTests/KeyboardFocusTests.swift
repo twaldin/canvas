@@ -39,6 +39,26 @@ struct KeyboardFocusTests {
         #expect(target("shell", ["note"], "shell") == nil, "nothing to act on: the command says so")
     }
 
+    @Test func codeCommandsFromTheKeyboardActOnTheFirstNameAtOrBelowTheTilesAnchorLine() {
+        // A follow tile aimed at line 17 of AgentReportSpool.swift (a closing brace), as filmed:
+        // ⌃⌘R did nothing and said nothing.
+        let file = [
+            14: "    public var method: String",
+            15: "    public var params: JSONValue",
+            16: "    public var file: URL",
+            17: "}",
+            18: "",
+            19: "/// The spooled reports of `tiles`, oldest first.",
+            20: "@MainActor",
+            21: "public static func read(from directory: URL, tiles: [ObjectID]) -> [Entry] {",
+        ]
+        let line: (Int) -> String = { file[$0] ?? "" }
+        #expect(CodeSubject.first(from: 15, through: 21, line: line) == CodeSubject.Position(line: 15, character: 15), "`params`, past the keywords")
+        #expect(CodeSubject.first(from: 17, through: 21, line: line) == CodeSubject.Position(line: 21, character: 19),
+                "`read`: past the brace, the blank line, the doc comment and the attribute")
+        #expect(CodeSubject.first(from: 17, through: 20, line: line) == nil, "nothing named in view: the command says so")
+    }
+
     @Test func theHeaderDropsItsHintBeforeItCutsTheSummary() {
         let width: (String) -> CGFloat = { CGFloat($0.count) * 6 }
         let full = ChangesMetrics.keysHints[0], compact = ChangesMetrics.keysHints[1], shortest = ChangesMetrics.keysHints.last!

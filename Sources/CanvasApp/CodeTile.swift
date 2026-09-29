@@ -958,9 +958,11 @@ extension CodeTile {
     enum KeyboardNavigation { case definition, definitionInNewTile, references, outline }
 
     /// Go to Definition, Find References and Outline from the menu bar, where no pointer names a
-    /// symbol: at the selection's start, else the first name on the tile's anchor line (the
-    /// first line of its range, else the top row) that isn't a keyword (`CodeSubject`). False
-    /// when there is none (a deleted file, nothing loaded yet).
+    /// symbol: at the selection's start, else the first name that isn't a keyword from the tile's
+    /// anchor line (the first line of its range, else the top row) down through its range and the
+    /// rows in view (`CodeSubject.first`: a tile aimed at a closing brace or a comment means the
+    /// next name below it). With no name there, a message in the tile says to select one. False
+    /// when there is nothing to act on (a deleted file, nothing loaded yet).
     @discardableResult
     func navigate(_ action: KeyboardNavigation) -> Bool {
         guard let navigation, let document, showsCurrent, let painter = rowsView.painter else { return false }
@@ -974,12 +976,18 @@ extension CodeTile {
         if let selection = painter.selection, selection.start < selection.end, case .line(let line)? = painter.rows.entryRow(selection.start.entry) {
             subject = (line, selection.start.offset)
         } else {
-            let top: Int? = if case .line(let line)? = painter.rows.segment(topRow)?.row { line } else { nil }
-            if let line = displayed.range?.start ?? top, let character = CodeSubject.firstName(in: document.text(of: .line(line))) {
-                subject = (line, character)
+            let shown = painter.visibleRows(rowsView.bounds).compactMap { row -> Int? in
+                if case .line(let line)? = painter.rows.row(row) { line } else { nil }
+            }
+            if let anchor = displayed.range?.start ?? shown.min(),
+               let found = CodeSubject.first(from: anchor, through: max(displayed.range?.end ?? anchor, shown.max() ?? anchor), line: { document.text(of: .line($0)) }) {
+                subject = (found.line, found.character)
             }
         }
-        guard let subject else { return false }
+        guard let subject else {
+            navigation.showMessage("Nothing named here to act on: select a name first", anchor: NSPoint(x: painter.gutterWidth + 8, y: CodePainter.rowTop(topRow)))
+            return true
+        }
         reveal(line: subject.line)
         let row = painter.rows.index(ofLine: subject.line)
         let anchor = NSPoint(x: painter.gutterWidth + 8, y: CodePainter.rowTop(row))

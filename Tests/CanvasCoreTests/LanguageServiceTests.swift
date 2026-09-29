@@ -317,10 +317,12 @@ final class LanguageServiceTests: Sendable {
 
     // MARK: Lifecycle with stand-in servers
 
-    /// A server that never answers initialize (and never reads its input).
-    func silentServer(_ language: String, ignoringSIGTERM: Bool = false) -> LanguageServerConfig {
-        let script = ignoringSIGTERM ? "trap '' TERM; exec /usr/bin/tail -f /dev/null" : "exec /usr/bin/tail -f /dev/null"
-        return LanguageServerConfig(language: language, command: "/bin/sh", arguments: ["-c", script], languageIDs: [language: language], rootMarkers: [])
+    /// A server that never answers initialize (and never reads its input). With `ignoringSIGTERM`,
+    /// it creates that file once its SIGTERM trap is installed, so a test can wait for it.
+    func silentServer(_ language: String, ignoringSIGTERM ready: URL? = nil) -> LanguageServerConfig {
+        let arguments = ready.map { ["-c", "trap '' TERM; : > \"$1\"; exec /usr/bin/tail -f /dev/null", "sh", $0.path] }
+            ?? ["-c", "exec /usr/bin/tail -f /dev/null"]
+        return LanguageServerConfig(language: language, command: "/bin/sh", arguments: arguments, languageIDs: [language: language], rootMarkers: [])
     }
 
     func startingPid(_ service: LanguageService, _ file: URL) async -> Int32? {
@@ -362,9 +364,12 @@ final class LanguageServiceTests: Sendable {
 
     @Test func quitKillsAServerThatIgnoresSIGTERM() async throws {
         let file = try write("a.hang", "x\n")
-        let service = LanguageService(configs: [silentServer("hang", ignoringSIGTERM: true)])
+        let trapped = dir.appendingPathComponent("hang-trapped")
+        let service = LanguageService(configs: [silentServer("hang", ignoringSIGTERM: trapped)])
         let request = Task { try await service.hover(file: file, boardRoot: dir, at: LSPPosition(line: 0, character: 0)) }
         let pid = try #require(await startingPid(service, file))
+        // SIGTERM sent before the shell installs its trap would end it by SIGTERM, not SIGKILL.
+        #expect(await eventually(10) { FileManager.default.fileExists(atPath: trapped.path) })
         await service.terminateAll(grace: .milliseconds(500))
         #expect(!Self.isAlive(pid))
         #expect(service.liveProcessCount == 0)

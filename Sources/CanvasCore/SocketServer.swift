@@ -100,6 +100,9 @@ public final class SocketServer: @unchecked Sendable {
     private var listenFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private var connections: [Int32: Connection] = [:]
+    /// The socket file `start` bound (device and inode). Instances sharing a support dir bind
+    /// the same path in turn, so `stop` removes the path only while it is still this file.
+    private var boundFile: (device: dev_t, inode: ino_t)?
     /// Reused for every read; only touched on `queue`.
     private var readBuffer = [UInt8](repeating: 0, count: 64 * 1024)
     private let handler: Handler
@@ -134,6 +137,8 @@ public final class SocketServer: @unchecked Sendable {
             throw POSIXError(.init(rawValue: code) ?? .EIO)
         }
         listenFD = fd
+        var info = stat()
+        if lstat(path, &info) == 0 { boundFile = (info.st_dev, info.st_ino) }
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self] in self?.accept() }
         source.setCancelHandler { close(fd) }
@@ -149,7 +154,11 @@ public final class SocketServer: @unchecked Sendable {
             connections.removeAll()
             listenFD = -1
         }
-        unlink(path)
+        var info = stat()
+        if let file = boundFile, lstat(path, &info) == 0, info.st_dev == file.device, info.st_ino == file.inode {
+            unlink(path)
+        }
+        boundFile = nil
     }
 
     private func accept() {

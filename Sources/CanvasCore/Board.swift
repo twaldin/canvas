@@ -834,6 +834,25 @@ public final class Board {
         return state == LifecycleState.working.rawValue || state == LifecycleState.done.rawValue
     }
 
+    /// Gemini CLI's window title while it waits for a prompt (its dynamic window title, on unless
+    /// the user turned `ui.dynamicWindowTitle` off or hid the title): `◇  Ready (<folder>)`, padded.
+    public static let geminiReadyTitle = "\u{25C7}  Ready"
+
+    /// Terminal `tile`'s program set its window title (OSC 0/2) to `title`. Gemini CLI reports an
+    /// approval dialog through its `Notification` hook but fires no hook when the user cancels it
+    /// with Esc ("Request cancelled."; the turn ends without `AfterTool` or `AfterAgent`), so a
+    /// gemini tile `blocked` on it stayed orange, ⌘J going there, until the next prompt. Its title
+    /// says `✋  Action Required` while a dialog is open and `◇  Ready` only once Gemini waits for a
+    /// prompt, with no approval pending and nothing running: that ends the wait (`idle`, reported
+    /// as the hooks report, at `seq` now, so a hook's report of the cancelled dialog arriving
+    /// late changes nothing). Answering the dialog is still the hooks' (`AfterTool`: working).
+    public func terminalTitled(_ tile: ObjectID, title: String, now: Date = Date()) {
+        guard let terminal = objects[tile], terminal.type == .terminal, terminal.props["agent"]?["kind"]?.string == "gemini",
+              terminal.props["lifecycle"]?["state"]?.string == LifecycleState.blocked.rawValue, !NotifyingAgent.reports(terminal),
+              title.drop(while: \.isWhitespace).hasPrefix(Self.geminiReadyTitle) else { return }
+        try? reportLifecycle(tile: tile, kind: "gemini", state: .idle, message: nil, seq: Int(now.timeIntervalSince1970 * 1_000_000), source: "canvas-gemini")
+    }
+
     /// The user has looked at this terminal; a `done` agent becomes `idle`.
     public func markSeen(_ tile: ObjectID) {
         guard let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }

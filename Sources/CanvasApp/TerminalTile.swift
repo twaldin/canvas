@@ -227,6 +227,7 @@ final class TerminalTile: NSView, TileContent {
 
     fileprivate func titleChanged(_ title: String) {
         oscTitle = title
+        board.terminalTitled(objectID, title: title)
         // A new command: the header's status was the previous one's.
         if commands.title(title, at: Date(), promptTitle: TerminalCommandTracker.promptTitle(cwd: reportedCwd, home: NSHomeDirectory())) {
             onStatus?(nil, false, nil)

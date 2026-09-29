@@ -619,6 +619,35 @@ struct BoardTests {
         #expect(NeedsYou.of(board.objects.values) == nil, "approved and seen: quiet again")
     }
 
+    @Test func aGeminiApprovalCancelledWithEscEndsTheWaitWhenGeminiSaysItIsReady() throws {
+        let board = makeBoard()
+        let gemini = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
+        let omp = board.create(type: .terminal, props: .object(["cwd": .string(root.path)]))
+        let start = 1_790_652_000_000_000
+        func state(_ tile: CanvasObject) -> String? { board.objects[tile.id]?.props["lifecycle"]?["state"]?.string }
+        try board.reportLifecycle(tile: gemini.id, kind: "gemini", state: .working, message: nil, seq: start, source: "canvas-gemini")
+        board.terminalTitled(gemini.id, title: "✦  Working… (canvas)")
+        try board.reportLifecycle(tile: gemini.id, kind: "gemini", state: .blocked, message: "Apply this change? (note.json)", seq: start + 1, source: "canvas-gemini", call: "c1")
+        board.terminalTitled(gemini.id, title: "✋  Action Required (canvas)                ")
+        #expect(NeedsYou.of(board.objects.values)?.terminals == [gemini.id])
+
+        // Esc: "Request cancelled.", and no hook fires. Gemini's title is all that says so.
+        board.terminalTitled(gemini.id, title: "◇  Ready (canvas)                                                               ", now: Date(timeIntervalSince1970: 1_790_652_001))
+        #expect(state(gemini) == "idle")
+        #expect(board.objects[gemini.id]?.props["lifecycle"]?["message"] == nil, "not the cancelled question")
+        #expect(NeedsYou.of(board.objects.values) == nil, "⌘J has nowhere to go")
+        try board.reportLifecycle(tile: gemini.id, kind: "gemini", state: .blocked, message: "Apply this change? (note.json)", seq: start + 1, source: "canvas-gemini", call: "c1")
+        #expect(state(gemini) == "idle", "the dialog's report, replayed late, is older")
+
+        // Only gemini, and only its wait for the user: a title never ends a turn or another agent's wait.
+        try board.reportLifecycle(tile: gemini.id, kind: "gemini", state: .working, message: nil, seq: start + 2_000_000, source: "canvas-gemini")
+        board.terminalTitled(gemini.id, title: "◇  Ready (canvas)")
+        #expect(state(gemini) == "working")
+        try board.reportLifecycle(tile: omp.id, kind: "omp", state: .blocked, message: "approve bash?", seq: 1, source: "canvas-omp")
+        board.terminalTitled(omp.id, title: "◇  Ready (canvas)")
+        #expect(state(omp) == "blocked")
+    }
+
     @Test func clearingAllMarkersClearsEveryOneWithItsEvent() throws {
         let board = makeBoard()
         let notes = (0..<3).map { board.create(type: .note, props: .object(["markdown": .string("n\($0)")])) }

@@ -112,6 +112,10 @@ export type CodeProps = {
     range?: LineRange;
     action: "read" | "edit" | "write" | "lsp" | "search";
   })[];
+  /** a branch (or any ref) the tile is anchored to instead of one checkout; `path` is relative to the board root's place in the repository (an absolute path in any worktree of the repository means the same repo path). While a worktree of the repository has the ref checked out the tile reads that working tree live: gutter against `diffBase` (default its merge-base), edits reload (header: "live in <worktree>"). Otherwise it reads git objects at the ref, read-only like `pinnedCommit` ("<ref> @ <sha>"). Once the ref no longer resolves (worktree and branch deleted) it reads `refSha`: when the default branch contains it, at the commit that merged it ("merged in <sha>"), else at `refSha` itself ("branch gone, showing <sha>") while its objects exist. `pinnedCommit`, when also set, wins and the ref is ignored. A ref that resolves to nothing (and no `refSha` whose objects remain) is `not_found` on create or update */
+  ref?: string;
+  /** written by Canvas: the full SHA `ref` last resolved to (the live worktree's HEAD, or the ref's commit), recorded on every resolve without a rev or undo step, so the tile keeps reading once its worktree and branch are deleted. May be given with `ref` (e.g. by a script that knows the tip) */
+  refSha?: string;
   /** a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: "pinned at <sha>"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so, and a create or update that needs its text (`size: fit`, a symbol) fails with `not_found`. A path in another worktree of the repository (absolute) is read in that worktree */
   pinnedCommit?: string;
   scale?: Scale;
@@ -123,6 +127,10 @@ export type NoteProps = {
   markdown: string;
   /** shown in the tile's title bar (default "Note") and Go to */
   title?: string;
+  /** a branch (or any ref) whose tree the note's paths resolve in, instead of `root` (which it overrides): the worktree that has it checked out, live, else git objects at the ref, falling back like CodeProps.ref once it is merged or deleted (via `refSha`). Excerpt fences without their own `@<sha>` read there; path:line links open code tiles with the same `ref`. The markdown stays inline, and images still load from the board's checkout when no worktree has the ref */
+  ref?: string;
+  /** written by Canvas: the SHA `ref` last resolved to (as CodeProps.refSha) */
+  refSha?: string;
   /** the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params */
   root?: string;
   scale?: Scale;
@@ -133,6 +141,10 @@ export type HtmlProps = {
   /** page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded */
   html: string;
   title?: string;
+  /** a branch (or any ref) whose tree canvas-code excerpts and canvas-link resolve in, instead of `root`: as NoteProps.ref. The page body stays inline; img and other page files load from the live worktree, else the board's checkout */
+  ref?: string;
+  /** written by Canvas: the SHA `ref` last resolved to (as CodeProps.refSha) */
+  refSha?: string;
   /** the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root */
   root?: string;
   allowNetwork?: string[];

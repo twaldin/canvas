@@ -101,6 +101,8 @@ class CodeProps(TypedDict):
     lastAction: NotRequired[Literal["read", "edit", "write", "lsp", "search"]]
     lastChanges: NotRequired[list["LineRange"]]
     history: NotRequired[list[dict[str, Any]]]
+    ref: NotRequired[str]
+    refSha: NotRequired[str]
     pinnedCommit: NotRequired[str]
     scale: NotRequired["Scale"]
     key: NotRequired["ObjectKey"]
@@ -108,6 +110,8 @@ class CodeProps(TypedDict):
 class NoteProps(TypedDict):
     markdown: Required[str]
     title: NotRequired[str]
+    ref: NotRequired[str]
+    refSha: NotRequired[str]
     root: NotRequired[str]
     scale: NotRequired["Scale"]
     key: NotRequired["ObjectKey"]
@@ -115,6 +119,8 @@ class NoteProps(TypedDict):
 class HtmlProps(TypedDict):
     html: Required[str]
     title: NotRequired[str]
+    ref: NotRequired[str]
+    refSha: NotRequired[str]
     root: NotRequired[str]
     allowNetwork: NotRequired[list[str]]
     state: NotRequired[dict[str, Any]]

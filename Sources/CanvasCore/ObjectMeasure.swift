@@ -95,7 +95,18 @@ public enum ObjectMeasure {
     public static func codeExcerpt(_ props: JSONValue, root: URL) async throws -> NoteExcerpt {
         guard let path = props["path"]?.string else { throw Failure.invalidParams("code props need a path") }
         let range = try? props["range"]?.decode(LineRange.self)
-        let fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: range == nil ? props["symbol"]?.string : nil)
+        var fence = NoteFence(path: path, commit: props["pinnedCommit"]?.string, lines: range, symbol: range == nil ? props["symbol"]?.string : nil)
+        var root = root
+        // A branch-anchored tile reads where its ref is now; a pinned commit wins over it.
+        if fence.commit?.isEmpty ?? true, let ref = RefSource.ref(of: props) {
+            do {
+                let source = try await RefSource.resolve(ref: ref, lastKnownSha: props["refSha"]?.string, boardRoot: root)
+                fence = source.fence(fence)
+                root = source.root
+            } catch {
+                throw Failure.notFound(RefSource.describe(error, ref: ref))
+            }
+        }
         let excerpt = await NoteSource.excerpt(for: fence, root: root, captured: nil)
         guard excerpt.range != nil else {
             if case .stale(let reason) = excerpt.status { throw excerpt.missing ? Failure.notFound(reason) : Failure.unavailable(reason) }

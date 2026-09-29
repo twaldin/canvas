@@ -87,9 +87,9 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         let own: Set<String> = switch self {
         case .terminal: ["cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "scale"]
         case .browser: ["url", "title", "pageTitle", "scale"]
-        case .code: ["path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "scale"]
-        case .note: ["markdown", "title", "root", "scale"]
-        case .html: ["html", "title", "root", "allowNetwork", "state", "scale"]
+        case .code: ["path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "ref", "refSha", "scale"]
+        case .note: ["markdown", "title", "root", "ref", "refSha", "scale"]
+        case .html: ["html", "title", "root", "ref", "refSha", "allowNetwork", "state", "scale"]
         case .changes: ["root", "base", "paths", "title", "reviewed", "viewed", "scale"]
         case .image: ["path", "caption", "title", "scale"]
         case .shape: ["kind", "text", "points", "color", "fill", "scale"]

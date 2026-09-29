@@ -81,6 +81,7 @@ final class CodeTile: NSView, TileContent {
         header.onCatchUp = { [weak self] in self?.catchUp() }
         header.onLocation = { [weak self] location in self?.userAim(location) }
         NotificationCenter.default.addObserver(self, selector: #selector(baseChanged), name: .gitDiffBaseChanged, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(refsMoved(_:)), name: .gitRefsMoved, object: nil)
         header.show(caption: object.props["caption"]?.string)
         refreshHeader()
         resizeSubviews(withOldSize: .zero)
@@ -113,6 +114,18 @@ final class CodeTile: NSView, TileContent {
     @objc nonisolated private func baseChanged() {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.load() }
+        }
+    }
+
+    /// A branch-anchored tile re-resolves when refs or worktrees of the repository it reads move:
+    /// a worktree checking its branch out or going away, the branch merged or deleted.
+    @objc nonisolated private func refsMoved(_ notification: Notification) {
+        let toplevel = notification.object as? String
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.source.ref != nil, toplevel == self.heldRepository else { return }
+                self.scheduleReload()
+            }
         }
     }
 
@@ -173,17 +186,48 @@ final class CodeTile: NSView, TileContent {
     private var diffBase: DiffBase { DiffBase(prop: object.props["diffBase"]?.string) }
     /// A commit the tile shows the file at instead of the working tree (read-only, no diff).
     private var pinnedCommit: String? { object.props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 } }
-    /// What a load reads: the file against its diff base, or at its pinned commit.
-    private var source: Source { Source(base: diffBase, pinned: pinnedCommit) }
+    /// What a load reads: the file against its diff base, at its pinned commit, or where its
+    /// branch (`props.ref`) is now; a pinned commit wins over a ref.
+    private var source: Source { Source(base: diffBase, pinned: pinnedCommit, ref: pinnedCommit == nil ? RefSource.ref(of: object.props) : nil) }
 
     private struct Source: Equatable {
         var base: DiffBase
         var pinned: String?
+        var ref: String?
 
-        func document(path: String, url: URL) async -> CodeDocument {
+        /// Where the file is read from: `url` (the path on the board), or for a ref the file in the
+        /// worktree that has it checked out, else in the board's checkout at the ref's commit.
+        struct Located: Sendable {
+            var file: URL
+            var ref: RefSource?
+            var failure: String?
+        }
+
+        func locate(url: URL, path: String, boardRoot: URL, refSha: String?) async -> Located {
+            guard let ref else { return Located(file: url) }
+            do {
+                let source = try await RefSource.resolve(ref: ref, lastKnownSha: refSha, boardRoot: boardRoot)
+                return Located(file: source.url(for: path), ref: source)
+            } catch {
+                return Located(file: url, failure: RefSource.describe(error, ref: ref))
+            }
+        }
+
+        func document(path: String, located: Located, boardRoot: URL) async -> CodeDocument {
             let engine = GitDiffEngine.shared
-            let diff = if let pinned { await engine.pinned(file: url, revision: pinned) } else { await engine.diff(file: url, base: base) }
-            return await offPool { CodeDocument(path: path, diff: diff) }
+            if let failure = located.failure {
+                let diff = FileDiff(state: .pinUnavailable, base: nil, baseLabel: failure, old: SideText(""), new: SideText(""), hunks: [])
+                return CodeDocument(path: path, diff: diff, ref: ref)
+            }
+            let diff: FileDiff = if let pinned {
+                await engine.pinned(file: located.file, revision: pinned)
+            } else if let commit = located.ref?.commit {
+                await engine.pinned(file: located.file, revision: commit)
+            } else {
+                await engine.diff(file: located.file, base: base)
+            }
+            let readPath = located.ref.map { _ in Board.relativePath(located.file.path, root: boardRoot) }
+            return await offPool { CodeDocument(path: path, diff: diff, readPath: readPath, ref: located.ref?.label) }
         }
     }
     private var followOf: ObjectID? { object.props["followOf"]?.string }
@@ -202,7 +246,7 @@ final class CodeTile: NSView, TileContent {
                 scheduleResume()
             }
         }
-        if old.props["diffBase"] != object.props["diffBase"] || old.props["pinnedCommit"] != object.props["pinnedCommit"] { load() }
+        if old.props["diffBase"] != object.props["diffBase"] || old.props["pinnedCommit"] != object.props["pinnedCommit"] || old.props["ref"] != object.props["ref"] { load() }
         if old.props["range"] != object.props["range"] || old.props["anchor"] != object.props["anchor"] {
             if documentIsCurrent {
                 reanchor()
@@ -295,15 +339,21 @@ final class CodeTile: NSView, TileContent {
         needsLoad = false
         let path = displayed.path
         let url = board.absoluteURL(path)
-        watch(url)
-        let source = source
+        let source = source, boardRoot = board.root, refSha = object.props["refSha"]?.string
+        if source.ref == nil { watch(url) }
         generation += 1
         let current = generation
         loadTask?.cancel()
         loadTask = Task { [weak self] in
             let engine = GitDiffEngine.shared
-            let held = await engine.retain(containing: url)
-            let document = await source.document(path: path, url: url)
+            let located = await source.locate(url: url, path: path, boardRoot: boardRoot, refSha: refSha)
+            if source.ref != nil, let self, current == self.generation {
+                // Its worktree deleted, the file goes, and the reload finds the ref's objects.
+                self.watch(located.file)
+                if let resolved = located.ref { self.board.recordRefSha(self.object.id, ref: resolved.ref, sha: resolved.resolution.sha) }
+            }
+            let held = await engine.retain(containing: located.file)
+            let document = await source.document(path: path, located: located, boardRoot: boardRoot)
             // Tiles loading together (a batch) install one per main turn.
             await MainTurns.next()
             guard let self, !Task.isCancelled, current == self.generation, self.isLive else {
@@ -328,8 +378,10 @@ final class CodeTile: NSView, TileContent {
     /// The model without holding the repository, for renders and cards of tiles that aren't live.
     private func loadOffscreen() async -> CodeDocument? {
         if documentIsCurrent, let document { return document }
-        let path = displayed.path, source = source
-        let document = await source.document(path: path, url: board.absoluteURL(path))
+        let path = displayed.path, source = source, boardRoot = board.root
+        let located = await source.locate(url: board.absoluteURL(path), path: path, boardRoot: boardRoot, refSha: object.props["refSha"]?.string)
+        if let resolved = located.ref { board.recordRefSha(object.id, ref: resolved.ref, sha: resolved.resolution.sha) }
+        let document = await source.document(path: path, located: located, boardRoot: boardRoot)
         await MainTurns.next()
         guard path == displayed.path, source == self.source else { return nil }
         if !showsCurrent || loadedSource != source || reanchorPending || self.document?.text != document.text || self.document?.signs != document.signs {
@@ -676,9 +728,10 @@ extension CodeTile {
     }
 
     private func showHeader(for document: CodeDocument?) {
-        // A pinned tile has no diff base to pick.
+        // A pinned tile, or one reading its ref's objects, has no diff base to pick.
         let warning = [staleReason.map { "stale: \($0)" }, document?.warning].compactMap { $0 }.joined(separator: " · ")
-        header.show(diffBase: pinnedCommit == nil ? diffBaseProp : nil, defaultBranch: defaultBranch(for: document), baseDescription: document?.baseDescription,
+        let readOnly = pinnedCommit != nil || (source.ref != nil && document.map { $0.isPinned || $0.diff.state == .pinUnavailable } ?? true)
+        header.show(diffBase: readOnly ? nil : diffBaseProp, defaultBranch: defaultBranch(for: document), baseDescription: document?.baseDescription,
                     status: document?.status ?? "loading…", warning: warning.isEmpty ? nil : warning, changes: !(document?.signs.isEmpty ?? true), follow: followOf != nil, missed: lock.missed)
         let before = header.height
         let history = followOf == nil ? [] : self.history
@@ -744,7 +797,7 @@ extension CodeTile {
         guard let document, showsCurrent, document.side == .new, !document.isPinned else { return }
         board.keepCode(object.id)
         let line = displayedLine(atY: point.y) ?? displayed.range?.start ?? 1
-        let path = document.path
+        let path = document.readPath
         Task { [weak self] in
             // The login shell is a blocking subprocess (once, then cached).
             let argv = await offPool {
@@ -906,7 +959,7 @@ extension CodeTile {
     /// quote base lines and name the base however the tile changes before the tray drains.
     private func code(_ lines: LineRange, side: DiffSide, in document: CodeDocument) -> MentionTarget {
         let commit = side == .old ? document.diff.base : document.mentionCommit
-        return .code(object: object.id, path: document.path, lines: lines, side: commit == nil || document.isPinned ? nil : side.rawValue,
+        return .code(object: object.id, path: document.readPath, lines: lines, side: commit == nil || document.isPinned ? nil : side.rawValue,
                      symbol: document.enclosingSymbol(lines: lines, side: side), commit: commit)
     }
 
@@ -1096,7 +1149,7 @@ extension CodeTile {
 // MARK: Code navigation (CodeNavigationHost)
 
 extension CodeTile: CodeNavigationHost {
-    var navigationPath: String { displayed.path }
+    var navigationPath: String { showsCurrent ? document?.readPath ?? displayed.path : displayed.path }
 
     var navigationView: NSView { rowsView }
 

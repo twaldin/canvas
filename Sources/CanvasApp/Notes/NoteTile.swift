@@ -35,6 +35,9 @@ final class NoteTile: NSView, TileContent {
     /// A symbol fence found no file yet: any (non-hidden) change under the root may declare it.
     private var watchesRoot = false
     private var events: FileEvents?
+    /// Where the note's files were last read (`Board.linkSource`): with a `ref`, the live worktree
+    /// or the ref's commit.
+    private var reading: LinkReading?
     private var resolveTask: Task<Void, Never>?
     private var resolveGeneration = 0
     private var pendingResolve: DispatchWorkItem?
@@ -130,13 +133,14 @@ final class NoteTile: NSView, TileContent {
     /// A code link the user clicked opened this code tile, or found one already showing the
     /// lines (`existing`); the canvas shows it.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
-    /// Where the note's relative paths resolve (`Board.linkRoot`).
-    private var linkRoot: URL { board.linkRoot(of: object) }
+    /// Where the note's relative paths resolve (`Board.linkRoot`, or where its ref was read).
+    private var linkRoot: URL { reading?.root ?? board.linkRoot(of: object) }
 
     func update(_ object: CanvasObject) {
         let changed = object.props["markdown"] != self.object.props["markdown"]
-        let rerooted = object.props["root"] != self.object.props["root"]
+        let rerooted = object.props["root"] != self.object.props["root"] || object.props["ref"] != self.object.props["ref"]
         self.object = object
+        if rerooted { reading = nil }
         guard changed else {
             if rerooted {
                 excerpts = [:]
@@ -210,14 +214,17 @@ final class NoteTile: NSView, TileContent {
         let generation = resolveGeneration
         let jobs = fences
         let captured = captured
-        let root = linkRoot
+        let board = board, object = object
         resolveTask = Task { [weak self] in
-            let results = await NoteSource.excerpts(for: jobs, root: root, captured: captured)
+            let reading = await board.linkSource(of: object)
+            let root = reading.root
+            let results = await NoteSource.excerpts(for: reading.fences(jobs), root: root, captured: captured)
             if Task.isCancelled { return }
             let images = await NoteImages.load(sources, root: root)
             if Task.isCancelled { return }
             guard let self, self.resolveGeneration == generation else { return }
             self.resolveTask = nil
+            self.reading = reading
             self.apply(results, images: images, imageFiles: Array(NoteImages.files(sources, root: root).values))
         }
     }
@@ -230,7 +237,8 @@ final class NoteTile: NSView, TileContent {
             self.images = images
             renderDisplay()
         }
-        let unpinned = fences.filter { $0.fence.commit == nil }
+        // Fences read at a commit (their own, or the ref's) never change on disk.
+        let unpinned = reading?.commit == nil ? fences.filter { $0.fence.commit == nil } : []
         let files = unpinned.compactMap { results[$0.key]?.path }.filter { !$0.isEmpty }
         let unfound = unpinned.contains { $0.fence.path == nil && results[$0.key]?.path.isEmpty != false }
         let root = linkRoot
@@ -250,7 +258,9 @@ final class NoteTile: NSView, TileContent {
     /// what it resolved last (a source restored since would still show its stale badge).
     func resolvedExcerpts() async -> [String: NoteExcerpt] {
         let jobs = fences
-        let results = await NoteSource.excerpts(for: jobs, root: linkRoot, captured: captured)
+        let reading = await board.linkSource(of: object)
+        self.reading = reading
+        let results = await NoteSource.excerpts(for: reading.fences(jobs), root: reading.root, captured: captured)
         // The markdown changed meanwhile: its own resolution is on its way.
         guard jobs == fences, !Task.isCancelled else { return results }
         capture(results)
@@ -289,6 +299,10 @@ final class NoteTile: NSView, TileContent {
         let rootPath = FileEvents.canonical(linkRoot.path)
         var directories = Set(files.map(FileEvents.watchableDirectory(for:)))
         if root { directories.insert(rootPath) }
+        // A note anchored to a branch re-reads when a worktree checks it out or goes away, or the
+        // branch moves, merges, or is deleted.
+        refsDirectory = RefSource.ref(of: object.props) == nil ? nil : GitWorktree.containing(board.root.path).map { FileEvents.canonical($0.commonDir) }
+        if let refsDirectory { directories.insert(refsDirectory) }
         // A directory inside another watched one adds nothing to a recursive stream.
         let minimal = directories.filter { directory in !directories.contains { $0 != directory && directory.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") } }.sorted()
         guard minimal != events?.directories else { return }
@@ -297,9 +311,13 @@ final class NoteTile: NSView, TileContent {
         }
     }
 
+    /// The repository's common git directory, watched for a note with a `ref`.
+    private var refsDirectory: String?
+
     private func filesChanged(_ paths: [String], root: String) {
         let relevant = paths.contains { path in
             if watchedFiles.contains(path) { return true }
+            if let refsDirectory, path.hasPrefix(refsDirectory + "/") { return GitDiffEngine.movesBase(path) }
             guard watchesRoot, path.hasPrefix(root + "/") else { return false }
             // Hidden directories (.git, .build) churn constantly and declare nothing.
             return !path.dropFirst(root.count + 1).split(separator: "/").contains { $0.hasPrefix(".") }
@@ -408,7 +426,9 @@ final class NoteTile: NSView, TileContent {
     private func open(_ link: NoteLink) {
         switch link {
         case .code(let path, let lines):
-            let opened = board.openForNavigation(CodeAim(path: board.boardPath(path, linkRoot: linkRoot), range: lines), from: object.id)
+            // A note anchored to a branch opens its code at the same ref.
+            let ref = RefSource.ref(of: object.props).map { ["ref": JSONValue.string($0)] } ?? [:]
+            let opened = board.openForNavigation(CodeAim(path: board.boardPath(path, linkRoot: linkRoot), range: lines), from: object.id, extra: ref)
             onOpenedCode?(opened.id, opened.existing)
         case .web(let url) where url.scheme == "http" || url.scheme == "https":
             let size = Board.defaultSize(.browser)

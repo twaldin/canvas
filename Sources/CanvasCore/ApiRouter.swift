@@ -206,7 +206,7 @@ public final class ApiRouter {
                 // An upsert is the create or update it is on the board now; `created` says which.
                 let upsert = method == "object.upsert"
                 let (method, resolved) = upsert ? try upserted(params) : (method, params)
-                let params = try await anchored(method, resolved)
+                let params = try await anchored(method, try await referenced(method, resolved))
                 // A keyed tile is its own: a create that gives a key never takes over another.
                 if method == "object.create", Board.key(params["props"] ?? .null) == nil, let reused = try reusableChanges(params) {
                     let size = try await fitSize("object.update", reused)
@@ -992,12 +992,24 @@ public final class ApiRouter {
             let fences = NoteMarkdown.anchoredFences(in: NoteMarkdown.parse(object.props["markdown"]?.string ?? ""))
             let excerpts = await noteExcerpts?(board, id) ?? [:]
             let unresolved = fences.filter { excerpts[$0.key] == nil }
-            let resolved = excerpts.merging(await NoteSource.excerpts(for: unresolved, root: board.linkRoot(of: object))) { tile, _ in tile }
+            let reading = await board.linkSource(of: object)
+            let resolved = excerpts.merging(await NoteSource.excerpts(for: reading.fences(unresolved), root: reading.root)) { tile, _ in tile }
             return result.merging(.object(["fences": NoteMarkdown.status(of: fences, excerpts: resolved)]))
         }
         if object.type == .code, let fence = CodeAnchor.fence(object.props) {
             var excerpt = await codeRangeStatus?(board, id)
-            if excerpt == nil { excerpt = await NoteSource.excerpt(for: fence, root: board.root, captured: nil) }
+            if excerpt == nil {
+                if let ref = RefSource.ref(of: object.props) {
+                    do {
+                        let source = try await RefSource.resolve(ref: ref, lastKnownSha: object.props["refSha"]?.string, boardRoot: board.root)
+                        excerpt = await NoteSource.excerpt(for: source.fence(fence), root: source.root, captured: nil)
+                    } catch {
+                        excerpt = NoteExcerpt(path: fence.path ?? "", range: nil, lines: [], status: .stale(RefSource.describe(error, ref: ref)), missing: true)
+                    }
+                } else {
+                    excerpt = await NoteSource.excerpt(for: fence, root: board.root, captured: nil)
+                }
+            }
             // The tile may have written a re-found range back meanwhile.
             let current = try dispatch("object.get", p)
             return current.merging(.object(["rangeStatus": .object(excerpt?.statusJSON ?? [:])]))
@@ -1092,23 +1104,81 @@ public final class ApiRouter {
     /// `object.create`/`object.update` params with a note's markdown anchored the way its tile
     /// would write it back (`NoteMarkdown.anchoringRanges`), so the result's `rev` is the one the
     /// next update needs. `pending` are the params of creates earlier in the same batch.
+    /// A create's or update's `ref` on a code, note, or HTML tile resolved now (`RefSource`):
+    /// `refSha` records the SHA it resolved to, a ref that resolves to nothing is `not_found`, and
+    /// clearing the ref clears `refSha`. A code tile's `pinnedCommit` wins: its ref isn't resolved.
+    func referenced(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> JSONValue {
+        guard var params = p.object, var props = p["props"]?.object, let value = props["ref"] else { return p }
+        let board: Board, type: ObjectType?, existing: JSONValue
+        if method == "object.create" {
+            board = try self.board(p)
+            type = p["type"]?.string.flatMap(ObjectType.init(rawValue:))
+            existing = .object([:])
+        } else {
+            let id = try string(p, "id")
+            if let index = Self.reference(id) {
+                guard let created = pending[index] else { return p }
+                board = try self.board(created)
+                type = created["type"]?.string.flatMap(ObjectType.init(rawValue:))
+                existing = created["props"] ?? .object([:])
+            } else {
+                let found = try self.board(forObject: id)
+                board = found
+                let object = try found.object(id)
+                type = object.type
+                existing = object.props
+            }
+        }
+        guard let type, [.code, .note, .html].contains(type) else { return p }
+        guard let ref = value.string, !ref.isEmpty else {
+            guard value == .null || value.string == "" else { throw Failure("invalid_params", "ref must be a branch or other ref name") }
+            props["refSha"] = .null
+            params["props"] = .object(props)
+            return .object(params)
+        }
+        let merged = existing.merging(.object(props))
+        if type == .code, let pinned = merged["pinnedCommit"]?.string, !pinned.isEmpty { return p }
+        // Another ref than before falls back only to a SHA given with it.
+        let known = existing["ref"]?.string == ref ? merged["refSha"]?.string : props["refSha"]?.string
+        do {
+            let source = try await RefSource.resolve(ref: ref, lastKnownSha: known, boardRoot: board.root)
+            props["refSha"] = .string(source.resolution.sha)
+        } catch GitRefs.Failure.notRevision {
+            throw Failure("invalid_params", RefSource.describe(GitRefs.Failure.notRevision(ref), ref: ref))
+        } catch GitRefs.Failure.notRepository {
+            throw Failure("invalid_params", "ref needs a board in a git repository")
+        } catch {
+            throw Failure("not_found", RefSource.describe(error, ref: ref))
+        }
+        params["props"] = .object(props)
+        return .object(params)
+    }
+
     func anchored(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> JSONValue {
         guard var params = p.object, var props = p["props"]?.object, let markdown = props["markdown"]?.string else { return p }
-        let root: URL
+        let root: URL, board: Board, merged: JSONValue
         if method == "object.create" {
             guard p["type"]?.string == ObjectType.note.rawValue else { return p }
-            root = pathRoot(try board(p), type: .note, props: .object(props), caller: caller(p), creating: true)
+            board = try self.board(p)
+            merged = .object(props)
+            root = pathRoot(board, type: .note, props: merged, caller: caller(p), creating: true)
         } else {
             let id = try string(p, "id")
             if let index = Self.reference(id) {
                 guard let created = pending[index], created["type"]?.string == ObjectType.note.rawValue else { return p }
-                root = pathRoot(try board(created), type: .note, props: (created["props"] ?? .object([:])).merging(.object(props)), caller: caller(created), creating: true)
+                board = try self.board(created)
+                merged = (created["props"] ?? .object([:])).merging(.object(props))
+                root = pathRoot(board, type: .note, props: merged, caller: caller(created), creating: true)
             } else {
-                guard let board = try? board(forObject: id), let note = board.objects[id], note.type == .note else { return p }
-                root = pathRoot(board, type: .note, props: note.props.merging(.object(props)), caller: nil, creating: false)
+                guard let found = try? self.board(forObject: id), let note = found.objects[id], note.type == .note else { return p }
+                board = found
+                merged = note.props.merging(.object(props))
+                root = pathRoot(board, type: .note, props: merged, caller: nil, creating: false)
             }
         }
-        let text = await NoteMarkdown.anchoringRanges(markdown, root: root)
+        // A note anchored to a branch anchors its ranges on the text at the ref.
+        let reading = RefSource.ref(of: merged) == nil ? LinkReading(root: root) : await board.linkSource(props: merged)
+        let text = await NoteMarkdown.anchoringRanges(markdown, reading: reading)
         guard text != markdown else { return p }
         props["markdown"] = .string(text)
         params["props"] = .object(props)
@@ -1270,7 +1340,7 @@ public final class ApiRouter {
                     upserts[index] = (key, holder)
                     if method == "object.update" { updating[index] = holder }
                 }
-                params = try await anchored(method, raw, pending: pending)
+                params = try await anchored(method, try await referenced(method, raw, pending: pending), pending: pending)
                 ops[index] = .object(["method": .string(method), "params": params])
                 sizes.append(try await fitSize(method, params, pending: pending))
             } catch {
@@ -1525,13 +1595,23 @@ public final class ApiRouter {
     /// tile shows it, or one row per line when the file can't be read. Each file is read once and
     /// wrapped once per width, concurrently.
     static func lineRows(of tiles: [CanvasObject], excerpts: [ObjectID: NoteExcerpt], root: URL) async -> [ObjectID: CodeRows] {
-        struct File: Hashable { var path: String, commit: String? }
-        func file(_ tile: CanvasObject) -> File? {
-            tile.props["path"]?.string.map { File(path: $0, commit: tile.props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 }) }
+        struct File: Hashable { var path: String, commit: String?, root: URL }
+        // A branch-anchored tile's file is where its ref is now (`RefSource`); a pinned commit wins.
+        var fileOf: [ObjectID: File] = [:]
+        for tile in tiles {
+            guard let path = tile.props["path"]?.string else { continue }
+            let pinned = tile.props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+            if pinned == nil, let ref = RefSource.ref(of: tile.props) {
+                guard let source = try? await RefSource.resolve(ref: ref, lastKnownSha: tile.props["refSha"]?.string, boardRoot: root) else { continue }
+                fileOf[tile.id] = File(path: source.fence(NoteFence(path: path)).path ?? path, commit: source.commit, root: source.root)
+            } else {
+                fileOf[tile.id] = File(path: path, commit: pinned, root: root)
+            }
         }
-        let files = Set(tiles.compactMap(file))
+        func file(_ tile: CanvasObject) -> File? { fileOf[tile.id] }
+        let files = Set(fileOf.values)
         let texts = await withTaskGroup(of: (File, String?).self) { group in
-            for file in files { group.addTask { (file, try? await NoteSource.read(file.path, commit: file.commit, root: root)) } }
+            for file in files { group.addTask { (file, try? await NoteSource.read(file.path, commit: file.commit, root: file.root)) } }
             var texts: [File: String] = [:]
             for await (file, text) in group { texts[file] = text }
             return texts

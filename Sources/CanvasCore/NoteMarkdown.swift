@@ -77,9 +77,14 @@ public enum NoteMarkdown {
     /// the note tile would write them back once it shows them. The API stores notes this way, so
     /// a note an agent just wrote isn't rewritten under it (a new `rev`) a moment later.
     public static func anchoringRanges(_ markdown: String, root: URL) async -> String {
+        await anchoringRanges(markdown, reading: LinkReading(root: root))
+    }
+
+    /// `anchoringRanges(_:root:)` for a note whose files are read as `reading` says (a `ref`).
+    public static func anchoringRanges(_ markdown: String, reading: LinkReading) async -> String {
         let fences = anchoredFences(in: parse(markdown)).filter(needsAnchor)
         guard !fences.isEmpty else { return markdown }
-        return anchoringRanges(markdown, fences: fences, results: await NoteSource.excerpts(for: fences, root: root))
+        return anchoringRanges(markdown, fences: fences, results: await NoteSource.excerpts(for: reading.fences(fences), root: reading.root))
     }
 
     /// `object.get`'s `fences` for a note: each anchored fence as written (its info string, the

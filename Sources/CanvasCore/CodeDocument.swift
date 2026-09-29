@@ -445,6 +445,9 @@ public struct SyntaxLines: Sendable, Equatable {
 /// both sides, and the header's status and warning. Built off the main thread.
 public struct CodeDocument: Sendable {
     public let path: String
+    /// The file the rows were read from, as mentions and the editor name it: `path`, or for a
+    /// tile anchored to a branch that is live in another worktree, the file in that worktree.
+    public let readPath: String
     public let diff: FileDiff
     /// Which side of the diff the rows show: the base version only for deleted files.
     public let side: DiffSide
@@ -471,8 +474,11 @@ public struct CodeDocument: Sendable {
 
     public var text: SideText { side == .old ? diff.old : diff.new }
 
-    public init(path: String, diff: FileDiff) {
+    /// `readPath` defaults to `path`; `ref` is a branch-anchored tile's state (`RefSource.label`),
+    /// which leads the status.
+    public init(path: String, diff: FileDiff, readPath: String? = nil, ref: String? = nil) {
         self.path = path
+        self.readPath = readPath ?? path
         self.diff = diff
         side = diff.state == .deleted ? .old : .new
         let showsSigns = diff.state == .modified || diff.state == .added
@@ -540,7 +546,12 @@ public struct CodeDocument: Sendable {
         }
         self.notice = notice
         self.warning = warning
-        self.status = status
+        // A ref's objects read like a pinned commit, but the header names the ref's state.
+        self.status = switch (ref, diff.state) {
+        case (nil, _): status
+        case (let ref?, .pinned): "\(ref) · read-only"
+        case (let ref?, _): status.isEmpty || diff.state == .pinUnavailable ? ref : "\(ref) · \(status)"
+        }
     }
 
     /// Displayed line range a line range of the object's `range` covers, clamped to the text.

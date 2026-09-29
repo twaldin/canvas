@@ -305,7 +305,7 @@ public final class Board {
         commitBookkeeping(before, props: .object(["range": range.json, "anchor": anchor.map(JSONValue.string) ?? .null]))
     }
 
-    private func commitBookkeeping(_ before: CanvasObject, props: JSONValue) {
+    func commitBookkeeping(_ before: CanvasObject, props: JSONValue) {
         var object = before
         object.props = object.props.merging(props)
         guard object != before else { return }

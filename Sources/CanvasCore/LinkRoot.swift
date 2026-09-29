@@ -9,7 +9,10 @@ import Foundation
 extension Board {
     public func linkRoot(of object: CanvasObject) -> URL { linkRoot(props: object.props) }
 
+    /// With a `ref`, the board root's place in the worktree that has it checked out, else the
+    /// board root (whose repository holds the ref's objects; `linkSource` reads them).
     public func linkRoot(props: JSONValue) -> URL {
+        if let ref = RefSource.ref(of: props) { return RefSource.liveRoot(ref: ref, boardRoot: root) ?? root }
         guard let value = props["root"]?.string, !value.isEmpty else { return root }
         return absoluteURL(value).standardizedFileURL
     }

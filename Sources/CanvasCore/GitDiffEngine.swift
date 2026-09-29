@@ -31,6 +31,10 @@ extension Notification.Name {
     /// after a commit, checkout, rebase, or fetch, or when the index changed whether a new file
     /// is tracked (`git add`). Live code tiles reload on it.
     public static let gitDiffBaseChanged = Notification.Name("canvas.gitDiffBaseChanged")
+    /// Posted (object: the top-level path of a repository a live tile holds) when HEAD, a ref, or
+    /// a worktree of the repository moved, whether or not any diff base did: branch-anchored
+    /// tiles re-resolve their ref on it (a worktree gone, a branch merged or deleted).
+    public static let gitRefsMoved = Notification.Name("canvas.gitRefsMoved")
 }
 
 /// Git diffs for code tiles (docs/design.md, Code/diff and Performance):
@@ -613,13 +617,14 @@ public actor GitDiffEngine {
         let toplevel = repository.toplevel.path
         repository.watcher = FileEventStream(paths: repository.watchedDirectories, latency: 0.4) { [weak self] paths in
             let bases = paths.contains(where: Self.movesBase), index = paths.contains(where: Self.isIndex)
+            if bases { NotificationCenter.default.post(name: .gitRefsMoved, object: toplevel) }
             guard let self, bases || index else { return }
             Task { await self.refresh(toplevel, bases: bases, index: index) }
         }
     }
 
     /// HEAD, branch refs, and packed-refs decide every base; index, objects, and logs never do.
-    nonisolated static func movesBase(_ path: String) -> Bool {
+    nonisolated public static func movesBase(_ path: String) -> Bool {
         if path.hasSuffix(".lock") || path.contains("/logs/") || path.contains("/objects/") { return false }
         let name = (path as NSString).lastPathComponent
         return name == "HEAD" || name == "packed-refs" || path.contains("/refs/")

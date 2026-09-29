@@ -65,8 +65,17 @@ public struct HandoffMention: Sendable {
         switch tile.type {
         case .code where point == nil:
             let range = lines ?? tile.props["range"].flatMap { try? $0.decode(LineRange.self) }
-            guard let path = tile.props["path"]?.string, let range else { return .object(object) }
-            let commit = tile.props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+            guard var path = tile.props["path"]?.string, let range else { return .object(object) }
+            var commit = tile.props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+            // A branch-anchored tile: the file in the worktree that has the ref checked out, else
+            // the SHA the tile last resolved it to.
+            if commit == nil, let ref = RefSource.ref(of: tile.props) {
+                if let live = RefSource.liveRoot(ref: ref, boardRoot: board.root) {
+                    path = board.relativePath(path.hasPrefix("/") ? path : live.appendingPathComponent(path).path)
+                } else {
+                    commit = tile.props["refSha"]?.string ?? ref
+                }
+            }
             return .code(object: object, path: path, lines: range, symbol: lines == nil ? tile.props["symbol"]?.string : nil, commit: commit)
         case .image where lines == nil:
             guard let point, let path = tile.props["path"]?.string else { return .object(object) }

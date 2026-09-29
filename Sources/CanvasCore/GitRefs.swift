@@ -46,8 +46,7 @@ public enum GitRefs {
         guard NoteSource.isRevision(ref) else { throw Failure.notRevision(ref) }
         guard let here = GitWorktree.containing(repo.standardizedFileURL.path) else { throw Failure.notRepository }
         let git = URL(fileURLWithPath: here.toplevel)
-        let branch = ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : ref
-        if let worktree = here.siblings.first(where: { $0.branch == branch }) {
+        if let worktree = liveWorktree(ref, in: here) {
             let top = URL(fileURLWithPath: worktree.toplevel)
             if let sha = await commit("HEAD", in: top, runner: runner) {
                 return Resolution(worktree: top, sha: sha, state: .live)
@@ -63,6 +62,13 @@ public enum GitRefs {
             return Resolution(worktree: nil, sha: sha, state: .merged(merge))
         }
         return Resolution(worktree: nil, sha: sha, state: .missing)
+    }
+
+    /// The worktree of `checkout`'s repository that has branch `ref` (`name` or `refs/heads/name`)
+    /// checked out, from the filesystem alone; nil when none has.
+    public static func liveWorktree(_ ref: String, in checkout: GitWorktree) -> GitWorktree? {
+        let branch = ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : ref
+        return checkout.siblings.first { $0.branch == branch }
     }
 
     /// The full SHA of the commit `revision` names, or nil when it names none.

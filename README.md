@@ -36,7 +36,7 @@ Which agents report their state and get your mentions:
 
 ## See what it changed
 
-Each agent terminal has one follow tile: the file the agent last read or edited, with a history strip and its edited rows flashing. Code tiles show the whole file scrolled to a range, with a gitsigns-style gutter against the merge-base (or HEAD); click a sign to peek at the old lines. Your language server gives them hover, go to definition, references and outline; without one, the last three answer by text search.
+Each agent terminal has one follow tile: the file the agent last read or edited, with a history strip and its edited rows flashing. Code tiles show the whole file scrolled to a range, with a gitsigns-style gutter against the merge-base (or HEAD); click a sign to peek at the old lines. A code tile can follow a branch instead of a checkout: it reads the branch's worktree live while one has it checked out, its commit once the worktree is gone, and after the merge says "merged in <sha>" and keeps showing the code. Your language server gives them hover, go to definition, references and outline; without one, the last three answer by text search.
 
 Changes tiles review an agent's work like a PR: uncommitted changes, the branch against its default branch, or against any commit. Stage, unstage or discard files, hunks and lines. ⌘Z undoes agents' changes too, and says what it undid.
 

@@ -427,8 +427,7 @@ final class NoteTile: NSView, TileContent {
         switch link {
         case .code(let path, let lines):
             // A note anchored to a branch opens its code at the same ref.
-            let ref = RefSource.ref(of: object.props).map { ["ref": JSONValue.string($0)] } ?? [:]
-            let opened = board.openForNavigation(CodeAim(path: board.boardPath(path, linkRoot: linkRoot), range: lines), from: object.id, extra: ref)
+            let opened = board.openForNavigation(CodeAim(path: board.boardPath(path, linkRoot: linkRoot), range: lines, ref: RefSource.ref(of: object.props)), from: object.id)
             onOpenedCode?(opened.id, opened.existing)
         case .web(let url) where url.scheme == "http" || url.scheme == "https":
             let size = Board.defaultSize(.browser)

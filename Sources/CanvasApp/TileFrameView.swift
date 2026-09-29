@@ -327,7 +327,7 @@ final class TileFrameView: NSView {
         case .changes:
             let spec = ChangesSpec(props)
             if let title = props["title"]?.string { return title }
-            let parts = (spec.root.map { [($0 as NSString).lastPathComponent] } ?? []) + spec.paths.map(PathLabel.short)
+            let parts = ((spec.head ?? spec.ref).map { [$0] } ?? []) + (spec.root.map { [($0 as NSString).lastPathComponent] } ?? []) + spec.paths.map(PathLabel.short)
             return parts.isEmpty ? branch.map { "Changes: \($0)" } ?? "Changes" : "Changes: \(parts.joined(separator: ", "))"
         default: return object.type.rawValue.capitalized
         }

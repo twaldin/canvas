@@ -320,7 +320,7 @@ public enum MentionContext {
                 String($0.drop { $0 == "#" }).trimmingCharacters(in: .whitespaces)
             } ?? ""
         case .html: return props["title"]?.string ?? "html"
-        case .changes: return props["title"]?.string ?? "changes vs \(ChangesSpec(props).baseProp)"
+        case .changes: return props["title"]?.string ?? ChangesSpec(props).name
         case .image: return props["title"]?.string ?? props["path"]?.string ?? "image"
         case .shape: return props["text"]?.string ?? props["kind"]?.string ?? ""
         case .arrow: return props["label"]?.string ?? props["relation"]?.string ?? ""

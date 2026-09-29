@@ -130,6 +130,9 @@ class HtmlProps(TypedDict):
 class ChangesProps(TypedDict):
     root: NotRequired[str]
     base: NotRequired[str]
+    head: NotRequired[str]
+    ref: NotRequired[str]
+    refSha: NotRequired[str]
     paths: NotRequired[list[str]]
     title: NotRequired[str]
     reviewed: NotRequired[list[dict[str, Any]]]

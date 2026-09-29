@@ -181,19 +181,22 @@ struct ChangesPainter {
 
     /// The buttons a file (`hunk` nil) or hunk header row shows: Stage, or Unstage in its place
     /// once everything there is staged, and Discard unless all of it is committed (a branch
-    /// reviewed against its merge-base: Discard never rewrites commits).
+    /// reviewed against its merge-base: Discard never rewrites commits). None for two commits
+    /// compared (`ChangedFile.readOnly`).
     func buttons(inRow rect: CGRect, file: Int, hunk: Int?) -> [(ChangesAction, CGRect)] {
-        let slots = Self.buttonSlots(inRow: rect)
         let changed = set.files[file]
+        guard !changed.readOnly else { return [] }
+        let slots = Self.buttonSlots(inRow: rect)
         let stage: ChangesAction = (hunk.map { changed.hunks[$0].status == .staged } ?? changed.unstageable) ? .unstage : .stage
         return ChangesAction.revert.applies(to: changed, hunk: hunk)
             ? [(stage, slots.stage), (.revert, slots.revert)] : [(stage, slots.stage)]
     }
 
-    /// The file header's Viewed check, left of its buttons.
+    /// The file header's Viewed check, left of its buttons (at the right edge without them).
     func viewedRect(inRow rect: CGRect) -> CGRect {
-        let stage = Self.buttonSlots(inRow: rect).stage
-        return CGRect(x: stage.minX - 10 - ChangesMetrics.viewedWidth, y: stage.minY, width: ChangesMetrics.viewedWidth, height: stage.height)
+        let slots = Self.buttonSlots(inRow: rect)
+        let right = set.comparesCommits ? slots.revert.maxX : slots.stage.minX - 10
+        return CGRect(x: right - ChangesMetrics.viewedWidth, y: slots.stage.minY, width: ChangesMetrics.viewedWidth, height: slots.stage.height)
     }
 
     func hit(at point: CGPoint, width: CGFloat, scroll: CGFloat) -> ChangesHit? {
@@ -224,9 +227,11 @@ struct ChangesPainter {
         if point.y < ChangesMetrics.headerHeight {
             if Self.filterRect(width: width).contains(point) { return "Filter the files by path (/ from the keyboard)" }
             if let lead = headerLayout(width: width).lead, lead.rect.contains(point) {
-                return [set.baseDescription ?? set.lead, "Click to compare with another base: the uncommitted changes, everything the branch changed, or a commit or ref"].joined(separator: "\n")
+                let what = set.comparesCommits ? "Click to compare with another base: everything the head changed since the default branch, or a commit or ref"
+                    : "Click to compare with another base: the uncommitted changes, everything the branch changed, or a commit or ref"
+                return [set.baseDescription ?? set.lead, what].joined(separator: "\n")
             }
-            return [set.baseDescription, ChangesTile.tooltip].compactMap { $0 }.joined(separator: "\n")
+            return [set.baseDescription, set.comparesCommits ? ChangesTile.readingTooltip : ChangesTile.tooltip].compactMap { $0 }.joined(separator: "\n")
         }
         switch hit(at: point, width: width, scroll: scroll) {
         case .button(let action, let file, let hunk)?:
@@ -240,13 +245,15 @@ struct ChangesPainter {
             case .unstaged: state = "not staged"
             case .partial: state = "partly staged: the index holds an earlier version of some of it"
             case .staged: state = "staged"
-            case .committed: state = "committed since the base (nothing to discard)"
+            case .committed: state = set.comparesCommits ? "in \(set.branch ?? "the head")" : "committed since the base (nothing to discard)"
             }
             return "\(target.header) · +\(target.added) −\(target.removed) · \(state)"
         case .file(let file)?: return set.files[file].oldBoardPath.map { "\($0) → \(set.files[file].boardPath)" } ?? set.files[file].boardPath
         case .list?: return "Click to fold or unfold the file list"
         case .listed(let file)?: return "Jump to \(set.files[file].boardPath)"
-        case .line?: return "Click to open in a code tile · drag, ⇧-click, or ⌘-click to select lines (an edited line brings its old version), then Stage, Unstage, or Discard"
+        case .line?:
+            return set.comparesCommits ? "Click to open the line in a code tile pinned to its side's commit · drag, ⇧-click, or ⌘-click to select lines to mention"
+                : "Click to open in a code tile · drag, ⇧-click, or ⌘-click to select lines (an edited line brings its old version), then Stage, Unstage, or Discard"
         case nil: return nil
         }
     }
@@ -303,7 +310,7 @@ struct ChangesPainter {
             rest = message
             color = .systemOrange
         } else if let selection, set.files.indices.contains(selection.file) {
-            rest = "\(selection.lines.count) line\(selection.lines.count == 1 ? "" : "s") selected · s stage · u unstage · r r discard · m mention"
+            rest = "\(selection.lines.count) line\(selection.lines.count == 1 ? "" : "s") selected · " + (set.comparesCommits ? "m mention" : "s stage · u unstage · r r discard · m mention")
             color = .controlAccentColor
         } else {
             lead = set.repository == nil ? nil : set.lead + " ▾"
@@ -479,7 +486,7 @@ struct ChangesPainter {
         if let symbol = changed.symbol(lines: LineRange(start: line, end: line), side: side) { text += " · \(symbol)" }
         let buttons = buttons(inRow: rect, file: file, hunk: hunk)
         var right = (buttons.first?.1.minX ?? rect.maxX) - 10
-        if let pill = Self.pill(target.status) {
+        if !changed.readOnly, let pill = Self.pill(target.status) {
             let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: pill.color]
             let size = (pill.text as NSString).size(withAttributes: attributes)
             let frame = CGRect(x: right - size.width - 10, y: rect.midY - 8, width: size.width + 10, height: 16)

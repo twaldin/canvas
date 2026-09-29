@@ -187,6 +187,8 @@ Code navigation (Go to Definition, Find References, Outline) needs the language'
 
 To show the user what you changed, create a changes tile instead of an HTML diff: `canvas object.create --type changes --json '{"props":{},"size":"fit"}'`.
 Props: `base` (default `HEAD`: uncommitted work; `merge-base`: everything the branch changed, a PR's view; or a commit), optional `root` (another worktree of the board's repo, e.g. `"../wt-agent"`), `paths` and `title`. Creating it again with the same props returns your existing tile (`reused: true`).
+A branch's or PR's diff without checking it out: `{"base": "origin/main", "head": "<branch or pull/N/head>"}`, read-only from git objects (head vs its merge-base with base; renames and deletions shown; no Stage/Discard; a line click opens a code tile pinned to that side's commit). A ref the repo lacks shows the exact `git fetch` to run: Canvas never fetches, so fetch first.
+`{"ref": "<branch>"}` instead of `root`: the worktree that has that branch checked out while one does (live, stageable), else its commits as with `head`; once the branch is deleted it keeps showing the last commit it read (`props.refSha`), marked `merged in <sha>` or `branch gone`.
 The user stages, unstages or discards per file, hunk, or selected lines; Stage/Unstage never change files: tell a user unsure of git so when they review your work.
 Read what they kept with `object.get` (`changes.files[].hunks[]` with `status` and `lines`; `props.reviewed[]`), no render needed. Every field: `references/api.md` "Objects".
 

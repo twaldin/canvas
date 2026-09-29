@@ -90,7 +90,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         case .code: ["path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "ref", "refSha", "scale"]
         case .note: ["markdown", "title", "root", "ref", "refSha", "scale"]
         case .html: ["html", "title", "root", "ref", "refSha", "allowNetwork", "state", "scale"]
-        case .changes: ["root", "base", "paths", "title", "reviewed", "viewed", "scale"]
+        case .changes: ["root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "scale"]
         case .image: ["path", "caption", "title", "scale"]
         case .shape: ["kind", "text", "points", "color", "fill", "scale"]
         case .arrow: ["from", "to", "relation", "label", "color", "route"]
@@ -292,14 +292,14 @@ extension MentionTarget {
     /// holds, so the chip and the context say "edited". Moving, resizing, scaling or restacking
     /// never does, nor bookkeeping (`bookkeepingProps`). A code mention holds its file's lines,
     /// not the tile's view of them: re-aiming the code tile it came from changes nothing, and
-    /// from a changes tile only another base or worktree, or a Stage, Unstage or Discard (or its
+    /// from a changes tile only another base, head, ref, or worktree, or a Stage, Unstage or Discard (or its
     /// undo) of a hunk of that file over the mentioned lines, does; staging another file in the
     /// same tile doesn't. Terminal text and page log entries are what they were when staged.
     public func isEdited(from before: CanvasObject, to after: CanvasObject) -> Bool {
         switch self {
         case .code(_, let path, let lines, let side, _, _, _):
             guard after.type == .changes else { return false }
-            if before.props["base"] != after.props["base"] || before.props["root"] != after.props["root"] { return true }
+            if ["base", "root", "head", "ref"].contains(where: { before.props[$0] != after.props[$0] }) { return true }
             let old = before.props["reviewed"]?.array ?? [], new = after.props["reviewed"]?.array ?? []
             // An action appends its entry (the oldest may drop off past the limit); undo removes it.
             let added = new.filter { !old.contains($0) }

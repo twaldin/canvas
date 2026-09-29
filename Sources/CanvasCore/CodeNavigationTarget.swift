@@ -1,15 +1,26 @@
 import Foundation
 
-/// Where a code tile points: its file (board-relative when under the root), lines and symbol.
+/// Where a code tile points: its file (board-relative when under the root), lines and symbol,
+/// and the version of the file it shows: the commit it is pinned to (`pinnedCommit`), or the
+/// branch it follows (`ref`); neither: the working tree.
 public struct CodeAim: Equatable, Sendable {
     public var path: String
     public var range: LineRange?
     public var symbol: String?
+    public var pinnedCommit: String?
+    public var ref: String?
 
-    public init(path: String, range: LineRange?, symbol: String? = nil) {
+    public init(path: String, range: LineRange?, symbol: String? = nil, pinnedCommit: String? = nil, ref: String? = nil) {
         self.path = path
         self.range = range
         self.symbol = symbol
+        self.pinnedCommit = pinnedCommit
+        self.ref = ref
+    }
+
+    /// Whether a code tile's props show the same version of a file as this aim.
+    func sameVersion(_ props: JSONValue) -> Bool {
+        props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 } == pinnedCommit && RefSource.ref(of: props) == ref
     }
 
     /// The aim of a code tile; nil for anything else.
@@ -23,12 +34,14 @@ public struct CodeAim: Equatable, Sendable {
     public init?(props: JSONValue) {
         guard let path = props["path"]?.string else { return nil }
         let start = props["range"]?["start"]?.int
-        self.init(path: path, range: start.map { LineRange(start: $0, end: props["range"]?["end"]?.int ?? $0) }, symbol: props["symbol"]?.string)
+        self.init(path: path, range: start.map { LineRange(start: $0, end: props["range"]?["end"]?.int ?? $0) }, symbol: props["symbol"]?.string,
+                  pinnedCommit: props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 }, ref: RefSource.ref(of: props))
     }
 
-    /// The props that aim a tile here (null clears a range or symbol it had).
+    /// The props that aim a tile here (null clears a range, symbol, pin, or ref it had).
     var props: JSONValue {
-        .object(["path": .string(path), "range": range?.json ?? .null, "symbol": symbol.map(JSONValue.string) ?? .null])
+        .object(["path": .string(path), "range": range?.json ?? .null, "symbol": symbol.map(JSONValue.string) ?? .null,
+                 "pinnedCommit": pinnedCommit.map(JSONValue.string) ?? .null, "ref": ref.map(JSONValue.string) ?? .null])
     }
 
     /// `path:12`, `path:12-20`, or the path alone.
@@ -95,7 +108,7 @@ extension Board {
         let center = center ?? view
         var best: (id: ObjectID, rank: (Int, Int, Double, Double))?
         for object in objects.values where object.props["followOf"] == nil {
-            guard let shown = CodeAim(object), shown.path == aim.path else { continue }
+            guard let shown = CodeAim(object), shown.path == aim.path, aim.sameVersion(object.props) else { continue }
             let exact = shown.range == aim.range
             if !exact {
                 guard let lines = aim.range, let range = shown.range, range.start <= lines.start, lines.end <= range.end,
@@ -134,7 +147,8 @@ extension Board {
         let center = near ?? view
         func distance(_ object: CanvasObject) -> Double { center.map(object.frame.centerDistance) ?? 0 }
         let nearest = objects.values.filter { object in
-            object.type == .code && object.props["path"]?.string == aim.path && (view.map { $0.intersects(object.frame) } ?? true) && isNavigationSurface(object.id)
+            object.type == .code && object.props["path"]?.string == aim.path && aim.sameVersion(object.props)
+                && (view.map { $0.intersects(object.frame) } ?? true) && isNavigationSurface(object.id)
         }.min { (distance($0), $0.id) < (distance($1), $1.id) }
         if let nearest, let reaim = reaimForNavigation(nearest.id, to: aim) {
             return CodeOpened(id: nearest.id, created: false, reaim: reaim)
@@ -143,6 +157,8 @@ extension Board {
         props["path"] = .string(aim.path)
         if let range = aim.range { props["range"] = range.json }
         if let symbol = aim.symbol { props["symbol"] = .string(symbol) }
+        if let pinnedCommit = aim.pinnedCommit { props["pinnedCommit"] = .string(pinnedCommit) }
+        if let ref = aim.ref { props["ref"] = .string(ref) }
         let size = Board.defaultSize(.code)
         let frame = source.map { place(width: size.w, height: size.h, near: $0, shrinkingTo: Board.followMinimumSize) }
             ?? place(width: size.w, height: size.h, near: nil)
@@ -183,7 +199,8 @@ extension Board {
         let matching = objects.values.filter { object in
             guard object.type == .changes else { return false }
             let spec = ChangesSpec(object.props)
-            return spec.paths.isEmpty && spec.baseProp == base && spec.directory(boardRoot: self.root).standardizedFileURL.path == directory
+            return spec.head == nil && spec.ref == nil && spec.paths.isEmpty && spec.baseProp == base
+                && spec.directory(boardRoot: self.root).standardizedFileURL.path == directory
         }
         func rank(_ object: CanvasObject) -> (Int, Double, ObjectID) {
             guard let view else { return (0, 0, object.id) }

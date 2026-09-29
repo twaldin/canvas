@@ -84,7 +84,7 @@ public enum HtmlChannel {
     /// already showing the lines anywhere (`existing`, a walkthrough's stop), else a plain code
     /// tile in view showing `path` re-aimed, else a new one to the right of the HTML tile.
     static func openCode(path: String, range: LineRange?, symbol: String?, ref: String?, beside tile: ObjectID, on board: Board) -> JSONValue {
-        let opened = board.openForNavigation(CodeAim(path: path, range: range, symbol: symbol), from: tile, extra: ref.map { ["ref": .string($0)] } ?? [:])
+        let opened = board.openForNavigation(CodeAim(path: path, range: range, symbol: symbol, ref: ref), from: tile)
         return .object(["tile": .string(opened.id), "created": .bool(opened.created), "existing": .bool(opened.existing)])
     }
 }

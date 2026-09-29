@@ -188,6 +188,7 @@ public struct ReviewPatch: Equatable, Sendable {
     /// deleted file are the file (deleted again, or brought back). A renamed file keeps its name.
     /// `lines`: only those rows (indices into the one hunk's `lines`) of the hunk.
     public static func revert(_ hunks: [ChangeHunk], of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) throws -> ReviewPatch {
+        if file.readOnly { throw ChangesFailure.readOnly }
         try checkPath(file.path)
         guard hunks.isEmpty || hunks.contains(where: \.status.discardable) else { throw ChangesFailure.committed }
         let mappings = file.status == .added || file.status == .deleted ? file.mappings : hunks.flatMap(\.mappings)
@@ -221,6 +222,7 @@ public struct ReviewPatch: Equatable, Sendable {
     /// `lines`: only those rows (indices into the one hunk's `lines`): added lines by their
     /// working-tree line, removed ones by the index line with the same text in the change there.
     public static func stage(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        if file.readOnly { throw ChangesFailure.readOnly }
         let text = try await towardWorkingTree(hunks, of: file, from: .index, in: repository, lines: lines, reverse: false)
         guard !text.isEmpty else { throw ChangesFailure("already staged") }
         return ReviewPatch(repository: repository, text: text, target: .index, reverse: false)
@@ -233,6 +235,7 @@ public struct ReviewPatch: Equatable, Sendable {
     /// deleted since HEAD comes back), and refused when the working tree is no longer what the
     /// tile shows or nothing of it is uncommitted. `lines`: only those rows of the one hunk.
     public static func discardUncommitted(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        if file.readOnly { throw ChangesFailure.readOnly }
         if let hunks, !hunks.contains(where: \.status.discardable) { throw ChangesFailure.committed }
         let text = try await towardWorkingTree(hunks, of: file, from: .head, in: repository, lines: lines, reverse: true, expected: file.status == .deleted ? nil : file.new)
         guard !text.isEmpty else { throw ChangesFailure("nothing uncommitted to discard in \(file.boardPath)") }
@@ -245,6 +248,7 @@ public struct ReviewPatch: Equatable, Sendable {
     /// leaves it, a deletion staged is taken back). `lines`: only those rows of the one hunk, by
     /// their text in the staged change. Refused when nothing there is staged.
     public static func unstage(_ hunks: [ChangeHunk]?, of file: ChangedFile, in repository: URL, lines: Set<Int>? = nil) async throws -> ReviewPatch {
+        if file.readOnly { throw ChangesFailure.readOnly }
         try checkPath(file.path)
         let picked = try lines.map { try Self.pick($0, of: hunks ?? []) }
         let head = try await blob(file, at: .head, in: repository)

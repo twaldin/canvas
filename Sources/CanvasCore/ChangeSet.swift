@@ -4,23 +4,49 @@ import Foundation
 /// board's repository, absolute or board-relative; none: the board root), the diff base (default
 /// `HEAD`: the uncommitted work, what an agent just did; `merge-base`; or a commit) and the files
 /// or directories it is limited to (relative to `root` or absolute; none: all of `root`).
+///
+/// `head` (any commit or ref: a branch, `origin/x`, a fetched `pull/N/head`) compares two commits
+/// instead of a worktree: the files as `head` has them against its merge-base with `base`
+/// (`git diff base...head`, a pull request's view), read from git objects, no checkout, nothing
+/// to stage or discard. `ref` (a branch) is the worktree that has it checked out when one of the
+/// board's repository does, else `head: ref`. With either, `base` defaults to `merge-base` (the
+/// default branch).
 public struct ChangesSpec: Equatable, Sendable {
     public var root: String?
     public var baseProp: String
     public var paths: [String]
+    public var head: String?
+    public var ref: String?
+    /// The commit `ref` named when the tile last read it (`props.refSha`, written by the tile):
+    /// what it reads once the branch is gone.
+    public var refSha: String?
 
     public init(_ props: JSONValue) {
-        root = props["root"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-        baseProp = props["base"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "HEAD"
+        func nonEmpty(_ key: String) -> String? { props[key]?.string.flatMap { $0.isEmpty ? nil : $0 } }
+        root = nonEmpty("root")
+        head = nonEmpty("head")
+        ref = nonEmpty("ref")
+        refSha = nonEmpty("refSha")
+        baseProp = nonEmpty("base") ?? (head != nil || ref != nil ? "merge-base" : "HEAD")
         paths = props["paths"]?.array?.compactMap(\.string).filter { !$0.isEmpty } ?? []
     }
 
     public var base: DiffBase { DiffBase(prop: baseProp) }
 
-    /// The directory reviewed: `root` resolved against the board root, else the board root.
+    /// The directory reviewed: `root` resolved against the board root; for `ref`, the worktree
+    /// of the board's repository that has the branch checked out; else the board root.
     public func directory(boardRoot: URL) -> URL {
+        if let ref, root == nil {
+            guard let own = GitWorktree.containing(boardRoot.path), let found = GitRefs.liveWorktree(ref, in: own), found.gitDir != own.gitDir else { return boardRoot }
+            return URL(fileURLWithPath: found.toplevel)
+        }
         guard let root else { return boardRoot }
         return (root.hasPrefix("/") ? URL(fileURLWithPath: root) : boardRoot.appendingPathComponent(root)).standardizedFileURL
+    }
+
+    /// How titles and the activity log name the tile: `changes vs HEAD`, `changes fm/x vs merge-base`.
+    public var name: String {
+        "changes \((head ?? ref).map { "\($0) " } ?? "")vs \(baseProp)"
     }
 }
 
@@ -345,6 +371,13 @@ public struct ChangedFile: Sendable {
     public var hunks: [ChangeHunk]
     /// Why there are no hunks to show (binary, too large, a submodule, only the mode changed).
     public var notice: String?
+    /// The two sides' blob ids when the diff compares commits (`ChangesSpec.head`): nil where
+    /// that side has no file. Nil for a worktree's diff.
+    public var blobs: Blobs?
+    public struct Blobs: Equatable, Sendable {
+        public var old: String?
+        public var new: String?
+    }
     public var oldSyntax = SyntaxLines.empty
     public var newSyntax = SyntaxLines.empty
     public var oldSymbols: [SyntaxSymbol] = []
@@ -356,19 +389,29 @@ public struct ChangedFile: Sendable {
     /// A hunk's changes a patch can carry: all of them for a created or deleted file (one hunk).
     public var mappings: [LineRangeMapping] { hunks.flatMap(\.mappings) }
 
+    /// Read from git objects (two commits compared): nothing of it is the reviewer's to stage,
+    /// unstage, or discard.
+    public var readOnly: Bool { blobs != nil }
+
     /// What the file header's buttons offer (a binary, oversized, or mode-only file has no lines
     /// to patch): Stage while some of it isn't staged, Unstage once all of that is (Stage's
-    /// place), Discard while some of it isn't committed (`HunkStatus.discardable`).
-    public var stageable: Bool { notice == nil && (hunks.isEmpty || hunks.contains { $0.status.stageable }) }
-    public var unstageable: Bool { notice == nil && !stageable && hunks.contains { $0.status.unstageable } }
-    public var discardable: Bool { notice == nil && (hunks.isEmpty || hunks.contains { $0.status.discardable }) }
+    /// place), Discard while some of it isn't committed (`HunkStatus.discardable`); none when
+    /// `readOnly`.
+    public var stageable: Bool { !readOnly && notice == nil && (hunks.isEmpty || hunks.contains { $0.status.stageable }) }
+    public var unstageable: Bool { !readOnly && notice == nil && !stageable && hunks.contains { $0.status.unstageable } }
+    public var discardable: Bool { !readOnly && notice == nil && (hunks.isEmpty || hunks.contains { $0.status.discardable }) }
 
     /// What `props.viewed` records for the file: its diff as the user saw it (hunk ids,
-    /// status, notice), so an entry stops counting once the diff changes.
+    /// status, notice), so an entry stops counting once the diff changes. Between commits, the
+    /// two sides' blob ids: the same while neither side's file changes, wherever the head moves.
     public var fingerprint: String {
         var hash = StableHash()
         hash.add(boardPath + "\u{0}" + status.rawValue + "\u{0}" + (notice ?? ""))
-        for hunk in hunks { hash.add("\u{0}" + hunk.id) }
+        if let blobs {
+            hash.add("\u{0}" + (oldBoardPath ?? "") + "\u{0}" + (blobs.old ?? "-") + "\u{0}" + (blobs.new ?? "-"))
+        } else {
+            for hunk in hunks { hash.add("\u{0}" + hunk.id) }
+        }
         return hash.hex
     }
 
@@ -384,8 +427,9 @@ public struct ChangedFile: Sendable {
 }
 
 /// What a changes tile shows: every file that differs between the base and the working tree
-/// (untracked files as added) under its paths, with hunks and their index status. Loaded by
-/// `load`, all git through `GitDiffEngine` and `GitRunner`, off the main thread.
+/// (untracked files as added) under its paths, with hunks and their index status; or, comparing
+/// two commits (`ChangesSpec.head`), every file that differs between them. Loaded by `load`,
+/// all git through `GitDiffEngine` and `GitRunner`, off the main thread.
 public struct ChangeSet: Sendable {
     public var repository: URL?
     /// Full SHA of the base; nil when there is none (see `notice`).
@@ -400,13 +444,43 @@ public struct ChangeSet: Sendable {
     /// Another worktree of the board's repository (`props.root`), named for the header: its
     /// directory (`PathLabel`) and branch, e.g. `wt-omp (feature)`. Nil for the board's own.
     public var worktree: String?
-    /// Full SHA of the reviewed worktree's HEAD; nil without commits.
+    /// Full SHA of the reviewed worktree's HEAD, or of the head commit compared; nil without commits.
     public var head: String?
-    /// The branch checked out in the reviewed worktree; nil when detached.
+    /// The branch checked out in the reviewed worktree (nil when detached), or the head as written.
     public var branch: String?
+    /// Set when two commits are compared (`ChangesSpec.head`, or a `ref` no worktree has checked
+    /// out): `base` is then the merge-base of `head` with the commit the base names.
+    public var commits: Commits?
+    public struct Commits: Equatable, Sendable {
+        /// Full SHA of the commit the base names (`origin/main`'s tip), whose merge-base with
+        /// the head is the diff's base.
+        public var baseTip: String
+        /// A `ref` that no longer resolves, read at the last commit the tile saw.
+        public var gone: Gone?
+    }
+
+    public enum Gone: Equatable, Sendable {
+        /// The default branch has it: brought in by this commit (the merge, or the head itself
+        /// when fast-forwarded).
+        case merged(String)
+        /// Deleted without the default branch having it.
+        case deleted
+
+        /// How the header says it, as code tiles do (`RefSource.label`): `merged in 1a2b3c4`, `branch gone`.
+        public var label: String {
+            switch self {
+            case .merged(let commit): "merged in \(commit.prefix(7))"
+            case .deleted: "branch gone"
+            }
+        }
+    }
+
+    /// The commit a `ref` tile read (`GitRefs.Resolution.sha`), which the tile keeps in
+    /// `props.refSha`; nil for other tiles.
+    public var refSha: String?
 
     public init(repository: URL? = nil, base: String? = nil, baseLabel: String = "", files: [ChangedFile] = [], notice: String? = nil, omitted: Int = 0, worktree: String? = nil,
-                head: String? = nil, branch: String? = nil) {
+                head: String? = nil, branch: String? = nil, commits: Commits? = nil) {
         self.repository = repository
         self.base = base
         self.baseLabel = baseLabel
@@ -416,7 +490,11 @@ public struct ChangeSet: Sendable {
         self.worktree = worktree
         self.head = head
         self.branch = branch
+        self.commits = commits
     }
+
+    /// Two commits compared, read from git objects: nothing to stage, unstage, or discard.
+    public var comparesCommits: Bool { commits != nil }
 
     /// The base is another commit than HEAD (the branch's merge-base, a commit typed in), so the
     /// hunks include committed work: Discard only puts back what isn't committed
@@ -438,10 +516,15 @@ public struct ChangeSet: Sendable {
     /// The header's lead, which names plainly what is compared with what (a click on it picks
     /// the base): `Uncommitted changes` against HEAD (another worktree's name first:
     /// `wt-omp (feature) · Uncommitted changes`), else `pr-1041 vs origin/main` (the branch, or
-    /// `HEAD` when detached, against the base's name); or why nothing is listed.
+    /// `HEAD` when detached, against the base's name), with the two commits' short SHAs when
+    /// comparing commits (`pr-1041 vs origin/main · 1a2b3c4..5d6e7f8`); or why nothing is listed.
     public var lead: String {
         let place = worktree.map { "\($0) · " } ?? ""
         if let notice { return place + notice }
+        if let commits, let base, let head {
+            let gone = commits.gone.map { " (\($0.label))" } ?? ""
+            return "\(branch ?? "HEAD")\(gone) vs \(baseName) · \(base.prefix(7))..\(head.prefix(7))"
+        }
         if base == nil || !includesCommits { return place + (files.isEmpty ? "No uncommitted changes" : "Uncommitted changes") }
         return "\(branch ?? "HEAD") vs \(baseName)"
     }
@@ -457,7 +540,7 @@ public struct ChangeSet: Sendable {
     /// What the header says after the lead: `6 files · +62 −0`, `no changes`, or nothing.
     public var counts: String {
         guard notice == nil, base != nil else { return "" }
-        guard !files.isEmpty else { return includesCommits ? "no changes" : "" }
+        guard !files.isEmpty else { return includesCommits || comparesCommits ? "no changes" : "" }
         let count = files.count + omitted
         return "\(count) file\(count == 1 ? "" : "s") · +\(added) −\(removed)"
     }
@@ -469,6 +552,10 @@ public struct ChangeSet: Sendable {
     /// The summary's tooltip: what the base is exactly.
     public var baseDescription: String? {
         guard let base else { return nil }
+        if let commits, let head {
+            return "\(branch ?? head.prefix(7).description) at \(head.prefix(7)) against its merge-base \(base.prefix(7)) with \(baseName) (at \(commits.baseTip.prefix(7))): "
+                + "read from git objects, nothing to stage or discard"
+        }
         guard includesCommits else { return "Against HEAD \(base.prefix(7)): the work not committed yet, staged or not" }
         return "Against \(baseLabel) \(base.prefix(7)): the commits since it and the work not committed yet (Discard only puts back uncommitted work)"
     }
@@ -477,19 +564,57 @@ public struct ChangeSet: Sendable {
 
     /// The changes between `spec`'s base and the working tree of the repository containing
     /// `root` (the board root), or of `spec.root` when that is another worktree of it (anything
-    /// else is refused), limited to `spec.paths` (else that directory). `highlight` also parses
-    /// both sides with tree-sitter (tiles; measuring and `object.get` don't need it).
+    /// else is refused), limited to `spec.paths` (else that directory). With `spec.head`, two
+    /// commits compared instead (`loadCommits`). `spec.ref` is resolved by `GitRefs`: the
+    /// worktree that has it checked out, else the commit it names (or, gone, the last one the
+    /// tile saw, `spec.refSha`) against the base; `refSha` says which commit that was.
+    /// `highlight` also parses both sides with tree-sitter (tiles; measuring and `object.get`
+    /// don't need it).
     public static func load(root: URL, spec: ChangesSpec, highlight: Bool = true, engine: GitDiffEngine = .shared) async -> ChangeSet {
-        let reviewed = spec.directory(boardRoot: root)
-        var worktree: String?
-        if let prop = spec.root {
-            guard GitWorktree.sameRepository(reviewed.path, root.path) else {
+        if spec.head != nil, spec.ref != nil { return ChangeSet(notice: "give head or ref, not both") }
+        if spec.ref != nil, spec.root != nil { return ChangeSet(notice: "give ref or root, not both") }
+        if let head = spec.head { return await loadCommits(root: root, spec: spec, head: head, headName: head, highlight: highlight) }
+        guard let ref = spec.ref else {
+            let reviewed = spec.directory(boardRoot: root)
+            if let prop = spec.root, !GitWorktree.sameRepository(reviewed.path, root.path) {
                 return ChangeSet(notice: "\(prop) is not a worktree of this board's repository")
             }
-            if let own = GitWorktree.containing(root.path), let other = GitWorktree.containing(reviewed.path), own.gitDir != other.gitDir {
-                worktree = PathLabel.short(reviewed.path) == reviewed.path ? other.name : PathLabel.short(reviewed.path)
-                if let branch = other.branch { worktree! += " (\(branch))" }
-            }
+            return await loadWorktree(root: root, reviewed: reviewed, spec: spec, highlight: highlight, engine: engine)
+        }
+        let resolution: GitRefs.Resolution
+        do {
+            resolution = try await GitRefs.resolve(repo: root, ref: ref, lastKnownSha: spec.refSha)
+        } catch GitRefs.Failure.unknownRef(_) {
+            return ChangeSet(notice: await missing(ref, in: GitDiffEngine.existingAncestor(of: root)), branch: ref)
+        } catch GitRefs.Failure.notRevision(_) {
+            return ChangeSet(notice: "not a ref: \(ref)", branch: ref)
+        } catch {
+            return ChangeSet(notice: "not in a git repository", branch: ref)
+        }
+        var set: ChangeSet
+        switch resolution.state {
+        case .live:
+            // The board's own checkout reviews the board root (which may be a directory inside it).
+            let own = GitWorktree.containing(root.path)?.gitDir
+            let reviewed = resolution.worktree.flatMap { GitWorktree.containing($0.path)?.gitDir == own ? nil : $0 } ?? root
+            set = await loadWorktree(root: root, reviewed: reviewed, spec: spec, highlight: highlight, engine: engine)
+        case .objects:
+            set = await loadCommits(root: root, spec: spec, head: resolution.sha, headName: ref, highlight: highlight)
+        case .merged(let merge):
+            set = await loadCommits(root: root, spec: spec, head: resolution.sha, headName: ref, gone: .merged(merge), highlight: highlight)
+        case .missing:
+            set = await loadCommits(root: root, spec: spec, head: resolution.sha, headName: ref, gone: .deleted, highlight: highlight)
+        }
+        set.refSha = resolution.sha
+        return set
+    }
+
+    /// A worktree's changes: `reviewed` (the board root, or another worktree of its repository).
+    private static func loadWorktree(root: URL, reviewed: URL, spec: ChangesSpec, highlight: Bool, engine: GitDiffEngine) async -> ChangeSet {
+        var worktree: String?
+        if let own = GitWorktree.containing(root.path), let other = GitWorktree.containing(reviewed.path), own.gitDir != other.gitDir {
+            worktree = PathLabel.short(reviewed.path) == reviewed.path ? other.name : PathLabel.short(reviewed.path)
+            if let branch = other.branch { worktree! += " (\(branch))" }
         }
         // Held while loading: the engine finds the repository and resolves the base once for
         // this listing and all its files.
@@ -579,6 +704,10 @@ public struct ChangeSet: Sendable {
         var oldMode: String?
         var newMode: String?
         var tracked: Bool
+        /// The sides' object ids as `--raw` printed them (full with `--no-abbrev`); nil where the
+        /// side has no file, or for the working tree (git prints zeros there).
+        var oldBlob: String? = nil
+        var newBlob: String? = nil
     }
 
     /// `git diff --raw -z` records: `:<old mode> <new mode> <old sha> <new sha> <status>\0<path>\0`,
@@ -595,17 +724,19 @@ public struct ChangeSet: Sendable {
             guard parts.count >= 5, let letter = parts[4].first else { continue }
             let oldMode = parts[0] == "000000" ? nil : String(parts[0])
             let newMode = parts[1] == "000000" ? nil : String(parts[1])
+            func blob(_ id: Substring) -> String? { id.allSatisfy { $0 == "0" } ? nil : String(id) }
+            let oldBlob = blob(parts[2]), newBlob = blob(parts[3])
             let twoPaths = letter == "R" || letter == "C"
             guard index + (twoPaths ? 1 : 0) < fields.count else { break }
             let first = fields[index]
             let second = twoPaths ? fields[index + 1] : nil
             index += twoPaths ? 2 : 1
             switch letter {
-            case "A": entries.append(Entry(status: .added, path: first, oldPath: nil, oldMode: nil, newMode: newMode, tracked: true))
-            case "D": entries.append(Entry(status: .deleted, path: first, oldPath: nil, oldMode: oldMode, newMode: nil, tracked: true))
-            case "M", "T": entries.append(Entry(status: .modified, path: first, oldPath: nil, oldMode: oldMode, newMode: newMode, tracked: true))
-            case "R": entries.append(Entry(status: .renamed, path: second ?? first, oldPath: first, oldMode: oldMode, newMode: newMode, tracked: true))
-            case "C": entries.append(Entry(status: .added, path: second ?? first, oldPath: nil, oldMode: nil, newMode: newMode, tracked: true))
+            case "A": entries.append(Entry(status: .added, path: first, oldPath: nil, oldMode: nil, newMode: newMode, tracked: true, newBlob: newBlob))
+            case "D": entries.append(Entry(status: .deleted, path: first, oldPath: nil, oldMode: oldMode, newMode: nil, tracked: true, oldBlob: oldBlob))
+            case "M", "T": entries.append(Entry(status: .modified, path: first, oldPath: nil, oldMode: oldMode, newMode: newMode, tracked: true, oldBlob: oldBlob, newBlob: newBlob))
+            case "R": entries.append(Entry(status: .renamed, path: second ?? first, oldPath: first, oldMode: oldMode, newMode: newMode, tracked: true, oldBlob: oldBlob, newBlob: newBlob))
+            case "C": entries.append(Entry(status: .added, path: second ?? first, oldPath: nil, oldMode: nil, newMode: newMode, tracked: true, newBlob: newBlob))
             default: continue
             }
         }
@@ -710,7 +841,8 @@ public struct ChangeSet: Sendable {
     // MARK: Summary
 
     /// What `object.get` adds for a changes tile: the files and their hunks, board-relative,
-    /// with each file's Viewed mark from `viewed` (`props.viewed`).
+    /// with each file's Viewed mark from `viewed` (`props.viewed`); comparing commits, the head
+    /// commit, the base's tip, and `readOnly`.
     public func json(viewed: JSONValue? = nil) -> JSONValue {
         var result: [String: JSONValue] = [
             "base": base.map(JSONValue.string) ?? .null,
@@ -722,6 +854,14 @@ public struct ChangeSet: Sendable {
         if let repository { result["repository"] = .string(repository.path) }
         if let notice { result["notice"] = .string(notice) }
         if omitted > 0 { result["omitted"] = .number(Double(omitted)) }
+        if let commits {
+            result["head"] = head.map(JSONValue.string) ?? .null
+            result["headLabel"] = branch.map(JSONValue.string) ?? .null
+            result["baseTip"] = .string(commits.baseTip)
+            result["readOnly"] = .bool(true)
+            if let gone = commits.gone { result["refState"] = .string(gone.label) }
+        }
+        if let refSha { result["refSha"] = .string(refSha) }
         return .object(result)
     }
 
@@ -764,4 +904,6 @@ public struct ChangesFailure: Error, Equatable, Sendable {
 
     /// Discard asked of committed work: a review never rewrites the commits it reads.
     public static let committed = ChangesFailure("committed: Discard only puts back work not committed yet")
+    /// Stage, Unstage, or Discard asked of two commits compared: nothing there is a worktree's.
+    public static let readOnly = ChangesFailure("read-only: this tile compares two commits; there is nothing to stage, unstage, or discard")
 }

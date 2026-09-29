@@ -1075,7 +1075,7 @@ public final class ApiRouter {
     }
 
     /// An `object.create` of a changes tile an agent already made for the same `root`, `base`,
-    /// and `paths` (its own tile, on that board): the update that brings that tile the call's
+    /// `head`, `ref`, and `paths` (its own tile, on that board): the update that brings that tile the call's
     /// other props, `frame`, and `size`, so the agent gets it back (`reused: true`) instead of
     /// a duplicate beside the user's review. Nil for anything else.
     func reusableChanges(_ p: JSONValue) throws -> JSONValue? {
@@ -1088,13 +1088,14 @@ public final class ApiRouter {
             .filter { $0.type == .changes && $0.createdBy == .agent(tile: caller) }
             .filter { object in
                 let other = ChangesSpec(object.props)
-                return other.baseProp == spec.baseProp && other.paths == spec.paths && other.directory(boardRoot: board.root).path == root
+                return other.baseProp == spec.baseProp && other.head == spec.head && other.ref == spec.ref && other.paths == spec.paths
+                    && other.directory(boardRoot: board.root).path == root
             }
             .max { $0.z < $1.z }
         guard let existing else { return nil }
         var update: [String: JSONValue] = ["id": .string(existing.id), "caller": .string(caller)]
         var given = props.object ?? [:]
-        for key in ["root", "base", "paths"] { given.removeValue(forKey: key) }
+        for key in ["root", "base", "head", "ref", "paths"] { given.removeValue(forKey: key) }
         if !given.isEmpty { update["props"] = .object(given) }
         if let frame = p["frame"] { update["frame"] = frame }
         if let size = p["size"] { update["size"] = size }
@@ -1104,9 +1105,10 @@ public final class ApiRouter {
     /// `object.create`/`object.update` params with a note's markdown anchored the way its tile
     /// would write it back (`NoteMarkdown.anchoringRanges`), so the result's `rev` is the one the
     /// next update needs. `pending` are the params of creates earlier in the same batch.
-    /// A create's or update's `ref` on a code, note, or HTML tile resolved now (`RefSource`):
-    /// `refSha` records the SHA it resolved to, a ref that resolves to nothing is `not_found`, and
-    /// clearing the ref clears `refSha`. A code tile's `pinnedCommit` wins: its ref isn't resolved.
+    /// A create's or update's `ref` on a code, note, HTML, or changes tile resolved now
+    /// (`RefSource`): `refSha` records the SHA it resolved to, a ref that resolves to nothing is
+    /// `not_found` (a changes tile's names the `git fetch` that brings it), and clearing the ref
+    /// clears `refSha`. A code tile's `pinnedCommit` wins: its ref isn't resolved.
     func referenced(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> JSONValue {
         guard var params = p.object, var props = p["props"]?.object, let value = props["ref"] else { return p }
         let board: Board, type: ObjectType?, existing: JSONValue
@@ -1129,7 +1131,7 @@ public final class ApiRouter {
                 existing = object.props
             }
         }
-        guard let type, [.code, .note, .html].contains(type) else { return p }
+        guard let type, [.code, .note, .html, .changes].contains(type) else { return p }
         guard let ref = value.string, !ref.isEmpty else {
             guard value == .null || value.string == "" else { throw Failure("invalid_params", "ref must be a branch or other ref name") }
             props["refSha"] = .null
@@ -1148,7 +1150,8 @@ public final class ApiRouter {
         } catch GitRefs.Failure.notRepository {
             throw Failure("invalid_params", "ref needs a board in a git repository")
         } catch {
-            throw Failure("not_found", RefSource.describe(error, ref: ref))
+            guard type == .changes else { throw Failure("not_found", RefSource.describe(error, ref: ref)) }
+            throw Failure("not_found", await ChangeSet.missing(ref, in: GitDiffEngine.existingAncestor(of: board.root)))
         }
         params["props"] = .object(props)
         return .object(params)

@@ -89,6 +89,15 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     Discard only puts back work not committed yet: committed hunks have none.
     """
 
+    /// The tooltip of a tile comparing two commits: reading keys only.
+    static let readingTooltip = """
+    Two commits compared, read from git objects: nothing to stage, unstage, or discard. Click a line to open it in a code tile pinned to its side's commit \
+    (a removed line at the base, anything else at the head); drag, ⇧-click or ⌘-click to select lines; Hyper-click (⌃⌥⇧⌘) a line or hunk header to mention it; \
+    click a file's header to fold it, its Viewed box to fold it until either side of it changes; click the summary to pick the base.
+    Keys once the tile has the keyboard (↩ or a click): j or ↓ next hunk, k or ↑ previous hunk, J or ] next file, K or [ previous file, \
+    / filter files, Return open the hunk in a code tile, m mention (the selected lines, else the hunk), Esc back to the canvas.
+    """
+
     init(object: CanvasObject, board: Board) {
         self.object = object
         self.board = board
@@ -167,9 +176,12 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     // MARK: Loading
 
     func update(_ object: CanvasObject) {
-        let old = ChangesSpec(self.object.props), oldViewed = self.object.props["viewed"]
+        var old = ChangesSpec(self.object.props), new = ChangesSpec(object.props)
+        let oldViewed = self.object.props["viewed"]
         self.object = object
-        if ChangesSpec(object.props) != old { return load() }
+        // The tile's own `refSha` write-back follows a listing; it asks for none.
+        (old.refSha, new.refSha) = (nil, nil)
+        if new != old { return load() }
         if object.props["viewed"] != oldViewed { syncViewed(from: oldViewed) }
         refreshPainter()
     }
@@ -216,9 +228,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             self.heldRepository = held
             let previous = self.set
             self.install(set)
-            self.watch(set.repository)
+            self.watch(set.repository, refsOnly: set.comparesCommits)
             self.growIfFitted(from: previous, to: set)
-            if spec.root == nil { self.onBranch?(set.branch) }
+            if spec.root == nil, spec.head == nil, spec.ref == nil { self.onBranch?(set.branch) }
+            if let ref = spec.ref, let sha = set.refSha { self.board.recordRefSha(self.object.id, ref: ref, sha: sha) }
         }
     }
 
@@ -314,18 +327,33 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
 
     /// Working-tree writes, and the index, HEAD, and refs in the git directory, reload the
     /// listing (debounced); objects, logs, and lock files don't. A linked worktree's own index
-    /// and HEAD live in the common git directory, which is watched too.
-    private func watch(_ repository: URL?) {
+    /// and HEAD live in the common git directory, which is watched too. Two commits compared
+    /// (`refsOnly`) only move with refs: just the common git directory, and only its refs.
+    private func watch(_ repository: URL?, refsOnly: Bool) {
         guard let repository else { return events = nil }
+        let worktree = GitWorktree.containing(repository.path)
         var directories = [FileEvents.canonical(repository.path)]
-        if let worktree = GitWorktree.containing(repository.path), !worktree.gitDir.hasPrefix(directories[0] + "/") {
+        let common = worktree.map { FileEvents.canonical($0.commonDir) }
+        if refsOnly, let common {
+            directories = [common]
+        } else if let worktree, !worktree.gitDir.hasPrefix(directories[0] + "/") {
             directories.append(FileEvents.canonical(worktree.gitDir))
         }
         guard events?.directories != directories else { return }
+        let commonDir = refsOnly ? common : nil
         events = FileEvents(directories: directories, latency: 0.3) { [weak self] paths in
-            guard let self, paths.contains(where: Self.matters), (self.events?.latestEventId ?? .max) > self.loadedThrough else { return }
+            guard let self else { return }
+            let moved = paths.contains { path in commonDir.map { Self.movesRefs(path, commonDir: $0) } ?? Self.matters(path) }
+            guard moved, (self.events?.latestEventId ?? .max) > self.loadedThrough else { return }
             self.scheduleReload(after: 0.2)
         }
+    }
+
+    /// A ref written in the common git directory (`refs/…`, `packed-refs`; not a lock).
+    nonisolated static func movesRefs(_ path: String, commonDir: String) -> Bool {
+        guard path.hasPrefix(commonDir + "/"), !path.hasSuffix(".lock") else { return false }
+        let inside = path.dropFirst(commonDir.count + 1)
+        return inside.hasPrefix("refs/") || inside == "packed-refs"
     }
 
     nonisolated static func matters(_ path: String) -> Bool {
@@ -500,7 +528,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
                 areas += [NSRect(x: 0, y: rect.minY, width: viewed.minX, height: rect.height), viewed] + buttons
             case .hunk(let file, let hunk):
                 let buttons = painter.buttons(inRow: rect, file: file, hunk: hunk).map(\.1)
-                areas += [NSRect(x: 0, y: rect.minY, width: buttons[0].minX, height: rect.height)] + buttons
+                areas += [NSRect(x: 0, y: rect.minY, width: buttons.first?.minX ?? rect.maxX, height: rect.height)] + buttons
             default:
                 areas.append(rect)
             }
@@ -735,14 +763,18 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         }
     }
 
-    /// s, u and r: on the selected lines, else the current hunk.
+    /// s, u and r: on the selected lines, else the current hunk (refused when two commits are
+    /// compared).
     private func actOnCurrent(_ action: ChangesAction) {
+        if set?.comparesCommits == true { return show(message: ChangesFailure.readOnly.message) }
         guard let target = keyTarget else { return show(message: Self.pickFirst) }
         act(action, file: target.file, hunk: target.hunk, lines: target.lines, byClick: false)
     }
 
-    /// A header button or its key: Discard asks first (`askToDiscard`), Stage and Unstage act at once.
+    /// A header button or its key: Discard asks first (`askToDiscard`), Stage and Unstage act at
+    /// once; two commits compared have nothing to act on and say so.
     private func act(_ action: ChangesAction, file: Int, hunk: Int?, lines: Set<Int>?, byClick: Bool) {
+        if set?.comparesCommits == true { return show(message: ChangesFailure.readOnly.message) }
         if action == .revert { return askToDiscard(file: file, hunk: hunk, lines: lines, byClick: byClick) }
         perform(action, file: file, hunk: hunk, lines: lines)
     }
@@ -837,26 +869,33 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     // MARK: Actions
 
     private func openCurrent() {
-        guard let current, let line = set?.openLine(file: current.file, hunk: current.hunk) else { return }
-        openCode(file: current.file, line: line)
+        guard let current, let set, let line = set.openLine(file: current.file, hunk: current.hunk) else { return }
+        openCode(file: current.file, line: line, side: set.files[current.file].status == .deleted ? .old : .new)
     }
 
     /// A clicked line in a code tile beside this one: its working-tree line (a removed line's
-    /// place in the working tree; a deleted file's base line).
+    /// place in the working tree; a deleted file's base line). Two commits compared: the line on
+    /// its own side (a removed line in the base).
     private func open(file: Int, hunk: Int, line: Int) {
         guard let set, let location = set.location(file: file, hunk: hunk, line: line) else { return }
+        if set.comparesCommits { return openCode(file: file, line: location.line, side: location.side) }
         let target = location.side == .old && set.files[file].status != .deleted ? set.openLine(file: file, hunk: hunk) ?? location.line : location.line
-        openCode(file: file, line: target)
+        openCode(file: file, line: target, side: set.files[file].status == .deleted ? .old : .new)
     }
 
     /// The line in a code tile beside this one: this tile's preview, re-aimed while the user
     /// hasn't kept it, else a plain code tile in view showing the file, else a new one
-    /// (`Board.openForNavigation`); one step of Navigate Back.
-    private func openCode(file: Int, line: Int) {
+    /// (`Board.openForNavigation`); one step of Navigate Back. Two commits compared: pinned to
+    /// the commit of `side` (the base's merge-base for the old side, the head for the new), at
+    /// the file's name there.
+    private func openCode(file: Int, line: Int, side: DiffSide) {
         guard let set else { return }
-        let aim = CodeAim(path: set.files[file].boardPath, range: LineRange(start: line, end: line))
+        let changed = set.files[file]
+        let pin = set.comparesCommits ? (side == .old ? set.base : set.head) : nil
+        let path = pin != nil && side == .old ? changed.oldBoardPath ?? changed.boardPath : changed.boardPath
+        let aim = CodeAim(path: path, range: LineRange(start: line, end: line), pinnedCommit: pin)
         let open = { [self] () -> CodeReaim? in
-            let opened = board.openForNavigation(aim, from: object.id, preview: true, extra: ["diffBase": .string(spec.baseProp)])
+            let opened = board.openForNavigation(aim, from: object.id, preview: true, extra: pin == nil ? ["diffBase": .string(spec.baseProp)] : [:])
             onOpenedCode?(opened.id, opened.created)
             return opened.reaim
         }
@@ -1000,6 +1039,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private func mention(file: Int, hunk: Int, lines: Set<Int>?) -> MentionTarget? {
         guard let set, let found = set.mention(file: file, hunk: hunk, lines: lines) else { return nil }
         let symbol = set.files[file].symbol(lines: found.lines, side: found.side)
+        if set.comparesCommits, found.side == .new {
+            // The head's lines, as that commit has them (no working tree in this diff).
+            return .code(object: object.id, path: found.path, lines: found.lines, side: nil, symbol: symbol, commit: set.head, diff: found.detail)
+        }
         return .code(object: object.id, path: found.path, lines: found.lines, side: set.base == nil ? nil : found.side.rawValue, symbol: symbol, commit: set.base, diff: found.detail)
     }
 
@@ -1065,7 +1108,8 @@ extension ChangesTile {
         let directory = spec.directory(boardRoot: board.root)
         let defaultBranch = GitWorktree.containing(directory.path)?.defaultBranch
         let menu = NSMenu()
-        for choice in ChangesBaseChoice.choices(current: current) {
+        // Two commits compared have no uncommitted work to pick.
+        for choice in ChangesBaseChoice.choices(current: current) where !(choice == .uncommitted && (spec.head != nil || set?.comparesCommits == true)) {
             let item = MenuAction.item(choice.title(defaultBranch: defaultBranch)) { [weak self] in self?.setBase(choice) }
             item.state = choice == current ? .on : .off
             menu.addItem(item)

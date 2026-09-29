@@ -157,8 +157,14 @@ export type HtmlProps = {
 export type ChangesProps = {
   /** another worktree of the board's repository to review (absolute or board-relative, e.g. ../wt-agent; default: the board root). Anything that isn't a worktree of the board's repository lists nothing and says so. Its files have absolute paths */
   root?: string;
-  /** what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch: everything the branch changed, a PR's view) | a commit or ref. The user picks it in the tile's header too. Against anything but HEAD, committed hunks can't be discarded */
+  /** what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch: everything the branch changed, a PR's view) | a commit or ref. The user picks it in the tile's header too. Against anything but HEAD, committed hunks can't be discarded. With `head` or `ref` it defaults to merge-base, and the diff is against the merge-base of `head` with it (`git diff base...head`, a PR's view) */
   base?: string;
+  /** compare two commits instead of a worktree: any commit or ref (a branch, origin/x, a fetched pull/N/head) against its merge-base with `base` (e.g. {"base": "origin/main", "head": "fm/rel-12389"}). Read from git objects, no checkout; renames and deletions included; read-only: no Stage, Unstage, or Discard. Clicking a line opens a code tile pinned to that side's commit. A ref the repository lacks lists nothing and names the exact `git fetch` that brings it: Canvas never fetches */
+  head?: string;
+  /** a branch, instead of `root`: while a worktree of the board's repository has it checked out, that worktree (live, as `root`); otherwise its commits against `base` from git objects, read-only (as `head`). Once the branch is gone it reads `refSha`, and says `merged in <sha>` or `branch gone`. object.create/update resolve it and record `refSha`; a ref that resolves to nothing is not_found, naming the `git fetch` that brings it */
+  ref?: string;
+  /** written by the tile: the commit `ref` named when the tile last read it, what it falls back to once the branch is deleted */
+  refSha?: string;
   /** files or directories to limit it to, relative to `root` (default the board root) or absolute (default: all of it); a path outside that worktree lists nothing and says so */
   paths?: string[];
   title?: string;
@@ -672,10 +678,22 @@ export type ObjectGetResult = {
     baseLabel?: string;
     added?: number;
     removed?: number;
-    /** why nothing is listed (not a repository, no commits, a path outside it) */
+    /** why nothing is listed (not a repository, no commits, a path outside it, a ref it lacks with the `git fetch` that brings it) */
     notice?: string;
     /** changed files past the 300 the tile loads */
     omitted?: number;
+    /** two commits compared (`head`, or a `ref` no worktree has checked out): full SHA of the head; `base` is its merge-base with the base */
+    head?: unknown;
+    /** two commits compared: the head as written */
+    headLabel?: unknown;
+    /** two commits compared: full SHA of the commit the base names */
+    baseTip?: string;
+    /** two commits compared: nothing to stage, unstage, or discard */
+    readOnly?: true;
+    /** a `ref` that no longer resolves, read at `refSha`: `merged in <sha>` or `branch gone` */
+    refState?: string;
+    /** `ref` tiles: the commit the ref named (the live worktree's HEAD, or the ref's commit) */
+    refSha?: string;
     files?: ({
       /** board-relative, else absolute */
       path?: string;

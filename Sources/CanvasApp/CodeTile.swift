@@ -324,7 +324,7 @@ final class CodeTile: NSView, TileContent {
     private func userAim(_ aim: Aim) {
         lock.userAimed(aim)
         apply(aim)
-        board.reaimForNavigation(object.id, to: CodeAim(path: aim.path, range: aim.range))
+        board.reaimForNavigation(object.id, to: CodeAim(path: aim.path, range: aim.range, pinnedCommit: pinnedCommit, ref: RefSource.ref(of: object.props)))
     }
 
     // MARK: Loading

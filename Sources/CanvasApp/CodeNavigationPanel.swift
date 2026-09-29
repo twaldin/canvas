@@ -337,8 +337,8 @@ private final class FilterList: NSView, NSTextFieldDelegate {
     }
 }
 
-/// Hover markdown → attributed text: fenced code in monospace on a tinted background, headings
-/// bold, rules as spacing, and inline emphasis/code/links from Foundation's inline parser.
+/// Hover markdown → attributed text: code in monospace on a tinted background, headings bold,
+/// rules as spacing, and the inline emphasis, code and links `HoverMarkdown` resolved.
 @MainActor
 enum HoverText {
     static let body = NSFont.systemFont(ofSize: 12)
@@ -352,10 +352,11 @@ enum HoverText {
             case .code(_, let text):
                 result.append(NSAttributedString(string: text + "\n", attributes: [.font: code, .foregroundColor: NSColor.labelColor,
                                                                                     .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.12)]))
-            case .heading(let text):
-                result.append(NSAttributedString(string: text + "\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]))
-            case .prose(let text):
-                result.append(inline(text))
+            case .heading(let spans):
+                result.append(inline(spans, font: NSFont.boldSystemFont(ofSize: 12)))
+                result.append(NSAttributedString(string: "\n", attributes: [.font: body]))
+            case .prose(let spans):
+                result.append(inline(spans, font: body))
                 result.append(NSAttributedString(string: "\n", attributes: [.font: body]))
             case .rule:
                 result.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4)]))
@@ -366,20 +367,15 @@ enum HoverText {
         return result
     }
 
-    private static func inline(_ text: String) -> NSAttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        guard let parsed = try? AttributedString(markdown: text, options: options) else {
-            return NSAttributedString(string: text, attributes: [.font: body, .foregroundColor: NSColor.labelColor])
-        }
+    private static func inline(_ spans: [HoverMarkdown.Span], font base: NSFont) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        for run in parsed.runs {
-            let intent = run.inlinePresentationIntent ?? []
-            var font = intent.contains(.code) ? code : body
-            if intent.contains(.stronglyEmphasized) { font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
-            if intent.contains(.emphasized) { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
-            var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: run.link == nil ? NSColor.labelColor : NSColor.linkColor]
-            if intent.contains(.code) { attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(0.12) }
-            result.append(NSAttributedString(string: String(parsed[run.range].characters), attributes: attributes))
+        for span in spans {
+            var font = span.code ? code : base
+            if span.strong { font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask) }
+            if span.emphasis { font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask) }
+            var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: span.link ? NSColor.linkColor : NSColor.labelColor]
+            if span.code { attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(0.12) }
+            result.append(NSAttributedString(string: span.text, attributes: attributes))
         }
         return result
     }

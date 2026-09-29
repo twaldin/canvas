@@ -33,6 +33,18 @@ public enum NoteMarkdown {
         }
     }
 
+    /// One line of note markdown as it reads (a chip's words, the title of a note without one):
+    /// its inline markup resolved, escapes and entities decoded, a heading's `#`s and a list
+    /// marker gone, as `plainText` reads a block. A line with no text (a fence, a rule) as written.
+    public static func plainText(ofLine line: some StringProtocol) -> String {
+        var node: Markup = parse(String(line))
+        while let child = node.child(at: 0) {
+            if let inline = child as? InlineContainer { return inline.plainText.trimmingCharacters(in: .whitespaces) }
+            node = child
+        }
+        return line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+    }
+
     public static func anchoredFences(in document: Document) -> [AnchoredFence] {
         var out: [AnchoredFence] = []
         var index: [String: Int] = [:]

@@ -116,8 +116,7 @@ public struct NoteItem: Equatable, Sendable {
         switch kind {
         case .row:
             return lines.first.map { row in
-                row.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "|"))
-                    .split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " · ")
+                cells(of: row.trimmingCharacters(in: .whitespaces)).map(NoteMarkdown.plainText(ofLine:)).joined(separator: " · ")
             } ?? ""
         case .code, .html:
             let body = kind == .code ? lines.dropFirst() : lines[...]
@@ -134,6 +133,25 @@ public struct NoteItem: Equatable, Sendable {
             }
             return lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
         }
+    }
+
+    /// A table row's cells, split at its unescaped pipes (GFM: `\|` is a pipe in a cell); the
+    /// pipes that open and close the row leave no empty cells.
+    private func cells(of row: String) -> [String] {
+        var cells: [String] = []
+        var cell = ""
+        var escaped = false
+        for character in row {
+            if character == "|", !escaped {
+                cells.append(cell)
+                cell = ""
+            } else {
+                cell.append(character)
+            }
+            escaped = character == "\\" && !escaped
+        }
+        cells.append(cell)
+        return cells.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
     // MARK: Helpers

@@ -40,12 +40,58 @@ struct HoverMarkdownTests {
     @Test func fencesHeadingsRulesAndParagraphsBecomeBlocks() {
         let markdown = "## Multiple results\n\n```swift\npublic struct Model\n```\n\n---\n\nThe *area*\nin points.\n\nSecond paragraph.\n~~~\nunterminated"
         #expect(HoverMarkdown.blocks(markdown) == [
-            .heading("Multiple results"),
+            .heading([.init("Multiple results")]),
             .code(language: "swift", text: "public struct Model"),
             .rule,
-            .prose("The *area*\nin points."),
-            .prose("Second paragraph."),
+            .prose([.init("The "), .init("area", emphasis: true), .init("\nin points.")]),
+            .prose([.init("Second paragraph.")]),
             .code(language: nil, text: "unterminated"),
+        ])
+    }
+
+    /// Each block as it reads: a heading's or paragraph's spans joined, code as is.
+    func read(_ markdown: String) -> [String] {
+        HoverMarkdown.blocks(markdown).map { block in
+            switch block {
+            case .heading(let spans), .prose(let spans): spans.map(\.text).joined()
+            case .code(_, let text): text
+            case .rule: "---"
+            }
+        }
+    }
+
+    @Test func escapedPunctuationReadsWithoutItsBackslash() {
+        // What sourcekit-lsp passes through from a doc comment, and pyright writes for a docstring.
+        #expect(read("# Discussion of max\\_depth and \\*args\n\nLoad the \\_\\_init\\_\\_ config for \\*user\\_name\\* from \\[path\\] \\# not a heading, a\\\\b &amp; c") == [
+            "Discussion of max_depth and *args",
+            "Load the __init__ config for *user_name* from [path] # not a heading, a\\b & c",
+        ])
+    }
+
+    @Test func backslashesInCodeStay() {
+        #expect(HoverMarkdown.blocks("See `snake_case\\path` or `a\\_b`.") == [
+            .prose([.init("See "), .init("snake_case\\path", code: true), .init(" or "), .init("a\\_b", code: true), .init(".")]),
+        ])
+        #expect(HoverMarkdown.blocks("## The `a\\_b` key") == [.heading([.init("The "), .init("a\\_b", code: true), .init(" key")])])
+        #expect(read("```\nre.sub(r\"\\_\", x)\n```") == ["re.sub(r\"\\_\", x)"])
+    }
+
+    @Test func indentedCodeIsCodeUnlessItContinuesAParagraph() {
+        // String's doc comment, as sourcekit-lsp passes it: the interpolation's backslash stays.
+        let markdown = "Prefixed by a\nbackslash.\n\n    let name = \"Rosa\"\n    let greeting = \"Welcome, \\(name)!\"\n\n        print(2 * n * m)\n\nThen\n    more of the paragraph."
+        #expect(HoverMarkdown.blocks(markdown) == [
+            .prose([.init("Prefixed by a\nbackslash.")]),
+            .code(language: nil, text: "let name = \"Rosa\"\nlet greeting = \"Welcome, \\(name)!\"\n\n    print(2 * n * m)"),
+            .prose([.init("Then\n    more of the paragraph.")]),
+        ])
+    }
+
+    @Test func anUnderlinedParagraphIsAHeadingAndARuleNeedsABlankLineBefore() {
+        #expect(HoverMarkdown.blocks("Accessing a String's\nUnicode Representation\n=====\n\nText\n---\n\n---\n\nEnd") == [
+            .heading([.init("Accessing a String's\nUnicode Representation")]),
+            .heading([.init("Text")]),
+            .rule,
+            .prose([.init("End")]),
         ])
     }
 }

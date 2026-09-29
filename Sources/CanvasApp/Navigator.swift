@@ -145,7 +145,7 @@ extension CanvasView {
         case .note:
             let markdown = props["markdown"]?.string ?? ""
             let line = markdown.split(whereSeparator: \.isNewline).lazy
-                .map { $0.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces) }
+                .map(NoteMarkdown.plainText(ofLine:))
                 .first { !$0.isEmpty }
             let title = props["title"]?.string.flatMap { $0.isEmpty ? nil : $0 }
             return NavigatorRow(target: .object(object.id), title: title ?? line ?? "Empty note", kind: "Note", dot: nil)

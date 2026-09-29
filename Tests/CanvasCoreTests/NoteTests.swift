@@ -1083,6 +1083,20 @@ struct NoteMentionTests {
         #expect(context.contains("    line 80\n    … 20 more lines (canvas get \(big.id))"))
         #expect(!context.contains("line 81"))
     }
+
+    @Test func chipsAndTheRenderedNoteReadEscapesAsText() throws {
+        let markdown = "# a\\_b\n\n| key | value |\n|---|---|\n| max\\_depth | a \\| b |\n\nUse \\_\\_init\\_\\_ or `x\\_y`."
+        let note = board.create(type: .note, props: .object(["markdown": .string(markdown)]))
+        let row = try board.stage(.note(object: note.id, item: try #require(NoteItem.at(line: 5, in: markdown))))
+        let paragraph = try board.stage(.note(object: note.id, item: try #require(NoteItem.at(line: 7, in: markdown))))
+        #expect(row.label == "note a_b › max_depth · a | b")
+        #expect(paragraph.label == "note a_b › Use __init__ or `x\\_y`.")
+
+        let rendered = NoteRenderer(excerpts: [:], width: 400).render(NoteMarkdown.parse(markdown), placeholder: "").string
+        #expect(rendered.hasPrefix("a_b\n"))
+        #expect(rendered.contains("max_depth") && rendered.contains("a | b"))
+        #expect(rendered.hasSuffix("Use __init__ or x\\_y."))
+    }
 }
 
 /// `object.get` says how a note's fences and a code tile's range resolve now, so an agent checks

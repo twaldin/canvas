@@ -315,10 +315,8 @@ public enum MentionContext {
         case .browser: return nonEmpty("title") ?? nonEmpty("pageTitle") ?? props["url"]?.string ?? ""
         case .code: return props["path"]?.string ?? ""
         case .note:
-            // Without a title, its first line, as it reads (a heading without its `#`s).
-            return nonEmpty("title") ?? props["markdown"]?.string?.split(separator: "\n").first.map {
-                String($0.drop { $0 == "#" }).trimmingCharacters(in: .whitespaces)
-            } ?? ""
+            // Without a title, its first line, as it reads (a heading without its `#`s or escapes).
+            return nonEmpty("title") ?? props["markdown"]?.string?.split(separator: "\n").first.map(NoteMarkdown.plainText(ofLine:)) ?? ""
         case .html: return props["title"]?.string ?? "html"
         case .changes: return props["title"]?.string ?? ChangesSpec(props).name
         case .image: return props["title"]?.string ?? props["path"]?.string ?? "image"

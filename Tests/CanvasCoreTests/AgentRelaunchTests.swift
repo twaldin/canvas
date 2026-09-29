@@ -50,13 +50,16 @@ final class AgentRelaunchTests {
     }
 
     /// A report the integration couldn't deliver, as report.ts spools it.
-    func spooled(_ tile: ObjectID, seq: Int, method: String = "agent.report", _ params: [String: JSONValue]) throws {
+    @discardableResult
+    func spooled(_ tile: ObjectID, seq: Int, method: String = "agent.report", _ params: [String: JSONValue]) throws -> URL {
         let folder = spool.appendingPathComponent(tile, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var params = params
         params["tile"] = .string(tile)
         let entry: JSONValue = .object(["seq": .number(Double(seq)), "method": .string(method), "params": .object(params)])
-        try JSONEncoder().encode(entry).write(to: folder.appendingPathComponent("\(seq)-1-\(UUID().uuidString.prefix(8)).json"))
+        let file = folder.appendingPathComponent("\(seq)-1-\(UUID().uuidString.prefix(8)).json")
+        try JSONEncoder().encode(entry).write(to: file)
+        return file
     }
 
     func spoolIsEmpty(_ tile: ObjectID) -> Bool {
@@ -179,5 +182,23 @@ final class AgentRelaunchTests {
         try after.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 101, source: "canvas-omp")
         #expect(after.board.objects[omp]?.props["lifecycle"]?["restored"] == nil)
         #expect(try await call(after, "agent.prompt", ["target": .string(omp), "text": "also the branch"])["ok"] == .bool(true))
+    }
+
+    @Test func aReportCanvasCouldNotReadWaitsForTheNextOpenWhileAFileThatIsNoReportIsDeleted() throws {
+        let manager = FileManager.default
+        let codex = "obj_codex"
+        let report = try spooled(codex, seq: 200, ["kind": "codex", "state": "idle", "source": "canvas-codex", "final": "Done."])
+        let garbage = spool.appendingPathComponent(codex).appendingPathComponent("junk.json")
+        try Data("not a report".utf8).write(to: garbage)
+
+        // Unreadable at this open (permissions): left out, and left in place.
+        try manager.setAttributes([.posixPermissions: 0], ofItemAtPath: report.path)
+        #expect(AgentReportSpool.read(from: spool, tiles: [codex]).isEmpty)
+        #expect(manager.fileExists(atPath: report.path))
+        #expect(!manager.fileExists(atPath: garbage.path), "a file that reads but isn't a report goes")
+
+        // Readable at the next open: replayed.
+        try manager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: report.path)
+        #expect(AgentReportSpool.read(from: spool, tiles: [codex]).map(\.seq) == [200])
     }
 }

@@ -16,8 +16,10 @@ public enum AgentReportSpool {
         public var file: URL
     }
 
-    /// The spooled reports of `tiles`, oldest first. Unreadable or half-written files are left
-    /// out (a writer renames a finished file into place; hidden temporary files are skipped).
+    /// The spooled reports of `tiles`, oldest first. A file that can't be read now (permissions,
+    /// IO) is left for the next open; one that reads but isn't a report is deleted. Half-written
+    /// files never show up: a writer renames a finished file into place, and hidden temporary
+    /// files are skipped.
     /// File IO: call it off the main actor.
     public static func read(from directory: URL, tiles: [ObjectID]) -> [Entry] {
         var entries: [Entry] = []
@@ -27,7 +29,9 @@ public enum AgentReportSpool {
             guard let names = try? manager.contentsOfDirectory(atPath: folder.path) else { continue }
             for name in names where name.hasSuffix(".json") && !name.hasPrefix(".") {
                 let file = folder.appendingPathComponent(name)
-                guard let data = try? Data(contentsOf: file), let json = try? JSONDecoder().decode(JSONValue.self, from: data),
+                // Left for the next open: a failed read says nothing about what the file holds.
+                guard let data = try? Data(contentsOf: file) else { continue }
+                guard let json = try? JSONDecoder().decode(JSONValue.self, from: data),
                       let seq = json["seq"]?.int, let method = json["method"]?.string, let params = json["params"] else {
                     // Not a report (garbage, or another writer's format): nothing will ever read it.
                     try? manager.removeItem(at: file)

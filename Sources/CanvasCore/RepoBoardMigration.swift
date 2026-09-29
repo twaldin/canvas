@@ -618,7 +618,12 @@ struct Rerooter {
                     props["root"] = .string(rootPath(oldRoot, what: what))
                 } else {
                     if let paths = props["paths"]?.array { props["paths"] = .array(paths.map { $0.string.map { .string(moved($0)) } ?? $0 }) }
-                    if refAnchor { setRef() }
+                    if refAnchor {
+                        // A ref'd changes tile defaults to the branch's merge-base view; keep the
+                        // uncommitted work it showed.
+                        if props["base"] == nil { props["base"] = .string("HEAD") }
+                        setRef()
+                    }
                 }
                 if let viewed = props["viewed"]?.object {
                     props["viewed"] = .object(Dictionary(viewed.map { (moved($0.key), $0.value) }, uniquingKeysWith: { a, _ in a }))

@@ -61,6 +61,7 @@ struct RepoBoardTests {
             _ = arrow(board, from: code.id, to: note.id)
             board.create(type: .arrow, props: .object(["from": .object(["object": .string(code.id)]), "to": .object(["point": .array([.number(900), .number(50)])])]))
             board.create(type: .terminal, props: .object(["cwd": .string(worktree.path)]), frame: Frame(x: 500, y: 0, w: 300, h: 200))
+            board.create(type: .changes, props: .object(["paths": .array([.string("src")])]), frame: Frame(x: 900, y: 0, w: 300, h: 200))
         }
         let before = main.snapshot.objects + feature.snapshot.objects
 
@@ -96,13 +97,20 @@ struct RepoBoardTests {
         let featureCode = try #require(feature.snapshot.objects.first { $0.type == .code })
         let inner = try #require(feature.snapshot.objects.first { $0.type == .group })
         let terminal = try #require(feature.snapshot.objects.first { $0.type == .terminal })
-        #expect(Set(GroupSpec(region.props)?.members ?? []) == [featureCode.id, inner.id, terminal.id], "top-level objects, not what an inner group holds or arrows")
+        let members = Set(GroupSpec(region.props)?.members ?? [])
+        #expect(members.isSuperset(of: [featureCode.id, inner.id, terminal.id]), "top-level objects")
+        #expect(!members.contains { [.arrow, .note].contains(board.objects[$0]?.type) }, "not arrows or what an inner group holds")
         let moved = try #require(board.objects[featureCode.id])
         let dx = moved.frame.x - featureCode.frame.x, dy = moved.frame.y - featureCode.frame.y
         #expect(moved.props["path"] == .string("src/a.txt"))
         #expect(moved.props["ref"] == .string("feature"))
         #expect(moved.props["refSha"] == .string(try await repo.git("rev-parse", "feature")))
         #expect(board.objects[terminal.id]?.props["branch"] == .string("feature"))
+        let changesID = try #require(feature.snapshot.objects.first { $0.type == .changes }).id
+        let changes = try #require(board.objects[changesID])
+        #expect(changes.props["ref"] == .string("feature"))
+        #expect(changes.props["base"] == .string("HEAD"), "still the branch's uncommitted work, as it reviewed its own worktree")
+        #expect(changes.props["paths"] == .array([.string("src")]))
 
         // Arrows keep their ends; a free end moves with its region.
         for arrow in before where arrow.type == .arrow {

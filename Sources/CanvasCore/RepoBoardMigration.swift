@@ -31,6 +31,17 @@ public enum RepoBoardMigration {
         public var objectsBefore: Int
         public var objectsAfter: Int
         public var legacy: [LegacyReport]
+        /// Keys two merged boards both held (`props.key` is unique per board): the object of the
+        /// board saved last keeps the key, the others' become `<key>@<branch>`.
+        public var keyRenames: [KeyRename]
+    }
+
+    public struct KeyRename: Codable, Equatable, Sendable {
+        public var object: ObjectID
+        /// The legacy board it came from; the repository board's own id for an object already on it.
+        public var board: BoardID
+        public var from: String
+        public var to: String
     }
 
     public struct LegacyReport: Codable, Equatable, Sendable {
@@ -120,8 +131,9 @@ public enum RepoBoardMigration {
 
         var reports: [RepoReport] = []
         for commonDir in byRepo.keys.sorted() {
-            let existing = repoBoards[commonDir]?.snapshot
-            var (target, report, merged) = merge(byRepo[commonDir]!, into: existing, commonDir: commonDir, now: now)
+            let existing = repoBoards[commonDir]
+            var (target, report, merged) = merge(byRepo[commonDir]!, into: existing?.snapshot, modified: existing.map { modified($0.url) } ?? .distantPast,
+                                                 commonDir: commonDir, now: now)
             reports.append(report)
             guard !dryRun else { continue }
             target.revision += 1
@@ -152,6 +164,8 @@ public enum RepoBoardMigration {
         /// The worktree's top level (as it was when gone); the root's worktree otherwise.
         var top: String
         var live: Bool
+        /// When its file was last saved: the latest board's object keeps a key two boards hold.
+        var modified: Date { RepoBoardMigration.modified(url) }
 
         var isDetached: Bool {
             if case .detached = identity { return true }
@@ -218,7 +232,11 @@ public enum RepoBoardMigration {
 
     // MARK: Merging
 
-    static func merge(_ boards: [Legacy], into existing: BoardSnapshot?, commonDir: String, now: Date) -> (BoardSnapshot, RepoReport, [URL]) {
+    static func modified(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+    }
+
+    static func merge(_ boards: [Legacy], into existing: BoardSnapshot?, modified existingModified: Date = .distantPast, commonDir: String, now: Date) -> (BoardSnapshot, RepoReport, [URL]) {
         let canonical = GitWorktree.canonicalRoot(commonDir: commonDir)
         let main = GitWorktree.containing(canonical).flatMap { $0.isMain && $0.commonDir == commonDir ? $0 : nil }
         var target = existing ?? BoardSnapshot(format: Board.format, id: BoardStore.repoID(commonDir: commonDir), root: canonical, revision: 0, objects: [])
@@ -246,6 +264,9 @@ public enum RepoBoardMigration {
         var reports: [LegacyReport] = []
         var merged: [URL] = []
         var placed = extent(of: target.objects)
+        // Where each object came from, for keys two boards hold.
+        var sources: [ObjectID: (board: BoardID, modified: Date, label: String?)] = [:]
+        for object in target.objects { sources[object.id] = (target.id, existingModified, nil) }
         for legacy in ordered {
             let snapshot = legacy.snapshot
             let anchor: Rerooter.Anchor
@@ -308,6 +329,7 @@ public enum RepoBoardMigration {
                 entry.offset = [dx, dy]
             }
             if let region { objects.append(region) }
+            for object in objects { sources[object.id] = (snapshot.id, legacy.modified, label(of: legacy)) }
             target.objects += objects
             placed = union([placed, extent(of: objects)].compactMap { $0 })
 
@@ -339,10 +361,45 @@ public enum RepoBoardMigration {
             reports.append(entry)
             merged.append(legacy.url)
         }
+        let renames = uniqueKeys(&target.objects, sources: sources)
         target.format = Board.format
         target.repo = repo
-        let report = RepoReport(board: target.id, root: canonical, commonDir: commonDir, objectsBefore: before, objectsAfter: target.objects.count, legacy: reports)
+        let report = RepoReport(board: target.id, root: canonical, commonDir: commonDir, objectsBefore: before, objectsAfter: target.objects.count, legacy: reports,
+                                keyRenames: renames)
         return (target, report, merged)
+    }
+
+    /// One holder per `props.key`: the object from the board saved last keeps it, every other
+    /// becomes `<key>@<its board's branch>` (a further `-2`, `-3` when that is taken too).
+    static func uniqueKeys(_ objects: inout [CanvasObject], sources: [ObjectID: (board: BoardID, modified: Date, label: String?)]) -> [KeyRename] {
+        var holders: [String: [Int]] = [:]
+        for (index, object) in objects.enumerated() {
+            if let key = object.props["key"]?.string, !key.isEmpty { holders[key, default: []].append(index) }
+        }
+        var taken = Set(holders.keys)
+        var renames: [KeyRename] = []
+        for key in holders.keys.sorted() {
+            guard let indices = holders[key], indices.count > 1 else { continue }
+            let ranked = indices.sorted { a, b in
+                let x = sources[objects[a].id]?.modified ?? .distantPast, y = sources[objects[b].id]?.modified ?? .distantPast
+                return x != y ? x > y : objects[a].id < objects[b].id
+            }
+            for index in ranked.dropFirst() {
+                let source = sources[objects[index].id]
+                let base = "\(key)@\(source?.label ?? "repo")"
+                var renamed = base, n = 2
+                while taken.contains(renamed) {
+                    renamed = "\(base)-\(n)"
+                    n += 1
+                }
+                taken.insert(renamed)
+                var props = objects[index].props.object ?? [:]
+                props["key"] = .string(renamed)
+                objects[index].props = .object(props)
+                renames.append(KeyRename(object: objects[index].id, board: source?.board ?? "", from: key, to: renamed))
+            }
+        }
+        return renames
     }
 
     static func label(of legacy: Legacy) -> String {

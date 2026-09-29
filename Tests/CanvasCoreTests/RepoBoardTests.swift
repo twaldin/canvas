@@ -144,6 +144,23 @@ struct RepoBoardTests {
         #expect(!FileManager.default.fileExists(atPath: boards.appendingPathComponent("\(feature.id).json").path))
     }
 
+    @Test func aKeyTwoBranchBoardsHoldStaysWithTheBoardSavedLastAndTheOtherIsRenamed() async throws {
+        let (repo, worktree) = try await fixture()
+        let main = try await legacyBoard(repo.root) { $0.create(type: .group, props: .object(["members": .array([]), "key": .string("REL-1")])) }
+        let feature = try await legacyBoard(worktree) { board in
+            let note = board.create(type: .note, props: .object(["markdown": .string("ticket")]))
+            board.create(type: .group, props: .object(["members": .array([.string(note.id)]), "key": .string("REL-1")]))
+        }
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: boards.appendingPathComponent("\(main.id).json").path)
+        let report = try #require(BoardStore(directory: boards).migrateToRepoBoards())
+        let renames = try #require(report.repos.first?.keyRenames)
+        let mainGroup = try #require(main.snapshot.objects.first).id
+        #expect(renames == [.init(object: mainGroup, board: main.id, from: "REL-1", to: "REL-1@main")])
+        let board = BoardRegistry(store: BoardStore(directory: boards)).open(root: repo.root)
+        #expect(try board.holder(ofKey: "REL-1")?.id == feature.snapshot.objects.first { $0.type == .group }?.id)
+        #expect(try board.holder(ofKey: "REL-1@main")?.id == mainGroup)
+    }
+
     @Test func aDetachedWorktreesBoardKeepsItsPathsInThatWorktree() async throws {
         let (repo, worktree) = try await fixture()
         try await TempRepo.run(["checkout", "-q", "--detach"], in: worktree)

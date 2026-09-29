@@ -1,6 +1,7 @@
 name: Release
 
-# Push a tag like v0.2.0 to build Canvas.app and attach Canvas-0.2.0.zip to a GitHub release.
+# Push a tag like v0.2.0 to build Canvas.app and attach Canvas-0.2.0.zip to a GitHub release, with
+# libintl's source (gettext-0.24.tar.gz) and THIRD_PARTY_NOTICES.md.
 # With the signing secrets below the zip holds a Developer ID-signed, notarized and stapled app;
 # without them, an ad-hoc signed one (docs/releasing.md).
 #
@@ -24,6 +25,20 @@ jobs:
       SIGNED: ${{ secrets.CANVAS_CERT_P12 != '' && secrets.CANVAS_NOTARY_KEY != '' }}
     steps:
       - uses: actions/checkout@v5
+      - name: Fetch libintl's source
+        # Canvas statically links GNU libintl (LGPL-2.1) inside libghostty, so every release carries
+        # its source next to the zip (THIRD_PARTY_NOTICES.md, "GNU libintl"). GNU's copy first, then
+        # the identical one Ghostty builds from.
+        env:
+          GETTEXT_SHA256: c918503d593d70daf4844d175a13d816afacb667c06fba1ec9dcd5002c1518b7
+        run: |
+          for url in https://ftp.gnu.org/gnu/gettext/gettext-0.24.tar.gz https://deps.files.ghostty.org/gettext-0.24.tar.gz; do
+            if curl -fsSL --retry 3 -o gettext-0.24.tar.gz "$url" && echo "$GETTEXT_SHA256  gettext-0.24.tar.gz" | shasum -a 256 -c -; then
+              exit 0
+            fi
+          done
+          echo "no gettext-0.24.tar.gz with SHA-256 $GETTEXT_SHA256" >&2
+          exit 1
       - name: Select Command Line Tools
         run: |
           sudo xcode-select -s /Library/Developer/CommandLineTools
@@ -81,9 +96,11 @@ jobs:
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME already exists; not publishing this build's zip."
+            # Its libintl source and notices still go up (the same files a Mac release attaches).
+            gh release upload "$GITHUB_REF_NAME" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --clobber
             exit 0
           fi
-          gh release create "$GITHUB_REF_NAME" "Canvas-${GITHUB_REF_NAME#v}.zip" --title "Canvas ${GITHUB_REF_NAME#v}" --generate-notes
+          gh release create "$GITHUB_REF_NAME" "Canvas-${GITHUB_REF_NAME#v}.zip" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "Canvas ${GITHUB_REF_NAME#v}" --generate-notes
       - name: Remove the signing keychain
         if: always() && env.SIGNED == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

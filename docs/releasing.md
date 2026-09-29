@@ -1,14 +1,14 @@
 # Releasing Canvas
 
-A release is `Canvas-<version>.zip` holding `Canvas.app`. Signed with a Developer ID Application certificate and notarized, it opens with a double-click; without the certificate it's ad-hoc signed and users clear the quarantine flag (README, Install).
+A release is `Canvas-<version>.zip` holding `Canvas.app`, plus `gettext-0.24.tar.gz` (the source of GNU libintl, which Canvas links statically inside libghostty; the LGPL requires it) and `THIRD_PARTY_NOTICES.md`. Signed with a Developer ID Application certificate and notarized, it opens with a double-click; without the certificate it's ad-hoc signed and users clear the quarantine flag (README, Install).
 
 - `scripts/bundle.sh release` builds and assembles the app. `CANVAS_SIGN_IDENTITY` switches its ad-hoc signature to a distribution one: nested code first, then the app, with the hardened runtime (`--options runtime`), `scripts/Canvas.entitlements` and a secure timestamp.
 - `scripts/notarize.sh <app> <zip>` checks the signature, zips the app, submits it with `notarytool submit --wait`, prints the notary log, staples the ticket to the app, checks it with `stapler validate` and `spctl`, and zips the stapled app.
-- `.github/workflows/release.yml` does both on a `v*` tag when the signing secrets exist, and makes the ad-hoc zip otherwise. It fails when the tag isn't `v` + `VERSION`, and publishes nothing when the tag's release already exists (one made from a Mac).
+- `.github/workflows/release.yml` does both on a `v*` tag when the signing secrets exist, and makes the ad-hoc zip otherwise. It fetches `gettext-0.24.tar.gz` from GNU (or Ghostty's identical copy) and fails unless its SHA-256 matches. It fails when the tag isn't `v` + `VERSION`. When the tag's release already exists (one made from a Mac), it publishes nothing but the libintl source and the notices.
 
 The version lives in `VERSION`. `scripts/bundle.sh` stamps it into Info.plist (`CANVAS_VERSION` overrides it), and `bun scripts/gen-clients.ts` writes it into the Python and TypeScript clients' manifests and the Claude Code plugin. To bump: edit `VERSION`, run `bun scripts/gen-clients.ts`, commit.
 
-`bundle.sh` copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into `Contents/Resources`. When a package, `resources/` asset or the libghostty-spm xcframework changes, update the notices: the libghostty table follows the Ghostty commit the xcframework was built from (`ar -t` on its `libghostty.a` lists the C libraries; the fonts are the ones `src/font/embedded.zig` embeds), and the GNU libintl section's source links, checksum and relinking steps follow its gettext version. The libintl section includes a written offer of its source, valid three years from each release.
+`bundle.sh` copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into `Contents/Resources`. When a package, `resources/` asset or the libghostty-spm xcframework changes, update the notices: the libghostty table follows the Ghostty commit the xcframework was built from (`ar -t` on its `libghostty.a` lists the C libraries; the fonts are the ones `src/font/embedded.zig` embeds), and the GNU libintl section's source links, checksum and relinking steps follow its gettext version, as do the tarball name and `GETTEXT_SHA256` in `release.yml`. The libintl section includes a written offer of its source, valid three years from each release.
 
 ## One-time setup
 
@@ -29,13 +29,15 @@ The version lives in `VERSION`. `scripts/bundle.sh` stamps it into Info.plist (`
 
 ## Release from this Mac
 
-Bump `VERSION` first (above). Build into `.build/dist`, never `.build/Canvas.app` (the running instance); `gh release create` makes the tag, and the Release workflow it starts leaves the release alone:
+Bump `VERSION` first (above). Build into `.build/dist`, never `.build/Canvas.app` (the running instance); `gh release create` makes the tag, and the Release workflow it starts leaves the release alone except for re-uploading the same libintl source and notices:
 
 ```sh
 export CANVAS_SIGN_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
 CANVAS_BUNDLE_APP="$PWD/.build/dist/Canvas.app" scripts/bundle.sh release
 CANVAS_NOTARY_PROFILE=canvas-notary scripts/notarize.sh .build/dist/Canvas.app Canvas-0.2.1.zip
-gh release create v0.2.1 Canvas-0.2.1.zip --title "Canvas 0.2.1" --generate-notes
+curl -fLO https://ftp.gnu.org/gnu/gettext/gettext-0.24.tar.gz
+echo "c918503d593d70daf4844d175a13d816afacb667c06fba1ec9dcd5002c1518b7  gettext-0.24.tar.gz" | shasum -a 256 -c -
+gh release create v0.2.1 Canvas-0.2.1.zip gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "Canvas 0.2.1" --generate-notes
 ```
 
 The first `codesign` asks for the key: choose Always Allow. Notarization usually takes a few minutes. `notarize.sh` fails on an Invalid submission and prints the log that says why. It ends with `spctl` saying `accepted, source=Notarized Developer ID`.

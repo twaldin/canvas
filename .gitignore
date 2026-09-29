@@ -12,5 +12,6 @@ node_modules/
 
 # Release artifacts and signing material (docs/releasing.md)
 /Canvas-*.zip
+/gettext-*.tar.gz
 *.p12
 AuthKey_*.p8

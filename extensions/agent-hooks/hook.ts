@@ -12,8 +12,10 @@
 // A hook never fails or stalls the agent: every Canvas call has a short timeout, errors are
 // swallowed, and the process exits by a hard deadline. Lifecycle reports Canvas isn't there to
 // take are spooled for it to replay (./report.ts).
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { canvasGuidance } from "../guidance";
 import { codexStartupQuestion } from "./codex-trust";
@@ -84,6 +86,17 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       const prompt = str(input.prompt)?.trim() ?? "";
       if (!prompt || /^[/!]/.test(prompt)) return undefined; // slash commands and shell escapes aren't prompts
       await report("working");
+      // Codex fires no Stop for a turn that fails (the usage limit): codex-turn.ts watches this
+      // turn's end in the rollout from here on, detached, and reports that one.
+      const rollout = str(input.transcript_path);
+      const turn = str(input.turn_id);
+      if (kind === "codex" && rollout && turn) {
+        let offset = 0;
+        try {
+          offset = statSync(rollout).size;
+        } catch {}
+        spawn(process.execPath, [resolve(import.meta.dir, "codex-turn.ts"), tile, rollout, turn, String(offset), String(process.ppid)], { detached: true, stdio: "ignore" }).unref();
+      }
       // Peek, hand the context to the agent, then commit: a hook killed before its output
       // reached the agent leaves the tray intact. Only the tray's prompt target gets the tray;
       // mentions other agents attached for this tile (agent.prompt) come with any prompt.

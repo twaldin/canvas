@@ -3,6 +3,17 @@
 The legend behind Help › Canvas Basics, so you can answer "what is this?" without reading Canvas's source.
 Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
+## Pointing an agent at things
+
+- **Hyper-click** (⌃⌥⇧⌘-click: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win; Caps Lock mapped to Hyper with a key remapper): stages a mention of a code line, page element, drawing, image pixel, or tile in the **tray**, the bar at the bottom of the window.
+  Hyper-drag on empty canvas mentions everything inside the box as one group.
+- **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles.
+- **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so): the terminal the user last typed in that runs an agent, else the board's only agent terminal (a dev-server shell beside it never takes it), else the last terminal typed in.
+  Clicking "→ name" opens a menu of the board's terminals (agents first) to pick another; it is kept across restarts. ⌃⌥⇧⌘V pastes them, for an agent without an integration, into the terminal the user is typing in, else into that target.
+- **Help › Get Started** walks a new user through a first mention on a practice note: Hyper-click it (or ⇧⌘M), then send it with a prompt; each step turns green when done. It opens by itself only on a first launch, until closed; a user who never set up Hyper can reopen it there.
+- **Drawing toolbar** at the top: select (V), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
+  The default ink (Black) is drawn dark over light pages and images and light over the dark canvas; other colors stay as chosen.
+
 ## Reading a board
 
 - Scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%.
@@ -55,17 +66,6 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 - **Review Changes** (File › Review Changes ⇧⌘R, or right-click the canvas) opens a changes tile, or goes to the one already there for the same root and base; File › Review Branch reviews everything the branch changed. Each changed file shows its changes (hunks), green added, red removed. Its summary is a picker: Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed); a code tile's base picker uses the same words, the exact base (merge-base, sha) in its tooltip.
 - **Stage** marks a change ready for the next commit, **Unstage** takes the mark off; neither changes files. **Discard** throws an uncommitted change away from the files: it asks first (the button turns into "Discard?" for a few seconds, or `r` twice), then a notice names what went with "⌘Z undoes". Committed hunks have no Discard.
 - **committed**: already in the branch's history (a branch review); **Viewed** folds a file until it changes. The tile's keys work once Return (or a click) gives it the keyboard; while it is only selected they say so.
-
-## Pointing an agent at things
-
-- **Hyper-click** (⌃⌥⇧⌘-click: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win; Caps Lock mapped to Hyper with a key remapper): stages a mention of a code line, page element, drawing, image pixel, or tile in the **tray**, the bar at the bottom of the window.
-  Hyper-drag on empty canvas mentions everything inside the box as one group.
-- **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles.
-- **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so): the terminal the user last typed in that runs an agent, else the board's only agent terminal (a dev-server shell beside it never takes it), else the last terminal typed in.
-  Clicking "→ name" opens a menu of the board's terminals (agents first) to pick another; it is kept across restarts. ⌃⌥⇧⌘V pastes them, for an agent without an integration, into the terminal the user is typing in, else into that target.
-- **Help › Get Started** walks a new user through a first mention on a practice note: Hyper-click it (or ⇧⌘M), then send it with a prompt; each step turns green when done. It opens by itself only on a first launch, until closed; a user who never set up Hyper can reopen it there.
-- **Drawing toolbar** at the top: select (V), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
-  The default ink (Black) is drawn dark over light pages and images and light over the dark canvas; other colors stay as chosen.
 
 ## Zoom and keys
 

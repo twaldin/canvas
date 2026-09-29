@@ -4,9 +4,19 @@
 // runs in (its real path, `-C` applied) or, inside a git checkout, the main repository's folder
 // (a worktree or subfolder of a trusted repository doesn't ask). Only the exact folder counts:
 // a subfolder of a trusted folder outside git asks. Approval and sandbox flags don't skip it.
+//
+// Answering "Trust and continue" fires no hook either (SessionStart waits for the first prompt),
+// but Codex writes the folder's `trust_level = "trusted"` right away. So hook.ts starts this file,
+// detached, at `Launch` when it reported the question:
+//   bun codex-trust.ts <tile> <seq> <codex pid> <codex's arguments…>   (in Codex's folder)
+// It reports `idle` once the config trusts the folder, and exits then, when Codex exits (Quit),
+// or after `TRUST_WATCH_LIMIT_MS`. Its `seq` is the launch report's plus one: any hook Codex fires
+// later is newer, so a prompt submitted first is never overwritten by this idle.
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { CanvasClient } from "../../clients/ts/src/index";
+import { report } from "./report";
 
 /** `codex --help`'s subcommands that start no interactive session (`resume`, `fork` and a bare prompt do). */
 const NON_INTERACTIVE: Record<string, true> = {
@@ -74,4 +84,42 @@ function repositoryRoot(folder: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+export const TRUST_WATCH_LIMIT_MS = 30 * 60 * 1000;
+
+/**
+ * Waits until Codex, started with `args` in `cwd`, no longer has a question to ask (the user
+ * trusted the folder): true then; false when `alive()` turns false (Codex quit) or `limitMs`
+ * passes first. `wait` paces the polls (default 500 ms).
+ */
+export async function watchTrust(args: string[], cwd: string, options: { alive: () => boolean; wait?: () => Promise<unknown>; limitMs?: number; codexHome?: string }): Promise<boolean> {
+  const wait = options.wait ?? (() => Bun.sleep(500));
+  const deadline = Date.now() + (options.limitMs ?? TRUST_WATCH_LIMIT_MS);
+  while (Date.now() < deadline) {
+    if (codexStartupQuestion(args, cwd, options.codexHome) === undefined) return true;
+    if (!options.alive()) return false;
+    await wait();
+  }
+  return false;
+}
+
+if (import.meta.main) {
+  const [tile, seq, pid, ...args] = process.argv.slice(2);
+  const codex = Number(pid);
+  const alive = () => {
+    try {
+      process.kill(codex, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (tile && Number.isInteger(Number(seq)) && Number.isInteger(codex) && codex > 1) {
+    if (await watchTrust(args, process.cwd(), { alive }).catch(() => false)) {
+      const client = new CanvasClient({ timeoutMs: 1000, reconnectTimeoutMs: 0 });
+      await report(client, { tile, kind: "codex", state: "idle", seq: Number(seq), source: "canvas-codex" }).catch(() => undefined);
+    }
+  }
+  process.exit(0);
 }

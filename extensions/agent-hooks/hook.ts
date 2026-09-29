@@ -67,6 +67,11 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       // with the first prompt, and none of its hooks while it asks about the folder first.
       const question = codexStartupQuestion(process.argv.slice(4), process.cwd());
       await (question ? report("blocked", question) : report("idle"));
+      // Answering it fires no hook: codex-trust.ts watches Codex's config for the answer.
+      const codex = process.env.CANVAS_CODEX_PID;
+      if (question && codex) {
+        spawn(process.execPath, [resolve(import.meta.dir, "codex-trust.ts"), tile, String(seq + 1), codex, ...process.argv.slice(4)], { detached: true, stdio: "ignore" }).unref();
+      }
       return undefined;
     }
     case "SessionStart": {

@@ -10,5 +10,6 @@ hooks=$(bun "$here/extensions/codex/config.ts" 2>/dev/null) || exec "$real" "$@"
 export CANVAS_AGENT=codex
 # Codex fires SessionStart only with the first prompt; say now that this tile runs Codex, and
 # whether it first asks about this folder (its arguments tell the folder and the subcommand).
-{ printf '{}' | "$here/extensions/agent-hooks/run" codex Launch "$@"; } >/dev/null 2>&1 &
+# `$$` is this shell's pid, which Codex keeps once it's exec'd: the launch hook watches it.
+{ printf '{}' | CANVAS_CODEX_PID=$$ "$here/extensions/agent-hooks/run" codex Launch "$@"; } >/dev/null 2>&1 &
 exec "$real" -c "$hooks" "$@"

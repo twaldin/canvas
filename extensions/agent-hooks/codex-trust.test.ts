@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexStartupQuestion } from "./codex-trust";
+import { codexStartupQuestion, watchTrust } from "./codex-trust";
 
 test("Codex asks at startup unless the folder, or its git repository, is trusted", () => {
   const top = mkdtempSync(join(tmpdir(), "canvas-codex-trust-"));
@@ -35,6 +35,29 @@ test("Codex asks at startup unless the folder, or its git repository, is trusted
     expect(ask("plain", ["-m", "exec"])).toBe("Codex asks whether to trust this folder"); // an option's value isn't a subcommand
     expect(ask("plain", ["resume", "--last"])).toBe("Codex asks whether to trust this folder");
     expect(codexStartupQuestion([], join(top, "plain"), join(top, "no-home"))).toBe("Codex asks whether to trust this folder"); // no config yet
+  } finally {
+    rmSync(top, { recursive: true, force: true });
+  }
+});
+
+test("Trusting the folder ends the wait; quitting Codex or trusting another folder doesn't", async () => {
+  const top = realpathSync(mkdtempSync(join(tmpdir(), "canvas-codex-trust-")));
+  try {
+    const home = join(top, "home");
+    mkdirSync(home);
+    mkdirSync(join(top, "app"));
+    mkdirSync(join(top, "other"));
+    // Codex rewrites its config when the user answers "Trust and continue".
+    const trust = (dir: string) => writeFileSync(join(home, "config.toml"), `[projects."${top}/${dir}"]\ntrust_level = "trusted"\n`);
+    let polls = 0;
+    const answered = watchTrust([], join(top, "app"), { alive: () => true, codexHome: home, wait: async () => { if (++polls === 3) trust("app"); } });
+    expect(await answered).toBe(true);
+    expect(polls).toBe(3);
+
+    trust("other");
+    polls = 0;
+    const quit = await watchTrust([], join(top, "app"), { alive: () => polls < 4, codexHome: home, wait: async () => void polls++ });
+    expect(quit).toBe(false);
   } finally {
     rmSync(top, { recursive: true, force: true });
   }

@@ -1,4 +1,5 @@
-/// The one-screen legend behind Help › Canvas Basics and the tooltips on the things it explains,
+/// The one-screen legend behind Help › Canvas Basics (pointing your agent at things first: it's
+/// what a newcomer opens it for) and the tooltips on the things it explains,
 /// in the words docs/design.md uses. `skills/canvas/references/ui.md` carries the same text for
 /// agents asked "what is this?".
 public enum CanvasBasics {
@@ -31,6 +32,13 @@ public enum CanvasBasics {
     public static let blockedBubble = "This agent is waiting for you. Click to answer in its terminal."
 
     public static let sections: [Section] = [
+        Section(title: "Pointing your agent at things", items: [
+            Item(term: "Hyper-click", text: "Hyper is ⌃⌥⇧⌘: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win (a key remapper can make Caps Lock Hyper). Hyper-click a code line, page element, drawing or tile to stage it as a mention in the tray at the bottom."),
+            Item(term: "⇧⌘M", text: "mention from the keyboard (Edit › Mention): the hunk or lines you're on in a changes tile, the selected text or range of a code tile, a note's block, a page's selection, a terminal's selection or last command; else the selected tiles."),
+            Item(term: "Tray", text: "the chips are staged mentions; \"→ name\" is the terminal they go to with your next prompt. Click it to pick another terminal; ⌃⌥⇧⌘V pastes them into the terminal you're typing in (else that one), for agents without an integration."),
+            Item(term: "Get Started", text: "Help › Get Started walks through a first mention on a practice note: stage it, then send it with a prompt. It opens by itself only on a first launch."),
+            Item(term: "Drawing", text: "the toolbar at the top draws boxes (R), ellipses (O), arrows (A), text (T) and ink (P); V selects. Hyper-click a drawing to show the agent what it marks."),
+        ]),
         Section(title: "Reading a board", items: [
             Item(term: "Scroll · pinch", text: "scroll pans, pinch zooms; ⌘9 shows everything, ⌘0 is 100%."),
             Item(term: "With a mouse", text: "the wheel pans; ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways."),
@@ -66,13 +74,6 @@ public enum CanvasBasics {
             Item(term: "Discard", text: "throws a change away from your files. It asks first (click again, or r twice) and only puts back work not committed yet."),
             Item(term: "committed · Viewed", text: "committed: already saved in the branch's history, nothing to discard. Viewed folds a file you've read until it changes."),
             Item(term: "⌘Z", text: "undoes a Stage, Unstage or Discard and says which."),
-        ]),
-        Section(title: "Pointing your agent at things", items: [
-            Item(term: "Hyper-click", text: "Hyper is ⌃⌥⇧⌘: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win (a key remapper can make Caps Lock Hyper). Hyper-click a code line, page element, drawing or tile to stage it as a mention in the tray at the bottom."),
-            Item(term: "⇧⌘M", text: "mention from the keyboard (Edit › Mention): the hunk or lines you're on in a changes tile, the selected text or range of a code tile, a note's block, a page's selection, a terminal's selection or last command; else the selected tiles."),
-            Item(term: "Tray", text: "the chips are staged mentions; \"→ name\" is the terminal they go to with your next prompt. Click it to pick another terminal; ⌃⌥⇧⌘V pastes them into the terminal you're typing in (else that one), for agents without an integration."),
-            Item(term: "Get Started", text: "Help › Get Started walks through a first mention on a practice note: stage it, then send it with a prompt. It opens by itself only on a first launch."),
-            Item(term: "Drawing", text: "the toolbar at the top draws boxes (R), ellipses (O), arrows (A), text (T) and ink (P); V selects. Hyper-click a drawing to show the agent what it marks."),
         ]),
         Section(title: "Zoom", items: [
             Item(term: "⌘9 · ⌘0", text: "fit everything · actual size (100%, or the selection at 100%)."),

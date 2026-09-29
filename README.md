@@ -52,7 +52,7 @@ The agent points back the same way: it opens the exact code it means beside its 
 - **Image tiles.** An image file with a caption, reloaded when the file changes.
 - **Drawing.** Shapes, arrows (straight, orthogonal, or routed around tiles), ink, and titled group regions.
 - **Getting around.** Go to… (⌘P) searches every group and tile by title, path, or note heading and takes you to the one you pick. When you've panned into empty space, a "Back to content" pill brings you home, and Zoom to Fit (⌘9) frames the main cluster of work instead of shrinking to fit a few far-off strays.
-- **Agent API.** A local socket with a JSON schema, a Python SDK, a TypeScript client, and the `canvas` CLI, which is on PATH inside Canvas terminal tiles and needs bun. Agents create and lay out objects in atomic batches, measure and fit content, render any region offscreen without moving your view, read the board's activity history, and hand each other board objects instead of re-describing them.
+- **Agent API.** A local socket with a JSON schema, a Python SDK, a TypeScript client, and the `canvas` CLI, which is on PATH inside Canvas terminal tiles and needs bun. Agents create and lay out objects in atomic batches, measure and fit content, render any region offscreen without moving your view, read the board's activity history, and hand each other board objects instead of re-describing them. Scripts that keep a board current (a region per ticket) name objects with a key and upsert them, so every run updates the same objects.
 
 ## Install
 

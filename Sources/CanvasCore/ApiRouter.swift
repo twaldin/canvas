@@ -196,14 +196,19 @@ public final class ApiRouter {
             if method == "view.snapshot" { return Self.ok(id, try await snapshot(params)) }
             if method == "tray.drain" { return Self.ok(id, try await drain(params)) }
             if method == "object.get" { return Self.ok(id, try await get(params)) }
+            if method == "object.find" { return Self.ok(id, try await find(params)) }
             switch method {
             case "object.measure": return Self.ok(id, try await measure(params))
             case "object.reload": return Self.ok(id, try await reload(params))
             case "object.batch": return Self.ok(id, try await batch(params))
             case "layout.check": return Self.ok(id, try await check(params))
-            case "object.create", "object.update":
-                let params = try await anchored(method, params)
-                if method == "object.create", let reused = try reusableChanges(params) {
+            case "object.create", "object.update", "object.upsert":
+                // An upsert is the create or update it is on the board now; `created` says which.
+                let upsert = method == "object.upsert"
+                let (method, resolved) = upsert ? try upserted(params) : (method, params)
+                let params = try await anchored(method, resolved)
+                // A keyed tile is its own: a create that gives a key never takes over another.
+                if method == "object.create", Board.key(params["props"] ?? .null) == nil, let reused = try reusableChanges(params) {
                     let size = try await fitSize("object.update", reused)
                     let result = try dispatch("object.update", try fitted("object.update", reused, size: size)).merging(.object(["reused": .bool(true)]))
                     return Self.ok(id, size == nil ? result : withOverlaps(result))
@@ -213,8 +218,9 @@ public final class ApiRouter {
                 // covers objects it didn't says so, as a refit does.
                 let covered = method == "object.update" && size == nil && params["frame"] != nil
                     ? params["id"]?.string.flatMap { id in (try? board(forObject: id)).map { Set($0.overlaps(of: id)) } } : nil
-                let result = try dispatch(method, try fitted(method, params, size: size))
-                return Self.ok(id, size != nil || covered != nil ? withOverlaps(result, beyond: covered ?? []) : result)
+                var result = try dispatch(method, try fitted(method, params, size: size))
+                if size != nil || covered != nil { result = withOverlaps(result, beyond: covered ?? []) }
+                return Self.ok(id, upsert ? result.merging(.object(["created": .bool(method == "object.create")])) : result)
             default: break
             }
             return Self.ok(id, try dispatch(method, params))
@@ -775,6 +781,7 @@ public final class ApiRouter {
                     props = props.merging(.object(["root": .string(root)]))
                 }
             }
+            try board.checkKey(props, for: nil)
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
             return Self.withWarnings(["object": try JSONValue.encode(board.reported(object))], type.unknownPropWarnings(props))
 
@@ -1000,6 +1007,61 @@ public final class ApiRouter {
         return result.merging(.object(["changes": set.json(viewed: object.props["viewed"])]))
     }
 
+    /// `object.find`: `key` → the object holding it, as `object.get` returns it; `keyPrefix` →
+    /// every object whose key starts with it, summarized as `board.get` lists them.
+    private func find(_ p: JSONValue) async throws -> JSONValue {
+        let board = try board(p)
+        switch (p["key"]?.string, p["keyPrefix"]?.string) {
+        case (let key?, nil):
+            guard let object = try board.holder(ofKey: key) else { throw BoardError.notFound("no object on board \(board.id) has key \"\(key)\"") }
+            var params: [String: JSONValue] = ["id": .string(object.id)]
+            if let view = p["as"] { params["as"] = view }
+            return try await get(.object(params))
+        case (nil, let prefix?):
+            return .object(["objects": try JSONValue.encode(board.reported(board.objects(keyPrefix: prefix)).map(summarized))])
+        default:
+            throw Failure("invalid_params", "object.find takes key or keyPrefix, one of them")
+        }
+    }
+
+    /// What the ops of a batch before an upsert do to keys, which the board doesn't show until
+    /// they apply: keys they give (to an id, or "$n" for what op n creates, with its type), and
+    /// ids whose key on the board no longer counts (deleted, or given another).
+    struct KeyPlan {
+        var given: [String: (id: String, type: ObjectType)] = [:]
+        var dropped: Set<String> = []
+
+        mutating func drop(_ id: String) {
+            dropped.insert(id)
+            given = given.filter { $0.value.id != id }
+        }
+    }
+
+    /// `object.upsert` params as the `object.create` or `object.update` they are now: the
+    /// object holding `key` on the board (as `plan` leaves it) updated, else a new one created
+    /// with `key` in its props.
+    func upserted(_ p: JSONValue, plan: KeyPlan = KeyPlan()) throws -> (method: String, params: JSONValue) {
+        let key = try string(p, "key")
+        guard !key.isEmpty else { throw Failure("invalid_params", "key must not be empty") }
+        guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
+        guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
+        if let given = props["key"], given != .string(key) { throw Failure("invalid_params", "props.key, when given, must be key") }
+        let board = try board(p)
+        let holder = try plan.given[key] ?? board.holder(ofKey: key).flatMap { plan.dropped.contains($0.id) ? nil : (id: $0.id, type: $0.type) }
+        var params = p.object ?? [:]
+        params.removeValue(forKey: "key")
+        guard let holder else {
+            params["board"] = .string(board.id)
+            params["props"] = props.merging(.object(["key": .string(key)]))
+            return ("object.create", .object(params))
+        }
+        guard holder.type == type else { throw Failure("conflict", "key \"\(key)\" is held by \(holder.id), a \(holder.type.rawValue), not a \(type.rawValue)") }
+        params.removeValue(forKey: "type")
+        params.removeValue(forKey: "board")
+        params["id"] = .string(holder.id)
+        return ("object.update", .object(params))
+    }
+
     /// An `object.create` of a changes tile an agent already made for the same `root`, `base`,
     /// and `paths` (its own tile, on that board): the update that brings that tile the call's
     /// other props, `frame`, and `size`, so the agent gets it back (`reused: true`) instead of
@@ -1168,36 +1230,65 @@ public final class ApiRouter {
         return Int(text.dropFirst())
     }
 
-    static let batchMethods: Set<String> = ["object.create", "object.update", "object.delete", "layout.place", "layout.stack", "layout.translate", "layout.grid"]
+    static let batchMethods: Set<String> = ["object.create", "object.update", "object.upsert", "object.delete", "layout.place", "layout.stack", "layout.translate", "layout.grid"]
 
     /// `object.batch`: every op applies or none does, as one board revision and one undo step.
     /// Sizes are measured before anything changes, so nothing else interleaves with the writes.
+    /// An upsert becomes its create or update then too, from the board and the ops before it
+    /// (`KeyPlan`); if its key's holder is another by the time it applies, the batch fails.
     private func batch(_ p: JSONValue) async throws -> JSONValue {
         guard var ops = p["ops"]?.array, !ops.isEmpty else { throw Failure("invalid_params", "ops must be a non-empty array") }
         let board = try board(p)
         func prepared(_ method: String, _ raw: JSONValue) -> JSONValue {
             var params = raw.object ?? [:]
-            if method == "object.create" { params["board"] = .string(board.id) }
+            if method == "object.create" || method == "object.upsert" { params["board"] = .string(board.id) }
             if params["caller"] == nil, let caller = p["caller"] { params["caller"] = caller }
             return .object(params)
         }
         var pending: [Int: JSONValue] = [:]
         var sizes: [CGSize?] = []
+        var plan = KeyPlan()
+        // Per upsert: its key and what holds it when the op applies (an id, "$m" for what op m
+        // creates, "$n" for itself: nothing, it creates). An upsert that updates is that object for
+        // "$n" in later ops (`updating`), so they are measured against it.
+        var upserts: [Int: (key: String, holder: String)] = [:]
+        var updating: [Int: String] = [:]
+        let names = ops.map { $0["method"]?.string ?? "" }
         for (index, op) in ops.enumerated() {
-            let method = op["method"]?.string ?? ""
+            var method = names[index]
             guard Self.batchMethods.contains(method) else {
                 throw Failure("invalid_params", "op \(index): method must be one of \(Self.batchMethods.sorted().joined(separator: ", "))")
             }
             let params: JSONValue
             do {
                 try Self.checkParams(method, op["params"] ?? .object([:]))
-                params = try await anchored(method, prepared(method, op["params"] ?? .object([:])), pending: pending)
-                ops[index] = op.merging(JSONValue.object(["params": params]))
+                var raw = prepared(method, try Self.replacingReferences(op["params"] ?? .object([:])) { n, _ in updating[n].map(JSONValue.string) })
+                if method == "object.upsert" {
+                    let key = try string(raw, "key")
+                    (method, raw) = try upserted(raw, plan: plan)
+                    let holder = raw["id"]?.string ?? "$\(index)"
+                    upserts[index] = (key, holder)
+                    if method == "object.update" { updating[index] = holder }
+                }
+                params = try await anchored(method, raw, pending: pending)
+                ops[index] = .object(["method": .string(method), "params": params])
                 sizes.append(try await fitSize(method, params, pending: pending))
             } catch {
-                throw Self.labelled(error, op: index, method)
+                throw Self.labelled(error, op: index, names[index])
             }
-            if method == "object.create" { pending[index] = params }
+            switch method {
+            case "object.create":
+                pending[index] = params
+                if let key = params["props"].flatMap(Board.key), let type = params["type"]?.string.flatMap(ObjectType.init) { plan.given[key] = ("$\(index)", type) }
+            case "object.update":
+                guard let id = params["id"]?.string, let value = params["props"]?["key"] else { break }
+                let type = Self.reference(id).flatMap { pending[$0]?["type"]?.string }.flatMap(ObjectType.init) ?? board.objects[id]?.type
+                plan.drop(id)
+                if let key = value.string, !key.isEmpty, let type { plan.given[key] = (id, type) }
+            case "object.delete":
+                if let id = params["id"]?.string { plan.drop(id) }
+            default: break
+            }
         }
         var results: [JSONValue] = []
         try board.atomically {
@@ -1205,14 +1296,22 @@ public final class ApiRouter {
                 let method = op["method"]?.string ?? ""
                 do {
                     let params = prepared(method, try resolve(op["params"] ?? .object([:]), results: results, index: index))
+                    if let upsert = upserts[index] {
+                        let planned = upsert.holder == "$\(index)" ? nil : try resolve(.string(upsert.holder), results: results, index: index).string
+                        let holder = try board.holder(ofKey: upsert.key)?.id
+                        guard holder == planned else {
+                            throw BoardError.conflict("key \"\(upsert.key)\" is held by \(holder ?? "nothing") now, not \(planned ?? "nothing") as when the batch was planned; send it again")
+                        }
+                    }
                     let named = [params["id"], params["near"]].compactMap({ $0?.string }) + (params["ids"]?.array?.compactMap(\.string) ?? [])
                         + (params["cells"]?.array?.compactMap { $0["id"]?.string } ?? [])
                     for id in named where board.objects[id] == nil {
                         throw BoardError.notFound("object \(id) on board \(board.id)")
                     }
-                    results.append(try dispatch(method, try fitted(method, params, size: sizes[index])))
+                    let result = try dispatch(method, try fitted(method, params, size: sizes[index]))
+                    results.append(upserts[index] == nil ? result : result.merging(.object(["created": .bool(method == "object.create")])))
                 } catch {
-                    throw Self.labelled(error, op: index, method)
+                    throw Self.labelled(error, op: index, names[index])
                 }
             }
         }
@@ -1252,15 +1351,22 @@ public final class ApiRouter {
         }
     }
 
-    /// Replaces every string `"$n"` in `value` with the id op n created.
+    /// Replaces every string `"$n"` in `value` with the id op n created (or an upsert updated).
     private func resolve(_ value: JSONValue, results: [JSONValue], index: Int) throws -> JSONValue {
+        try Self.replacingReferences(value) { n, text in
+            guard n < index, let id = results[n]["object"]?["id"] else { throw Failure("invalid_params", "\(text) must name an earlier create or upsert op") }
+            return id
+        }
+    }
+
+    /// `value` with each string `"$n"` replaced by what `replacement` gives for n (kept when nil).
+    static func replacingReferences(_ value: JSONValue, _ replacement: (Int, String) throws -> JSONValue?) rethrows -> JSONValue {
         switch value {
         case .string(let text):
-            guard let n = Self.reference(text) else { return value }
-            guard n < index, let id = results[n]["object"]?["id"] else { throw Failure("invalid_params", "\(text) must name an earlier create op") }
-            return id
-        case .array(let items): return .array(try items.map { try resolve($0, results: results, index: index) })
-        case .object(let fields): return .object(try fields.mapValues { try resolve($0, results: results, index: index) })
+            guard let n = reference(text) else { return value }
+            return try replacement(n, text) ?? value
+        case .array(let items): return .array(try items.map { try replacingReferences($0, replacement) })
+        case .object(let fields): return .object(try fields.mapValues { try replacingReferences($0, replacement) })
         default: return value
         }
     }

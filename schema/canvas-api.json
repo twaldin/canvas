@@ -78,6 +78,7 @@
       },
       "additionalProperties": false
     },
+    "ObjectKey": { "type": "string", "minLength": 1, "description": "any object: a name a script finds it by (`object.find`, `object.upsert`), e.g. a ticket id on the group that is its region. Unique on its board: taking one another object holds is `conflict`, naming the holder; null removes it" },
     "TerminalProps": {
       "type": "object",
       "required": ["cwd", "command"],
@@ -96,7 +97,8 @@
         },
         "lifecycle": { "$ref": "#/definitions/Lifecycle" },
         "follow": { "type": "boolean", "default": true, "description": "follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again" },
-        "scale": { "$ref": "#/definitions/Scale" }
+        "scale": { "$ref": "#/definitions/Scale" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -107,7 +109,8 @@
         "url": { "type": "string" },
         "title": { "type": "string", "description": "names the tile; the app never overwrites it" },
         "pageTitle": { "type": "string", "description": "written by the app: the page's own title; shown when `title` is unset; never bumps rev" },
-        "scale": { "$ref": "#/definitions/Scale" }
+        "scale": { "$ref": "#/definitions/Scale" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -140,7 +143,8 @@
           }
         },
         "pinnedCommit": { "type": "string", "description": "a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: \"pinned at <sha>\"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so, and a create or update that needs its text (`size: fit`, a symbol) fails with `not_found`. A path in another worktree of the repository (absolute) is read in that worktree" },
-        "scale": { "$ref": "#/definitions/Scale" }
+        "scale": { "$ref": "#/definitions/Scale" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -154,7 +158,8 @@
         },
         "title": { "type": "string", "description": "shown in the tile's title bar (default \"Note\") and Go to" },
         "root": { "type": "string", "description": "the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params" },
-        "scale": { "$ref": "#/definitions/Scale" }
+        "scale": { "$ref": "#/definitions/Scale" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -167,7 +172,8 @@
         "root": { "type": "string", "description": "the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root" },
         "allowNetwork": { "type": "array", "items": { "type": "string", "description": "host, host:port, or *.host; http/https/ws to anything else is blocked" }, "default": [] },
         "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" },
-        "scale": { "$ref": "#/definitions/Scale" }
+        "scale": { "$ref": "#/definitions/Scale" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -201,7 +207,8 @@
           }
         },
         "viewed": { "type": "object", "additionalProperties": { "type": "string" }, "description": "written by the tile: files the user marked Viewed (path → a fingerprint of their diff then). A file counts as viewed (folded, `changes.files[].viewed`) only while its diff is unchanged" },
-        "scale": { "$ref": "#/definitions/Scale" }
+        "scale": { "$ref": "#/definitions/Scale" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -212,7 +219,8 @@
         "path": { "type": "string", "description": "the image file: board-relative or absolute (png, jpg, gif, webp, heic, tiff, bmp, svg, or a pdf's first page). The tile shows it at its aspect ratio and reloads when the file changes on disk, so re-save a chart to the same path to update it" },
         "caption": { "type": "string", "description": "one line under the picture (truncated when longer than the tile is wide)" },
         "title": { "type": "string", "description": "shown in the title bar and Go to (default: the file name)" },
-        "scale": { "$ref": "#/definitions/Scale" }
+        "scale": { "$ref": "#/definitions/Scale" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -225,7 +233,8 @@
         "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 }, "description": "ink points [x, y, pressure?] in object-local coordinates" },
         "color": { "type": "string", "description": "palette name (black, grey, blue, green, orange, red, violet) or #rrggbb" },
         "fill": { "enum": ["none", "semi", "solid"], "default": "none", "description": "rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it" },
-        "scale": { "$ref": "#/definitions/Scale", "description": "text shapes only: font scale (the frame grows with it); ignored on other kinds" }
+        "scale": { "$ref": "#/definitions/Scale", "description": "text shapes only: font scale (the frame grows with it); ignored on other kinds" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -262,7 +271,8 @@
           "enum": ["straight", "orthogonal", "avoid"],
           "default": "straight",
           "description": "straight: one segment between the facing sides; orthogonal: horizontal/vertical segments with one jog; avoid: horizontal/vertical segments around every tile (and text or filled shape) in the way. Arrows between the same two objects (either direction) are drawn apart automatically; labels sit beside the route, clear of boxes where possible."
-        }
+        },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -274,7 +284,8 @@
         "members": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
         "title": { "type": "string", "description": "shown in the title band; the band is the group's drag handle" },
         "color": { "type": "string", "description": "palette name or #rrggbb, as ShapeProps.color; tints the region and title" },
-        "padding": { "type": "number", "minimum": 0, "default": 24, "description": "space between the members' bounds and the region's edge" }
+        "padding": { "type": "number", "minimum": 0, "default": 24, "description": "space between the members' bounds and the region's edge" },
+        "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
     },
@@ -772,6 +783,27 @@
         }
       }
     },
+    "object.find": {
+      "description": "Find an object by its `props.key` (ObjectKey) instead of its id: `key` returns it as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order (\"REL-\" for every ticket's region), possibly none. One of the two. Keys are per board: `board` defaults as for object.create.",
+      "params": {
+        "type": "object",
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "key": { "type": "string", "description": "the key exactly" },
+          "keyPrefix": { "type": "string", "description": "list the objects whose keys start with this" },
+          "as": { "enum": ["raw", "graph"], "default": "raw", "description": "with `key`: as object.get" }
+        },
+        "additionalProperties": false
+      },
+      "result": {
+        "type": "object",
+        "properties": {
+          "object": { "$ref": "#/definitions/CanvasObject", "description": "`key`: the object, with the rest of object.get's result beside it" },
+          "graph": { "type": "object" },
+          "objects": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" }, "description": "`keyPrefix`: the objects, summarized as board.get lists them" }
+        }
+      }
+    },
     "object.create": {
       "description": "Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
       "params": {
@@ -806,6 +838,24 @@
         "additionalProperties": false
       },
       "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "present when a `size: fit` refit covers others, or a `frame` given outright (e.g. a browser tile widened to a desktop viewport) makes the object cover one it didn't before (by layout.check's overlap rule; in a batch, only fits and `props.scale` resizes, once the whole batch is laid out): the ids of everything it covers. Grow away from neighbours or move it (layout.place) rather than leave the user's tiles buried" } } }
+    },
+    "object.upsert": {
+      "description": "Create or update by key, so a script that rebuilds part of the board (a region per ticket) can run again and again without keeping ids: when an object on the board holds `key` it is updated (`props` shallow-merged, `frame` and `size` as object.update; its type must be `type`, else `conflict`), else one is created as object.create would with `key` added to its props. Either way the result names the object's id; `created` says which happened. In object.batch, later ops can name it as \"$n\" either way, and an upsert of a key an earlier op of the batch creates updates that one.",
+      "params": {
+        "type": "object",
+        "required": ["key", "type", "props"],
+        "properties": {
+          "board": { "$ref": "#/definitions/Id" },
+          "key": { "$ref": "#/definitions/ObjectKey" },
+          "type": { "$ref": "#/definitions/ObjectType" },
+          "props": { "type": "object", "description": "the type's props, as for object.create (on an update, merged into the object's)" },
+          "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }], "description": "as for object.create; on an update, as object.update's (any of x, y, w, h). Omit it to leave where the object is (a region the user moved stays moved)" },
+          "size": { "const": "fit", "description": "as for object.create and object.update" },
+          "caller": { "$ref": "#/definitions/Id" }
+        },
+        "additionalProperties": false
+      },
+      "result": { "type": "object", "required": ["object", "created"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "created": { "type": "boolean", "description": "true: nothing held the key, so the object is new" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "as object.create's" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "as object.create's and object.update's" } } }
     },
     "object.delete": {
       "description": "Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached.",
@@ -857,7 +907,7 @@
       }
     },
     "object.batch": {
-      "description": "Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string \"$n\" anywhere in an op's params stands for the id created by op n (e.g. an arrow from \"$0\" to \"$1\", a group with members [\"$0\", \"$1\"], a grid cell {\"id\": \"$2\", \"row\": 0, \"col\": 1}).",
+      "description": "Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/upsert/delete and layout.place/stack/translate/grid with their usual params; the string \"$n\" anywhere in an op's params stands for the id op n created (or, an upsert, created or updated) (e.g. an arrow from \"$0\" to \"$1\", a group with members [\"$0\", \"$1\"], a grid cell {\"id\": \"$2\", \"row\": 0, \"col\": 1}).",
       "params": {
         "type": "object",
         "required": ["ops"],
@@ -869,7 +919,7 @@
             "items": {
               "type": "object",
               "required": ["method", "params"],
-              "properties": { "method": { "enum": ["object.create", "object.update", "object.delete", "layout.place", "layout.stack", "layout.translate", "layout.grid"] }, "params": { "type": "object" } },
+              "properties": { "method": { "enum": ["object.create", "object.update", "object.upsert", "object.delete", "layout.place", "layout.stack", "layout.translate", "layout.grid"] }, "params": { "type": "object" } },
               "additionalProperties": false
             }
           },

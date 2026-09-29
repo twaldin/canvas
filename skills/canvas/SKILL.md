@@ -206,6 +206,26 @@ Read `references/html-explainers.md` before building an explainer: components, p
 Colors, fills, text sizes, arrow routing and binding rules: `references/shapes.md`.
 `canvas get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
 
+### Boards a script keeps current
+
+A script that rebuilds part of the board from elsewhere (a region per Linear ticket or PR, its status, its diff) names what it makes with `props.key` instead of keeping ids: any object takes one, unique on its board.
+`object.upsert` finds the object holding the key and updates it (props merge; it stays where the user moved it unless you pass `frame`), or creates it when none does; `created` in the result says which.
+Run the same batch every time; the second run changes only what changed, with the same ids, one ⌘Z:
+
+```python
+for t in tickets:  # e.g. from Linear
+    k = t["id"]    # "REL-12389"
+    canvas.object.batch(ops=[
+        {"method": "object.upsert", "params": {"key": f"{k}/status", "type": "note", "props": {"markdown": f"**{t['state']}** · CI {t['ci']}"}, "size": "fit", "frame": {"x": 0, "y": 0, "w": 320}}},
+        {"method": "object.upsert", "params": {"key": f"{k}/diff", "type": "changes", "props": {"root": t["worktree"]}}},
+        {"method": "object.upsert", "params": {"key": k, "type": "group", "props": {"members": ["$0", "$1"], "title": f"{k} {t['title']}"}}},
+    ])
+```
+
+`"$0"` is op 0's object whether it was created or updated. A frame given to an upsert applies on every run, so leave it out (or out of the batch after the first run) where the user may rearrange.
+`object.find(key="REL-12389")` returns that object as `object.get` does (`not_found` when none holds it); `object.find(key_prefix="REL-")` lists every keyed object whose key starts with it, e.g. to delete regions of tickets that closed.
+Taking a key another object holds, or upserting it as another type, is `conflict` naming the holder.
+
 ## Browser tiles
 
 omp's `browser` tool opens a browser tile beside your terminal for each `browser.open` (find its id with `canvas board.history --limit 5`); `close` deletes it.

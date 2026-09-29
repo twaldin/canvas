@@ -69,6 +69,8 @@ class Lifecycle(TypedDict):
     restored: NotRequired[Literal[true]]
     via: NotRequired[Literal["notifications"]]
 
+ObjectKey = str
+
 class TerminalProps(TypedDict):
     cwd: Required[str]
     command: Required[list[str]]
@@ -79,12 +81,14 @@ class TerminalProps(TypedDict):
     lifecycle: NotRequired["Lifecycle"]
     follow: NotRequired[bool]
     scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
 
 class BrowserProps(TypedDict):
     url: Required[str]
     title: NotRequired[str]
     pageTitle: NotRequired[str]
     scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
 
 class CodeProps(TypedDict):
     path: Required[str]
@@ -99,12 +103,14 @@ class CodeProps(TypedDict):
     history: NotRequired[list[dict[str, Any]]]
     pinnedCommit: NotRequired[str]
     scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
 
 class NoteProps(TypedDict):
     markdown: Required[str]
     title: NotRequired[str]
     root: NotRequired[str]
     scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
 
 class HtmlProps(TypedDict):
     html: Required[str]
@@ -113,6 +119,7 @@ class HtmlProps(TypedDict):
     allowNetwork: NotRequired[list[str]]
     state: NotRequired[dict[str, Any]]
     scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
 
 class ChangesProps(TypedDict):
     root: NotRequired[str]
@@ -122,12 +129,14 @@ class ChangesProps(TypedDict):
     reviewed: NotRequired[list[dict[str, Any]]]
     viewed: NotRequired[dict[str, Any]]
     scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
 
 class ImageProps(TypedDict):
     path: Required[str]
     caption: NotRequired[str]
     title: NotRequired[str]
     scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
 
 class ShapeProps(TypedDict):
     kind: Required[Literal["rect", "ellipse", "text", "ink"]]
@@ -136,10 +145,11 @@ class ShapeProps(TypedDict):
     color: NotRequired[str]
     fill: NotRequired[Literal["none", "semi", "solid"]]
     scale: NotRequired["Scale"]
+    key: NotRequired["ObjectKey"]
 
 Binding = Union[dict[str, Any], dict[str, Any]]
 
-ArrowProps = TypedDict("ArrowProps", {"from": Required["Binding"], "to": Required["Binding"], "relation": NotRequired[str], "label": NotRequired[str], "color": NotRequired[str], "route": NotRequired[Literal["straight", "orthogonal", "avoid"]]})
+ArrowProps = TypedDict("ArrowProps", {"from": Required["Binding"], "to": Required["Binding"], "relation": NotRequired[str], "label": NotRequired[str], "color": NotRequired[str], "route": NotRequired[Literal["straight", "orthogonal", "avoid"]], "key": NotRequired["ObjectKey"]})
 
 class GroupProps(TypedDict):
     """A group is a region: its frame is always its members' bounds plus `padding`, with a 32 pt title band on top, kept current as members move, resize, or go away (a `frame` passed for a group is ignored). `object.get --as graph` encloses what lies inside that frame."""
@@ -147,6 +157,7 @@ class GroupProps(TypedDict):
     title: NotRequired[str]
     color: NotRequired[str]
     padding: NotRequired[float]
+    key: NotRequired["ObjectKey"]
 
 class FitFrame(TypedDict):
     """with size: fit (or for a new note), where the object goes; the rest of its frame is measured"""
@@ -339,6 +350,11 @@ class ObjectApi:
         params = {"id": id, "as": as_, "since": since}
         return self._call("object.get", params, [])
 
+    def find(self, *, board: "Id" | None = None, key: str | None = None, key_prefix: str | None = None, as_: Literal["raw", "graph"] | None = None) -> dict[str, Any]:
+        """Find an object by its `props.key` (ObjectKey) instead of its id: `key` returns it as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order ("REL-" for every ticket's region), possibly none. One of the two. Keys are per board: `board` defaults as for object.create."""
+        params = {"board": board, "key": key, "keyPrefix": key_prefix, "as": as_}
+        return self._call("object.find", params, ["board"])
+
     def create(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame", "SizeFrame"] | None = None, size: Literal["fit"] | None = None, parent: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
         """Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`."""
         params = {"board": board, "type": type, "props": props, "frame": frame, "size": size, "parent": parent, "caller": caller}
@@ -348,6 +364,11 @@ class ObjectApi:
         """Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content."""
         params = {"id": id, "rev": rev, "frame": frame, "size": size, "props": props, "caller": caller}
         return self._call("object.update", params, ["caller"])
+
+    def upsert(self, *, key: "ObjectKey", type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, frame: Union["Frame", "FitFrame", "SizeFrame"] | None = None, size: Literal["fit"] | None = None, caller: "Id" | None = None) -> dict[str, Any]:
+        """Create or update by key, so a script that rebuilds part of the board (a region per ticket) can run again and again without keeping ids: when an object on the board holds `key` it is updated (`props` shallow-merged, `frame` and `size` as object.update; its type must be `type`, else `conflict`), else one is created as object.create would with `key` added to its props. Either way the result names the object's id; `created` says which happened. In object.batch, later ops can name it as "$n" either way, and an upsert of a key an earlier op of the batch creates updates that one."""
+        params = {"board": board, "key": key, "type": type, "props": props, "frame": frame, "size": size, "caller": caller}
+        return self._call("object.upsert", params, ["board","caller"])
 
     def delete(self, *, id: "Id", caller: "Id" | None = None) -> dict[str, Any]:
         """Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached."""
@@ -365,7 +386,7 @@ class ObjectApi:
         return self._call("object.reload", params, ["caller"])
 
     def batch(self, *, ops: list[dict[str, Any]], board: "Id" | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1})."""
+        """Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/upsert/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id op n created (or, an upsert, created or updated) (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1})."""
         params = {"board": board, "ops": ops, "caller": caller}
         return self._call("object.batch", params, ["board","caller"])
 
@@ -526,7 +547,7 @@ class GeneratedApi:
         self.view = ViewApi(call)
         self.events = EventsApi(call)
 
-METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"]
+METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"]
 
 # Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent.
 RESEND_METHODS = ["agent.wait"]

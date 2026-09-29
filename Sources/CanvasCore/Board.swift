@@ -101,6 +101,10 @@ public final class Board {
 
     /// Board revision at which each object last changed (for `board.get since`).
     private var changedAt: [ObjectID: Int] = [:]
+    /// Who holds each `props.key` (`Board+Keys.swift`), kept with `objects` wherever it changes
+    /// (commit, delete, load), so undo, redo, and a failed batch's rollback leave it exact. A set,
+    /// so a board file that holds one key twice (edited by hand) still loads and says so on lookup.
+    private(set) var keyHolders: [String: Set<ObjectID>] = [:]
     /// Terminal tiles the user has seen since their agent last reported `working` (or, reporting
     /// by notification, last notified: `NotifyingAgent`).
     var seenSinceWorking: Set<ObjectID> = []
@@ -208,6 +212,7 @@ public final class Board {
             }
             objects[object.id] = object
             changedAt[object.id] = snapshot.revision
+            if let key = Self.key(object.props) { keyHolders[key, default: []].insert(object.id) }
         }
         // Group frames follow their members (older boards stored placeholders); nested groups
         // settle within a few passes.
@@ -314,6 +319,7 @@ public final class Board {
     func write(_ id: ObjectID, rev: Int?, frame: Frame?, z: Double?, props: JSONValue?, caller: ObjectID?, actor: ActivityActor? = nil, cause: String? = nil, refitting: Set<ObjectID>) throws -> CanvasObject {
         let before = try object(id)
         if let rev, rev != before.rev { throw BoardError.conflict("object \(id) is at rev \(before.rev), not \(rev)") }
+        try checkKey(props, for: id)
         var object = before
         if let frame { object.frame = frame }
         if let z { object.z = z }
@@ -357,6 +363,7 @@ public final class Board {
         detachArrows(from: id, actor: actor, caller: caller)
         guard let removed = objects.removeValue(forKey: id) else { throw BoardError.notFound("object \(id)") }
         changedAt.removeValue(forKey: id)
+        reindexKey(id, from: removed.props, to: nil)
         bumpRevision()
         history.record(.deleted(removed), by: Actor(caller: caller))
         if removed.type == .terminal { removedTerminals.append(id) }
@@ -432,10 +439,21 @@ public final class Board {
 
     private func commit(_ object: CanvasObject) {
         bumpRevision()
+        reindexKey(object.id, from: objects[object.id]?.props, to: object.props)
         objects[object.id] = object
         changedAt[object.id] = revision
         revHighWater[object.id] = max(revHighWater[object.id] ?? 0, object.rev)
         onChange?()
+    }
+
+    private func reindexKey(_ id: ObjectID, from old: JSONValue?, to new: JSONValue?) {
+        let before = old.flatMap(Self.key), after = new.flatMap(Self.key)
+        guard before != after else { return }
+        if let before {
+            keyHolders[before]?.remove(id)
+            if keyHolders[before]?.isEmpty == true { keyHolders.removeValue(forKey: before) }
+        }
+        if let after { keyHolders[after, default: []].insert(id) }
     }
 
     private func bumpRevision() {

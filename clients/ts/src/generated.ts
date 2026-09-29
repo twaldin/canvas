@@ -53,6 +53,9 @@ export type Lifecycle = {
   via?: "notifications";
 };
 
+/** any object: a name a script finds it by (`object.find`, `object.upsert`), e.g. a ticket id on the group that is its region. Unique on its board: taking one another object holds is `conflict`, naming the holder; null removes it */
+export type ObjectKey = string;
+
 export type TerminalProps = {
   cwd: string;
   /** argv run inside the zmx session */
@@ -71,6 +74,7 @@ export type TerminalProps = {
   /** follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again */
   follow?: boolean;
   scale?: Scale;
+  key?: ObjectKey;
 };
 
 export type BrowserProps = {
@@ -80,6 +84,7 @@ export type BrowserProps = {
   /** written by the app: the page's own title; shown when `title` is unset; never bumps rev */
   pageTitle?: string;
   scale?: Scale;
+  key?: ObjectKey;
 };
 
 export type CodeProps = {
@@ -110,6 +115,7 @@ export type CodeProps = {
   /** a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: "pinned at <sha>"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so, and a create or update that needs its text (`size: fit`, a symbol) fails with `not_found`. A path in another worktree of the repository (absolute) is read in that worktree */
   pinnedCommit?: string;
   scale?: Scale;
+  key?: ObjectKey;
 };
 
 export type NoteProps = {
@@ -120,6 +126,7 @@ export type NoteProps = {
   /** the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params */
   root?: string;
   scale?: Scale;
+  key?: ObjectKey;
 };
 
 export type HtmlProps = {
@@ -132,6 +139,7 @@ export type HtmlProps = {
   /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
   state?: Record<string, unknown>;
   scale?: Scale;
+  key?: ObjectKey;
 };
 
 export type ChangesProps = {
@@ -170,6 +178,7 @@ export type ChangesProps = {
   /** written by the tile: files the user marked Viewed (path → a fingerprint of their diff then). A file counts as viewed (folded, `changes.files[].viewed`) only while its diff is unchanged */
   viewed?: Record<string, unknown>;
   scale?: Scale;
+  key?: ObjectKey;
 };
 
 export type ImageProps = {
@@ -180,6 +189,7 @@ export type ImageProps = {
   /** shown in the title bar and Go to (default: the file name) */
   title?: string;
   scale?: Scale;
+  key?: ObjectKey;
 };
 
 export type ShapeProps = {
@@ -193,6 +203,7 @@ export type ShapeProps = {
   fill?: "none" | "semi" | "solid";
   /** text shapes only: font scale (the frame grows with it); ignored on other kinds */
   scale?: Scale;
+  key?: ObjectKey;
 };
 
 export type Binding = {
@@ -215,6 +226,7 @@ export type ArrowProps = {
   color?: string;
   /** straight: one segment between the facing sides; orthogonal: horizontal/vertical segments with one jog; avoid: horizontal/vertical segments around every tile (and text or filled shape) in the way. Arrows between the same two objects (either direction) are drawn apart automatically; labels sit beside the route, clear of boxes where possible. */
   route?: "straight" | "orthogonal" | "avoid";
+  key?: ObjectKey;
 };
 
 /** A group is a region: its frame is always its members' bounds plus `padding`, with a 32 pt title band on top, kept current as members move, resize, or go away (a `frame` passed for a group is ignored). `object.get --as graph` encloses what lies inside that frame. */
@@ -226,6 +238,7 @@ export type GroupProps = {
   color?: string;
   /** space between the members' bounds and the region's edge */
   padding?: number;
+  key?: ObjectKey;
 };
 
 /** with size: fit (or for a new note), where the object goes; the rest of its frame is measured */
@@ -690,6 +703,23 @@ export type ObjectGetResult = {
   };
 };
 
+export type ObjectFindParams = {
+  board?: Id;
+  /** the key exactly */
+  key?: string;
+  /** list the objects whose keys start with this */
+  keyPrefix?: string;
+  /** with `key`: as object.get */
+  as?: "raw" | "graph";
+};
+export type ObjectFindResult = {
+  /** `key`: the object, with the rest of object.get's result beside it */
+  object?: CanvasObject;
+  graph?: Record<string, unknown>;
+  /** `keyPrefix`: the objects, summarized as board.get lists them */
+  objects?: CanvasObject[];
+};
+
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
@@ -730,6 +760,28 @@ export type ObjectUpdateResult = {
   overlaps?: Id[];
 };
 
+export type ObjectUpsertParams = {
+  board?: Id;
+  key: ObjectKey;
+  type: ObjectType;
+  /** the type's props, as for object.create (on an update, merged into the object's) */
+  props: Record<string, unknown>;
+  /** as for object.create; on an update, as object.update's (any of x, y, w, h). Omit it to leave where the object is (a region the user moved stays moved) */
+  frame?: Frame | FitFrame | SizeFrame;
+  /** as for object.create and object.update */
+  size?: "fit";
+  caller?: Id;
+};
+export type ObjectUpsertResult = {
+  object: CanvasObject;
+  /** true: nothing held the key, so the object is new */
+  created: boolean;
+  /** as object.create's */
+  warnings?: string[];
+  /** as object.create's and object.update's */
+  overlaps?: Id[];
+};
+
 export type ObjectDeleteParams = {
   id: Id;
   caller?: Id;
@@ -766,7 +818,7 @@ export type ObjectReloadResult = {
 export type ObjectBatchParams = {
   board?: Id;
   ops: ({
-    method: "object.create" | "object.update" | "object.delete" | "layout.place" | "layout.stack" | "layout.translate" | "layout.grid";
+    method: "object.create" | "object.update" | "object.upsert" | "object.delete" | "layout.place" | "layout.stack" | "layout.translate" | "layout.grid";
     params: Record<string, unknown>;
   })[];
   caller?: Id;
@@ -1157,17 +1209,21 @@ export interface CanvasApi {
   object: {
     /** Read one object. `as: graph` adds structural relations: encloses, enclosedBy, overlaps, arrowsIn/arrowsOut (arrows bound to it), arrows (arrows drawn inside it, with from/to bindings), and from/to for an arrow. A changes tile adds `changes`: its files and hunks as git has them now (what the user kept), each hunk with its unified `lines`, next to `props.reviewed` (what they staged or discarded, with the patches). A terminal adds `lastCommand` once its shell finished one. A browser tile adds `page`: the console messages, uncaught errors and failed requests its page reported since it loaded (recorded from the first line of the page on), its error and warning counts, and web vitals; pass `page.cursor` back as `since` to read only what came after. A note adds `fences`: each anchored fence's state (live, relocated, stale, applied, missing), resolved range and reason, resolved against disk now; a code tile showing a range adds `rangeStatus`, the same for its range. To look at an object, `view.render` it. */
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
+    /** Find an object by its `props.key` (ObjectKey) instead of its id: `key` returns it as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order ("REL-" for every ticket's region), possibly none. One of the two. Keys are per board: `board` defaults as for object.create. */
+    find(params?: ObjectFindParams): Promise<ObjectFindResult>;
     /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
+    /** Create or update by key, so a script that rebuilds part of the board (a region per ticket) can run again and again without keeping ids: when an object on the board holds `key` it is updated (`props` shallow-merged, `frame` and `size` as object.update; its type must be `type`, else `conflict`), else one is created as object.create would with `key` added to its props. Either way the result names the object's id; `created` says which happened. In object.batch, later ops can name it as "$n" either way, and an upsert of a key an earlier op of the batch creates updates that one. */
+    upsert(params: ObjectUpsertParams): Promise<ObjectUpsertResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
     /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
     /** Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so a `canvas get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. Only browser tiles reload: code, note and changes tiles follow their files by themselves. */
     reload(params: ObjectReloadParams): Promise<ObjectReloadResult>;
-    /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id created by op n (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
+    /** Apply several changes atomically: one board revision and one undo step, and if any op fails nothing changes (the error names the op). Ops are object.create/update/upsert/delete and layout.place/stack/translate/grid with their usual params; the string "$n" anywhere in an op's params stands for the id op n created (or, an upsert, created or updated) (e.g. an arrow from "$0" to "$1", a group with members ["$0", "$1"], a grid cell {"id": "$2", "row": 0, "col": 1}). */
     batch(params: ObjectBatchParams): Promise<ObjectBatchResult>;
   };
   layout: {
@@ -1248,8 +1304,10 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
     },
     object: {
       get: (params: ObjectGetParams) => call("object.get", params ?? {}, []) as Promise<ObjectGetResult>,
+      find: (params?: ObjectFindParams) => call("object.find", params ?? {}, ["board"]) as Promise<ObjectFindResult>,
       create: (params: ObjectCreateParams) => call("object.create", params ?? {}, ["board","caller"]) as Promise<ObjectCreateResult>,
       update: (params: ObjectUpdateParams) => call("object.update", params ?? {}, ["caller"]) as Promise<ObjectUpdateResult>,
+      upsert: (params: ObjectUpsertParams) => call("object.upsert", params ?? {}, ["board","caller"]) as Promise<ObjectUpsertResult>,
       delete: (params: ObjectDeleteParams) => call("object.delete", params ?? {}, ["caller"]) as Promise<ObjectDeleteResult>,
       measure: (params: ObjectMeasureParams) => call("object.measure", params ?? {}, ["board","caller"]) as Promise<ObjectMeasureResult>,
       reload: (params: ObjectReloadParams) => call("object.reload", params ?? {}, ["caller"]) as Promise<ObjectReloadResult>,
@@ -1293,7 +1351,7 @@ export function bindMethods(call: (method: string, params: object, envKeys: stri
   };
 }
 
-export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.create","object.update","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;
+export const METHODS = ["system.ping","board.get","board.history","board.list","board.open","board.export","object.get","object.find","object.create","object.update","object.upsert","object.delete","object.measure","object.reload","object.batch","layout.place","layout.stack","layout.translate","layout.grid","layout.check","tray.list","tray.stage","tray.unstage","tray.drain","tray.commit","agent.report","agent.report_session","agent.release","agent.list","agent.prompt","agent.wait","agent.read","follow.report","view.attention","view.get","view.render","view.snapshot","events.subscribe"] as const;
 
 /** Reads the client re-sends when the connection drops after sending (the app restarted), with `timeoutMs` reduced by the time already spent. */
 export const RESEND_METHODS: readonly string[] = ["agent.wait"];

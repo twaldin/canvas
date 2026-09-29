@@ -80,10 +80,11 @@ public enum Actor: Codable, Equatable, Sendable {
 public enum ObjectType: String, Codable, Sendable, CaseIterable {
     case terminal, browser, code, note, html, changes, image, shape, arrow, group
 
-    /// The props this type defines (schema `TerminalProps` … `GroupProps`). Others are kept but
-    /// reported: `object.create`/`object.update` name them in `warnings`.
+    /// The props this type defines (schema `TerminalProps` … `GroupProps`), `key` among them for
+    /// every type (`Board+Keys.swift`). Others are kept but reported: `object.create`/`object.update`
+    /// name them in `warnings`.
     public var knownProps: Set<String> {
-        switch self {
+        let own: Set<String> = switch self {
         case .terminal: ["cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "scale"]
         case .browser: ["url", "title", "pageTitle", "scale"]
         case .code: ["path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "scale"]
@@ -95,6 +96,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         case .arrow: ["from", "to", "relation", "label", "color", "route"]
         case .group: ["members", "title", "color", "padding"]
         }
+        return own.union(["key"])
     }
 
     /// One warning per key of `props` this type doesn't define, in key order.

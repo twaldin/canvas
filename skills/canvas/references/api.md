@@ -22,13 +22,14 @@ Results are objects, never bare values:
 | Call | Returns |
 | --- | --- |
 | `object.create`, `object.update`, `object.get` | `{object}` (the new id is `result["object"]["id"]`); `object.get --as graph` adds `graph`; create/update add `warnings` for unknown prop keys |
+| `object.upsert` | `{object, created}`; `object.find` → what `object.get` returns (with `key`) or `{objects}` (with `keyPrefix`) |
 | `object.batch` | `{results, revision}`: each op's result in order (`results[0]["object"]["id"]`) |
 | `layout.place`/`stack`/`translate` | `{frames: {id: frame}}`; `layout.grid` adds `columns` and `rows` |
 | `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, overflow, scrolls, truncated}` |
 | `view.render`, `view.snapshot` | `{path, width, height, scale, objects}` plus `canvasRect` (render) or `viewport` (snapshot) |
 | `agent.prompt` | `{agent, waitable, submittedAt}`; `agent.wait` → `{agent}`; `agent.read` → `{agent, text, lines}` (`truncated` with `since`) |
 
-Error codes: `not_found` (no such object/agent/board; a code tile's file or `pinnedCommit` that isn't there), `conflict` (stale `rev`: re-read, re-apply, retry),
+Error codes: `not_found` (no such object/agent/board; a code tile's file or `pinnedCommit` that isn't there; no object holds the key `object.find` asked for), `conflict` (stale `rev`: re-read, re-apply, retry; a `props.key` another object holds, named in the message),
 `invalid_params`, `unavailable` (e.g. a terminal without a running session, or the app isn't running), `unsupported`, `timeout` (`agent.wait`).
 A param the method doesn't take, or a required one missing, is `invalid_params` naming every param it takes (`unknown param delta; missing dx, dy; layout.translate takes ids (required), dx (required), dy (required), caller`); the same for each `object.batch` op.
 If the app restarts, the next call reconnects on its own (waiting up to 15 s). `unavailable` with "may or may not have applied" means your request was sent but its reply was lost: re-read (`board.get`) before retrying.
@@ -60,6 +61,9 @@ If the app restarts, the next call reconnects on its own (waiting up to 15 s). `
 - `props` on `object.update` merge shallowly: `{"range": …}` replaces `range` and keeps other props. Set a prop to `null` to clear it.
   `frame` on `object.update` may give any of `x, y, w, h` (`{"frame": {"h": 420}}`); the rest stay. On create it needs all four, or `size: "fit"` (below).
 - A prop the type doesn't define (a typo like `colour` or `markdwon`) is kept, but `object.create`/`object.update` (and each batch op's result) add `warnings`, one per unknown key naming the type's real props. No `warnings` key means every prop is known.
+- `props.key` on any object is a name scripts find it by (`"REL-12389"`), unique on its board: a create, update, or upsert that gives a key another object holds is `conflict` naming the holder, and `null` gives it up.
+  `object.find(key=…)` returns the holder as `object.get` does; `object.find(key_prefix=…)` lists holders of keys starting with it, in key order (summarized as `board.get` lists them).
+  `object.upsert(key, type, props, frame?, size?)` updates the holder (props merged; its type must be `type`, else `conflict`) or creates one with the key; `created` says which. Undo, redo, and a failed batch put keys back with their objects.
 - `object.reload(id)` reloads any browser tile's page as its reload button does (the user's tiles too; a failed load is retried) and waits until it has loaded (`timeoutMs`, default 15 s): `{id, url, loaded, failed?}`. Use it after an edit instead of changing `props.url` to a dummy query, which adds to the tile's Back history; then read `canvas get <tile> --since <cursor>`.
 - Every change bumps `rev`. Pass `rev` on updates to objects the user may be editing; the `rev` a create or update returns is current.
   A note's line-range fences (`file=src/a.ts#L10-40`) come back with an `anchor="<first line>"` added, as the tile would write it.
@@ -118,8 +122,8 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   Unused row/col numbers take no space; `origin` defaults to the cells' current top-left.
   Between rows of different groups leave `row_gap` for both groups' padding plus the 32 pt title band (e.g. 24 + 24 + 32 + your gap).
   Returns `frames`, `columns` `[{col, x, w}]`, and `rows` `[{row, y, h}]`.
-- `object.batch(ops)`: `[{method, params}]` with `object.create/update/delete` and `layout.place/stack/translate/grid`, applied as one revision and one ⌘Z, or not at all (the error names the failing op).
-  `"$0"` anywhere in a later op's params is the id op 0 created. Op params are the schema's own names (`colGap`, not `col_gap`):
+- `object.batch(ops)`: `[{method, params}]` with `object.create/update/upsert/delete` and `layout.place/stack/translate/grid`, applied as one revision and one ⌘Z, or not at all (the error names the failing op).
+  `"$0"` anywhere in a later op's params is the id op 0 created (or, an upsert, created or updated). An upsert of a key an earlier op of the batch creates updates that object; if another request moves a key while the batch is being measured, the batch fails with `conflict`: send it again. Op params are the schema's own names (`colGap`, not `col_gap`):
   ```python
   canvas.object.batch(ops=[
       {"method": "object.create", "params": {"type": "code", "props": {"path": "src/a.ts", "range": {"start": 10, "end": 30}}, "size": "fit", "frame": {"x": 0, "y": 0}}},

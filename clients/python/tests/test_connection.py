@@ -176,6 +176,30 @@ class ConnectionTest(unittest.TestCase):
         self.assertEqual(raised.exception.code, "unavailable")
         self.assertIn("board.get was not sent", str(raised.exception))
 
+    def test_an_app_binding_its_socket_just_after_a_connect_missed_it_is_not_a_sandbox(self) -> None:
+        # The restart race: a connect while waiting for the app finds no socket (ENOENT), and the
+        # app binds it before the client looks whether the file is there.
+        app = self.serve()
+        client = self.client()
+        client.board.get()
+        app.stop()
+        connect = socket.socket.connect
+        missed: list[str] = []
+
+        def missing_then_bound(sock: socket.socket, address: str) -> None:
+            try:
+                connect(sock, address)
+            except FileNotFoundError:
+                missed.append(address)
+                if len(missed) == 2:  # the first connect of the waiting reconnect
+                    app.listen()
+                raise
+
+        with mock.patch.object(socket.socket, "connect", missing_then_bound):
+            self.assertEqual(client.board.get()["method"], "board.get")
+        self.assertEqual(len(missed), 2)
+        self.assertEqual([method for method, _ in app.requests], ["board.get", "board.get"])
+
     def test_a_socket_that_is_there_but_refuses_this_process_names_a_sandbox_at_once(self) -> None:
         # What a sandbox does to the connect: the socket exists, this process may not use it.
         self.serve()
@@ -188,6 +212,20 @@ class ConnectionTest(unittest.TestCase):
         self.assertEqual(raised.exception.code, "unavailable")
         self.assertIn(f"Canvas socket {self.path} exists", str(raised.exception))
         self.assertIn("a sandbox (e.g. Codex's) may be blocking", str(raised.exception))
+
+    def test_a_socket_that_is_there_but_unseen_twice_names_a_sandbox_at_once(self) -> None:
+        # Codex's seatbelt: the socket file is there, but every connect answers ENOENT.
+        self.serve()
+        client = self.client()
+
+        def unseen(sock: socket.socket, address: str) -> None:
+            raise FileNotFoundError(2, "No such file or directory")
+
+        started = time.monotonic()
+        with mock.patch.object(socket.socket, "connect", unseen), self.assertRaises(CanvasError) as raised:
+            client.board.get()
+        self.assertLess(time.monotonic() - started, 5, "no waiting for an app that is already there")
+        self.assertIn(f"Canvas socket {self.path} exists but connecting to it failed (ENOENT)", str(raised.exception))
 
     def test_connection_lost_after_sending_is_not_resent(self) -> None:
         app = self.serve()

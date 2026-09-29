@@ -217,6 +217,7 @@ class Canvas(GeneratedApi):
 
     def _open(self, wait: float) -> None:
         deadline = time.monotonic() + wait
+        missed_there = False
         while True:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
@@ -225,7 +226,13 @@ class Canvas(GeneratedApi):
             except OSError as error:
                 sock.close()
                 if _sandboxed(self.socket_path, error):
+                    # ENOENT with the file there is also an app binding its socket just after this
+                    # connect missed it (a restart): only a second one in a row is a sandbox.
+                    if error.errno == errno.ENOENT and not missed_there:
+                        missed_there = True
+                        continue
                     raise _NotSent(_sandbox_message(self.socket_path, error)) from None
+                missed_there = False
                 if time.monotonic() >= deadline:
                     waited = f" after waiting {wait:g}s for the app" if wait else ""
                     raise _NotSent(f"Canvas socket {self.socket_path}: {error.strerror or error}{waited}") from None

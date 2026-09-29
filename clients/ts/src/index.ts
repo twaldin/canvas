@@ -196,6 +196,7 @@ export class CanvasClient {
 
   async #open(waitMs: number): Promise<Connection> {
     const deadline = Date.now() + waitMs;
+    let missedThere = false;
     for (;;) {
       try {
         return await this.#dial();
@@ -204,10 +205,17 @@ export class CanvasClient {
         // A socket this process may not connect to, or can't see although it is there, is a
         // sandbox (Codex's seatbelt answers ENOENT), not a missing app: waiting won't help.
         if (code === "EPERM" || code === "EACCES" || (code === "ENOENT" && existsSync(this.socketPath))) {
+          // ENOENT with the file there is also an app binding its socket just after this dial
+          // missed it (a restart): only a second one in a row is a sandbox.
+          if (code === "ENOENT" && !missedThere) {
+            missedThere = true;
+            continue;
+          }
           throw new NotSent(
             `Canvas socket ${this.socketPath} exists but connecting to it failed (${code}): a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it`,
           );
         }
+        missedThere = false;
         if (Date.now() >= deadline) {
           throw new NotSent(`Canvas socket ${this.socketPath}: ${(error as Error).message}${waitMs ? ` after waiting ${waitMs / 1000}s for the app` : ""}`);
         }

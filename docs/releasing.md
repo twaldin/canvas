@@ -8,6 +8,8 @@ A release is `Canvas-<version>.zip` holding `Canvas.app`. Signed with a Develope
 
 The version lives in `VERSION`. `scripts/bundle.sh` stamps it into Info.plist (`CANVAS_VERSION` overrides it), and `bun scripts/gen-clients.ts` writes it into the Python and TypeScript clients' manifests and the Claude Code plugin. To bump: edit `VERSION`, run `bun scripts/gen-clients.ts`, commit.
 
+`bundle.sh` copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into `Contents/Resources`. When a package, `resources/` asset or the libghostty-spm xcframework changes, update the notices: the libghostty table follows the Ghostty commit the xcframework was built from (`ar -t` on its `libghostty.a` lists the C libraries; the fonts are the ones `src/font/embedded.zig` embeds), and the GNU libintl section's source links, checksum and relinking steps follow its gettext version. The libintl section includes a written offer of its source, valid three years from each release.
+
 ## One-time setup
 
 1. Enroll in the Apple Developer Program. Note the Team ID (developer.apple.com › Account › Membership details).

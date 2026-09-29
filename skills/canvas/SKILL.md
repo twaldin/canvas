@@ -210,6 +210,11 @@ Colors, fills, text sizes, arrow routing and binding rules: `references/shapes.m
 
 omp's `browser` tool opens a browser tile beside your terminal for each `browser.open` (find its id with `canvas board.history --limit 5`); `close` deletes it.
 To drive a tile it didn't open, `browser.open({name: "<new tab name>", url: "canvas:obj_…"})` attaches to that tile at its current page; `browser.close` then lets go and leaves the tile on the board.
+Without omp's tool (Claude Code, Codex, a script), drive tiles with `canvas browser <verb> <tile> [--key value]`, one call per step; every browser tile works, the user's too.
+`canvas browser open <url>` opens one beside your terminal and prints its `surface_id`; `canvas browser list` lists the board's.
+Loop: `canvas browser snapshot <tile> --interactive` (refs `e1`…), then `click <tile> --selector @e2`, `fill <tile> --selector @e1 --text "…"` (or `type`), `press <tile> --key Enter`, `wait <tile> --load_state complete`, `eval <tile> --script "document.title"`; refs last until the next snapshot or navigation, so snapshot again after the page changes.
+`canvas browser screenshot <tile> --out shot.png` writes the PNG and prints its `path`. `close <tile>` deletes the tile: close only tiles you opened. Verbs and params: `references/browser.md`.
+Codex runs these escalated, like every canvas command. Playwright, browser-use and Chrome DevTools MCP can't reach tiles: they are WebKit, with no CDP endpoint.
 The page's viewport is the tile's body; the tool's `viewport` and emulation don't reach it: for a phone width resize the tile (`object.update` frame `{"w": 390, "h": 902}`).
 Pages you drive stay live for 60 s wherever the tile is; 2 min after the tile leaves view the page is released (in-page state gone), so finish multi-step page work without long pauses.
 Before trusting rAF or timer numbers, check `canvas get <tile>` → `page.visibility` (visible/hidden/driven/released).

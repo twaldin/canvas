@@ -39,10 +39,11 @@ struct HousekeepingTests {
         let files = [
             file("render-1790488042161-1.png", age: day + 1),
             file("snapshot-1790488232903-2.jpg", age: 2 * day),
+            file("screenshot-1790488232999-4312.png", age: 2 * day),   // canvas browser screenshot
             file("render-1790489399701-1.png", age: day - 60),   // today's
             file("render-final.png", age: 2 * day),               // an agent's own name
             file("notes.txt", age: 2 * day),
         ]
-        #expect(Housekeeping.staleRenders(files, now: now) == ["render-1790488042161-1.png", "snapshot-1790488232903-2.jpg"])
+        #expect(Housekeeping.staleRenders(files, now: now) == ["render-1790488042161-1.png", "snapshot-1790488232903-2.jpg", "screenshot-1790488232999-4312.png"])
     }
 }

@@ -1,6 +1,6 @@
 # Browser tiles
 
-How omp's browser tool and canvas browser tiles behave, beyond SKILL.md's summary.
+How omp's browser tool, `canvas browser`, and canvas browser tiles behave, beyond SKILL.md's summary.
 
 omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens a browser tile beside your terminal for each `browser.open({name})`;
 `close` deletes it.
@@ -30,6 +30,23 @@ omp's `browser` tool (its cmux backend is on automatically inside Canvas) opens 
 - The user can click links and buttons in a tile directly. `board.history` credits your terminal with the tiles you open and close
   and with URL changes your commands cause within 10 s (pushState and back included; a `_blank` link opens a tile beside the page, never moving the view);
   the user's clicks are `user`, changes the page makes later on its own `system`.
+
+## `canvas browser` (Claude Code, Codex, scripts)
+
+Without omp's tool, `canvas browser <verb> [<tile>] [--key value] [--json '{…}']` sends one request of the same cmux subset (docs/contracts.md) on `CMUX_SOCKET_PATH` and prints the result as JSON.
+Errors print `code: message` and exit 1 (`not_found: no element matches #go`, `timeout`, `js_error`). Text params (`--text 1`, `--key 1`) stay strings.
+
+- `open [url]`: a new tile beside your terminal; its id is the result's `surface_id`. `list`: the board's terminals and browser tiles (`id`, `type`, `title`, `url`). `close <tile>` deletes the tile, so close only yours.
+- `navigate <tile> --url …`, `back`, `forward`, `reload`, `url.get` (`url`, `title`).
+- `snapshot <tile> [--interactive] [--max_depth N]`: an outline with refs (`e1` → `{role, name}`). `--interactive` lists only controls; without it the result adds `page.text` and `page.html`.
+- `click`, `dblclick`, `hover`, `focus`, `check`, `uncheck`, `scroll_into_view` with `--selector` (CSS or a ref `@e3`). `fill --selector … --text …` sets a field's value at once (input and change events); `type` sends key events per character, for fields that react to keys.
+- `press <tile> --key Enter` (`Tab`, `Shift+Tab`, a character; clipboard and undo shortcuts can't be driven), `scroll <tile> --dy 600`.
+- `wait <tile>` with exactly one of `--load_state interactive|complete`, `--url_contains …`, `--selector …`, and `--timeout_ms` (default 30000). After a click that navigates, wait before the next snapshot.
+- `eval <tile> --script "…"`: one expression runs in an async function (a promise it returns is awaited, `await` works); statements return their completion value. The page's CSP doesn't apply. Return plain JSON values (`({a: 1})`, not DOM nodes).
+- `screenshot <tile> [--out f.png]`: the tile's viewport, one pixel per CSS pixel, written to `--out` (relative to the cwd) or a new file under `$TMPDIR/canvas-renders/`; prints `path`, `width`, `height`. Read the PNG to look at it.
+
+Every driven page stays live 60 s after each command, as with omp's tool. `board.history` credits what your commands cause to the terminal that opened the tile; on a tile someone else opened they show as `system`.
+Codex's sandbox blocks the socket: run `canvas browser` escalated, like every canvas command.
 
 ## Errors, requests and the dev server
 

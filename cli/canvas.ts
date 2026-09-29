@@ -6,16 +6,22 @@
 //   canvas <namespace> <method> ...
 //   canvas get <id> [--as raw|graph]       object.get
 //   canvas render <id|id,id|x,y,w,h> [--out f.png] [--scale 2] [--full] ...   view.render
+//   canvas browser <verb> [<tile>] [--key value] ...   browser tiles over the cmux subset (below)
 // view.render and view.snapshot write the image to --out (relative to the cwd; format from the
 // extension) or, without it, to a new file under $TMPDIR/canvas-renders/, and print the result
-// metadata with its `path`. object.create/update print prop values over 1 KB elided (`--full`
-// prints them whole); what the app returns is unchanged.
-// Connection: CANVAS_SOCKET, CANVAS_TILE_ID, CANVAS_BOARD_ID (every Canvas terminal tile sets them).
+// metadata with its `path`; so does `browser screenshot`. object.create/update print prop values
+// over 1 KB elided (`--full` prints them whole); what the app returns is unchanged.
+// Connection: CANVAS_SOCKET, CANVAS_TILE_ID, CANVAS_BOARD_ID (every Canvas terminal tile sets them);
+// `browser`: CMUX_SOCKET_PATH (else cmux.sock beside the Canvas socket), CMUX_SURFACE_ID,
+// CMUX_SOCKET_PASSWORD.
 // Errors print `code: message` to stderr and exit 1.
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import catalog from "../schema/canvas-api.json";
-import { CanvasClient, CanvasError, ENV_DEFAULTS } from "../clients/ts/src/index";
+import { CanvasClient, CanvasError, DEFAULT_SOCKET, ENV_DEFAULTS } from "../clients/ts/src/index";
 
 type Schema = {
   type?: string | string[];
@@ -46,6 +52,7 @@ function usage(help = false): never {
     "       canvas <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--flag]",
     "       canvas get <id> [--as graph]",
     "       canvas render <id|id,id|x,y,w,h> [--out file.png] [--scale 2] [--full]",
+    "       canvas browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
   ];
   if (help) {
     lines.push(
@@ -55,6 +62,9 @@ function usage(help = false): never {
       "ShapeProps, ArrowProps, GroupProps, BrowserProps (e.g. `canvas methods CodeProps`).",
       "--json @file reads the params from a file (@- or - reads stdin); --key value pairs combine with it, later ones win.",
       "object.create/update print prop values over 1 KB elided; --full prints them whole.",
+      "`canvas browser` drives browser tiles over the cmux subset (docs/contracts.md): `open [url]` opens one beside",
+      "this terminal, `list` lists this board's, `close <tile>` closes one, any other verb sends browser.<verb> to <tile>",
+      "(e.g. `canvas browser snapshot obj_… --interactive`, `canvas browser click obj_… --selector @e2`).",
       "",
       `How to use Canvas well (read before building on the board): ${SKILL}`,
     );
@@ -223,6 +233,99 @@ if (argv[0] === "methods") {
     console.log(`How to use Canvas well: ${SKILL}`);
   }
   process.exit(0);
+}
+
+/** Params of the cmux subset (docs/contracts.md) that are strings: `--text 1` and `--key 1` stay text. */
+const BROWSER_STRINGS: Schema = {
+  properties: Object.fromEntries(
+    ["surface_id", "workspace_id", "url", "selector", "text", "script", "key", "load_state", "url_contains", "out"].map((key) => [key, { type: "string" }]),
+  ),
+};
+const BROWSER_METHODS: Record<string, string> = { open: "browser.open_split", list: "surface.list", close: "surface.close" };
+
+/**
+ * `canvas browser <verb> [<tile>] [--key value]`: one request on the cmux browser subset, for agents
+ * without omp's browser tool. `open [url]` → browser.open_split beside this terminal (CMUX_SURFACE_ID),
+ * `list` → surface.list of this board, `close <tile>` → surface.close, any other verb → browser.<verb>
+ * on <tile>. `screenshot` writes the PNG like `render` and prints its `path` instead of the base64.
+ */
+async function browser(args: string[]): Promise<void> {
+  const [verb, ...more] = args;
+  if (!verb || verb.startsWith("--")) usage();
+  const positional = more[0] !== undefined && !more[0].startsWith("--") ? more.shift() : undefined;
+  const params = parseArgs(more, BROWSER_STRINGS);
+  const out = params.out;
+  delete params.out;
+  if (out !== undefined && (verb !== "screenshot" || typeof out !== "string")) {
+    throw new CanvasError("invalid_params", "--out <file.png> is for `canvas browser screenshot`");
+  }
+  const method = Object.hasOwn(BROWSER_METHODS, verb) ? BROWSER_METHODS[verb] : `browser.${verb}`;
+  if (verb === "open") {
+    if (positional !== undefined) params.url ??= positional;
+  } else if (positional !== undefined) {
+    params.surface_id = positional;
+  }
+  // open and list act on the calling terminal's board unless told otherwise.
+  if ((verb === "open" || verb === "list") && params.surface_id === undefined && params.workspace_id === undefined && process.env.CMUX_SURFACE_ID) {
+    params.surface_id = process.env.CMUX_SURFACE_ID;
+  }
+
+  const path = process.env.CMUX_SOCKET_PATH || join(dirname(process.env.CANVAS_SOCKET || DEFAULT_SOCKET), "cmux.sock");
+  const socket = connect(path);
+  const connected = Promise.withResolvers<void>();
+  socket.once("connect", () => connected.resolve());
+  socket.once("error", connected.reject);
+  try {
+    await connected.promise;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // As the Canvas client does: a socket that exists but refuses this process is a sandbox (Codex's).
+    if (code === "EPERM" || code === "EACCES" || (code === "ENOENT" && existsSync(path))) {
+      throw new CanvasError("unavailable", `cmux socket ${path} exists but connecting to it failed (${code}): a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it`);
+    }
+    throw new CanvasError("unavailable", `cmux socket ${path}: ${(error as Error).message} (is Canvas running? its terminal tiles set CMUX_SOCKET_PATH)`);
+  }
+  socket.on("error", () => socket.destroy());
+  const lines = createInterface({ input: socket, crlfDelay: Infinity });
+  const replies = lines[Symbol.asyncIterator]();
+  const reply = async (sent: string): Promise<string> => {
+    const next = await replies.next();
+    if (next.done) throw new CanvasError("unavailable", `cmux socket ${path} closed before answering ${sent}; it may or may not have applied — re-read before retrying`);
+    return next.value;
+  };
+  try {
+    if (process.env.CMUX_SOCKET_PASSWORD) {
+      socket.write(`auth ${process.env.CMUX_SOCKET_PASSWORD}\n`);
+      const answer = await reply("auth");
+      if (!answer.startsWith("OK")) throw new CanvasError("unauthorized", answer.replace(/^ERROR: /, ""));
+    }
+    socket.write(`${JSON.stringify({ id: 1, method, params })}\n`);
+    const response = JSON.parse(await reply(method)) as { ok: boolean; result?: Record<string, unknown>; error?: { code: string; message: string } };
+    if (!response.ok) throw new CanvasError(response.error?.code ?? "internal_error", response.error?.message ?? "no error message");
+    const result = response.result ?? {};
+    if (typeof result.png_base64 === "string") {
+      const file = out !== undefined ? resolve(out as string) : join(tmpdir(), "canvas-renders", `screenshot-${Date.now()}-${process.pid}.png`);
+      if (out === undefined) mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, Buffer.from(result.png_base64, "base64"));
+      delete result.png_base64;
+      result.path = file;
+    }
+    console.log(JSON.stringify(result, null, 2));
+  } finally {
+    lines.close();
+    socket.destroy();
+  }
+}
+
+if (argv[0] === "browser") {
+  try {
+    await browser(argv.slice(1));
+  } catch (error) {
+    if (error instanceof CanvasError) console.error(`${error.code}: ${error.message}`);
+    else console.error(`error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  }
+  process.exit();
 }
 
 let method: string;

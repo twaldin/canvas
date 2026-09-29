@@ -59,14 +59,15 @@ public enum Housekeeping {
         }.map(\.name)
     }
 
-    /// Renders and snapshots Canvas named itself (`render-<ms>-<n>.png`, `snapshot-…jpg`) older
-    /// than `renderAge`; a file an agent wrote there under another name stays.
+    /// Renders and snapshots Canvas named itself (`render-<ms>-<n>.png`, `snapshot-…jpg`), and
+    /// `canvas browser screenshot`'s (`screenshot-<ms>-<pid>.png`), older than `renderAge`; a file
+    /// an agent wrote there under another name stays.
     public static func staleRenders(_ files: [File], now: Date) -> [String] {
         files.filter { file in
             let parts = file.name.split(separator: ".")
             guard parts.count == 2, ["png", "jpg"].contains(parts[1]) else { return false }
             let fields = parts[0].split(separator: "-", omittingEmptySubsequences: false)
-            guard fields.count == 3, ["render", "snapshot"].contains(fields[0]),
+            guard fields.count == 3, ["render", "snapshot", "screenshot"].contains(fields[0]),
                   fields.dropFirst().allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isASCII) && $0.allSatisfy(\.isNumber) }) else { return false }
             return now.timeIntervalSince(file.modified) >= renderAge
         }.map(\.name)

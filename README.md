@@ -48,7 +48,7 @@ The agent points back the same way: it opens the exact code it means beside its 
 
 - **Notes.** Markdown with fences that stay live against the files they quote; a `propose` fence renders as a diff, and a fence whose code moved away says it's stale.
 - **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid, code excerpts); agents chain them into walkthroughs.
-- **Browser tiles.** omp's `browser` tool drives them; the page's errors show on the tile.
+- **Browser tiles.** Agents drive them: omp with its `browser` tool, Claude Code, Codex and any other CLI with `canvas browser` (snapshot, click, type, eval, screenshot). The page's errors show on the tile.
 - **Image tiles.** An image file with a caption, reloaded when the file changes.
 - **Drawing.** Shapes, arrows (straight, orthogonal, or routed around tiles), ink, and titled group regions.
 - **Getting around.** Go to… (⌘P) searches every group and tile by title, path, or note heading and takes you to the one you pick. When you've panned into empty space, a "Back to content" pill brings you home, and Zoom to Fit (⌘9) frames the main cluster of work instead of shrinking to fit a few far-off strays.

@@ -396,15 +396,15 @@ struct TerminalCommandTests {
     }
 
     @Test func aRangeWrappedInsideATableCellJoins() {
-        let rows = ["│ 5. Anonymous requests │ Low-Med │ server/routes/trade-ups.ts:1383-13 │",
+        let rows = ["│ 5. Anonymous requests │ Low-Med │ server/routes/checkouts.ts:1383-13 │",
                     "│                      │         │ 92                                 │"]
         let hit = TerminalReferences.hit(row: 0, column: 40, columns: 80, read: { rows.indices.contains($0) ? rows[$0] : nil },
-                                         resolve: { $0 == "server/routes/trade-ups.ts" ? $0 : nil })
+                                         resolve: { $0 == "server/routes/checkouts.ts" ? $0 : nil })
         #expect(hit?.lines == LineRange(start: 1383, end: 1392))
         // A next table row with more in it than digits is its own row.
         let other = [rows[0], "│ 6. Next finding │ Low │ 92 more │"]
         let alone = TerminalReferences.hit(row: 0, column: 40, columns: 80, read: { other.indices.contains($0) ? other[$0] : nil },
-                                           resolve: { $0 == "server/routes/trade-ups.ts" ? $0 : nil })
+                                           resolve: { $0 == "server/routes/checkouts.ts" ? $0 : nil })
         #expect(alone?.lines == LineRange(start: 1383, end: 1383))
     }
 

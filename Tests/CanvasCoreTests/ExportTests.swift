@@ -6,8 +6,8 @@ import CanvasCore
 /// selection that keep whole diagrams (groups, the arrows between their tiles).
 struct ExportTests {
     @Test func separatorsInATitleReadAsDashes() {
-        // Auditor F2: "Findings report: trade-up-bot top 5" saved as "Findings report  trade-up-bot top 5".
-        #expect(ExportFile.name("Findings report: trade-up-bot top 5", ext: "html") == "Findings report - trade-up-bot top 5.html")
+        // "Findings report: shop-api top 5" was saved as "Findings report  shop-api top 5".
+        #expect(ExportFile.name("Findings report: shop-api top 5", ext: "html") == "Findings report - shop-api top 5.html")
         #expect(ExportFile.name("src/app/page.tsx:10-20", ext: "png") == "src - app - page.tsx - 10-20.png")
         #expect(ExportFile.name("a :/ b\tc\n", ext: "png") == "a - b c.png", "runs of separators and spaces collapse")
     }
@@ -54,7 +54,7 @@ struct ExportTests {
     }
 
     @Test func aMarqueeAroundGroupsSelectsThemAndTheArrowsBetweenThem() {
-        // Auditor F3: four groups of code tiles joined by arrows; one arrow's route bends outside
+        // Four groups of code tiles joined by arrows; one arrow's route bends outside
         // the marquee, another leads to a tile outside it.
         let groups = [
             SelectionScope.Group(id: "g1", members: ["a", "b"], enclosed: true),

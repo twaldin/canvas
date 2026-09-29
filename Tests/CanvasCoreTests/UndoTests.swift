@@ -157,7 +157,7 @@ struct UndoTests {
     }
 
     @Test func aPagesOwnTitleIsBookkeepingThatNeverFightsTheAgent() throws {
-        // The designer study: the page's title replaced the agent's `title` and bumped `rev`, so the
+        // Seen in use: the page's title replaced the agent's `title` and bumped `rev`, so the
         // creator's `object.update rev: 1` failed with a conflict.
         let board = makeBoard()
         let agent = terminal(on: board)

@@ -5,7 +5,7 @@
 ```sh
 swift run -j 4 CanvasCoreTests        # swift-testing suites for CanvasCore
 bun scripts/gen-clients.ts --check    # generated TS/Python clients match schema/canvas-api.json
-(cd clients/python && python3 -m unittest)   # Python SDK: compositions loading, shipped compositions, connection config/reconnect against a fake socket
+(cd clients/python && python3 -m unittest)   # Python SDK (Python 3.11+): compositions loading, shipped compositions, connection config/reconnect against a fake socket
 bun test extensions/agent-hooks             # hook payload classification: which thread (the tile's session, a subagent, Codex's internal sessions) an event comes from
 ```
 

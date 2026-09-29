@@ -39,7 +39,7 @@ struct PillLayoutTests {
     }
 
     @Test func aBubbleNeverCoversItsTilesTitleOrAddressBar() {
-        // Designer study F7: a browser tile at the top of the view (title bar and address bar
+        // A browser tile at the top of the view (title bar and address bar
         // 58 pt), reaching under the tray, with a terminal beside it. No room above, left, or
         // below; right of it is the terminal.
         let browser = CGRect(x: 60, y: 90, width: 420, height: 800)
@@ -212,7 +212,7 @@ struct PillLayoutTests {
     }
 
     @Test func anEdgePillSlidesOffATilesTitleBar() {
-        // Auditor F4: a code tile reaching past the right edge, its title bar where the pill for
+        // A code tile reaching past the right edge, its title bar where the pill for
         // an object far right would sit.
         let tile = CGRect(x: 1000, y: 440, width: 600, height: 300)
         let titleBar = CGRect(x: 1000, y: 440, width: 600, height: 26)

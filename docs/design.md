@@ -262,7 +262,7 @@ Question cards (`canvas_ask`), MCP server, `canvas lsp-proxy`, multi-agent overv
 
 ## Acceptance findings
 
-Run on a clone of `3d-game` with Tim's omp 18.3: omp added an FPS/position HUD, followed by a mention-driven follow-up and an HTML explainer. Fixed along the way:
+Run on a clone of `3d-game` with omp 18.3: omp added an FPS/position HUD, followed by a mention-driven follow-up and an HTML explainer. Fixed along the way:
 
 - Follow tiles re-aimed at scratch files (a `/tmp` screenshot the agent read). `follow.report` now ignores paths outside the board root and the terminal's cwd.
 - omp's browser check saw `document.hidden` and a stopped `requestAnimationFrame` (the tile was offscreen or the window on another Space). Agent-driven pages now stay visible to WebKit (window occlusion detection off, offscreen web views parked in a clipped stage view) for 60 s after the last command.

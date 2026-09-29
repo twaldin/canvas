@@ -34,6 +34,7 @@ The terminal keeps the transcript. The canvas keeps the work.
    ```sh
    brew install neurosnap/tap/zmx oven-sh/bun/bun
    ```
+   The Python SDK needs Python 3.11 or later; macOS's own `python3` is 3.9 (`brew install python` for a newer one).
 4. Optional, for omp: install the Canvas extension. omp sessions started in a Canvas terminal tile then report their lifecycle, drive follow tiles, and get the canvas skill.
    ```sh
    mkdir -p ~/.omp/agent/extensions
@@ -67,7 +68,7 @@ Canvas edits no shell, agent or Ghostty config: Codex's hooks are a per-session 
 
 ## Build from source
 
-The Command Line Tools are enough; Xcode is not required.
+The Command Line Tools are enough; Xcode is not required. Client generation and the omp extension need [bun](https://bun.sh), and the Python SDK's tests need Python 3.11 or later.
 
 ```sh
 swift build                    # debug build

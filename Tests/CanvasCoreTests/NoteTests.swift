@@ -894,7 +894,7 @@ struct PinnedMentionTests {
 
 struct NoteItemTests {
     static let audit = """
-    # Audit log: trade-up-bot
+    # Audit log: shop-api
 
     Intro paragraph that
     wraps onto two lines.
@@ -936,7 +936,7 @@ struct NoteItemTests {
         let paragraph = try item(4)
         #expect(paragraph.kind == .paragraph)
         #expect(paragraph.lines == LineRange(start: 3, end: 4))
-        #expect(paragraph.headings == ["Audit log: trade-up-bot"])
+        #expect(paragraph.headings == ["Audit log: shop-api"])
         #expect(paragraph.text == "Intro paragraph that\nwraps onto two lines.")
     }
 
@@ -944,7 +944,7 @@ struct NoteItemTests {
         let lead = try item(11)
         #expect(lead.kind == .item)
         #expect(lead.lines == LineRange(start: 11, end: 13))
-        #expect(lead.headings == ["Audit log: trade-up-bot", "Leads"])
+        #expect(lead.headings == ["Audit log: shop-api", "Leads"])
         #expect(lead.text == "4. Rate limit keyed on IP\n   - behind a proxy: all one key\n   - see server/index.ts:117")
         #expect(lead.summary == "4. Rate limit keyed on IP")
 
@@ -958,7 +958,7 @@ struct NoteItemTests {
         let leads = try item(6)
         #expect(leads.kind == .heading)
         #expect(leads.lines == LineRange(start: 6, end: 28), "the deeper #### section is part of it; ## Fixed ends it")
-        #expect(leads.headings == ["Audit log: trade-up-bot"])
+        #expect(leads.headings == ["Audit log: shop-api"])
         #expect(leads.summary == "Leads")
         #expect(leads.text.hasPrefix("## Leads\n\n1. Session secret fallback"))
     }
@@ -966,9 +966,9 @@ struct NoteItemTests {
     @Test func headingPathSkipsMissingLevels() throws {
         let section = try item(16)
         #expect(section.lines == LineRange(start: 16, end: 28))
-        #expect(section.headings == ["Audit log: trade-up-bot", "Leads"])
-        #expect(try item(19).headings == ["Audit log: trade-up-bot", "Leads", "Rate limits"])
-        #expect(try item(32).headings == ["Audit log: trade-up-bot", "Fixed"], "a later ## leaves the #### section")
+        #expect(section.headings == ["Audit log: shop-api", "Leads"])
+        #expect(try item(19).headings == ["Audit log: shop-api", "Leads", "Rate limits"])
+        #expect(try item(32).headings == ["Audit log: shop-api", "Fixed"], "a later ## leaves the #### section")
     }
 
     @Test func quoteRowAndFence() throws {
@@ -1042,7 +1042,7 @@ struct NoteMentionTests {
     @Test func contextGivesHeadingPathAndTheItemsText() async throws {
         let (note, _) = try stageLead()
         let context = await board.drain(peek: true).context
-        #expect(context.contains("[1] note \(note.id) \"Audit log: trade-up-bot\" · list item, markdown lines 11-13 · in Audit log: trade-up-bot › Leads\n"))
+        #expect(context.contains("[1] note \(note.id) \"Audit log: shop-api\" · list item, markdown lines 11-13 · in Audit log: shop-api › Leads\n"))
         #expect(context.contains("\n    4. Rate limit keyed on IP\n       - behind a proxy: all one key\n       - see server/index.ts:117\n"))
         #expect(!context.contains("CSP allows"), "only the item")
     }
@@ -1051,14 +1051,14 @@ struct NoteMentionTests {
         let (note, _) = try stageLead()
         try board.update(note.id, props: .object(["markdown": .string("Preface\n\n" + NoteItemTests.audit)]))
         let moved = await board.drain(peek: true).context
-        #expect(moved.contains("list item, markdown lines 13-15 · in Audit log: trade-up-bot › Leads (edited)"))
+        #expect(moved.contains("list item, markdown lines 13-15 · in Audit log: shop-api › Leads (edited)"))
         #expect(!moved.contains("changed since"))
 
         try board.update(note.id, props: .object(["markdown": .string(NoteItemTests.audit.replacingOccurrences(of: "   - see server/index.ts:117", with: "   - fixed"))]))
         let grown = await board.drain(peek: true).context
         #expect(grown.contains("(changed since it was mentioned; as it reads now:)\n    4. Rate limit keyed on IP\n       - behind a proxy: all one key\n       - fixed"))
 
-        try board.update(note.id, props: .object(["markdown": .string("# Audit log: trade-up-bot\n\nAll fixed.")]))
+        try board.update(note.id, props: .object(["markdown": .string("# Audit log: shop-api\n\nAll fixed.")]))
         let gone = await board.drain(peek: true).context
         #expect(gone.contains("(no longer in the note; as it read when mentioned:)\n    4. Rate limit keyed on IP"))
     }
@@ -1068,7 +1068,7 @@ struct NoteMentionTests {
         let json = try JSONValue.encode(mention.target)
         #expect(json["kind"]?.string == "note")
         #expect(json["block"]?.string == "item")
-        #expect(json["headings"] == .array([.string("Audit log: trade-up-bot"), .string("Leads")]))
+        #expect(json["headings"] == .array([.string("Audit log: shop-api"), .string("Leads")]))
         #expect(try json.decode(MentionTarget.self) == mention.target)
     }
 

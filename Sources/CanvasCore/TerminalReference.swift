@@ -340,7 +340,7 @@ public struct TerminalTextRows {
     /// whose text reaches the last column goes on directly, unless it is a separator a program
     /// padded to the width (`TerminalTail.isRule`); one that ends in blanks or a border
     /// (a TUI's margin and scrollbar, even when they fill the row) only after an unfinished word,
-    /// or inside a table cell: a reference that looks whole (`trade-ups.ts:1383-13` before the
+    /// or inside a table cell: a reference that looks whole (`checkouts.ts:1383-13` before the
     /// cell's `│`) goes on when the row below holds nothing in its cells but digits (`92`).
     static func join(_ upper: String, _ lower: String, columns: Int) -> Join? {
         guard !TerminalTail.isRule(upper) else { return nil }

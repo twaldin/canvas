@@ -8,3 +8,9 @@ __pycache__/
 node_modules/
 
 .canvas-home/
+.DS_Store
+
+# Release artifacts and signing material (docs/releasing.md)
+/Canvas-*.zip
+*.p12
+AuthKey_*.p8

@@ -311,7 +311,7 @@ struct ChangesPainter {
             rest = hint
             color = .systemOrange
         } else if let selection, set.files.indices.contains(selection.file) {
-            rest = "\(selection.lines.count) line\(selection.lines.count == 1 ? "" : "s") selected · " + (set.comparesCommits ? "m mention" : "s stage · u unstage · r r discard · m mention")
+            rest = "\(selection.lines.count) line\(selection.lines.count == 1 ? "" : "s") selected · " + (set.comparesCommits ? "m mention" : "s stage · u unstage · r ⌘⌫ discard · m mention")
             color = .controlAccentColor
         } else {
             lead = set.repository == nil ? nil : set.lead + " ▾"

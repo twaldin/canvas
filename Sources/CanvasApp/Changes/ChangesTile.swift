@@ -84,8 +84,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     Click a line to open it in a code tile; drag over lines, ⇧-click or ⌘-click to select lines (an edited line brings its old version), then Stage, Unstage, or Discard just those; \
     Hyper-click (⌃⌥⇧⌘) a line or hunk header to mention it; click a file's header to fold it, its Viewed box to fold it until it changes; click the summary to pick the base.
     Keys once the tile has the keyboard (↩ or a click): j or ↓ next hunk, k or ↑ previous hunk, J or ] next file, K or [ previous file, \
-    / filter files, Return open the hunk in a code tile, s stage, u unstage, r twice discard, m mention (the selected lines, else the hunk), Esc back to the canvas.
-    Discard asks first: click it (or press r) again to throw the change away. Every Stage, Unstage, and Discard is one ⌘Z. \
+    / filter files, Return open the hunk in a code tile, s stage, u unstage, r then ⌘⌫ discard, m mention (the selected lines, else the hunk), Esc back to the canvas.
+    Discard asks first: click it again, or press ⌘⌫ after r, to throw the change away; any other key keeps it. Every Stage, Unstage, and Discard is one ⌘Z. \
     Discard only puts back work not committed yet: committed hunks have none.
     """
 
@@ -596,7 +596,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         case .button(let action, let file, let hunk):
             let lines = hunk.flatMap { hunk in selection.flatMap { $0.file == file && $0.hunk == hunk ? $0.lines : nil } }
             if let hunk { current = (file, hunk) }
-            act(action, file: file, hunk: hunk, lines: lines, byClick: true)
+            act(action, file: file, hunk: hunk, lines: lines, input: .click)
         case .viewed(let file):
             toggleViewed(file)
         case .file(let file):
@@ -688,32 +688,19 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.capsLock, .numericPad, .function])
     }
 
-    /// The tile's own keys.
-    private enum Key { case next, previous, nextFile, previousFile, open, stage, unstage, discard, filter, mention }
-
-    private static func key(_ event: NSEvent) -> Key? {
+    /// The tile's own key a press is (`ChangesKey`).
+    private static func key(_ event: NSEvent) -> ChangesKey? {
         guard event.type == .keyDown else { return nil }
         let modifiers = Self.modifiers(event)
-        guard modifiers.isEmpty || modifiers == .shift else { return nil }
-        switch (event.keyCode, event.charactersIgnoringModifiers, modifiers == .shift) {
-        case (125, _, false), (_, "j", false): return .next
-        case (126, _, false), (_, "k", false): return .previous
-        case (_, "J", _), (_, "]", false): return .nextFile
-        case (_, "K", _), (_, "[", false): return .previousFile
-        case (36, _, false), (76, _, false): return .open
-        case (_, "s", false): return .stage
-        case (_, "u", false): return .unstage
-        case (_, "r", false): return .discard
-        case (_, "/", false): return .filter
-        case (_, "m", false): return .mention
-        default: return nil
-        }
+        return ChangesKey(keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, shift: modifiers.contains(.shift),
+                          command: modifiers.contains(.command), other: !modifiers.subtracting([.shift, .command]).isEmpty)
     }
 
     /// Whether the canvas leaves a key to the tile while it is the one selected: its keys other
-    /// than Return (which enters it), `r` included, which would pick the rectangle tool.
+    /// than Return (which enters it) and ⌘⌫ (Delete Selection), `r` included, which would pick
+    /// the rectangle tool.
     static func isOwnKey(_ event: NSEvent) -> Bool {
-        key(event).map { $0 != .open } ?? false
+        key(event).map { $0 != .open && $0 != .confirmDiscard } ?? false
     }
 
     /// One of the tile's keys pressed while it is only selected (the canvas has the keyboard):
@@ -743,10 +730,11 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         if !first.inView { reveal(file: first.file, hunk: first.hunk) }
     }
 
-    /// Keys only with the keyboard in the tile, so typing elsewhere can never stage or discard.
+    /// Keys only with the keyboard in the tile, so typing elsewhere can never stage or discard;
+    /// any key but r and ⌘⌫ drops a Discard question (`DiscardByKey`).
     override func keyDown(with event: NSEvent) {
         let key = Self.key(event)
-        if key != .discard { dropDiscardQuestion() }
+        if DiscardByKey.step(key, asked: discard.target != nil) == .drop { dropDiscardQuestion() }
         if event.keyCode == 53, Self.modifiers(event).isEmpty {
             if selection != nil {
                 selection = nil
@@ -765,10 +753,21 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         case .open: openCurrent()
         case .stage: actOnCurrent(.stage)
         case .unstage: actOnCurrent(.unstage)
-        case .discard: actOnCurrent(.revert)
+        case .askDiscard: actOnCurrent(.revert)
+        case .confirmDiscard: confirmDiscard()
         case .filter: focusFilter()
         case .mention: mentionCurrent()
         }
+    }
+
+    /// ⌘⌫ is a key equivalent (Edit › Delete Selection's): while a Discard question shows and
+    /// the tile has the keyboard, it answers the question instead.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self, DiscardByKey.step(Self.key(event), asked: discard.target != nil) == .discard else {
+            return super.performKeyEquivalent(with: event)
+        }
+        confirmDiscard()
+        return true
     }
 
     /// s, u and r: on the selected lines, else the current hunk (refused when two commits are
@@ -776,14 +775,14 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     private func actOnCurrent(_ action: ChangesAction) {
         if set?.comparesCommits == true { return show(message: ChangesFailure.readOnly.message) }
         guard let target = keyTarget else { return show(message: Self.pickFirst) }
-        act(action, file: target.file, hunk: target.hunk, lines: target.lines, byClick: false)
+        act(action, file: target.file, hunk: target.hunk, lines: target.lines, input: .key)
     }
 
     /// A header button or its key: Discard asks first (`askToDiscard`), Stage and Unstage act at
     /// once; two commits compared have nothing to act on and say so.
-    private func act(_ action: ChangesAction, file: Int, hunk: Int?, lines: Set<Int>?, byClick: Bool) {
+    private func act(_ action: ChangesAction, file: Int, hunk: Int?, lines: Set<Int>?, input: DiscardQuestion.Input) {
         if set?.comparesCommits == true { return show(message: ChangesFailure.readOnly.message) }
-        if action == .revert { return askToDiscard(file: file, hunk: hunk, lines: lines, byClick: byClick) }
+        if action == .revert { return askToDiscard(file: file, hunk: hunk, lines: lines, input: input) }
         perform(action, file: file, hunk: hunk, lines: lines)
     }
 
@@ -795,8 +794,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
 
     private static let pickFirst = "pick a hunk first (j/k or click)"
 
-    /// A Discard asked about (a first `r`, or a first click on a Discard button) and its hint:
-    /// one state, painted as the button's "Discard?" and the header's hint together.
+    /// A Discard asked about (`r`, or a first click on a Discard button) and its hint: one
+    /// state, painted as the button's "Discard?" and the header's hint together.
     private var discard = DiscardQuestion()
 
     /// The user moved on (another press or key in the tile, the keyboard left it): the question
@@ -807,10 +806,12 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         refreshPainter()
     }
 
-    /// Discard asks first (`DiscardQuestion`): the question stays until answered or until the
-    /// user does something else (`dropDiscardQuestion`). A committed hunk has nothing to discard
-    /// and says so at once.
-    private func askToDiscard(file: Int, hunk: Int?, lines: Set<Int>?, byClick: Bool) {
+    /// Discard asks first (`DiscardQuestion`): `r` or a first click turns the button into
+    /// "Discard?" with a hint, which stays until answered or until the user does something else
+    /// (`dropDiscardQuestion`). A second click answers; from the keyboard only ⌘⌫ does
+    /// (`confirmDiscard`), never a second `r`, so text typed into the tile (a prompt meant for an
+    /// agent) never throws work away. A committed hunk has nothing to discard and says so at once.
+    private func askToDiscard(file: Int, hunk: Int?, lines: Set<Int>?, input: DiscardQuestion.Input) {
         guard let set, set.files.indices.contains(file), hunk.map(set.files[file].hunks.indices.contains) ?? true else {
             return show(message: Self.pickFirst)
         }
@@ -819,9 +820,17 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         let target = DiscardQuestion.Target(path: changed.boardPath, hunk: hunk.map { changed.hunks[$0].id }, lines: lines)
         messageWork?.cancel()
         message = nil
-        let answer = discard.press(target, byClick: byClick)
+        let answer = discard.press(target, by: input)
         refreshPainter()
         if answer == .confirmed { perform(.revert, file: file, hunk: hunk, lines: lines) }
+    }
+
+    /// ⌘⌫ while a question shows: discards what it asked about.
+    private func confirmDiscard() {
+        guard let asked = discard.target, let set, let file = set.files.firstIndex(where: { $0.boardPath == asked.path }) else { return }
+        let hunk = asked.hunk.flatMap { id in set.files[file].hunks.firstIndex { $0.id == id } }
+        guard asked.hunk == nil || hunk != nil else { return dropDiscardQuestion() }
+        askToDiscard(file: file, hunk: hunk, lines: asked.lines, input: .confirm)
     }
 
     /// The next or previous hunk of an unfolded, listed file becomes current and scrolls into view.

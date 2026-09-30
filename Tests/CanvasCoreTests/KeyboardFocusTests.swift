@@ -27,6 +27,76 @@ struct KeyboardFocusTests {
         #expect(KeyboardFocus.afterTitleBarPress(on: "shell", isTerminal: true, holder: shell) == .stay)
     }
 
+    @Test func aPressAnywhereOnATitleBarButItsButtonsIsTheTilesHandle() {
+        // A click on a terminal's title bar at ~0.4 zoom, on the bar around its title or past it,
+        // selected nothing, and the prompt typed next went to the changes tile that had the keyboard.
+        func part(_ x: CGFloat, _ y: CGFloat, zoom: CGFloat = 0) -> TileTitleBar.Part? {
+            TileTitleBar.part(at: CGPoint(x: x, y: y), width: 1000, zoomControlWidth: zoom)
+        }
+        #expect(part(100, 13) == .handle, "the title")
+        #expect(part(100, 2) == .handle, "the bar above the title")
+        #expect(part(100, 24) == .handle, "and below it")
+        #expect(part(15, 13) == .handle, "the lifecycle dot")
+        #expect(part(930, 13) == .handle, "past the title, where a command's status sits")
+        #expect(part(984, 13) == .close)
+        #expect(part(996, 13) == .handle, "beside the ✕")
+        #expect(part(930, 13, zoom: 72) == .zoomControl, "− % + while hovered or selected")
+        #expect(part(890, 13, zoom: 72) == .handle, "just before it")
+        #expect(part(100, 30) == nil, "the content")
+    }
+
+    @Test func theTrayNamesTheTerminalYouAreTypingInWhenItIsNotTheTarget() {
+        // The tray said "→ codex" while the prompt ran in the plain shell holding the keyboard.
+        let codex = KeyboardFocus.Named("codex", name: "codex · Fix forecast tests")
+        let shell = KeyboardFocus.Named("zsh", name: "~/inventory")
+        #expect(KeyboardFocus.trayTarget(codex, keyboard: shell) == "codex · Fix forecast tests · you're typing in ~/inventory")
+        #expect(KeyboardFocus.trayTarget(codex, keyboard: codex) == "codex · Fix forecast tests")
+        #expect(KeyboardFocus.trayTarget(codex, keyboard: nil) == "codex · Fix forecast tests", "the keyboard on the canvas or another tile")
+        #expect(KeyboardFocus.trayTarget(nil, keyboard: shell) == nil)
+    }
+
+    @Test func typedTextNeverDiscardsAChangesTilesWork() {
+        // A prompt meant for an agent went into a changes tile that still had the keyboard, where
+        // a second r discarded: any word with "rr" threw work away.
+        func key(_ character: Character) -> ChangesKey? {
+            ChangesKey(keyCode: character == "\n" ? 36 : 0, characters: String(character), shift: character.isUppercase, command: false, other: false)
+        }
+        let confirm = ChangesKey(keyCode: 51, characters: "\u{7f}", shift: false, command: true, other: false)
+        #expect(confirm == .confirmDiscard)
+        func discards(_ keys: [ChangesKey?]) -> Int {
+            var asked = false, count = 0
+            for key in keys {
+                switch DiscardByKey.step(key, asked: asked) {
+                case .ask: asked = true
+                case .discard: count += 1; asked = false
+                case .drop: asked = false
+                case .none: break
+                }
+            }
+            return count
+        }
+        let prompt = "Sorry, the error is in carry(): refactor it, rerun the tests and reply with one line per item. RR rr r\n"
+        #expect(discards(prompt.map(key)) == 0)
+        #expect(discards([key("r"), confirm]) == 1, "r asks, ⌘⌫ answers")
+        #expect(discards([key("r"), key("r"), key("r"), confirm]) == 1, "asking again keeps the question")
+        #expect(discards([confirm]) == 0, "⌘⌫ alone stays Delete Selection")
+        #expect(discards([key("r"), key("e"), confirm]) == 0, "any other key keeps the change")
+        #expect(ChangesKey(keyCode: 15, characters: "r", shift: false, command: false, other: true) == nil, "⌥r, ⌃r: not the tile's")
+    }
+
+    @Test func tabNeverTypesIntoTheSelectedTileAndEscClosesGetStartedLast() {
+        #expect(KeyboardFocus.entersSelection(keyCode: 36) && KeyboardFocus.entersSelection(keyCode: 76), "Return and Enter")
+        #expect(!KeyboardFocus.entersSelection(keyCode: 48), "Tab ×3 put the practice note into editing and saved a tab into it")
+        func escape(chrome: Bool = false, group: Bool = false, selection: Bool = false, panel: Bool = true) -> KeyboardFocus.Escape {
+            KeyboardFocus.escape(chromeHidden: chrome, inGroup: group, hasSelection: selection, panelOpen: panel)
+        }
+        #expect(escape() == .closePanel, "Get Started open over an empty selection: Esc never closed it")
+        #expect(escape(selection: true) == .deselect, "the selection first")
+        #expect(escape(group: true, selection: true) == .exitGroup)
+        #expect(escape(chrome: true, selection: true) == .showChrome)
+        #expect(escape(panel: false) == .none)
+    }
+
     @Test func codeCommandsActOnTheFocusedThenSelectedThenLastClickedCodeTile() {
         let codes: Set<ObjectID> = ["a", "b", "c"]
         func target(_ focused: ObjectID?, _ selection: Set<ObjectID>, _ clicked: ObjectID?) -> ObjectID? {

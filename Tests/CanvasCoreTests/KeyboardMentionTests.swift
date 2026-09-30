@@ -28,6 +28,20 @@ struct KeyboardMentionTests {
         #expect(target([box.id]) == .group(objects: [box.id, label.id], name: "hot path"))
     }
 
+    @Test func goToSelectsTheLinesItShowedSoMentionStagesThemNotTheWholeTile() {
+        // ⌘P "forecast.py:9", or the "src/cart.ts · L10–19" row, then ⇧⌘M staged the whole tile.
+        let board = Board(id: "b", root: URL(fileURLWithPath: "/tmp"))
+        let shown = board.create(type: .code, props: .object(["path": "forecast.py", "range": LineRange(start: 4, end: 9).json]), frame: Frame(x: 0, y: 0, w: 300, h: 200))
+        let whole = board.create(type: .code, props: .object(["path": "cart.ts"]), frame: Frame(x: 400, y: 0, w: 300, h: 200))
+        let note = board.create(type: .note, props: .object(["markdown": "x"]), frame: Frame(x: 0, y: 300, w: 300, h: 200))
+        #expect(KeyboardMention.goToLines(LineRange(start: 9, end: 9), landedOn: shown) == LineRange(start: 9, end: 9),
+                "path:line on a tile already showing it: that line, not the tile's 4–9")
+        #expect(KeyboardMention.goToLines(nil, landedOn: shown) == LineRange(start: 4, end: 9), "a code tile's row: the range it showed")
+        #expect(KeyboardMention.goToLines(nil, landedOn: whole) == nil, "a whole file: the tile")
+        #expect(KeyboardMention.goToLines(LineRange(start: 2, end: 2), landedOn: note) == nil)
+        #expect(KeyboardMention.goToLines(nil, landedOn: nil) == nil)
+    }
+
     @Test func promptSeesWhenTheForegroundProgramIsNotTheAgent() {
         #expect(PromptTarget.foreignProgram(kind: "omp", program: "tmux") == "tmux")
         #expect(PromptTarget.foreignProgram(kind: "omp", program: "nvim src/walk.rs") == "nvim src/walk.rs")

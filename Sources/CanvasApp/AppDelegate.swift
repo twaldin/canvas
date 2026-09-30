@@ -297,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The board the user is on (`CanvasWindowController.frontmost`).
-    private var keyController: CanvasWindowController? {
+    fileprivate var keyController: CanvasWindowController? {
         CanvasWindowController.frontmost ?? controllers.values.first
     }
 
@@ -342,6 +342,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func sendToBack(_ sender: Any?) { keyController?.sendToBack(sender) }
     @objc func pasteMentions(_ sender: Any?) { keyController?.pasteMentions(sender) }
     @objc func mentionCurrent(_ sender: Any?) { keyController?.mentionCurrent(sender) }
+    @objc func removeLastMention(_ sender: Any?) { keyController?.removeLastMention(sender) }
+    @objc func clearMentions(_ sender: Any?) { keyController?.clearMentions(sender) }
     @objc func goToNextNeedsYou(_ sender: Any?) { keyController?.goToNextNeedsYou(sender) }
     @objc func navigateBack(_ sender: Any?) { keyController?.navigateBack(sender) }
     @objc func navigateForward(_ sender: Any?) { keyController?.navigateForward(sender) }
@@ -458,6 +460,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // ⇧⌘M: no shell or TUI sees ⌘, Ghostty binds nothing to it, and the board window
             // takes it ahead of a focused terminal (CanvasWindowController.handleKeyEquivalent).
             item("Mention", #selector(mentionCurrent(_:)), "M", [.command, .shift]),
+            // The tray from the keyboard: take chips off, pick the terminal they go to. ⌥⇧⌘M
+            // beside Mention's ⇧⌘M: no shell sees ⌘, and neither macOS nor Ghostty binds it.
+            item("Remove Last Mention", #selector(removeLastMention(_:)), "M", [.command, .shift, .option]),
+            TrayMenu.item("Remove Mention"),
+            item("Clear Mentions", #selector(clearMentions(_:)), ""),
+            TrayMenu.item("Send Mentions To"),
         ])
         // Content Zoom: how big a tile's content draws inside its frame, in place (View ▸ Zoom
         // In/Out, ⌘= / ⌘-, zoom the board); the selection, else the tile holding the keyboard
@@ -560,5 +568,31 @@ extension AppDelegate: NSMenuItemValidation {
     /// Menu items that don't apply now are disabled (the board window decides).
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         keyController?.validate(item) ?? false
+    }
+}
+
+/// Edit ▸ Remove Mention and Send Mentions To: the tray's chips and the board's terminals, as
+/// the tray shows them on the board the user is on, filled each time the submenu opens (menu
+/// search too), so a keyboard user can take any chip off and change where they go.
+@MainActor
+private final class TrayMenu: NSObject, NSMenuDelegate {
+    static let shared = TrayMenu()
+
+    static func item(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: title)
+        menu.delegate = shared
+        item.submenu = menu
+        return item
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard let controller = (NSApp.delegate as? AppDelegate)?.keyController else { return menu.removeAllItems() }
+        let removing = menu.title == "Remove Mention"
+        if removing { controller.fillRemoveMentionMenu(menu) } else { controller.fillTargetMenu(menu) }
+        guard menu.numberOfItems == 0 else { return }
+        let none = NSMenuItem(title: removing ? "No Mentions Staged" : "No Terminals", action: nil, keyEquivalent: "")
+        none.isEnabled = false
+        menu.addItem(none)
     }
 }

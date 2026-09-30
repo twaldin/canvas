@@ -218,7 +218,7 @@ final class TileFrameView: NSView {
         let width = bounds.width
         titleBar.frame = NSRect(x: 0, y: 0, width: width, height: Self.titleHeight)
         badge.frame = NSRect(x: 10, y: (Self.titleHeight - 10) / 2, width: 10, height: 10)
-        closeButton.frame = NSRect(x: width - 28, y: 3, width: 22, height: 20)
+        closeButton.frame = TileTitleBar.closeFrame(width: width)
         layoutTitle()
         let body = NSRect(x: 0, y: Self.titleHeight, width: width, height: max(0, bounds.height - Self.titleHeight))
         // The zoom view keeps its bounds' scale as its frame changes (AppKit), so the content
@@ -304,7 +304,7 @@ final class TileFrameView: NSView {
         // (never on a tile with an author mark) before that.
         let width = bounds.width
         let zoomWidth = zoomControl.isHidden ? 0 : zoomControl.fittedWidth
-        zoomControl.frame = NSRect(x: width - 30 - zoomWidth, y: 4, width: zoomWidth, height: 18)
+        zoomControl.frame = TileTitleBar.zoomControlFrame(width: width, controlWidth: zoomWidth) ?? .zero
         let trailing = zoomWidth > 0 ? zoomWidth + 4 : 0
         let status = statusLabel.isHidden ? 0 : min(statusLabel.fittingSize.width, max(0, width / 3))
         statusLabel.frame = NSRect(x: width - 32 - trailing - status, y: 6, width: status, height: 15)
@@ -606,6 +606,11 @@ final class TileFrameView: NSView {
         if resizeGrip.contains(local) { return self }
         // A zoomed-out card is one handle: click selects, drag moves, double-click focuses.
         if !isLive || zoomedOut, bounds.contains(local) { return self }
+        // So is the title bar, but for its buttons (`TileTitleBar`): a press on the title, the
+        // dot, a status or the gaps between them selects the tile and turns the keyboard to it,
+        // the first click into an inactive window included (the bar's own view takes no first
+        // click, so a press on it was lost and typing stayed in the tile that had the keyboard).
+        if TileTitleBar.part(at: local, width: bounds.width, zoomControlWidth: zoomControl.isHidden ? 0 : zoomControl.frame.width) == .handle { return self }
         return super.hitTest(point)
     }
 

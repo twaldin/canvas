@@ -503,6 +503,25 @@ final class CodeTile: NSView, TileContent {
         }
         rowsView.painter = painter
         rowsMoved()
+        selectGoToLines()
+    }
+
+    /// Lines Go to landed on (`select(lines:)`), selected once the rows show the file.
+    private var goToLines: LineRange?
+
+    /// Go to (⌘P) landed on `lines` here: they are selected, as a drag over them would, so ⇧⌘M
+    /// mentions them and ⌘C copies them, not the whole tile (`KeyboardMention.goToLines`); a
+    /// re-aim to another file selects them once it has loaded.
+    func select(lines: LineRange) {
+        goToLines = lines
+        selectGoToLines()
+    }
+
+    private func selectGoToLines() {
+        guard let lines = goToLines, showsCurrent, let painter = rowsView.painter, painter.rows.entryCount > 0 else { return }
+        goToLines = nil
+        let first = painter.rows.entry(ofLine: lines.start), last = painter.rows.entry(ofLine: max(lines.start, lines.end))
+        rowsView.painter?.selection = (CodeRows.Position(entry: first, offset: 0), CodeRows.Position(entry: last, offset: painter.text(ofEntry: last).length))
     }
 
     // MARK: Anchoring

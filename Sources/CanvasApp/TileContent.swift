@@ -129,7 +129,7 @@ protocol TileContent: NSView {
     var surfaceLuminance: Double? { get }
     /// Whether clicking into the tile should take keyboard focus.
     var takesKeyboardFocus: Bool { get }
-    /// Return (or Tab) on the selected tile while the canvas has the keyboard: the tile takes it
+    /// Return on the selected tile while the canvas has the keyboard: the tile takes it
     /// (a terminal, a code tile's rows, a changes tile, a note's editor, a page). Esc in the
     /// tile hands it back (`CanvasView.leaveTile`). False when nothing in it types.
     func enterKeyboard() -> Bool

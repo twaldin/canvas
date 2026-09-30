@@ -475,22 +475,25 @@ struct DiscardQuestionTests {
     /// confirming click only asked again.
     @Test func aQuestionLastsUntilAnsweredWithItsHint() {
         var question = DiscardQuestion()
-        #expect(question.press(lines, byClick: true) == .asked)
+        #expect(question.press(lines, by: .click) == .asked)
         #expect(question.hint == "click Discard again to discard 2 selected lines from your files")
-        #expect(question.press(lines, byClick: true) == .confirmed)
+        #expect(question.press(lines, by: .click) == .confirmed)
         #expect(question.target == nil && question.hint == nil)
     }
 
     @Test func anotherTargetOrMovingOnAsksAgain() {
         var question = DiscardQuestion()
-        _ = question.press(lines, byClick: true)
-        #expect(question.press(hunk, byClick: true) == .asked, "the whole hunk isn't the lines asked about")
+        _ = question.press(lines, by: .click)
+        #expect(question.press(hunk, by: .click) == .asked, "the whole hunk isn't the lines asked about")
         #expect(question.hint == "click Discard again to discard this hunk from your files")
         question.drop()
         #expect(question.target == nil && question.hint == nil)
-        #expect(question.press(hunk, byClick: false) == .asked)
-        #expect(question.hint == "press r again to discard this hunk from your files")
-        #expect(question.press(DiscardQuestion.Target(path: "inventory/forecast.py", hunk: nil, lines: nil), byClick: true) == .asked)
+        #expect(question.press(hunk, by: .key) == .asked)
+        #expect(question.hint == "⌘⌫ discards this hunk from your files · any other key keeps it")
+        #expect(question.press(hunk, by: .key) == .asked, "a second r never discards")
+        #expect(question.press(hunk, by: .confirm) == .confirmed, "⌘⌫ does")
+        _ = question.press(hunk, by: .key)
+        #expect(question.press(DiscardQuestion.Target(path: "inventory/forecast.py", hunk: nil, lines: nil), by: .click) == .asked)
         #expect(question.hint == "click Discard again to discard all of inventory/forecast.py from your files")
     }
 }

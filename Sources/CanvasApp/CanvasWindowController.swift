@@ -144,10 +144,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         navigator.onGo = { [weak self] target in
             switch target {
             case .allContent: self?.canvas.zoomToFit()
-            case .object(let id): self?.canvas.go(to: id)
+            case .object(let id):
+                self?.canvas.go(to: id)
+                self?.selectGoToLines(nil, in: id)
             case .heading(let id, let line): self?.canvas.go(to: id, heading: line)
             case .file(let path, let lines):
-                self?.open(path: path, lines: lines)
+                if let id = self?.open(path: path, lines: lines) { self?.selectGoToLines(lines, in: id) }
             case .status: break
             }
         }
@@ -157,6 +159,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         getStarted.onClose = { [weak self] in self?.getStartedClosed() }
         getStarted.onNewTerminal = { [weak self] in self?.newTerminal(nil) }
         getStarted.onShowPractice = { [weak self] in self?.showPracticeNote() }
+        canvas.onTab = { [weak self] backward in
+            guard let getStarted = self?.getStarted, getStarted.isOpen else { return false }
+            getStarted.takeKeyboard(backward: backward)
+            return true
+        }
+        canvas.panelOpen = { [weak self] in self?.getStarted.isOpen ?? false }
+        canvas.closePanel = { [weak self] in self?.getStarted.close() }
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
@@ -201,12 +210,20 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         trayTitleWork?.cancel()
         trayTitleWork = nil
         let target = canvas.promptTarget.flatMap { board.objects[$0] }
-        var title = target.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
-        if let affinity, affinity.target == target?.id { title = title.map { "\($0) · works in \(affinity.checkout)" } }
+        func named(_ terminal: CanvasObject) -> KeyboardFocus.Named {
+            KeyboardFocus.Named(terminal.id, name: PromptTarget.label(terminal, shownTitle: canvas.tiles[terminal.id]?.title))
+        }
+        var targetName = target.map(named)
+        if let affinity, affinity.target == target?.id { targetName?.name += " · works in \(affinity.checkout)" }
+        trayKeyboard = canvas.focusedTerminal
+        let title = KeyboardFocus.trayTarget(targetName, keyboard: trayKeyboard.flatMap { board.objects[$0] }.map(named))
         tray.show(board.tray, targetTitle: title, targetDrains: target.map(PromptTarget.drains) ?? false,
                   hasTerminal: board.objects.values.contains { $0.type == .terminal }, board: board)
         refreshGetStarted(target: target)
     }
+
+    /// The terminal with the keyboard when the tray last named it (`KeyboardFocus.trayTarget`).
+    private var trayKeyboard: ObjectID?
 
     /// What the tab last showed (`NeedsYou`), so a terminal's frequent updates redraw nothing.
     private var tabState: NeedsYou?
@@ -264,14 +281,19 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 
     /// The board's terminals, those running an agent first, each named as its header names it;
-    /// the current target is checked.
+    /// the current target is checked. The tray's "→ name ▾" opens it; Edit ▸ Send Mentions To
+    /// is the same list for the keyboard (`fillTargetMenu`).
     private func targetMenu() -> NSMenu? {
-        let terminals = PromptTarget.menuOrder(board.objects)
-        guard !terminals.isEmpty else { return nil }
         let menu = NSMenu(title: "Send Mentions To")
+        fillTargetMenu(menu)
+        return menu.numberOfItems > 0 ? menu : nil
+    }
+
+    func fillTargetMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
         menu.autoenablesItems = false
         var agents = true
-        for terminal in terminals {
+        for terminal in PromptTarget.menuOrder(board.objects) {
             let isAgent = PromptTarget.runsAgent(terminal)
             if agents, !isAgent, menu.numberOfItems > 0 { menu.addItem(.separator()) }
             agents = isAgent
@@ -281,7 +303,28 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             item.state = terminal.id == canvas.promptTarget ? .on : .off
             menu.addItem(item)
         }
-        return menu
+    }
+
+    /// Edit ▸ Remove Mention: the tray's chips in order, numbered as the prompt numbers them;
+    /// picking one takes it off, as its ✕ does.
+    func fillRemoveMentionMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.autoenablesItems = false
+        for (index, mention) in board.tray.enumerated() {
+            let id = mention.id
+            menu.addItem(MenuAction.item("[\(index + 1)] \(mention.label)") { [weak self] in try? self?.board.unstage(id) })
+        }
+    }
+
+    /// Edit ▸ Remove Last Mention (⌥⇧⌘M): the chip staged last comes off.
+    @objc func removeLastMention(_ sender: Any?) {
+        guard let last = board.tray.last else { return }
+        try? board.unstage(last.id)
+    }
+
+    /// Edit ▸ Clear Mentions: every chip comes off.
+    @objc func clearMentions(_ sender: Any?) {
+        for mention in board.tray { try? board.unstage(mention.id) }
     }
 
     /// The mentions the tray held when last seen, to tell which one was just staged.
@@ -315,6 +358,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             }
             view = current.superview
         }
+        if canvas.focusedTerminal != trayKeyboard { refreshTray() }
         if let tile = canvas.focusedTile { canvas.keyboardUsed(tile) }
     }
 
@@ -518,10 +562,12 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// a plain code tile in view showing the file re-aimed at them (never an agent's, captioned,
     /// grouped or follow tile: `Board.openForNavigation`), gone to; else a new one placed in view
     /// like any object the user asks for. One step of Navigate Back.
-    private func open(path: String, lines: LineRange?) {
+    private func open(path: String, lines: LineRange?) -> ObjectID? {
         let aim = CodeAim(path: path, range: lines)
+        var landed: ObjectID?
         canvas.navigating(landing: aim) {
             let opened = board.openForNavigation(aim, from: nil)
+            landed = opened.id
             if opened.created, let object = board.objects[opened.id] {
                 canvas.showNew(object)
             } else {
@@ -529,6 +575,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             }
             return opened.reaim
         }
+        return landed
+    }
+
+    /// Go to landed on a code tile: the lines it named (`path:line`, a symbol) or the tile's row
+    /// showed are selected in it (`KeyboardMention.goToLines`), so ⇧⌘M mentions just them.
+    private func selectGoToLines(_ lines: LineRange?, in id: ObjectID) {
+        guard let range = KeyboardMention.goToLines(lines, landedOn: board.objects[id]) else { return }
+        (canvas.tiles[id]?.content as? CodeTile)?.select(lines: range)
     }
 
     /// When the language servers last answered a Go to symbol search with symbols (they are warm).
@@ -859,6 +913,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return board.objects.values.contains { $0.type == .group && (selection.contains($0.id) || GroupSpec($0.props)?.members.contains(where: selection.contains) == true) }
         case #selector(pasteMentions(_:)): return !board.tray.isEmpty && pasteTarget != nil
         case #selector(mentionCurrent(_:)): return canvas.focusedTile != nil || !selection.isEmpty
+        case #selector(removeLastMention(_:)), #selector(clearMentions(_:)): return !board.tray.isEmpty
         case #selector(exitGroup(_:)): return canvas.enteredGroup != nil
         case #selector(enterGroup(_:)): return canvas.selectedGroup != nil
         case #selector(copyObjectIDs(_:)):

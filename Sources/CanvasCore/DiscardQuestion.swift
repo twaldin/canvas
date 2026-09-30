@@ -36,17 +36,21 @@ public struct DiscardQuestion: Equatable, Sendable {
 
     public init() {}
 
-    /// A Discard pressed on `target` (`byClick`: its button, else `r`): the same target as the
-    /// question showing confirms it; anything else asks about `target`.
-    public mutating func press(_ target: Target, byClick: Bool) -> Answer {
-        if self.target == target {
+    /// How a Discard was pressed: its button, `r`, or ⌘⌫ (`DiscardByKey`).
+    public enum Input: Equatable, Sendable { case click, key, confirm }
+
+    /// A Discard pressed on `target`: a click or ⌘⌫ on the target of the question showing
+    /// confirms it; `r` only ever asks, so a second `r` (typed text: "error", "carry") never
+    /// discards; anything else asks about `target`.
+    public mutating func press(_ target: Target, by input: Input) -> Answer {
+        if input != .key, self.target == target {
             drop()
             return .confirmed
         }
         let what = target.lines.map { "\($0.count) selected line\($0.count == 1 ? "" : "s")" }
             ?? (target.hunk == nil ? "all of \(PathLabel.short(target.path))" : "this hunk")
         self.target = target
-        hint = "\(byClick ? "click Discard again" : "press r again") to discard \(what) from your files"
+        hint = input == .click ? "click Discard again to discard \(what) from your files" : "⌘⌫ discards \(what) from your files · any other key keeps it"
         return .asked
     }
 

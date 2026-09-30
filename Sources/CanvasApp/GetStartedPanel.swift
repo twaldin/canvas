@@ -5,8 +5,10 @@ import CanvasCore
 /// the leading side so the practice note beside it and the tray below stay in view. It says
 /// what Hyper-click is in one sentence, the three ways to do it, then walks through one:
 /// Hyper-click the practice note (the chip shows in the tray), then send it with a prompt.
-/// Each step turns into a green check when done. ×, Esc while it has the keyboard, Done, or the
-/// menu item again close it; closing is what stops it opening at launch.
+/// Each step turns into a green check when done. ×, Esc while it has the keyboard (or on the
+/// canvas once nothing is selected), Done, or the menu item again close it; Tab and ⇧Tab walk
+/// its buttons (from the canvas too), Space presses one. Closing is what stops it opening at
+/// launch.
 @MainActor
 final class GetStartedPanel: NSVisualEffectView {
     static let width: CGFloat = 400
@@ -33,9 +35,11 @@ final class GetStartedPanel: NSVisualEffectView {
 
     private let stepOne = StepRow(number: 1)
     private let stepTwo = StepRow(number: 2)
-    private let newTerminal = NSButton(title: "New Terminal  ⌘T", target: nil, action: nil)
-    private let showPractice = NSButton(title: "Show Practice Note", target: nil, action: nil)
-    private let finish = NSButton(title: "Close", target: nil, action: nil)
+    private let newTerminal = KeyButton(title: "New Terminal  ⌘T", target: nil, action: nil)
+    private let showPractice = KeyButton(title: "Show Practice Note", target: nil, action: nil)
+    private let finish = KeyButton(title: "Close", target: nil, action: nil)
+    private let closeButton = KeyButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close Get Started") ?? NSImage(), target: nil, action: nil)
+    private let karabiner = KeyButton(title: "Get Karabiner-Elements \u{2197}", target: nil, action: nil)
     private let footer = GetStartedPanel.wrapping("", size: 12, color: .secondaryLabelColor)
     private weak var previousResponder: NSResponder?
     private var shown: (GetStarted.Step, Target)?
@@ -56,18 +60,20 @@ final class GetStartedPanel: NSVisualEffectView {
 
         let title = NSTextField(labelWithString: "Get Started")
         title.font = .systemFont(ofSize: 15, weight: .semibold)
-        let close = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close Get Started") ?? NSImage(), target: self, action: #selector(closeClicked))
-        close.isBordered = false
-        close.contentTintColor = .secondaryLabelColor
-        close.toolTip = "Close (Esc). Help › Get Started opens it again."
-        let header = NSStackView(views: [title, NSView(), close])
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        closeButton.isBordered = false
+        closeButton.contentTintColor = .secondaryLabelColor
+        closeButton.toolTip = "Close (Esc). Help › Get Started opens it again."
+        let header = NSStackView(views: [title, NSView(), closeButton])
         header.orientation = .horizontal
 
         let lead = Self.wrapping("Hyper-click (hold ⌃⌥⇧⌘ and click) a line of code, a note, a page element or a command's output, and it goes with your next prompt to your agent.", size: 13, color: .labelColor)
 
         let chord = Self.item("⌃⌥⇧⌘-click", "hold Control, Option, Shift and Command, and click. On a PC keyboard: Ctrl+Alt+Shift+Win.")
         let capsLock = Self.item("Caps Lock", "one key for all four with Karabiner-Elements (free): Complex Modifications › Add predefined rule › \u{201C}Change caps_lock to command+control+option+shift\u{201D}.")
-        let karabiner = NSButton(title: "Get Karabiner-Elements \u{2197}", target: self, action: #selector(karabinerClicked))
+        karabiner.target = self
+        karabiner.action = #selector(karabinerClicked)
         karabiner.isBordered = false
         karabiner.attributedTitle = NSAttributedString(string: karabiner.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.linkColor])
         karabiner.toolTip = "Opens karabiner-elements.pqrs.org in your browser. Chalkwork installs nothing."
@@ -118,11 +124,14 @@ final class GetStartedPanel: NSVisualEffectView {
     override var acceptsFirstResponder: Bool { true }
 
     /// Esc closes; Return does too once the walk-through is done. Not a key equivalent on
-    /// Done: Return typed into a terminal must stay the terminal's.
+    /// Done: Return typed into a terminal must stay the terminal's. Tab and ⇧Tab walk the
+    /// buttons, the keys reaching here from the one that has the keyboard.
     override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
         switch event.keyCode {
         case 53: close()
         case 36, 76 where shown?.0 == .done: close()
+        case 48 where modifiers.isEmpty || modifiers == .shift: step(backward: modifiers == .shift)
         default: super.keyDown(with: event)
         }
     }
@@ -137,10 +146,40 @@ final class GetStartedPanel: NSVisualEffectView {
         window.makeFirstResponder(self)
     }
 
+    /// Tab (⇧Tab) on the canvas: the first (last) button takes the keyboard; the canvas gets it
+    /// back past the last (first) one, or when the panel closes.
+    func takeKeyboard(backward: Bool) {
+        guard isOpen, let window, let button = backward ? keyButtons.last : keyButtons.first else { return }
+        if !hasKeyboard { previousResponder = window.firstResponder }
+        window.makeFirstResponder(button)
+    }
+
+    /// Its buttons in reading order, as Tab walks them: whichever show now.
+    private var keyButtons: [NSButton] {
+        [closeButton, karabiner, newTerminal, showPractice, finish].filter { !$0.isHiddenOrHasHiddenAncestor }
+    }
+
+    private var hasKeyboard: Bool {
+        (window?.firstResponder as? NSView).map { $0 === self || $0.isDescendant(of: self) } ?? false
+    }
+
+    /// The next (previous) button takes the keyboard; past the ends, what had it before.
+    private func step(backward: Bool) {
+        guard let window else { return }
+        let buttons = keyButtons
+        let index = buttons.firstIndex { $0 === window.firstResponder }
+        let next = index.map { $0 + (backward ? -1 : 1) } ?? (backward ? buttons.count - 1 : 0)
+        if buttons.indices.contains(next) {
+            window.makeFirstResponder(buttons[next])
+        } else {
+            CanvasView.returnKeyboard(to: previousResponder, in: window)
+        }
+    }
+
     /// Hides the panel and hands the keyboard back, as Chalkwork Basics does.
     func close() {
         guard isOpen else { return }
-        let hadKeyboard = (window?.firstResponder as? NSView).map { $0 === self || $0.isDescendant(of: self) } ?? false
+        let hadKeyboard = hasKeyboard
         isHidden = true
         if hadKeyboard, let window { CanvasView.returnKeyboard(to: previousResponder, in: window) }
         previousResponder = nil
@@ -279,4 +318,12 @@ private final class StepRow: NSStackView {
         text.textColor = done || active ? .labelColor : .secondaryLabelColor
         setAccessibilityLabel("Step \(number), \(done ? "done" : active ? "to do now" : "next"): \(string)")
     }
+}
+
+/// A button Tab reaches whatever the system's keyboard navigation setting says (Get Started is
+/// the first thing a keyboard-only user meets, and its buttons never got a focus ring); Space
+/// presses it.
+private final class KeyButton: NSButton {
+    override var canBecomeKeyView: Bool { !isHiddenOrHasHiddenAncestor && isEnabled }
+    override var acceptsFirstResponder: Bool { isEnabled }
 }

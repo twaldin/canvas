@@ -31,10 +31,10 @@ public enum ChangesMetrics {
     /// Tallest frame `size: "fit"` gives, title bar included; more scrolls.
     public static let maxFitHeight: CGFloat = 4000
     /// The header's hints, longest first; the tile shows the longest that fits (`hint`). With
-    /// the keyboard: which keys work (`r r`: Discard asks for a second r). Without it: how to
-    /// select lines and how to take it.
-    public static let keysHints = ["j/k hunks · J/K or ]/[ files · ↩ open · s stage · u unstage · r r discard · m mention · esc done",
-                                   "j/k hunks · s stage · u unstage · r r discard · m mention · esc", "j/k · s · u · rr · m · esc"]
+    /// the keyboard: which keys work (`r ⌘⌫`: r asks to discard, ⌘⌫ answers, `DiscardByKey`).
+    /// Without it: how to select lines and how to take it.
+    public static let keysHints = ["j/k hunks · J/K or ]/[ files · ↩ open · s stage · u unstage · r ⌘⌫ discard · m mention · esc done",
+                                   "j/k hunks · s stage · u unstage · r ⌘⌫ discard · m mention · esc", "j/k · s · u · r⌘⌫ · m · esc"]
     public static let idleHints = ["⇧-click or drag lines to stage just those · ↩ or click for keys", "↩ or click to use keys", "↩ for keys"]
     /// The same for a listing with nothing to stage, unstage, or discard (a branch's commits
     /// reviewed against its merge-base, nothing uncommitted): reading keys only.

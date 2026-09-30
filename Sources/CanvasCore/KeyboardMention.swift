@@ -27,6 +27,17 @@ public enum KeyboardMention {
         }
         return .group(objects: ordered.map(\.id), name: nil)
     }
+
+    /// The lines Go to (⌘P) landed on in the code tile `object`, which it selects so ⇧⌘M
+    /// mentions them (and ⌘C copies them), not the whole tile: a `path:line` or symbol row's
+    /// `lines`, else, for a code tile's own row ("forecast.py · L7–9"), the range it showed.
+    /// Nil for anything but a code tile, and for a file opened without lines.
+    public static func goToLines(_ lines: LineRange?, landedOn object: CanvasObject?) -> LineRange? {
+        guard let object, object.type == .code else { return nil }
+        if let lines { return lines }
+        guard let start = object.props["range"]?["start"]?.int else { return nil }
+        return LineRange(start: start, end: max(start, object.props["range"]?["end"]?.int ?? start))
+    }
 }
 
 extension ChangeSet {

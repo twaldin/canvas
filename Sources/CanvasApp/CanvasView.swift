@@ -74,9 +74,15 @@ final class CanvasDocumentView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? { canvas?.emptyCanvasMenu(at: convert(event.locationInWindow, from: nil)) }
 
     override func keyDown(with event: NSEvent) {
-        let plain = event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty
-        // Return or Tab hands the keyboard to the one selected tile (Esc in it hands it back).
-        if plain, [36, 76, 48].contains(event.keyCode), canvas?.enterSelection() == true { return }
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        let plain = modifiers.isEmpty
+        // Return hands the keyboard to the one selected tile (Esc in it hands it back).
+        if plain, KeyboardFocus.entersSelection(keyCode: event.keyCode), canvas?.enterSelection() == true { return }
+        // Tab (⇧Tab) goes to an open panel's buttons, else nowhere: it never types into a tile.
+        if event.keyCode == 48, plain || modifiers == .shift {
+            _ = canvas?.onTab?(modifiers == .shift)
+            return
+        }
         switch event.keyCode {
         case 53: cancelOperation(nil)
         case 51, 117: deleteBackward(nil)
@@ -157,9 +163,17 @@ final class CanvasView: NSScrollView {
     /// settles it).
     var promptTarget: ObjectID? { didSet { onPromptTargetChange?() } }
     var onPromptTargetChange: (() -> Void)?
-    /// The prompt target retitled itself (an agent's OSC title); the tray names it by that.
+    /// The prompt target, or the terminal holding the keyboard, retitled itself (an agent's OSC
+    /// title); the tray names them by that.
     var onPromptTargetTitle: (() -> Void)?
     var onSelectionChange: (() -> Void)?
+    /// Tab (true: ⇧Tab) with the canvas holding the keyboard: an open panel (Get Started) takes
+    /// it at its first (last) button; false when none is open.
+    var onTab: ((Bool) -> Bool)?
+    /// Whether a panel is open over the board that Esc on the canvas closes once nothing else
+    /// is left to leave (Get Started), and closing it.
+    var panelOpen: (() -> Bool)?
+    var closePanel: (() -> Void)?
 
     // MARK: Drawn objects (installed by the drawing layer)
 
@@ -350,7 +364,8 @@ final class CanvasView: NSScrollView {
         if let terminal = content as? TerminalTile {
             terminal.onTitle = { [weak self] title in
                 self?.tiles[id]?.setTitle(title)
-                if self?.promptTarget == id { self?.onPromptTargetTitle?() }
+                // The tray names the target and, when typing goes elsewhere, the terminal typing goes to.
+                if self?.promptTarget == id || self?.focusedTerminal == id { self?.onPromptTargetTitle?() }
                 // The foreground program changed, maybe: it names the terminal's objects.
                 self?.syncAuthors(of: id)
             }
@@ -637,6 +652,10 @@ final class CanvasView: NSScrollView {
                 // it selects just that tile, as a plain click does; title bars ⇧-click to add.
                 lastClickedTile = tile.objectID
                 select(tile.objectID, extend: false)
+            } else if let tile = view as? TileFrameView, hit !== tile, !event.modifierFlags.contains(.shift) {
+                // A title-bar button (close, content zoom; the rest of the bar is the tile's own
+                // handle, `TileTitleBar`): the user turned to the tile, as a press on its bar does.
+                _ = press(tile.objectID, extend: false)
             }
             return event
         case .leftMouseDragged where shapePress:
@@ -835,8 +854,13 @@ final class CanvasView: NSScrollView {
     // MARK: Commands
 
     func escape() {
-        if chromeHidden { return chromeHidden = false }
-        if enteredGroup != nil { exitGroup() } else { setSelection([]) }
+        switch KeyboardFocus.escape(chromeHidden: chromeHidden, inGroup: enteredGroup != nil, hasSelection: !selection.isEmpty, panelOpen: panelOpen?() ?? false) {
+        case .showChrome: chromeHidden = false
+        case .exitGroup: exitGroup()
+        case .deselect: setSelection([])
+        case .closePanel: closePanel?()
+        case .none: break
+        }
     }
 
     func deleteSelection() {
@@ -996,7 +1020,7 @@ final class CanvasView: NSScrollView {
     /// Tiles Return hands the keyboard to (an HTML tile's page never takes it: `HtmlWebView`).
     private static let enterable: Set<ObjectType> = [.terminal, .code, .changes, .note, .browser]
 
-    /// Return (or Tab) with one tile selected and the canvas holding the keyboard: the tile
+    /// Return with one tile selected and the canvas holding the keyboard: the tile
     /// takes it (`TileContent.enterKeyboard`), revealed first with the least pan (an agent's
     /// terminal with its follow tile, `landing`); a zoomed-out one comes up at 100%
     /// so its live view can. False when nothing is selected that types (the key stays the

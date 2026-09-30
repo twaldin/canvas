@@ -130,10 +130,15 @@ struct RepoBoardTests {
         let entry = try #require(listed["worktrees"]?.array?.first { $0["branch"] == .string("feature") })
         #expect(entry["live"] == .bool(true))
         #expect(entry["region"] == .string(region.id))
-        let part = try #require(try router.dispatch("board.get", .object(["board": .string(id), "branch": .string("feature")]))["objects"]?.array)
+        let got = try router.dispatch("board.get", .object(["board": .string(id), "branch": .string("feature")]))
+        let part = try #require(got["objects"]?.array)
+        #expect(got["regions"] == .array([.string(region.id)]))
         // Terminals started before the migration still name their old board (CANVAS_BOARD_ID).
         #expect(try router.dispatch("board.get", .object(["board": .string(feature.id)]))["board"] == .string(id))
         #expect(Set(part.compactMap { $0["id"]?.string }) == Set(feature.snapshot.objects.map(\.id) + [region.id]))
+        // A branch without a region still says so, and the whole board lists none.
+        #expect(try router.dispatch("board.get", .object(["board": .string(id), "branch": .string("no-such-branch")]))["regions"] == .array([]))
+        #expect(try router.dispatch("board.get", .object(["board": .string(id)]))["regions"] == nil)
     }
 
     @Test func runningAgainMergesNothingTwice() async throws {

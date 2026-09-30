@@ -338,7 +338,7 @@ One canvas per git repository, whichever worktree or branch opens it (rooted at 
 `canvas board.open --root <absolute dir>` opens a directory's board as a tab (creating it if new) behind the user's current tab; pass `--select true` only when the user asked to see it.
 A worktree opens its repository's board: the result's `worktree` names it (path, branch, and `region`, the group that holds that branch's objects when there is one), and New Terminal starts there.
 Then address it with `board: <id>` (from the result) on every call, and start agents there by creating terminal tiles on that board; a terminal started in a worktree records `worktree` and `branch` in its props.
-Give each branch's work its own region: a group titled with the branch (`props.key: "branch:<name>"`), and `canvas board.get --branch <name>` returns just that part of the board.
+Give each branch's work its own region: a group titled with the branch (`props.key: "branch:<name>"`), and `canvas board.get --branch <name>` returns just that part of the board, with `regions` listing that branch's region ids (`[]` before you make one).
 `canvas board.list` shows every stored board, and a repository board's `worktrees` (path, branch, `live`: still checked out there).
 `canvas board.export` writes a readable snapshot to `<root>/.canvas/board.json` for committing when the user asks to save the board with the repo.
 

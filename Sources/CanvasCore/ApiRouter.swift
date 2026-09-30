@@ -705,16 +705,19 @@ public final class ApiRouter {
         case "board.get":
             let board = try board(p)
             var snapshot = board.snapshot.objects
+            var regions: [ObjectID]?
             if let branch = p["branch"]?.string {
                 // One branch's part of a repository board (docs/design/repo-boards.md "Per-branch filter").
                 let ids = board.objects(ofBranch: branch)
                 snapshot = snapshot.filter { ids.contains($0.id) }
+                regions = board.regions(ofBranch: branch)
             }
             let objects = board.reported(snapshot).map(summarized)
             var result: [String: JSONValue] = [
                 "board": .string(board.id), "root": .string(board.root.path),
                 "revision": .number(Double(board.revision)), "objects": try JSONValue.encode(objects),
             ]
+            if let regions { result["regions"] = .array(regions.map(JSONValue.string)) }
             if let since = p["since"]?.int { result["changed"] = .array(board.changed(since: since).map(JSONValue.string)) }
             return .object(result)
 

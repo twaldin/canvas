@@ -719,7 +719,8 @@
           "root": { "type": "string" },
           "revision": { "type": "integer" },
           "objects": { "type": "array", "items": { "$ref": "#/definitions/CanvasObject" } },
-          "changed": { "type": "array", "items": { "$ref": "#/definitions/Id" } }
+          "changed": { "type": "array", "items": { "$ref": "#/definitions/Id" } },
+          "regions": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "with `branch`: the ids of the branch's regions (groups keyed `branch:<branch>`), `[]` when it has none" }
         }
       }
     },

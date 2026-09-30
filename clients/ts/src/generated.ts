@@ -680,6 +680,8 @@ export type BoardGetResult = {
   revision: number;
   objects: CanvasObject[];
   changed?: Id[];
+  /** with `branch`: the ids of the branch's regions (groups keyed `branch:<branch>`), `[]` when it has none */
+  regions?: Id[];
 };
 
 export type BoardHistoryParams = {

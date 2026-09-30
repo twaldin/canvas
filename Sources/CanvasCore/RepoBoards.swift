@@ -134,15 +134,18 @@ extension Board {
         onChange?()
     }
 
-    /// The objects of branch `name` (`board.get` `branch`): every region keyed `branch:<name>`
-    /// and what it holds (nested groups too), objects whose `ref` is the branch, terminals that
+    /// The regions of branch `name`: groups keyed `branch:<name>`, by id.
+    public func regions(ofBranch name: String) -> [ObjectID] {
+        objects.values.filter { $0.type == .group && $0.props["key"]?.string == "branch:\(name)" }.map(\.id).sorted()
+    }
+
+    /// The objects of branch `name` (`board.get` `branch`): its regions (`regions(ofBranch:)`)
+    /// and what they hold (nested groups too), objects whose `ref` is the branch, terminals that
     /// started on it, and arrows between those.
     public func objects(ofBranch name: String) -> Set<ObjectID> {
         var found = Set<ObjectID>()
-        var pending = objects.values.filter { object in
-            (object.type == .group && object.props["key"]?.string == "branch:\(name)")
-                || object.props["ref"]?.string == name
-                || (object.type == .terminal && object.props["branch"]?.string == name)
+        var pending = regions(ofBranch: name) + objects.values.filter { object in
+            object.props["ref"]?.string == name || (object.type == .terminal && object.props["branch"]?.string == name)
         }.map(\.id)
         while let id = pending.popLast() {
             guard found.insert(id).inserted, let object = objects[id] else { continue }

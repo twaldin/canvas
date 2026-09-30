@@ -146,9 +146,9 @@ Details and an example: `references/api.md` "Layout".
 | Structure: boxes, labels, relations | `shape` / `arrow`, see below |
 | A web page | `browser`: `{"url": "http://localhost:3000"}` (your browser tool opens its own; see Browser tiles) |
 
-Any tile or text shape takes `scale` in its props (0.25–8, default 1): it draws everything bigger or smaller while laying out as if its frame were frame ÷ scale.
-To make a tile readable from further out without changing what it shows, set `scale` and multiply `w`/`h` by the same factor, giving no `x`/`y`: it never covers neighbours (it grows up or left, else moves nearby, else to the nearest free spot farther off), so read the frame in the result to see where it went.
-Users scale objects themselves (Object › Scale); leave their scale alone unless asked.
+A tile's size is its frame; `zoom` in its props (0.25–8, default 1; not on image tiles) is how big its content draws inside that frame, in place: 1.5 is 150%, the frame never changes with it, and the content lays out at the body ÷ zoom (a terminal gets fewer, bigger columns; a page a narrower viewport).
+To show more or less, resize the tile; don't zoom to make room. A text shape's font is `textSize` (0.25–8, default 1), and its box grows with it.
+Users zoom content themselves (Object › Content Zoom, ⌃⌘= / ⌃⌘-, or the − % + in a tile's title bar); leave their zoom alone unless asked. `props.scale` is gone: it fails with `invalid_params`.
 
 Update with `object.update` (props shallow-merge; `frame` may give any of x, y, w, h; pass `rev` from your last read or create to avoid clobbering a concurrent edit; `conflict` means re-read and retry).
 After changing a note's markdown or an HTML tile's html, refit in the same call: `object.update` with `"size": "fit"`.

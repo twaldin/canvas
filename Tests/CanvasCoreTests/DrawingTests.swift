@@ -265,21 +265,21 @@ struct TextShapeLayoutTests {
     let long = "dots dangle at line ends: keep link + dot together, one per line on phone? and the footer links too"
 
     @Test func aClickedTextGrowsWithItsTextThenWrapsAtTheDefaultWidth() {
-        let short = TextShapeLayout.size("hi", scale: 1, wrapWidth: nil)
-        let line = TextShapeLayout.size("x", scale: 1, wrapWidth: nil).height
+        let short = TextShapeLayout.size("hi", textSize: 1, wrapWidth: nil)
+        let line = TextShapeLayout.size("x", textSize: 1, wrapWidth: nil).height
         #expect(short.width < 60 && short.height == line)
-        let wrapped = TextShapeLayout.size(long, scale: 1, wrapWidth: nil)
+        let wrapped = TextShapeLayout.size(long, textSize: 1, wrapWidth: nil)
         #expect(wrapped.width <= TextShapeLayout.autoWidth + 2, "\(wrapped.width) wide: it stops growing at the default width")
         #expect(wrapped.height > 2 * line, "and wraps onto more lines")
-        let scaled = TextShapeLayout.size(long, scale: 2, wrapWidth: nil)
+        let scaled = TextShapeLayout.size(long, textSize: 2, wrapWidth: nil)
         #expect(scaled.width > TextShapeLayout.autoWidth + 2 && scaled.width <= 2 * TextShapeLayout.autoWidth + 2, "the default width scales with the font")
     }
 
     @Test func aDraggedTextKeepsItsWidthAndWrapsThere() {
-        let narrow = TextShapeLayout.size(long, scale: 1, wrapWidth: 180)
+        let narrow = TextShapeLayout.size(long, textSize: 1, wrapWidth: 180)
         #expect(narrow.width == 180)
-        #expect(narrow.height > TextShapeLayout.size(long, scale: 1, wrapWidth: nil).height)
-        #expect(TextShapeLayout.size("hi", scale: 1, wrapWidth: 400).width == 400, "wider than its text: the width stays")
+        #expect(narrow.height > TextShapeLayout.size(long, textSize: 1, wrapWidth: nil).height)
+        #expect(TextShapeLayout.size("hi", textSize: 1, wrapWidth: 400).width == 400, "wider than its text: the width stays")
     }
 
     @Test func editingATextKeepsTheWayItWasSized() {
@@ -287,8 +287,8 @@ struct TextShapeLayoutTests {
         func text(_ string: String, _ size: CGSize) -> CanvasObject {
             board.create(type: .shape, props: ShapeSpec(kind: .text, text: string).props, frame: Frame(x: 0, y: 0, w: size.width, h: size.height))
         }
-        #expect(TextShapeLayout.wrapWidth(of: text("hi", TextShapeLayout.size("hi", scale: 1, wrapWidth: nil))) == nil, "grown to its text: keeps growing")
-        #expect(TextShapeLayout.wrapWidth(of: text(long, TextShapeLayout.size(long, scale: 1, wrapWidth: nil))) == nil, "wrapped at the default width: still grows")
+        #expect(TextShapeLayout.wrapWidth(of: text("hi", TextShapeLayout.size("hi", textSize: 1, wrapWidth: nil))) == nil, "grown to its text: keeps growing")
+        #expect(TextShapeLayout.wrapWidth(of: text(long, TextShapeLayout.size(long, textSize: 1, wrapWidth: nil))) == nil, "wrapped at the default width: still grows")
         #expect(TextShapeLayout.wrapWidth(of: text("hi", CGSize(width: 250, height: 30))) == 250, "a dragged width stays")
         #expect(TextShapeLayout.wrapWidth(of: text(long, CGSize(width: 180, height: 200))) == 180)
     }

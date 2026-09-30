@@ -77,8 +77,8 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
     unowned let shapeLayer: ShapeLayer
     let editing: ObjectID?
     private let object: CanvasObject?
-    /// A text shape's font scale (`props.scale`); labels don't scale.
-    private let textScale: CGFloat
+    /// A text shape's text size (`props.textSize`); labels are always `DrawingStyle.labelSize`.
+    private let textSize: CGFloat
     private let isLabel: Bool
     /// A text shape's wrap width; nil grows with the text (up to `TextShapeLayout.autoWidth`).
     private let wrapWidth: CGFloat?
@@ -92,9 +92,9 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
         editing = object?.id
         let spec = object.flatMap { ShapeSpec($0.props) }
         isLabel = spec.map { $0.kind == .rect || $0.kind == .ellipse } ?? false
-        textScale = isLabel ? 1 : spec?.scale ?? 1
+        textSize = isLabel ? 1 : spec?.textSize ?? 1
         wrapWidth = isLabel ? nil : object.map { TextShapeLayout.wrapWidth(of: $0) } ?? newWidth
-        let size = isLabel ? DrawingStyle.labelSize : DrawingStyle.textSize * textScale
+        let size = isLabel ? DrawingStyle.labelSize : DrawingStyle.textPointSize * textSize
         let pad = Self.padding
         let frame: NSRect
         if isLabel, let object {
@@ -107,7 +107,7 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
         let storage = NSTextStorage()
         let layout = NSLayoutManager()
         storage.addLayoutManager(layout)
-        let containerWidth = isLabel ? frame.width - 2 * pad : wrapWidth ?? TextShapeLayout.autoWidth * textScale
+        let containerWidth = isLabel ? frame.width - 2 * pad : wrapWidth ?? TextShapeLayout.autoWidth * textSize
         let container = NSTextContainer(size: NSSize(width: containerWidth, height: .greatestFiniteMagnitude))
         container.widthTracksTextView = isLabel
         container.lineFragmentPadding = 0
@@ -224,7 +224,7 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
 
     /// Size of the committed text shape at its wrap width.
     private func measured(_ text: String) -> NSSize {
-        TextShapeLayout.size(text, scale: textScale, wrapWidth: wrapWidth)
+        TextShapeLayout.size(text, textSize: textSize, wrapWidth: wrapWidth)
     }
 
     /// A text shape's box follows its text: the wrap width wide (else the text's width, at
@@ -232,7 +232,7 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
     private func fitToText() {
         guard !isLabel else { return }
         let size = measured(string)
-        let minimum = DrawingStyle.textSize * textScale * 2
+        let minimum = DrawingStyle.textPointSize * textSize * 2
         let width = wrapWidth ?? max(minimum, size.width)
         setFrameSize(NSSize(width: ceil(width) + 2 * Self.padding, height: ceil(size.height) + 2 * Self.padding))
     }

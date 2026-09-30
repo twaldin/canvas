@@ -40,8 +40,8 @@ export type AnchorStatus = {
   reason?: string;
 };
 
-/** how much bigger the object draws its content than its natural size: a tile lays out at frame size ÷ scale and draws magnified (header, text, page, terminal cells), so resizing the frame by the same factor keeps its layout; a text shape scales its font. Out-of-range values clamp; 1 is written as absent. An object.update that sets it with a size-only frame (w/h, no x/y) makes room on a tile: grown up or left, else moved to a free spot nearby, else to the nearest free spot farther off, never over its neighbours. The user sets it with ⌥-drag on a tile corner, a text shape's corner, or Object › Scale (Bigger ⌃⌘=, Smaller ⌃⌘-, Actual Size ⌃⌘0) */
-export type Scale = number;
+/** how big the tile's content draws inside its frame, in place (1.5 is 150%): the frame never changes with it and the title bar stays at 1×; the body lays out at body ÷ zoom and draws zoom× (terminal: bigger text, fewer columns and rows, the program gets the new grid; browser, html: like page zoom, the viewport is body ÷ zoom; code, note, changes: text bigger and rewrapped; diagram: bigger). An object.update that sets it never changes the frame: resize the tile for more room. Out-of-range values clamp; 1 is written as absent. Not on image tiles (the picture is already fitted to the frame; make the tile bigger). The user sets it with the title bar's − % + (the % resets to 100%) or Object › Content Zoom (Zoom Content In ⌃⌘=, Out ⌃⌘-, the presets, Reset Content Zoom ⌃⌘0). Replaces `scale`, which object.create/update/upsert/batch and object.measure reject with invalid_params */
+export type Zoom = number;
 
 export type Lifecycle = {
   state: "working" | "blocked" | "idle" | "done" | "unknown";
@@ -73,7 +73,7 @@ export type TerminalProps = {
   lifecycle?: Lifecycle;
   /** follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again */
   follow?: boolean;
-  scale?: Scale;
+  zoom?: Zoom;
   key?: ObjectKey;
   /** written by Canvas: the top level of the worktree of the board's repository the terminal was created in (its `cwd`'s); what it started in, not updated when the shell moves */
   worktree?: string;
@@ -87,7 +87,7 @@ export type BrowserProps = {
   title?: string;
   /** written by the app: the page's own title; shown when `title` is unset; never bumps rev */
   pageTitle?: string;
-  scale?: Scale;
+  zoom?: Zoom;
   key?: ObjectKey;
 };
 
@@ -122,7 +122,7 @@ export type CodeProps = {
   refSha?: string;
   /** a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: "pinned at <sha>"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so, and a create or update that needs its text (`size: fit`, a symbol) fails with `not_found`. A path in another worktree of the repository (absolute) is read in that worktree */
   pinnedCommit?: string;
-  scale?: Scale;
+  zoom?: Zoom;
   key?: ObjectKey;
 };
 
@@ -137,7 +137,7 @@ export type NoteProps = {
   refSha?: string;
   /** the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params */
   root?: string;
-  scale?: Scale;
+  zoom?: Zoom;
   key?: ObjectKey;
 };
 
@@ -154,7 +154,7 @@ export type HtmlProps = {
   allowNetwork?: string[];
   /** tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB */
   state?: Record<string, unknown>;
-  scale?: Scale;
+  zoom?: Zoom;
   key?: ObjectKey;
 };
 
@@ -199,7 +199,7 @@ export type ChangesProps = {
   })[];
   /** written by the tile: files the user marked Viewed (path → a fingerprint of their diff then). A file counts as viewed (folded, `changes.files[].viewed`) only while its diff is unchanged */
   viewed?: Record<string, unknown>;
-  scale?: Scale;
+  zoom?: Zoom;
   key?: ObjectKey;
 };
 
@@ -210,7 +210,6 @@ export type ImageProps = {
   caption?: string;
   /** shown in the title bar and Go to (default: the file name) */
   title?: string;
-  scale?: Scale;
   key?: ObjectKey;
 };
 
@@ -279,7 +278,7 @@ export type DiagramProps = {
     omitted?: number;
     computedAt?: string;
   };
-  scale?: Scale;
+  zoom?: Zoom;
   key?: ObjectKey;
 };
 
@@ -292,8 +291,8 @@ export type ShapeProps = {
   color?: string;
   /** rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it */
   fill?: "none" | "semi" | "solid";
-  /** text shapes only: font scale (the frame grows with it); ignored on other kinds */
-  scale?: Scale;
+  /** text shapes only: a multiplier of the 20-pt text font; the frame grows with it (a corner drag on a text shape scales text and box together, as does Object › Content Zoom). Rect and ellipse labels don't take it; ignored on other kinds */
+  textSize?: number;
   key?: ObjectKey;
 };
 
@@ -628,7 +627,7 @@ export type RenderedObject = {
   state: "rendered" | "placeholder" | "failed";
   /** why a tile is a placeholder or failed */
   reason?: string;
-  /** the content's own extent in canvas points at the tile's width, below its title bar (tiles only; a scaled tile's layout extent times its `scale`); code: its range's rows and longest line under the header, the whole file without a range (what size "fit" shows) */
+  /** the content's own extent in canvas points at the tile's width, below its title bar (tiles only; a zoomed tile's layout extent times its `zoom`); code: its range's rows and longest line under the header, the whole file without a range (what size "fit" shows) */
   contentSize?: {
     w?: number;
     h?: number;
@@ -860,7 +859,7 @@ export type ObjectFindResult = {
 export type ObjectCreateParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
   frame?: Frame | FitFrame | SizeFrame;
   /** measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width) */
@@ -885,7 +884,7 @@ export type ObjectUpdateParams = {
   frame?: FramePatch;
   /** measure the frame's size from the content */
   size?: "fit";
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props?: Record<string, unknown>;
   caller?: Id;
 };
@@ -893,7 +892,7 @@ export type ObjectUpdateResult = {
   object: CanvasObject;
   /** present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway */
   warnings?: string[];
-  /** present when a `size: fit` refit covers others, or a `frame` given outright (e.g. a browser tile widened to a desktop viewport) makes the object cover one it didn't before (by layout.check's overlap rule; in a batch, only fits and `props.scale` resizes, once the whole batch is laid out): the ids of everything it covers. Grow away from neighbours or move it (layout.place) rather than leave the user's tiles buried */
+  /** present when a `size: fit` refit covers others, or a `frame` given outright (e.g. a browser tile widened to a desktop viewport) makes the object cover one it didn't before (by layout.check's overlap rule; in a batch, only fits, once the whole batch is laid out): the ids of everything it covers. Grow away from neighbours or move it (layout.place) rather than leave the user's tiles buried */
   overlaps?: Id[];
 };
 
@@ -928,7 +927,7 @@ export type ObjectDeleteResult = Record<string, unknown>;
 export type ObjectMeasureParams = {
   board?: Id;
   type: ObjectType;
-  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one) */
+  /** the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`) */
   props: Record<string, unknown>;
   /** wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640) */
   width?: number;
@@ -1389,7 +1388,7 @@ export interface CanvasApi {
     upsert(params: ObjectUpsertParams): Promise<ObjectUpsertResult>;
     /** Delete an object (and remove it from any staged mentions). Arrows bound to it keep their drawn route: that end becomes a free `point` where it last attached. */
     delete(params: ObjectDeleteParams): Promise<ObjectDeleteResult>;
-    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). Other types are `unsupported`. */
+    /** Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). A tile with `zoom` lays out at `width` ÷ zoom, and its frame is the 26-pt title bar plus that body times zoom (as wide as its natural width times zoom). Other types are `unsupported`. */
     measure(params: ObjectMeasureParams): Promise<ObjectMeasureResult>;
     /** Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so a `canvas get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves. */
     reload(params: ObjectReloadParams): Promise<ObjectReloadResult>;
@@ -1445,7 +1444,7 @@ export interface CanvasApi {
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
     /** What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light). */
     get(params?: ViewGetParams): Promise<ViewGetResult>;
-    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. */
+    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame. */
     render(params: ViewRenderParams): Promise<ViewRenderResult>;
     /** The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render. */
     snapshot(params?: ViewSnapshotParams): Promise<ViewSnapshotResult>;

@@ -85,15 +85,15 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
     /// name them in `warnings`.
     public var knownProps: Set<String> {
         let own: Set<String> = switch self {
-        case .terminal: ["cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "scale", "worktree", "branch"]
-        case .browser: ["url", "title", "pageTitle", "scale"]
-        case .code: ["path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "ref", "refSha", "scale"]
-        case .note: ["markdown", "title", "root", "ref", "refSha", "scale"]
-        case .html: ["html", "title", "root", "ref", "refSha", "allowNetwork", "state", "scale"]
-        case .changes: ["root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "scale"]
-        case .image: ["path", "caption", "title", "scale"]
-        case .diagram: ["kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "scale"]
-        case .shape: ["kind", "text", "points", "color", "fill", "scale"]
+        case .terminal: ["cwd", "command", "zmxSession", "title", "name", "agent", "lifecycle", "follow", "zoom", "worktree", "branch"]
+        case .browser: ["url", "title", "pageTitle", "zoom"]
+        case .code: ["path", "range", "anchor", "symbol", "caption", "diffBase", "followOf", "lastAction", "lastChanges", "history", "pinnedCommit", "ref", "refSha", "zoom"]
+        case .note: ["markdown", "title", "root", "ref", "refSha", "zoom"]
+        case .html: ["html", "title", "root", "ref", "refSha", "allowNetwork", "state", "zoom"]
+        case .changes: ["root", "base", "head", "ref", "refSha", "paths", "title", "reviewed", "viewed", "zoom"]
+        case .image: ["path", "caption", "title"]
+        case .diagram: ["kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "zoom"]
+        case .shape: ["kind", "text", "points", "color", "fill", "textSize"]
         case .arrow: ["from", "to", "relation", "label", "color", "route"]
         case .group: ["members", "title", "color", "padding", "flow"]
         }
@@ -285,12 +285,12 @@ public enum MentionTarget: Codable, Equatable, Sendable {
 
 extension MentionTarget {
     /// Props that say how an object looks or what the app keeps about it, not what it holds:
-    /// scaling a tile, a changes tile's Viewed folds, a terminal's lifecycle and agent, a page's
-    /// own title.
-    static let bookkeepingProps: Set<String> = ["scale", "viewed", "lifecycle", "agent", "pageTitle"]
+    /// a tile's content zoom, a text shape's text size, a changes tile's Viewed folds, a
+    /// terminal's lifecycle and agent, a page's own title.
+    static let bookkeepingProps: Set<String> = ["zoom", "textSize", "viewed", "lifecycle", "agent", "pageTitle"]
 
     /// Whether an update of one of its objects (`before` → `after`) changed what this mention
-    /// holds, so the chip and the context say "edited". Moving, resizing, scaling or restacking
+    /// holds, so the chip and the context say "edited". Moving, resizing, zooming or restacking
     /// never does, nor bookkeeping (`bookkeepingProps`). A code mention holds its file's lines,
     /// not the tile's view of them: re-aiming the code tile it came from changes nothing, and
     /// from a changes tile only another base, head, ref, or worktree, or a Stage, Unstage or Discard (or its

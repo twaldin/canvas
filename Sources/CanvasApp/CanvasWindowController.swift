@@ -755,15 +755,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.toggleFollow()
     }
 
-    /// Object ▸ Scale ▸ a preset or Actual Size (the item's `tag` in percent).
-    @objc func scaleSelection(_ sender: Any?) {
+    /// Object ▸ Content Zoom ▸ a preset or Reset Content Zoom (the item's `tag` in percent).
+    @objc func zoomContent(_ sender: Any?) {
         guard let item = sender as? NSMenuItem else { return }
-        canvas.setScale(Double(item.tag) / 100)
+        canvas.setZoom(Double(item.tag) / 100)
     }
 
-    /// Object ▸ Scale ▸ Bigger (⌃⌘=) and Smaller (⌃⌘-).
-    @objc func scaleBigger(_ sender: Any?) { canvas.stepScale(bigger: true) }
-    @objc func scaleSmaller(_ sender: Any?) { canvas.stepScale(bigger: false) }
+    /// Object ▸ Content Zoom ▸ Zoom Content In (⌃⌘=) and Out (⌃⌘-).
+    @objc func zoomContentIn(_ sender: Any?) { canvas.stepZoom(bigger: true) }
+    @objc func zoomContentOut(_ sender: Any?) { canvas.stepZoom(bigger: false) }
 
     @objc func copyObjectIDs(_ sender: Any?) {
         canvas.copyIDs()
@@ -869,16 +869,16 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             }
             item.state = canvas.follows(terminal) ? .on : .off
             return true
-        case #selector(scaleSelection(_:)):
-            guard let scales = canvas.scaleTargetScales else {
+        case #selector(zoomContent(_:)):
+            guard let levels = canvas.zoomTargetLevels else {
                 item.state = .off
                 return false
             }
-            let scale = Double(item.tag) / 100
-            item.state = scales == [scale] && item.tag != 100 ? .on : .off
-            return item.tag != 100 || scales != [1]
-        case #selector(scaleBigger(_:)): return canvas.canStepScale(bigger: true)
-        case #selector(scaleSmaller(_:)): return canvas.canStepScale(bigger: false)
+            let zoom = Double(item.tag) / 100
+            item.state = levels == [zoom] && item.tag != 100 ? .on : .off
+            return item.tag != 100 || levels != [1]
+        case #selector(zoomContentIn(_:)): return canvas.canStepZoom(bigger: true)
+        case #selector(zoomContentOut(_:)): return canvas.canStepZoom(bigger: false)
         case #selector(showNavigator(_:)): return window?.attachedSheet == nil
         case #selector(goToDefinition(_:)), #selector(openDefinitionInNewTile(_:)), #selector(findReferences(_:)), #selector(showOutline(_:)):
             // With no code tile to act on the command still runs, to say so (`navigateCode`).

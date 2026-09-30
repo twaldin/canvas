@@ -364,13 +364,13 @@ public enum MentionContext {
             }
             // A shape drawn on top of something (a tile region, a bigger box) points at part of
             // it: name the topmost object underneath that contains it (or most of it), and where,
-            // in its local units (a tile's own points, starting below its title bar, where its
-            // content does).
+            // in its local units (a tile's content points, starting below its title bar, at its
+            // zoom).
             if let (host, region, partly) = host(of: object, on: board) {
-                let scale = host.scale
+                let zoom = host.zoom
                 let title = RenderMath.isTile(host.type) ? RenderMath.tileTitleHeight : 0
-                let local = CGRect(x: (region.minX - host.frame.x) / scale, y: (region.minY - host.frame.y) / scale - title,
-                                   width: region.width / scale, height: region.height / scale)
+                let local = CGRect(x: (region.minX - host.frame.x) / zoom, y: (region.minY - host.frame.y - title) / zoom,
+                                   width: region.width / zoom, height: region.height / zoom)
                 parts.append(String(format: "· %@over %@ %@ at (%.0f, %.0f) %.0f×%.0f", partly ? "partly " : "", host.type.rawValue, host.id,
                                     Double(local.minX), Double(local.minY), Double(local.width), Double(local.height)))
             }

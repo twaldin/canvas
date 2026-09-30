@@ -101,7 +101,7 @@ final class CanvasDocumentView: NSView {
 /// The viewport only moves on user input, never in response to agents.
 @MainActor
 final class CanvasView: NSScrollView {
-    static let liveThreshold: CGFloat = 0.3
+    static let liveThreshold = CGFloat(RenderMath.liveThreshold)
     /// Live tiles turn to cards only below this share of their live zoom, and offscreen only past
     /// `cardMargin`: a zoom or pan resting near an edge must not flip tiles back and forth.
     static let cardHysteresis: CGFloat = 0.9
@@ -309,7 +309,9 @@ final class CanvasView: NSScrollView {
                 // The user's own resize already laid the content out at this size; any other
                 // (an agent's update or fit, undo) re-aims a code tile at its range.
                 let body = tile.content.frame.size
-                tile.place(Self.docRect(object.frame), scale: CGFloat(object.scale))
+                // Readable is the board's magnification times the content's zoom.
+                if tile.zoom != CGFloat(object.zoom) { scheduleLiveness() }
+                tile.place(Self.docRect(object.frame), zoom: CGFloat(object.zoom))
                 let restacks = tile.z != object.z
                 tile.update(object)
                 if tile.content.frame.size != body, let code = tile.content as? CodeTile { code.resizedElsewhere() }
@@ -393,16 +395,12 @@ final class CanvasView: NSScrollView {
             self?.setSelection([opened])
         }
         let tile = TileFrameView(object: object, content: content, frame: Self.docRect(object.frame))
-        tile.onFrameCommit = { [weak self] rect, scale in
+        tile.onFrameCommit = { [weak self] rect in
+            _ = try? self?.board.update(id, frame: Self.canvasFrame(rect))
+        }
+        tile.onZoom = { [weak self] zoom in
             guard let self, let object = self.board.objects[id] else { return }
-            var frame = Self.canvasFrame(rect)
-            // An ⌥-drag scale makes room like the Scale menu (`Board.scaledFrame`) and the view
-            // follows a tile that moved away; a plain resize stays where the user dragged it.
-            let scaled = scale != CGFloat(object.scale)
-            if scaled, let placed = try? self.board.scaledFrame(id, to: CGSize(width: frame.w, height: frame.h)) { frame = placed }
-            let props: JSONValue? = scaled ? .object(["scale": Self.scaleProp(Double(scale))]) : nil
-            _ = try? self.board.update(id, frame: frame, props: props)
-            if scaled { self.keepInView([id]) }
+            self.setZoom(zoom, of: [object])
         }
         tile.onResizing = { [weak self] in self?.objectsMoved() }
         tile.onClose = { [weak self] in self?.delete([id]) }
@@ -418,7 +416,7 @@ final class CanvasView: NSScrollView {
         if object.type != .terminal, object.type != .browser, !magnifying, !shouldBeLive(tile, scale: magnification) { tile.startAsCard() }
         document.addSubview(tile, positioned: .below, relativeTo: shapeLayer ?? overlay)
         tiles[id] = tile
-        tile.zoomedOut = magnification * tile.scale < Self.liveThreshold
+        tile.zoomedOut = RenderMath.isZoomedOut(magnification: magnification, zoom: tile.zoom)
         if object.type == .terminal { lifecycleChanged(object) }
         if object.type == .terminal { syncAuthors(of: id) } else { tile.setAuthor(authorName(of: object)) }
         scheduleLiveness()
@@ -494,8 +492,10 @@ final class CanvasView: NSScrollView {
     func setSelection(_ ids: Set<ObjectID>) {
         guard ids != selection else { return }
         let added = ids.subtracting(selection)
+        let removed = selection.subtracting(ids)
         selection = ids
         for (id, group) in groups { group.isSelected = !chromeHidden && ids.contains(id) }
+        for id in added.union(removed) { tiles[id]?.isSelected = !chromeHidden && ids.contains(id) }
         board.activity.selectionChanged(Array(ids), actor: .user, rev: board.revision)
         scheduleActivitySettle()
         refreshRings()
@@ -1214,17 +1214,28 @@ final class CanvasView: NSScrollView {
         try? board.setFollowing(id, !follows(id))
     }
 
-    /// What Object ▸ Scale acts on (like ⌘W): the selected tiles and text shapes, else the tile
-    /// holding the keyboard.
-    private var scaleTargets: [CanvasObject] {
-        let selected = selection.compactMap { board.objects[$0] }.filter { ObjectScale.applies(to: $0.type, props: $0.props) }
-        return selected.isEmpty ? focusedTile.flatMap { board.objects[$0] }.map { [$0] } ?? [] : selected
+    /// What Object ▸ Content Zoom acts on (like ⌘W): the selected tiles whose content zooms and
+    /// text shapes, else the tile holding the keyboard.
+    private var zoomTargets: [CanvasObject] {
+        let selected = selection.compactMap { board.objects[$0] }.filter(Self.zooms)
+        return selected.isEmpty ? focusedTile.flatMap { board.objects[$0] }.flatMap { Self.zooms($0) ? [$0] : nil } ?? [] : selected
     }
 
-    /// The scales of `scaleTargets`; nil when there is none.
-    var scaleTargetScales: Set<Double>? {
-        let scales = Set(scaleTargets.map(\.scale))
-        return scales.isEmpty ? nil : scales
+    /// Whether Content Zoom acts on `object`: a tile whose content zooms (`ObjectZoom.applies`),
+    /// or a text shape, whose content is its text (`props.textSize`; its box follows the text).
+    private static func zooms(_ object: CanvasObject) -> Bool {
+        ObjectZoom.applies(to: object.type) || (object.type == .shape && ShapeSpec(object.props)?.kind == .text)
+    }
+
+    /// A tile's content zoom, a text shape's text size.
+    private static func contentZoom(of object: CanvasObject) -> Double {
+        object.type == .shape ? ShapeSpec.textSize(of: object.props) : object.zoom
+    }
+
+    /// The content zooms of `zoomTargets`; nil when there is none.
+    var zoomTargetLevels: Set<Double>? {
+        let levels = Set(zoomTargets.map(Self.contentZoom))
+        return levels.isEmpty ? nil : levels
     }
 
     /// The one selected group, for Enter Group.
@@ -1270,7 +1281,7 @@ final class CanvasView: NSScrollView {
         menu.addItem(MenuAction.item("Bring to Front") { [weak self] in self?.bringToFront() })
         menu.addItem(MenuAction.item("Send to Back") { [weak self] in self?.sendToBack() })
         menu.addItem(.separator())
-        if let scale = scaleMenu() { menu.addItem(scale) }
+        if let zoom = contentZoomMenu() { menu.addItem(zoom) }
         menu.addItem(MenuAction.item("Group Selection", enabled: expandedSelection().count >= 2) { [weak self] in self?.groupSelection() })
         if count == 1, let terminal = board.objects[id], terminal.type == .terminal {
             // Off removes the follow tile; on, the agent's next file report brings it back.
@@ -1300,86 +1311,69 @@ final class CanvasView: NSScrollView {
         return menu
     }
 
-    /// Bigger, Smaller, the presets and Actual Size for the selected tiles and text shapes (a
-    /// preset is checked when they all show it), with the main menu's shortcuts; nil when
-    /// nothing selected scales.
-    private func scaleMenu() -> NSMenuItem? {
-        guard let current = scaleTargetScales else { return nil }
-        func percent(_ scale: Double) -> String { "\(Int((scale * 100).rounded()))%" }
+    /// Zoom Content In, Out, the presets and Reset Content Zoom for the selected tiles and text
+    /// shapes (a preset is checked when they all show it), with the main menu's shortcuts; nil
+    /// when nothing selected zooms.
+    private func contentZoomMenu() -> NSMenuItem? {
+        guard let current = zoomTargetLevels else { return nil }
         func shortcut(_ item: NSMenuItem, _ key: String) -> NSMenuItem {
             (item.keyEquivalent, item.keyEquivalentModifierMask) = (key, [.control, .command])
             return item
         }
         let submenu = NSMenu()
-        submenu.addItem(shortcut(MenuAction.item("Bigger", enabled: canStepScale(bigger: true)) { [weak self] in self?.stepScale(bigger: true) }, "="))
-        submenu.addItem(shortcut(MenuAction.item("Smaller", enabled: canStepScale(bigger: false)) { [weak self] in self?.stepScale(bigger: false) }, "-"))
+        submenu.addItem(shortcut(MenuAction.item("Zoom Content In", enabled: canStepZoom(bigger: true)) { [weak self] in self?.stepZoom(bigger: true) }, "="))
+        submenu.addItem(shortcut(MenuAction.item("Zoom Content Out", enabled: canStepZoom(bigger: false)) { [weak self] in self?.stepZoom(bigger: false) }, "-"))
         submenu.addItem(.separator())
-        for preset in ObjectScale.presets {
-            let item = MenuAction.item(percent(preset)) { [weak self] in self?.setScale(preset) }
+        for preset in ObjectZoom.presets {
+            let item = MenuAction.item(ObjectZoom.percent(preset)) { [weak self] in self?.setZoom(preset) }
             item.state = current == [preset] ? .on : .off
             submenu.addItem(item)
         }
         submenu.addItem(.separator())
-        submenu.addItem(shortcut(MenuAction.item("Actual Size", enabled: current != [1]) { [weak self] in self?.setScale(1) }, "0"))
-        submenu.addItem(MenuAction.item("⌥-drag a corner to scale freely", enabled: false) {})
-        let title = current.count == 1 && current != [1] ? "Scale (\(percent(current.first!)))" : "Scale"
+        submenu.addItem(shortcut(MenuAction.item("Reset Content Zoom", enabled: current != [1]) { [weak self] in self?.setZoom(1) }, "0"))
+        let title = current.count == 1 && current != [1] ? "Content Zoom (\(ObjectZoom.percent(current.first!)))" : "Content Zoom"
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.submenu = submenu
         return item
     }
 
-    /// Sets `props.scale` of the selected tiles and text shapes, else of the tile holding the
-    /// keyboard, resizing each so its content keeps its layout, as one undo step. A tile that
-    /// grows makes room rather than cover its neighbours (`Board.scaledFrame`), and the view
-    /// follows it (`keepInView`).
-    func setScale(_ scale: Double) {
-        rescale(scaleTargets.filter { $0.scale != scale }.map { ($0, scale) })
+    /// Sets the content zoom of the selected tiles and text shapes, else of the tile holding the
+    /// keyboard, as one undo step (`setZoom(_:of:)`).
+    func setZoom(_ zoom: Double) {
+        setZoom(zoom, of: zoomTargets)
     }
 
-    /// Object ▸ Scale ▸ Bigger (⌃⌘=) or Smaller (⌃⌘-): each target to the next of the menu's
-    /// levels that way (`ObjectScale.step`); one past the last level stays.
-    func stepScale(bigger: Bool) {
-        rescale(scaleTargets.compactMap { object in ObjectScale.step(from: object.scale, bigger: bigger).map { (object, $0) } })
+    /// Object ▸ Content Zoom ▸ Zoom Content In (⌃⌘=) or Out (⌃⌘-): each target to the next of
+    /// `ObjectZoom.levels` that way; one past the last level stays.
+    func stepZoom(bigger: Bool) {
+        apply(zoomChanges: zoomTargets.compactMap { object in ObjectZoom.step(from: Self.contentZoom(of: object), bigger: bigger).map { (object, $0) } })
     }
 
-    /// Whether Bigger (`bigger`) or Smaller has a level to step any target to.
-    func canStepScale(bigger: Bool) -> Bool {
-        scaleTargets.contains { ObjectScale.step(from: $0.scale, bigger: bigger) != nil }
+    /// Whether Zoom Content In (`bigger`) or Out has a level to step any target to.
+    func canStepZoom(bigger: Bool) -> Bool {
+        zoomTargets.contains { ObjectZoom.step(from: Self.contentZoom(of: $0), bigger: bigger) != nil }
     }
 
-    private func rescale(_ changes: [(CanvasObject, Double)]) {
+    /// `objects` at content zoom `zoom`, as one undo step: a tile's `props.zoom` with its frame
+    /// as it is (the content lays out again at the new size inside it); a text shape's
+    /// `props.textSize`, its box grown or shrunk with its text from its top-left corner.
+    func setZoom(_ zoom: Double, of objects: [CanvasObject]) {
+        apply(zoomChanges: objects.filter { abs(Self.contentZoom(of: $0) - zoom) >= 0.001 }.map { ($0, zoom) })
+    }
+
+    private func apply(zoomChanges changes: [(CanvasObject, Double)]) {
         guard !changes.isEmpty else { return }
-        // What shows, at least in part, clear of the chrome: the view keeps it in view.
-        let clear = Self.docRect(clearViewport)
-        let shown = changes.map(\.0.id).filter { docFrame($0)?.intersects(clear) == true }
         board.transaction {
-            for (object, scale) in changes {
-                let size = ObjectScale.rescaled(object.frame, from: object.scale, to: scale)
-                guard let frame = try? board.scaledFrame(object.id, to: CGSize(width: size.w, height: size.h)) else { continue }
-                _ = try? board.update(object.id, frame: frame, props: .object(["scale": Self.scaleProp(scale)]))
+            for (object, zoom) in changes {
+                if object.type == .shape {
+                    let ratio = zoom / Self.contentZoom(of: object)
+                    let frame = Frame(x: object.frame.x, y: object.frame.y, w: object.frame.w * ratio, h: object.frame.h * ratio)
+                    _ = try? board.update(object.id, frame: frame, props: .object(["textSize": ObjectZoom.prop(zoom)]))
+                } else {
+                    _ = try? board.update(object.id, props: .object(["zoom": ObjectZoom.prop(zoom)]))
+                }
             }
         }
-        keepInView(shown)
-    }
-
-    /// After the user scaled `ids` (the ones that showed before): the least pan that shows them
-    /// whole again clear of the chrome, when Scale moved one away or grew it out of view or
-    /// under the toolbar; nothing when they show already. Too big to show whole, their top-left
-    /// shows (the bottom of a terminal being typed in, where its prompt is). Confirm7 study: a
-    /// terminal scaled from the keyboard moved wholly below the view and kept the keyboard.
-    private func keepInView(_ ids: [ObjectID]) {
-        let rects = ids.compactMap { board.objects[$0].map { Self.docRect($0.frame) } }
-        guard let first = rects.first else { return }
-        let union = rects.dropFirst().reduce(first) { $0.union($1) }
-        let shown = Self.docRect(clearViewport)
-        let room = max(0, min(shown.width - union.width, shown.height - union.height) / 2)
-        let typing = ids.count == 1 && ids[0] == focusedTerminal
-        reveal(rect: union, padding: min(Self.jumpPadding / magnification, room), bottomFirst: typing)
-    }
-
-    /// `props.scale` as written: 1 removes it.
-    static func scaleProp(_ scale: Double) -> JSONValue {
-        scale == 1 ? .null : .number(scale)
     }
 
     private func groupMenu(for id: ObjectID) -> NSMenu {
@@ -1427,6 +1421,7 @@ final class CanvasView: NSScrollView {
         didSet {
             guard chromeHidden != oldValue else { return }
             for (id, group) in groups { group.isSelected = !chromeHidden && selection.contains(id) }
+            for id in selection { tiles[id]?.isSelected = !chromeHidden }
             refreshRings()
             for tile in tiles.values { (tile.content as? CodeTile)?.setPresenting(chromeHidden) }
             for id in board.objects.keys { syncAuthor(id) }
@@ -1808,7 +1803,7 @@ final class CanvasView: NSScrollView {
     /// Height of an object's header on screen: a tile's title bar plus its content's controls
     /// strip (a browser's address bar), live or card; a group's title band.
     private func headerOnScreen(_ id: ObjectID, zoom: CGFloat) -> CGFloat {
-        if let tile = tiles[id] { return (TileFrameView.titleHeight + tile.content.headerHeight) * tile.scale * zoom }
+        if let tile = tiles[id] { return (TileFrameView.titleHeight + tile.content.headerHeight * tile.zoom) * zoom }
         return groups[id] != nil ? CGFloat(GroupSpec.titleHeight) * zoom : 0
     }
 
@@ -1980,7 +1975,7 @@ final class CanvasView: NSScrollView {
             let scale = magnification
             for tile in tiles.values {
                 tile.setLive(shouldBeLive(tile, scale: scale))
-                tile.zoomedOut = scale * tile.scale < Self.liveThreshold
+                tile.zoomedOut = RenderMath.isZoomedOut(magnification: scale, zoom: tile.zoom)
             }
             // A web page's viewport follows its view's device-pixel size (`BrowserTile.webViewFrame`).
             if scale != settledMagnification {
@@ -1998,7 +1993,7 @@ final class CanvasView: NSScrollView {
     /// out (hysteresis), so small pans and zooms don't swap it back and forth.
     private func shouldBeLive(_ tile: TileFrameView, scale: CGFloat) -> Bool {
         let margin = tile.isLive ? Self.cardMargin : Self.liveMargin
-        let readable = scale * tile.scale >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
+        let readable = scale * tile.zoom >= tile.content.liveZoom * (tile.isLive ? Self.cardHysteresis : 1)
         return readable && tile.frame.intersects(documentVisibleRect.insetBy(dx: -margin, dy: -margin))
     }
 

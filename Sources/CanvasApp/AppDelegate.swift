@@ -349,9 +349,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func reviewBranch(_ sender: Any?) { keyController?.reviewBranch(sender) }
     @objc func clearAttentionMarkers(_ sender: Any?) { keyController?.clearAttentionMarkers(sender) }
     @objc func toggleFollowFiles(_ sender: Any?) { keyController?.toggleFollowFiles(sender) }
-    @objc func scaleSelection(_ sender: Any?) { keyController?.scaleSelection(sender) }
-    @objc func scaleBigger(_ sender: Any?) { keyController?.scaleBigger(sender) }
-    @objc func scaleSmaller(_ sender: Any?) { keyController?.scaleSmaller(sender) }
+    @objc func zoomContent(_ sender: Any?) { keyController?.zoomContent(sender) }
+    @objc func zoomContentIn(_ sender: Any?) { keyController?.zoomContentIn(sender) }
+    @objc func zoomContentOut(_ sender: Any?) { keyController?.zoomContentOut(sender) }
     @objc func copyObjectIDs(_ sender: Any?) { keyController?.copyObjectIDs(sender) }
     @objc func enterGroup(_ sender: Any?) { keyController?.enterGroup(sender) }
     @objc func goToDefinition(_ sender: Any?) { keyController?.goToDefinition(sender) }
@@ -458,25 +458,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // takes it ahead of a focused terminal (CanvasWindowController.handleKeyEquivalent).
             item("Mention", #selector(mentionCurrent(_:)), "M", [.command, .shift]),
         ])
-        // Scale: the selection, else the tile holding the keyboard (`CanvasView.scaleTargets`).
-        // ⌃⌘ chords: ⌥⌘= / ⌥⌘- are macOS Zoom's (Accessibility), which the people who need
-        // bigger tiles use; Ghostty's ⌃⌘= (equalize splits) has no splits here, and a focused
-        // terminal's menu shortcuts beat its bindings (CanvasWindowController.handleKeyEquivalent).
-        let scale = NSMenuItem(title: "Scale", action: nil, keyEquivalent: "")
-        scale.submenu = NSMenu(title: "Scale")
-        scale.submenu?.addItem(item("Bigger", #selector(scaleBigger(_:)), "=", [.control, .command]))
-        scale.submenu?.addItem(item("Smaller", #selector(scaleSmaller(_:)), "-", [.control, .command]))
-        scale.submenu?.addItem(.separator())
-        for preset in ObjectScale.presets {
-            let percent = Int((preset * 100).rounded())
-            let item = item("\(percent)%", #selector(scaleSelection(_:)), "")
-            item.tag = percent
-            scale.submenu?.addItem(item)
+        // Content Zoom: how big a tile's content draws inside its frame, in place (View ▸ Zoom
+        // In/Out, ⌘= / ⌘-, zoom the board); the selection, else the tile holding the keyboard
+        // (`CanvasView.zoomTargets`). ⌃⌘ chords: ⌥⌘= / ⌥⌘- are macOS Zoom's (Accessibility),
+        // which the people who need bigger text use; Ghostty's ⌃⌘= (equalize splits) has no
+        // splits here, and a focused terminal's menu shortcuts beat its bindings
+        // (CanvasWindowController.handleKeyEquivalent).
+        let zoom = NSMenuItem(title: "Content Zoom", action: nil, keyEquivalent: "")
+        zoom.submenu = NSMenu(title: "Content Zoom")
+        zoom.submenu?.addItem(item("Zoom Content In", #selector(zoomContentIn(_:)), "=", [.control, .command]))
+        zoom.submenu?.addItem(item("Zoom Content Out", #selector(zoomContentOut(_:)), "-", [.control, .command]))
+        zoom.submenu?.addItem(.separator())
+        for preset in ObjectZoom.presets {
+            let item = item(ObjectZoom.percent(preset), #selector(zoomContent(_:)), "")
+            item.tag = Int((preset * 100).rounded())
+            zoom.submenu?.addItem(item)
         }
-        scale.submenu?.addItem(.separator())
-        let actual = item("Actual Size", #selector(scaleSelection(_:)), "0", [.control, .command])
+        zoom.submenu?.addItem(.separator())
+        let actual = item("Reset Content Zoom", #selector(zoomContent(_:)), "0", [.control, .command])
         actual.tag = 100
-        scale.submenu?.addItem(actual)
+        zoom.submenu?.addItem(actual)
         submenu("Object", [
             item("Group", #selector(groupSelection(_:)), "g"),
             item("Ungroup", #selector(ungroupSelection(_:)), "G", [.command, .shift]),
@@ -486,7 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // matched the plain ⌘] and ⌘[ (Forward and Back) and never the shifted chords.
             item("Bring to Front", #selector(bringToFront(_:)), "}", [.command, .shift]),
             item("Send to Back", #selector(sendToBack(_:)), "{", [.command, .shift]),
-            scale,
+            zoom,
             .separator(),
             // The focused terminal's, else the selected one's (the context menu's toggle).
             item("Follow Files", #selector(toggleFollowFiles(_:)), ""),

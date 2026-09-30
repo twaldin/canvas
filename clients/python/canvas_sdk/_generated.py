@@ -60,7 +60,7 @@ class AnchorStatus(TypedDict):
     written: NotRequired["LineRange"]
     reason: NotRequired[str]
 
-Scale = float
+Zoom = float
 
 class Lifecycle(TypedDict):
     state: Required[Literal["working", "blocked", "idle", "done", "unknown"]]
@@ -80,7 +80,7 @@ class TerminalProps(TypedDict):
     agent: NotRequired[dict[str, Any]]
     lifecycle: NotRequired["Lifecycle"]
     follow: NotRequired[bool]
-    scale: NotRequired["Scale"]
+    zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
     worktree: NotRequired[str]
     branch: NotRequired[str]
@@ -89,7 +89,7 @@ class BrowserProps(TypedDict):
     url: Required[str]
     title: NotRequired[str]
     pageTitle: NotRequired[str]
-    scale: NotRequired["Scale"]
+    zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
 
 class CodeProps(TypedDict):
@@ -106,7 +106,7 @@ class CodeProps(TypedDict):
     ref: NotRequired[str]
     refSha: NotRequired[str]
     pinnedCommit: NotRequired[str]
-    scale: NotRequired["Scale"]
+    zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
 
 class NoteProps(TypedDict):
@@ -115,7 +115,7 @@ class NoteProps(TypedDict):
     ref: NotRequired[str]
     refSha: NotRequired[str]
     root: NotRequired[str]
-    scale: NotRequired["Scale"]
+    zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
 
 class HtmlProps(TypedDict):
@@ -126,7 +126,7 @@ class HtmlProps(TypedDict):
     root: NotRequired[str]
     allowNetwork: NotRequired[list[str]]
     state: NotRequired[dict[str, Any]]
-    scale: NotRequired["Scale"]
+    zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
 
 class ChangesProps(TypedDict):
@@ -139,14 +139,13 @@ class ChangesProps(TypedDict):
     title: NotRequired[str]
     reviewed: NotRequired[list[dict[str, Any]]]
     viewed: NotRequired[dict[str, Any]]
-    scale: NotRequired["Scale"]
+    zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
 
 class ImageProps(TypedDict):
     path: Required[str]
     caption: NotRequired[str]
     title: NotRequired[str]
-    scale: NotRequired["Scale"]
     key: NotRequired["ObjectKey"]
 
 class DiagramProps(TypedDict):
@@ -160,7 +159,7 @@ class DiagramProps(TypedDict):
     expanded: NotRequired[list[str]]
     title: NotRequired[str]
     graph: NotRequired[dict[str, Any]]
-    scale: NotRequired["Scale"]
+    zoom: NotRequired["Zoom"]
     key: NotRequired["ObjectKey"]
 
 class ShapeProps(TypedDict):
@@ -169,7 +168,7 @@ class ShapeProps(TypedDict):
     points: NotRequired[list[list[float]]]
     color: NotRequired[str]
     fill: NotRequired[Literal["none", "semi", "solid"]]
-    scale: NotRequired["Scale"]
+    textSize: NotRequired[float]
     key: NotRequired["ObjectKey"]
 
 Binding = Union[dict[str, Any], dict[str, Any]]
@@ -411,7 +410,7 @@ class ObjectApi:
         return self._call("object.delete", params, ["caller"])
 
     def measure(self, *, type: "ObjectType", props: dict[str, Any], board: "Id" | None = None, width: float | None = None, caller: "Id" | None = None) -> dict[str, Any]:
-        """Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). Other types are `unsupported`."""
+        """Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). A tile with `zoom` lays out at `width` ÷ zoom, and its frame is the 26-pt title bar plus that body times zoom (as wide as its natural width times zoom). Other types are `unsupported`."""
         params = {"board": board, "type": type, "props": props, "width": width, "caller": caller}
         return self._call("object.measure", params, ["board","caller"])
 
@@ -551,7 +550,7 @@ class ViewApi:
         return self._call("view.get", params, ["board"])
 
     def render(self, *, target: Union["Id", list["Id"], "Frame"], board: "Id" | None = None, scale: float | None = None, full: bool | None = None, exclude: list[Any] | None = None, padding: float | None = None, out: str | None = None, format: Literal["png", "jpeg"] | None = None, timeout_ms: int | None = None) -> dict[str, Any]:
-        """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn."""
+        """Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame."""
         params = {"board": board, "target": target, "scale": scale, "full": full, "exclude": exclude, "padding": padding, "out": out, "format": format, "timeoutMs": timeout_ms}
         return self._call("view.render", params, ["board"])
 

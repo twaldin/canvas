@@ -175,11 +175,26 @@ public enum RenderMath {
     /// Tallest a tile's full content is drawn, in points (a runaway page can't allocate gigabytes).
     public static let maxContentExtent: Double = 20_000
 
-    /// A tile's content area in its own (natural) points: its frame below the title bar, both
-    /// divided by its `scale`.
+    /// A tile's content area in its content's own points: its frame below the title bar,
+    /// divided by its `zoom` (the body the content lays out in).
     public static func body(of object: CanvasObject) -> CGSize {
         let frame = object.naturalFrame
         return CGSize(width: frame.w, height: max(0, frame.h - tileTitleHeight))
+    }
+
+    /// Below this, a tile's content is too small on screen to use: the tile is a card (one
+    /// handle, tinted by its agent's state) and the canvas lets its live view go.
+    public static let liveThreshold: Double = 0.3
+
+    /// Whether content at `zoom` on a board at `magnification` is below `liveThreshold`: how big
+    /// it shows is the board's magnification times the content's zoom, so a tile zoomed to 200%
+    /// stays readable on a board zoomed out twice as far.
+    public static func isZoomedOut(magnification: Double, zoom: Double) -> Bool {
+        magnification * zoom < liveThreshold
+    }
+
+    public static func isZoomedOut(_ object: CanvasObject, magnification: Double) -> Bool {
+        isZoomedOut(magnification: magnification, zoom: object.zoom)
     }
 
     public static func isTile(_ type: ObjectType) -> Bool {

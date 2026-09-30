@@ -72,8 +72,8 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
 - ⌘9 fits everything (or the largest cluster); ⌘0 is 100% (the selection at 100%); ⌘= and ⌘- step 10–100%.
   Below about 30% (terminals 15%) tiles show as cards; zooming in brings them back live.
-- **Bigger text**: zoom stops at 100%, so the user makes a tile bigger instead: ⌃⌘= / ⌃⌘- step the selected tile (else the one with the keyboard) through 50–200% and ⌃⌘0 puts it back (Object › Scale, also Bigger/Smaller/Actual Size in its right-click menu); ⌥-drag a corner scales freely.
-  A tile scaled up grows up or left, or moves to the nearest free spot, rather than cover its neighbours; the view follows a tile the user scaled.
+- **Bigger text**: board zoom stops at 100%, so the user zooms a tile's content instead, in place: ⌃⌘= / ⌃⌘- step the selected tile (else the one with the keyboard) through 25–500% and ⌃⌘0 puts it back at 100% (Object › Content Zoom, also in its right-click menu). The tile keeps its size and its content reflows (a terminal gets fewer, bigger columns).
+  The title bar shows `−  150%  +` left of the ✕: the % whenever it isn't 100% (a click resets it), − and + on hover or selection. Corner drag resizes; ⌥-drag resizes keeping proportions. A zoomed-in tile stays live further out.
 - ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; `core.py:120` opens at a line; ⌘P again selects the query, Esc closes; an agent's terminal is framed with its follow tile when both fit); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
 - Right-click empty canvas for New Terminal Here, New Note Here and New Browser Here; File › New … puts them in the view.
 - ⌘-click a `path:line` in terminal output opens it in that terminal's preview tile; ⌥⌘-click opens a separate tile the user keeps.

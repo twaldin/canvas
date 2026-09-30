@@ -78,7 +78,7 @@ public enum CanvasBasics {
         Section(title: "Zoom", items: [
             Item(term: "⌘9 · ⌘0", text: "fit everything · actual size (100%, or the selection at 100%)."),
             Item(term: "⌘= · ⌘-", text: "zoom in and out, 10% to 100%. Zoomed far out, tiles become cards (a picture, tinted by the agent's state); zoom in to use them."),
-            Item(term: "⌃⌘= · ⌃⌘- · ⌃⌘0", text: "make the selected tile (or the one you're typing in) bigger, smaller, or its actual size again (Object › Scale, 50% to 200%): its text grows with it, and it moves over rather than cover its neighbours. ⌥-drag a corner scales freely."),
+            Item(term: "⌃⌘= · ⌃⌘- · ⌃⌘0", text: "zoom the content of the selected tile (or the one you're typing in) in, out, or back to 100% (Object › Content Zoom), in place: the tile keeps its size and its text reflows (a terminal gets fewer, bigger columns). A tile shows its zoom by its ✕: click the % for 100%, hover for − and +. Drag a corner to resize a tile; ⌥-drag keeps its proportions."),
         ]),
         Section(title: "Keyboard", items: [
             Item(term: "⌘P", text: "go to a tile, file or symbol, or a heading in a note."),

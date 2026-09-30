@@ -10,6 +10,8 @@ enum DevInput {
     static let notification = Notification.Name("canvas.dev.input")
     /// Where replayed modifier changes happen; real input uses the actual mouse location.
     static var pointer: NSPoint?
+    /// The enter/exit tracking areas the last replayed `move` was inside.
+    static var hovered: [NSTrackingArea] = []
 
     static let enabled = ProcessInfo.processInfo.environment["CANVAS_DEV_INPUT"] == "1"
 
@@ -128,7 +130,7 @@ enum DevInput {
         case "menu":
             // A shown context menu runs a tracking loop posted events can't drive: build the menu
             // a right-click at x,y would show (the hit view, then its superviews) and perform the
-            // item at `path`, titles separated by "/" (e.g. "Scale/150%"; "//" is a slash in a
+            // item at `path`, titles separated by "/" (e.g. "Content Zoom/150%"; "//" is a slash in a
             // title: "Review Changes/Branch vs origin//main").
             let at = point("x", "y")
             guard let frame = content.superview, let hit = content.hitTest(frame.convert(at, from: nil)),
@@ -144,21 +146,41 @@ enum DevInput {
                 if titles.isEmpty { current.performActionForItem(at: index) } else { menu = current.items[index].submenu }
             }
         case "move":
-            // Tracking-area mouseMoved events come from the window server; a posted mouseMoved
-            // never reaches their owners. Deliver it to the areas under the point directly.
+            // Tracking-area events come from the window server; a posted mouseMoved never reaches
+            // their owners. Deliver them to the areas under the point directly: mouseMoved, and
+            // mouseEntered/mouseExited as the point enters and leaves areas (a tile's hover
+            // controls), against where the last replayed move was.
             let at = point("x", "y")
             guard let frame = content.superview, let hit = content.hitTest(frame.convert(at, from: nil)),
                   let event = NSEvent.mouseEvent(with: .mouseMoved, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0) else { return }
+            var entered: [NSTrackingArea] = []
             for view in sequence(first: hit, next: \.superview) {
                 let local = view.convert(at, from: nil)
-                for area in view.trackingAreas where area.options.contains(.mouseMoved) {
+                for area in view.trackingAreas {
                     let rect = area.options.contains(.inVisibleRect) ? view.visibleRect : area.rect
+                    guard rect.contains(local) else { continue }
+                    if area.options.contains(.mouseEnteredAndExited) { entered.append(area) }
+                    guard area.options.contains(.mouseMoved) else { continue }
                     // Owners needn't be responders (any object implementing mouseMoved:).
                     let moved = #selector(NSResponder.mouseMoved(with:))
-                    if rect.contains(local), let owner = area.owner as? NSObject, owner.responds(to: moved) { owner.perform(moved, with: event) }
+                    if let owner = area.owner as? NSObject, owner.responds(to: moved) { owner.perform(moved, with: event) }
                 }
             }
+            // Real enter/exit events, to Canvas's own owners only: AppKit's and WebKit's private
+            // owners read state a replayed event doesn't carry.
+            func deliver(_ type: NSEvent.EventType, _ selector: Selector, to areas: [NSTrackingArea]) {
+                for area in areas {
+                    guard let owner = area.owner as? NSObject, NSStringFromClass(Swift.type(of: owner)).hasPrefix("CanvasApp."), owner.responds(to: selector),
+                          let crossing = NSEvent.enterExitEvent(with: type, location: at, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                                                                windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                                                trackingNumber: unsafeBitCast(area, to: Int.self), userData: nil) else { continue }
+                    owner.perform(selector, with: crossing)
+                }
+            }
+            deliver(.mouseExited, #selector(NSResponder.mouseExited(with:)), to: hovered.filter { old in !entered.contains { $0 === old } })
+            deliver(.mouseEntered, #selector(NSResponder.mouseEntered(with:)), to: entered.filter { new in !hovered.contains { $0 === new } })
+            hovered = entered
         case "drag":
             let start = point("x", "y")
             let end = point("toX", "toY")

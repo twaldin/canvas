@@ -24,7 +24,7 @@ public enum DrawingStyle {
         family.flatMap { NSFont(descriptor: $0, size: size) } ?? .systemFont(ofSize: size)
     }
 
-    public static let textSize: CGFloat = 20
+    public static let textPointSize: CGFloat = 20
     public static let labelSize: CGFloat = 18
     public static let arrowLabelSize: CGFloat = 15
 

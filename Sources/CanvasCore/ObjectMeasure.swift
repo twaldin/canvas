@@ -38,11 +38,12 @@ public enum ObjectMeasure {
     /// `width` wraps notes and text (a note defaults to a new note's width; text defaults to
     /// one unwrapped line per paragraph); for code it is the widest the frame may get (default
     /// `CodeMetrics.defaultFitWidth`), past which long lines wrap. Sizes and `width` are canvas
-    /// points: a tile with `props.scale` lays out at `width / scale` and measures `scale` times
-    /// its natural size; a text shape's font is `scale` times the text size.
+    /// points: a tile with `props.zoom` lays out its body at `width / zoom` and measures its body
+    /// `zoom` times its natural size under a 1× title bar (`ObjectZoom.zoomed`); a text shape's
+    /// font is `textSize` times the text size.
     public static func size(type: ObjectType, props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
-        let scale = RenderMath.isTile(type) ? ObjectScale.of(props) : 1
-        let natural = width.map { CGFloat($0 / scale) }
+        let zoom = ObjectZoom.applies(to: type) ? ObjectZoom.of(props) : 1
+        let natural = width.map { CGFloat($0 / zoom) }
         let size: CGSize
         switch type {
         case .code:
@@ -82,19 +83,18 @@ public enum ObjectMeasure {
         case .browser, .terminal, .arrow, .group:
             throw Failure.unsupported("\(type.rawValue) objects have no intrinsic size")
         }
-        return CGSize(width: size.width * scale, height: size.height * scale)
+        return ObjectZoom.zoomed(size, zoom: zoom)
     }
 
     /// The frame an HTML tile needs to show its whole document with the page laid out `width`
-    /// canvas points wide (default a new HTML tile's width) at `width / scale`: as wide as that or
+    /// canvas points wide (default a new HTML tile's width) at `width / zoom`: as wide as that or
     /// the document's scroll width, as tall as the title bar plus the document, uncapped.
     public static func htmlExtent(_ props: JSONValue, width: Double?, root: URL) async throws -> CGSize {
         guard let html else { throw Failure.unsupported("html objects are measured by the app's WebKit") }
-        let scale = CGFloat(ObjectScale.of(props))
-        let natural = CGFloat(width ?? Board.defaultSize(.html).w) / scale
+        let zoom = ObjectZoom.of(props)
+        let natural = CGFloat(width ?? Board.defaultSize(.html).w) / zoom
         let document = try await html(props, natural, root)
-        return CGSize(width: max(natural, document.width.rounded(.up)) * scale,
-                      height: (CGFloat(RenderMath.tileTitleHeight) + document.height.rounded(.up)) * scale)
+        return ObjectZoom.zoomed(CGSize(width: max(natural, document.width.rounded(.up)), height: CGFloat(RenderMath.tileTitleHeight) + document.height.rounded(.up)), zoom: zoom)
     }
 
     /// The lines a code tile shows fitted: its `range` (what the tile scrolls to and tints; a
@@ -199,7 +199,7 @@ public enum ObjectMeasure {
         let text = spec.text ?? ""
         switch spec.kind {
         case .text:
-            let label = DrawingStyle.text(text, size: DrawingStyle.textSize * spec.scale, color: .labelColor)
+            let label = DrawingStyle.text(text, size: DrawingStyle.textPointSize * spec.textSize, color: .labelColor)
             let bounds = textBounds(label, width: width)
             return CGSize(width: width ?? bounds.width, height: bounds.height)
         case .rect, .ellipse:
@@ -224,19 +224,19 @@ public enum ObjectMeasure {
 }
 
 /// How a text shape typed on the canvas is sized as it's typed and committed: one made by a
-/// click grows with its text and wraps at `autoWidth` (times its scale); one made by a drag, or
-/// any other width, wraps at its frame's width and keeps it. The drawing layer wraps at the
+/// click grows with its text and wraps at `autoWidth` (times its text size); one made by a drag,
+/// or any other width, wraps at its frame's width and keeps it. The drawing layer wraps at the
 /// frame width, so the frame alone says which: a frame exactly as wide as its grown text grows.
 @MainActor
 public enum TextShapeLayout {
-    /// Where a clicked text shape starts wrapping, at scale 1.
+    /// Where a clicked text shape starts wrapping, at text size 1.
     public static let autoWidth: CGFloat = 320
 
-    /// The frame size for `text`: `wrapWidth` wide when given, else grown to the text up to
-    /// `autoWidth × scale`. Empty text measures as one line.
-    public static func size(_ text: String, scale: CGFloat, wrapWidth: CGFloat?) -> CGSize {
-        let label = DrawingStyle.text(text.isEmpty ? " " : text, size: DrawingStyle.textSize * scale, color: .labelColor)
-        let bounds = ObjectMeasure.textBounds(label, width: max(1, wrapWidth ?? autoWidth * scale))
+    /// The frame size for `text` at `textSize` (`props.textSize`): `wrapWidth` wide when given,
+    /// else grown to the text up to `autoWidth × textSize`. Empty text measures as one line.
+    public static func size(_ text: String, textSize: CGFloat, wrapWidth: CGFloat?) -> CGSize {
+        let label = DrawingStyle.text(text.isEmpty ? " " : text, size: DrawingStyle.textPointSize * textSize, color: .labelColor)
+        let bounds = ObjectMeasure.textBounds(label, width: max(1, wrapWidth ?? autoWidth * textSize))
         return CGSize(width: wrapWidth ?? bounds.width, height: bounds.height)
     }
 
@@ -244,7 +244,7 @@ public enum TextShapeLayout {
     /// keeps growing as it's edited), else its frame's width.
     public static func wrapWidth(of object: CanvasObject) -> CGFloat? {
         guard let spec = ShapeSpec(object.props), spec.kind == .text else { return nil }
-        let grown = size(spec.text ?? "", scale: spec.scale, wrapWidth: nil)
+        let grown = size(spec.text ?? "", textSize: spec.textSize, wrapWidth: nil)
         return abs(grown.width - CGFloat(object.frame.w)) <= 1 ? nil : CGFloat(object.frame.w)
     }
 }

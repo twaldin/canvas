@@ -321,8 +321,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         let cap = object.createdBy == .user ? Board.defaultSize(.changes) : nil
         guard let size = ChangesMetrics.grown(CGSize(width: natural.w, height: natural.h), from: old, to: new, viewed: object.props["viewed"],
                                               cap: cap.map { CGSize(width: $0.w, height: $0.h) }) else { return }
-        let scale = ObjectScale.of(object.props)
-        board.growFitted(object.id, frame: Frame(x: object.frame.x, y: object.frame.y, w: (size.width * scale).rounded(.up), h: (size.height * scale).rounded(.up)))
+        let grown = ObjectZoom.zoomed(size, zoom: object.zoom)
+        board.growFitted(object.id, frame: Frame(x: object.frame.x, y: object.frame.y, w: grown.width.rounded(.up), h: grown.height.rounded(.up)))
     }
 
     /// Working-tree writes, and the index, HEAD, and refs in the git directory, reload the

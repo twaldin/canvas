@@ -452,7 +452,7 @@ final class DiagramTile: NSView, TileContent {
     /// resize stays unless the graph needs more), into free space only (`Board.grownFrame`):
     /// what doesn't fit is drawn scaled. The app's write, not an undo step.
     private func fit(growingOnly: Bool) {
-        let scale = ObjectScale.of(object.props)
+        let zoom = CGFloat(object.zoom)
         let body = layout.bodySize, current = RenderMath.body(of: object)
         var w = min(body.width, Self.maxFitBody.width), h = min(body.height, Self.maxFitBody.height)
         if growingOnly {
@@ -460,7 +460,7 @@ final class DiagramTile: NSView, TileContent {
             h = max(h, current.height)
             guard w > current.width || h > current.height else { return }
         }
-        guard let frame = try? board.grownFrame(object.id, toward: CGSize(width: w * scale, height: (h + RenderMath.tileTitleHeight) * scale)),
+        guard let frame = try? board.grownFrame(object.id, toward: ObjectZoom.zoomed(CGSize(width: w, height: h + RenderMath.tileTitleHeight), zoom: Double(zoom))),
               frame != object.frame else { return }
         _ = try? board.update(object.id, frame: frame, actor: .system)
     }

@@ -203,12 +203,13 @@ public enum CodeMetrics {
     }
 
     /// `lineY` for a code tile at `frame` with `props` as it shows them freshly aimed: scrolled to
-    /// `props.range` by `scrollOffset`, magnified by `props.scale`. Canvas y. `rows` (wrapped at
-    /// the tile's natural width) nil: one row per line, content length unknown. Live tiles use
-    /// their real scroll instead (the user may have scrolled).
+    /// `props.range` by `scrollOffset`, its body zoomed by `props.zoom` under a 1× title bar.
+    /// Canvas y. `rows` (wrapped at the tile's natural width) nil: one row per line, content
+    /// length unknown. Live tiles use their real scroll instead (the user may have scrolled).
     public static func lineY(line: Int, frame: Frame, props: JSONValue, rows: CodeRows?) -> CGFloat {
-        let scale = CGFloat(ObjectScale.of(props))
-        return CGFloat(frame.y) + scale * naturalLineY(line: line, frameHeight: CGFloat(frame.h) / scale, props: props, rows: rows)
+        let zoom = ObjectZoom.of(props), natural = ObjectZoom.natural(frame, zoom: zoom)
+        let y = naturalLineY(line: line, frameHeight: CGFloat(natural.h), props: props, rows: rows)
+        return CGFloat(frame.y) + titleHeight + CGFloat(zoom) * (y - titleHeight)
     }
 
     /// `lineY` in the tile's own points from the top of its frame, for a natural frame

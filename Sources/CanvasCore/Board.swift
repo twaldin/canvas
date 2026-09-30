@@ -210,7 +210,8 @@ public final class Board {
         root = URL(fileURLWithPath: snapshot.root)
         revision = snapshot.revision
         let format = snapshot.format ?? 1
-        for var object in snapshot.objects {
+        // `props.scale` became a tile's content `zoom` (frame kept) and a text shape's `textSize`.
+        for var object in snapshot.objects.map(ObjectZoom.migrated) {
             // Groups were labelled by `name` before they became titled regions.
             if object.type == .group, var props = object.props.object, let name = props.removeValue(forKey: "name") {
                 if props["title"] == nil { props["title"] = name }
@@ -603,36 +604,15 @@ public final class Board {
     /// aside) among those no farther than its longer side; else grown from the top-left anyway
     /// (`overlaps(of:)` says onto what).
     public func refitFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
-        try refitted(id, to: size, anywhere: false)
-    }
-
-    /// The frame `id` takes when its scale changes and its frame becomes `size` (the Scale menu
-    /// and keys, the end of an ⌥-drag, an agent's `props.scale` with a size-only frame): a tile
-    /// makes room by `refitFrame`'s rule, except that when no slot nearby is free it moves to
-    /// the nearest free one farther off (in view first) rather than grow over anything, so
-    /// growing it for legibility never covers its neighbours (the app pans the least that
-    /// keeps a tile the user scaled in view); a text shape (an annotation, often meant to lie
-    /// over something) keeps its top-left corner.
-    public func scaledFrame(_ id: ObjectID, to size: CGSize) throws -> Frame {
-        let object = try object(id)
-        guard RenderMath.isTile(object.type) else { return Frame(x: object.frame.x, y: object.frame.y, w: size.width, h: size.height) }
-        return try refitted(id, to: size, anywhere: true)
-    }
-
-    /// `refitFrame`'s rule; `anywhere`: with no free slot nearby, the nearest one farther off
-    /// instead of growing in place.
-    private func refitted(_ id: ObjectID, to size: CGSize, anywhere: Bool) throws -> Frame {
         let current = try object(id).frame
         let grown = Frame(x: current.x, y: current.y, w: size.width, h: size.height)
         let containers = Set(objects.values.filter { $0.type == .group && BoardGeometry.leafMembers(of: $0.id, in: objects).contains(id) }.map(\.id))
         let neighbours = objects.values.filter { $0.id != id && !containers.contains($0.id) && BoardGeometry.countsForOverlaps($0) }.map(\.frame)
         if let corner = Layout.refit(current, to: size, clearOf: neighbours) { return corner }
-        let ignoring = containers.union([id])
-        if let nearby = freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: ignoring, within: max(grown.w, grown.h)) {
+        if let nearby = freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: containers.union([id]), within: max(grown.w, grown.h)) {
             return nearby
         }
-        guard anywhere else { return Frame(x: grown.x.rounded(), y: grown.y.rounded(), w: grown.w, h: grown.h) }
-        return freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: ignoring)!
+        return Frame(x: grown.x.rounded(), y: grown.y.rounded(), w: grown.w, h: grown.h)
     }
 
     /// The frame a tile the app grows for its own content (a diagram whose graph gained nodes)

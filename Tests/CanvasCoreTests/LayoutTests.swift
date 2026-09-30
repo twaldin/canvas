@@ -153,14 +153,15 @@ final class LayoutApiTests {
         let narrow = Self.size(try await result("object.measure", .object(["type": "html", "props": page, "width": 400])))
         #expect(narrow == CGSize(width: 400, height: title + 800))
 
-        // Fit on create at a width, and at a scale (laid out at width ÷ scale, drawn scale times).
+        // Fit on create at a width, and at a zoom (the page laid out at width ÷ zoom and drawn zoom
+        // times under the 1× title bar).
         let fitted = try await result("object.create", .object(["type": "html", "props": page, "frame": .object(["x": 0, "y": 0, "w": 400]), "size": "fit"]))
         let id = try #require(fitted["object"]?["id"]?.string)
         #expect(try #require(fitted["object"]?["frame"]).decode(Frame.self) == Frame(x: 0, y: 0, w: 400, h: Double(title + 800)))
-        var scaledProps = page.object ?? [:]
-        scaledProps["scale"] = 2
-        let scaled = Self.size(try await result("object.measure", .object(["type": "html", "props": .object(scaledProps), "width": 800])))
-        #expect(scaled == CGSize(width: 800, height: (title + 800) * 2))
+        var zoomedProps = page.object ?? [:]
+        zoomedProps["zoom"] = 2
+        let zoomed = Self.size(try await result("object.measure", .object(["type": "html", "props": .object(zoomedProps), "width": 800])))
+        #expect(zoomed == CGSize(width: 800, height: title + 800 * 2))
 
         // A re-fit keeps the tile's width; a page taller than the cap stops at it.
         let longer = try await result("object.update", .object(["id": .string(id), "props": .object(["html": .string(String(repeating: "x", count: 640))]), "size": "fit"]))
@@ -444,34 +445,36 @@ final class LayoutApiTests {
         #expect(staged["mention"]?["label"]?.string?.contains("Bug report") == true, "mentions name the note by its title")
     }
 
-    @Test func scaledTilesLayOutAtTheirNaturalSizeAndReportCanvasPoints() async throws {
-        let scaled = Self.code(10, 19).merging(.object(["scale": 2]))
+    @Test func zoomedTilesLayOutTheirBodyAtItsNaturalSizeUnderA1xTitleBar() async throws {
+        let title = CGFloat(RenderMath.tileTitleHeight)
+        let zoomed = Self.code(10, 19).merging(.object(["zoom": 2]))
         let natural = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(10, 19)])))
-        let measured = Self.size(try await result("object.measure", .object(["type": "code", "props": scaled])))
-        #expect(measured == CGSize(width: natural.width * 2, height: natural.height * 2))
+        let measured = Self.size(try await result("object.measure", .object(["type": "code", "props": zoomed])))
+        #expect(measured == CGSize(width: natural.width * 2, height: title + (natural.height - title) * 2))
         // 600 canvas points at 2× wrap like a 300-point tile: line 12's 64 columns still take 3 rows.
-        let wide = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(1, 30).merging(.object(["scale": 2])), "width": 600])))
+        let wide = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(1, 30).merging(.object(["zoom": 2])), "width": 600])))
         let narrow = Self.size(try await result("object.measure", .object(["type": "code", "props": Self.code(1, 30), "width": 300])))
-        #expect(wide == CGSize(width: narrow.width * 2, height: narrow.height * 2))
+        #expect(wide == CGSize(width: narrow.width * 2, height: title + (narrow.height - title) * 2))
 
-        let created = try await result("object.create", .object(["type": "code", "props": scaled, "frame": .object(["x": 0, "y": 0]), "size": "fit"]))
+        let created = try await result("object.create", .object(["type": "code", "props": zoomed, "frame": .object(["x": 0, "y": 0]), "size": "fit"]))
         let fit = try board.object(try #require(created["object"]?["id"]?.string))
         #expect(fit.frame.w == Double(measured.width) && fit.frame.h == Double(measured.height))
 
-        let tiny = board.create(type: .code, props: Self.code(1, 30).merging(.object(["scale": 2])), frame: Frame(x: 0, y: 600, w: 600, h: 200))
+        // 200 tall at 2×: a 26-point title bar over a body of 87 content points.
+        let tiny = board.create(type: .code, props: Self.code(1, 30).merging(.object(["zoom": 2])), frame: Frame(x: 0, y: 600, w: 600, h: 200))
         let report = try await result("layout.check", .object(["ids": .array([.string(tiny.id)])]))
         let scrolled = try #require(report["scrolls"]?.array?.first { $0["id"] == .string(tiny.id) })
-        #expect(scrolled["y"]?.number == 2 * (Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - 100))
+        #expect(scrolled["y"]?.number == 2 * (Double(CodeMetrics.size(lines: 32, longestLine: 64, caption: false).height) - (26 + 87)))
     }
 
-    /// A scaled tile's natural width comes back a hair under the points it was fitted at
-    /// (frame.w ÷ scale): checking it must not lose a column, wrap the longest line, and report
+    /// A zoomed tile's natural width comes back a hair under the points it was fitted at
+    /// (frame.w ÷ zoom): checking it must not lose a column, wrap the longest line, and report
     /// the fitted tile a row short (presenter study: "overflow y=19" on fit tiles at 1.1–1.25).
-    @Test func scaledFitCodeTilesCheckClean() async throws {
+    @Test func zoomedFitCodeTilesCheckClean() async throws {
         var ids: [String] = []
-        for (index, scale) in [1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.45, 1.7, 2.3].enumerated() {
+        for (index, zoom) in [1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.45, 1.7, 2.3].enumerated() {
             for (row, range) in [(10, 19), (45, 60), (1, 12)].enumerated() {
-                let props = Self.code(range.0, range.1).merging(.object(["scale": .number(scale)]))
+                let props = Self.code(range.0, range.1).merging(.object(["zoom": .number(zoom)]))
                 let created = try await result("object.create", .object(["type": "code", "props": props,
                                                                           "frame": .object(["x": .number(Double(index) * 2000), "y": .number(Double(row) * 2000)]), "size": "fit"]))
                 ids.append(try #require(created["object"]?["id"]?.string))
@@ -481,24 +484,25 @@ final class LayoutApiTests {
         #expect(report["scrolls"] == .array([]) && report["overflow"] == .array([]))
     }
 
-    @Test func scaleIsClampedAndOnlyTilesAndTextTakeIt() {
-        #expect(ObjectScale.of(.object([:])) == 1)
-        #expect(ObjectScale.of(.object(["scale": 100])) == ObjectScale.range.upperBound)
-        #expect(ObjectScale.of(.object(["scale": .number(0.01)])) == ObjectScale.range.lowerBound)
-        #expect(ObjectScale.of(.object(["scale": .number(-2)])) == 1 && ObjectScale.of(.object(["scale": "2"])) == 1)
-        let rect = board.create(type: .shape, props: .object(["kind": "rect", "scale": 2]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
-        let text = board.create(type: .shape, props: .object(["kind": "text", "text": "hi", "scale": 2]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
-        let note = board.create(type: .note, props: .object(["markdown": "n", "scale": 2]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
-        #expect(rect.scale == 1 && text.scale == 2 && note.scale == 2)
-        #expect(note.naturalFrame == Frame(x: 0, y: 0, w: 200, h: 150))
-        #expect(ObjectScale.rescaled(note.frame, from: 2, to: 0.5) == Frame(x: 0, y: 0, w: 100, h: 75), "the natural size is kept, top-left fixed")
+    @Test func zoomIsClampedAndEveryTileButAnImageTakesIt() {
+        #expect(ObjectZoom.of(.object([:])) == 1)
+        #expect(ObjectZoom.of(.object(["zoom": 100])) == ObjectZoom.range.upperBound)
+        #expect(ObjectZoom.of(.object(["zoom": .number(0.01)])) == ObjectZoom.range.lowerBound)
+        #expect(ObjectZoom.of(.object(["zoom": .number(-2)])) == 1 && ObjectZoom.of(.object(["zoom": "2"])) == 1)
+        let text = board.create(type: .shape, props: .object(["kind": "text", "text": "hi", "zoom": 2]), frame: Frame(x: 0, y: 0, w: 100, h: 100))
+        let image = board.create(type: .image, props: .object(["path": "a.png", "zoom": 2]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
+        let note = board.create(type: .note, props: .object(["markdown": "n", "zoom": 2]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
+        #expect(text.zoom == 1 && image.zoom == 1 && note.zoom == 2)
+        #expect(note.naturalFrame == Frame(x: 0, y: 0, w: 200, h: 26 + 137), "the title bar stays; the body lays out at half its size")
+        #expect(RenderMath.body(of: image) == CGSize(width: 400, height: 274), "a picture fills its frame at any zoom")
     }
 
-    @Test func biggerAndSmallerStepThroughTheMenusLevelsFromAnyScale() {
-        #expect(ObjectScale.step(from: 1, bigger: true) == 1.25 && ObjectScale.step(from: 1, bigger: false) == 0.75)
-        #expect(ObjectScale.step(from: 2, bigger: true) == nil && ObjectScale.step(from: 0.5, bigger: false) == nil, "the menu's ends")
-        #expect(ObjectScale.step(from: 1.1, bigger: true) == 1.25 && ObjectScale.step(from: 1.1, bigger: false) == 1, "an ⌥-dragged scale steps to the levels either side")
-        #expect(ObjectScale.step(from: 3, bigger: false) == 2 && ObjectScale.step(from: 0.3, bigger: true) == 0.5, "an agent's scale past the menu steps back into it")
+    @Test func zoomInAndOutStepThroughTheLevelsFromAnyZoom() {
+        #expect(ObjectZoom.step(from: 1, bigger: true) == 1.1 && ObjectZoom.step(from: 1, bigger: false) == 0.9)
+        #expect(ObjectZoom.step(from: 0.75, bigger: false) == 0.67, "the level a browser has")
+        #expect(ObjectZoom.step(from: 5, bigger: true) == nil && ObjectZoom.step(from: 0.25, bigger: false) == nil, "the ends")
+        #expect(ObjectZoom.step(from: 1.05, bigger: true) == 1.1 && ObjectZoom.step(from: 1.05, bigger: false) == 1, "an agent's zoom steps to the levels either side")
+        #expect(ObjectZoom.step(from: 7, bigger: false) == 5, "past the last level steps back into them")
     }
 
     @Test func captionsWidenMeasureAndTruncatedCaptionsAreReported() async throws {
@@ -657,36 +661,6 @@ struct LayoutBoardTests {
         #expect(try board.refitFrame(tile.id, to: CGSize(width: 200, height: 300)) == frame)
         _ = try board.update(tile.id, frame: frame)
         #expect(board.overlaps(of: tile.id).isEmpty && board.overlaps(of: below.id).isEmpty && board.overlaps(of: above.id).isEmpty)
-    }
-
-    @Test func scalingATileUpMakesRoomLikeARefit() throws {
-        let tile = note(0, 0, 400, 300)
-        let below = note(0, 340, 400, 300)
-        let doubled = ObjectScale.rescaled(tile.frame, from: 1, to: 2)
-        let frame = try board.scaledFrame(tile.id, to: CGSize(width: doubled.w, height: doubled.h))
-        #expect(frame == Frame(x: 0, y: -300, w: 800, h: 600), "grown up, off the tile below, instead of down over it")
-        _ = try board.update(tile.id, frame: frame, props: .object(["scale": 2]))
-        #expect(board.overlaps(of: tile.id).isEmpty && board.overlaps(of: below.id).isEmpty)
-        #expect(try board.scaledFrame(tile.id, to: CGSize(width: 400, height: 300)) == Frame(x: 0, y: -300, w: 400, h: 300), "shrinking keeps the top-left corner")
-        // A text shape is an annotation, often lying over a tile on purpose: it grows in place.
-        let label = board.create(type: .shape, props: .object(["kind": "text", "text": "look"]), frame: Frame(x: 10, y: 10, w: 100, h: 30))
-        #expect(try board.scaledFrame(label.id, to: CGSize(width: 200, height: 60)) == Frame(x: 10, y: 10, w: 200, h: 60))
-    }
-
-    @Test func scalingABoxedInBrowserTileUpMovesClearOfItsNeighbours() throws {
-        // Game study F3: the game's browser tile with the snapshot image right of it, a note
-        // below, code above and the terminal left, each 24–40 pt away. No corner grows clear of
-        // them and no free slot is within its longer side, so Scale Bigger grew it in place over
-        // the image and the note.
-        let browser = board.create(type: .browser, props: .object(["url": "http://127.0.0.1:8766/"]), frame: Frame(x: 550, y: 530, w: 860, h: 700))
-        let neighbours = [note(1434, 530, 640, 700), note(550, 1270, 900, 600), note(550, -60, 1150, 566), note(-474, 200, 1000, 1400)]
-        let bigger = ObjectScale.rescaled(browser.frame, from: 1, to: 1.25)
-        let size = CGSize(width: bigger.w, height: bigger.h)
-        #expect(try board.refitFrame(browser.id, to: size) == Frame(x: 550, y: 530, w: 1075, h: 875), "a size fit still grows in place, naming what it covers")
-        let frame = try board.scaledFrame(browser.id, to: size)
-        #expect(frame == Frame(x: 1474, y: 1254, w: 1075, h: 875), "the nearest free slot, past the image and the note")
-        _ = try board.update(browser.id, frame: frame, props: .object(["scale": .number(1.25)]))
-        #expect(board.overlaps(of: browser.id).isEmpty && neighbours.allSatisfy { board.overlaps(of: $0.id).isEmpty })
     }
 
     @Test func stackWrapsLinesAndAlignsAcrossThem() {
@@ -1042,11 +1016,13 @@ struct LayoutBoardTests {
         // A caption strip moves the rows down.
         let captioned: JSONValue = .object(["path": "src.txt", "caption": "why", "range": .object(["start": 10, "end": 19])])
         #expect(CodeMetrics.lineY(line: 10, frame: fit, props: captioned, rows: nil) == 100 + middle(ofRow: 0, scroll: 0) + CodeMetrics.captionHeight)
-        // At 2× in a frame twice the size, the tile shows the same rows, twice as far down.
-        let scaled: JSONValue = .object(["path": "src.txt", "scale": 2, "range": .object(["start": 10, "end": 19])])
-        let doubled = Frame(x: 0, y: 50, w: 800, h: tall.h * 2)
-        #expect(CodeMetrics.lineY(line: 10, frame: doubled, props: scaled, rows: nil) == 50 + 2 * middle(ofRow: 3, scroll: 0))
-        #expect(CodeMetrics.lineY(line: 99, frame: doubled, props: scaled, rows: nil) == 50 + CGFloat(doubled.h))
+        // At 2× in a frame whose body is twice the size, the tile shows the same rows, twice as
+        // far below its 1× title bar.
+        let zoomed: JSONValue = .object(["path": "src.txt", "zoom": 2, "range": .object(["start": 10, "end": 19])])
+        let title = CodeMetrics.titleHeight
+        let doubled = Frame(x: 0, y: 50, w: 800, h: Double(title) + (tall.h - Double(title)) * 2)
+        #expect(CodeMetrics.lineY(line: 10, frame: doubled, props: zoomed, rows: nil) == 50 + title + 2 * (middle(ofRow: 3, scroll: 0) - title))
+        #expect(CodeMetrics.lineY(line: 99, frame: doubled, props: zoomed, rows: nil) == 50 + CGFloat(doubled.h))
     }
 
     @Test func lineAnchorsBelowAWrappedLineLandOnTheirVisualRow() {

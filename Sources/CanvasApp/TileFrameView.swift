@@ -1,15 +1,20 @@
 import AppKit
 import CanvasCore
 
-/// Shared chrome around every tile: title bar (drag moves the selection), lifecycle badge, close
-/// button, resize grip, and the zoomed-out card (tinted by agent lifecycle). Selection rings are
-/// drawn by the canvas overlay.
+/// Shared chrome around every tile: title bar (drag moves the selection), lifecycle badge, content
+/// zoom control, close button, resize grip, and the zoomed-out card (tinted by agent lifecycle).
+/// Selection rings are drawn by the canvas overlay.
 @MainActor
 final class TileFrameView: NSView {
     static let titleHeight = CGFloat(RenderMath.tileTitleHeight)
 
     let objectID: ObjectID
     let content: any TileContent
+    /// Holds the content at the tile's `zoom`: its frame is the body, its bounds the body divided
+    /// by the zoom, so the content lays out, hit-tests, and converts coordinates in its own points
+    /// and draws magnified in place, while the title bar stays at 1×.
+    private let zoomView = ContentZoomView()
+    private let zoomControl = TileZoomControl()
     private let titleBar = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     /// The agent terminal that made the object (`AuthorMark`), small and muted at the right.
@@ -26,8 +31,10 @@ final class TileFrameView: NSView {
     private(set) var z: Double = 0
     private var lifecycleState: String?
 
-    /// Called with the new canvas-space frame and scale when a resize or ⌥-drag scale ends.
-    var onFrameCommit: ((NSRect, CGFloat) -> Void)?
+    /// Called with the new canvas-space frame when a resize ends.
+    var onFrameCommit: ((NSRect) -> Void)?
+    /// The title bar's − / % / + asked for this content zoom.
+    var onZoom: ((Double) -> Void)?
     /// Live resize, so the canvas can keep rings and groups around the tile.
     var onResizing: (() -> Void)?
     var onClose: (() -> Void)?
@@ -38,20 +45,27 @@ final class TileFrameView: NSView {
     var onTitleDoubleClick: (() -> Void)?
     var onMenu: (() -> NSMenu?)?
 
-    private var resizeStart: (mouse: NSPoint, frame: NSRect, scale: CGFloat, scaling: Bool)?
-    /// The object's `props.scale`: title bar and content drawn this many times their natural
-    /// size. The view's bounds are its natural size (frame ÷ scale), so everything inside lays
-    /// out, hit-tests, and converts coordinates in the tile's own points.
-    private(set) var scale: CGFloat = 1
+    private var resizeStart: (mouse: NSPoint, frame: NSRect, proportional: Bool)?
+    /// The object's `props.zoom` (`ObjectZoom`): how big the content draws inside the body. The
+    /// frame is the tile's size and never follows it.
+    private(set) var zoom: CGFloat = 1
+    /// Whether the tile is selected (the zoom control's − and + show while it is, or hovered).
+    var isSelected = false {
+        didSet { if isSelected != oldValue { updateZoomControl() } }
+    }
+    private var hovered = false
     private var moving = false
 
     /// What the tile is, for accessibility ("terminal", "code", …).
     private let roleDescription: String
+    /// Whether the tile's content zooms (`ObjectZoom.applies`): not an image's.
+    private let zoomable: Bool
 
     init(object: CanvasObject, content: any TileContent, frame: NSRect) {
         objectID = object.id
         self.content = content
-        scale = CGFloat(object.scale)
+        zoom = CGFloat(object.zoom)
+        zoomable = ObjectZoom.applies(to: object.type)
         roleDescription = object.type == .html ? "HTML" : object.type.rawValue
         super.init(frame: frame)
         closeButton.tile = self
@@ -86,8 +100,12 @@ final class TileFrameView: NSView {
         statusLabel.isHidden = true
         titleBar.addSubview(statusLabel)
         titleBar.addSubview(closeButton)
+        zoomControl.onStep = { [weak self] bigger in self?.stepZoom(bigger: bigger) }
+        zoomControl.onReset = { [weak self] in self?.onZoom?(1) }
+        titleBar.addSubview(zoomControl)
         addSubview(titleBar)
-        addSubview(content)
+        zoomView.addSubview(content)
+        addSubview(zoomView)
         card.imageScaling = .scaleProportionallyUpOrDown
         card.isHidden = true
         cardTitle.font = .systemFont(ofSize: 28, weight: .semibold)
@@ -99,7 +117,8 @@ final class TileFrameView: NSView {
         cardTint.isHidden = true
         addSubview(cardTint)
         update(object)
-        applyScale()
+        layoutParts()
+        updateZoomControl()
     }
 
     required init?(coder: NSCoder) { fatalError("unused") }
@@ -167,28 +186,32 @@ final class TileFrameView: NSView {
         }
     }
 
-    /// Layout happens in `applyScale`, once the bounds match the new frame.
+    /// Layout happens in `layoutParts`.
     override func resizeSubviews(withOldSize oldSize: NSSize) {}
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        applyScale()
-    }
-
-    /// Moves and scales the tile in one step, so its content never lays out at a size in between.
-    func place(_ rect: NSRect, scale: CGFloat) {
-        let rescaled = scale != self.scale
-        self.scale = scale
-        if frame != rect { frame = rect }
-        if rescaled { applyScale() }
-    }
-
-    /// Bounds are the natural size, so the layer (radius and border included) and everything in
-    /// it draw magnified by `scale`.
-    private func applyScale() {
-        let natural = NSSize(width: frame.width / scale, height: frame.height / scale)
-        if bounds.size != natural { setBoundsSize(natural) }
         layoutParts()
+    }
+
+    /// Moves the tile and zooms its content in one step, so the content never lays out at a size
+    /// in between.
+    func place(_ rect: NSRect, zoom: CGFloat) {
+        let rezoomed = zoom != self.zoom
+        self.zoom = zoom
+        if frame != rect { frame = rect }
+        if rezoomed {
+            applyZoom()
+            updateZoomControl()
+        }
+    }
+
+    /// The content at `zoom` in the body: laid out at the body divided by the zoom.
+    private func applyZoom() {
+        let body = zoomView.frame.size
+        let natural = NSSize(width: body.width / zoom, height: body.height / zoom)
+        if abs(zoomView.bounds.width - natural.width) > 0.001 || abs(zoomView.bounds.height - natural.height) > 0.001 { zoomView.setBoundsSize(natural) }
+        if content.frame.size != zoomView.bounds.size || content.frame.origin != .zero { content.frame = NSRect(origin: .zero, size: zoomView.bounds.size) }
     }
 
     private func layoutParts() {
@@ -198,7 +221,10 @@ final class TileFrameView: NSView {
         closeButton.frame = NSRect(x: width - 28, y: 3, width: 22, height: 20)
         layoutTitle()
         let body = NSRect(x: 0, y: Self.titleHeight, width: width, height: max(0, bounds.height - Self.titleHeight))
-        if content.frame != body { content.frame = body }
+        // The zoom view keeps its bounds' scale as its frame changes (AppKit), so the content
+        // sees one resize, to its natural size.
+        if zoomView.frame != body { zoomView.frame = body }
+        applyZoom()
         card.frame = body
         cardTitle.frame = body.insetBy(dx: 12, dy: body.height / 3)
         cardTint.frame = bounds
@@ -274,14 +300,66 @@ final class TileFrameView: NSView {
     }
 
     private func layoutTitle() {
-        // A terminal's command status (never on a tile with an author mark) takes the right end.
+        // The content zoom control sits before the close button; a terminal's command status
+        // (never on a tile with an author mark) before that.
         let width = bounds.width
+        let zoomWidth = zoomControl.isHidden ? 0 : zoomControl.fittedWidth
+        zoomControl.frame = NSRect(x: width - 30 - zoomWidth, y: 4, width: zoomWidth, height: 18)
+        let trailing = zoomWidth > 0 ? zoomWidth + 4 : 0
         let status = statusLabel.isHidden ? 0 : min(statusLabel.fittingSize.width, max(0, width / 3))
-        statusLabel.frame = NSRect(x: width - 32 - status, y: 6, width: status, height: 15)
-        let frames = Self.titleFrames(width: width - (status > 0 ? status + 8 : 0), title: titleLabel.stringValue, author: author)
+        statusLabel.frame = NSRect(x: width - 32 - trailing - status, y: 6, width: status, height: 15)
+        let frames = Self.titleFrames(width: width - (status > 0 ? status + 8 : 0) - trailing, title: titleLabel.stringValue, author: author)
         titleLabel.frame = frames.title
         authorLabel.isHidden = frames.author == nil
         if let rect = frames.author { authorLabel.frame = rect }
+    }
+
+    // MARK: Content zoom
+
+    /// − and +: the next of `ObjectZoom.levels` that way.
+    private func stepZoom(bigger: Bool) {
+        guard let next = ObjectZoom.step(from: Double(zoom), bigger: bigger) else { return }
+        onZoom?(next)
+    }
+
+    /// The percentage shows whenever the content isn't at 100%, − and + while the tile is
+    /// hovered or selected: an untouched tile's title bar stays as it was.
+    private func updateZoomControl() {
+        let zoom = Double(self.zoom)
+        let expanded = zoomable && (hovered || isSelected)
+        zoomControl.show(zoom: zoom, expanded: expanded, canZoomOut: ObjectZoom.step(from: zoom, bigger: false) != nil,
+                         canZoomIn: ObjectZoom.step(from: zoom, bigger: true) != nil)
+        zoomControl.isHidden = !zoomable || (!expanded && abs(zoom - 1) < 0.001)
+        layoutTitle()
+    }
+
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovered = true
+        updateZoomControl()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = false
+        updateZoomControl()
+    }
+
+    static let zoomLabelFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+
+    /// Where the title bar shows the content zoom percentage while − and + are hidden, here and
+    /// in `view.render`: just before the close button; nil at 100%.
+    static func zoomLabelFrame(width: CGFloat, zoom: Double) -> NSRect? {
+        guard abs(zoom - 1) >= 0.001 else { return nil }
+        return NSRect(x: width - 30 - TileZoomControl.percentWidth, y: 4, width: TileZoomControl.percentWidth, height: 18)
     }
 
     /// Where a title bar `width` wide draws the title and the author mark (nil: none), here and
@@ -511,14 +589,15 @@ final class TileFrameView: NSView {
 
     // MARK: Move / resize
 
-    /// The bottom-right corner: drag resizes, ⌥-drag scales. 16 canvas points in at any tile
-    /// scale (at least the handle's half on screen), and past the corner as far as the handle
-    /// the canvas draws for a selected tile (`TileHandles`) reaches, selected or not, inside a
-    /// group or not: a drag starting just outside the corner still resizes.
+    /// The bottom-right corner: drag resizes, ⌥-drag resizes keeping the tile's proportions;
+    /// neither changes the content's zoom. 16 points in (at least the handle's half on screen),
+    /// and past the corner as far as the handle the canvas draws for a selected tile
+    /// (`TileHandles`) reaches, selected or not, inside a group or not: a drag starting just
+    /// outside the corner still resizes.
     private var resizeGrip: NSRect {
         let perScreenPoint = convert(NSSize(width: 1, height: 1), from: nil).width
         let reach = TileHandles.reach * perScreenPoint
-        let inside = min(max(16 / scale, reach), bounds.width / 2, bounds.height / 2)
+        let inside = min(max(16, reach), bounds.width / 2, bounds.height / 2)
         return NSRect(x: bounds.width - inside, y: bounds.height - inside, width: inside + reach, height: inside + reach)
     }
 
@@ -532,7 +611,7 @@ final class TileFrameView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         if resizeGrip.contains(convert(event.locationInWindow, from: nil)) {
-            resizeStart = (event.locationInWindow, frame, scale, event.modifierFlags.contains(.option))
+            resizeStart = (event.locationInWindow, frame, event.modifierFlags.contains(.option))
         } else if event.clickCount == 2 {
             onTitleDoubleClick?()
         } else {
@@ -548,15 +627,13 @@ final class TileFrameView: NSView {
         let dx = (event.locationInWindow.x - start.mouse.x) * perPoint
         let dy = (start.mouse.y - event.locationInWindow.y) * perPoint
         let w = start.frame.width, h = start.frame.height
-        if start.scaling {
-            // The drag projected on the diagonal: the tile keeps its proportions and its content
-            // its layout, magnified with it.
-            let ratio = ((w + dx) * w + (h + dy) * h) / max(w * w + h * h, 1)
-            let scale = min(max(start.scale * ratio, ObjectScale.range.lowerBound), ObjectScale.range.upperBound)
-            let applied = scale / start.scale
-            place(NSRect(origin: start.frame.origin, size: NSSize(width: w * applied, height: h * applied)), scale: scale)
+        let minimum = NSSize(width: 160, height: 80 + Self.titleHeight)
+        if start.proportional {
+            // The drag projected on the diagonal: the tile keeps its proportions.
+            let ratio = max(((w + dx) * w + (h + dy) * h) / max(w * w + h * h, 1), minimum.width / max(w, 1), minimum.height / max(h, 1))
+            setFrameSize(NSSize(width: w * ratio, height: h * ratio))
         } else {
-            setFrameSize(NSSize(width: max(160 * scale, w + dx), height: max((80 + Self.titleHeight) * scale, h + dy)))
+            setFrameSize(NSSize(width: max(minimum.width, w + dx), height: max(minimum.height, h + dy)))
         }
         onResizing?()
     }
@@ -565,8 +642,8 @@ final class TileFrameView: NSView {
         if moving {
             moving = false
             onMoveEnded?(event)
-        } else if let start = resizeStart, start.frame != frame || start.scale != scale {
-            onFrameCommit?(frame, scale)
+        } else if let start = resizeStart, start.frame != frame {
+            onFrameCommit?(frame)
         }
         resizeStart = nil
     }
@@ -585,6 +662,91 @@ private final class CardImageView: NSImageView {
     weak var tile: TileFrameView?
 
     override func accessibilityLabel() -> String? { tile?.accessibilityLabel() }
+}
+
+/// The tile's body at its content zoom (`TileFrameView.zoomView`): a frame the body's size and
+/// bounds the body divided by the zoom, holding the content at its bounds. It never resizes the
+/// content itself; the tile sets the content's frame once per change.
+private final class ContentZoomView: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        autoresizesSubviews = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    nonisolated override var isFlipped: Bool { true }
+}
+
+/// The title bar's content zoom control, `−  150%  +`: − and + step through `ObjectZoom.levels`,
+/// a click on the percentage goes back to 100%. The percentage shows whenever the content isn't
+/// at 100%; − and + only while the tile is hovered or selected (`TileFrameView.updateZoomControl`).
+/// Object › Content Zoom and its keys (⌃⌘= ⌃⌘- ⌃⌘0) do the same.
+private final class TileZoomControl: NSView {
+    var onStep: ((Bool) -> Void)?
+    var onReset: (() -> Void)?
+    private let minus = NSButton()
+    private let percent = NSButton()
+    private let plus = NSButton()
+    private var expanded = false
+    static let buttonWidth: CGFloat = 18
+    /// Room for the widest percentage ("100%", "800%") and the label's padding.
+    static let percentWidth: CGFloat = (("800%" as NSString).size(withAttributes: [.font: TileFrameView.zoomLabelFont]).width + 10).rounded(.up)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        for (button, symbol, label, tip) in [(minus, "minus", "Zoom content out", "Zoom Content Out (⌃⌘-)"), (plus, "plus", "Zoom content in", "Zoom Content In (⌃⌘=)")] {
+            button.isBordered = false
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+                .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))
+            button.imagePosition = .imageOnly
+            button.contentTintColor = .secondaryLabelColor
+            button.setAccessibilityLabel(label)
+            button.toolTip = tip
+            button.target = self
+            button.action = #selector(step(_:))
+            addSubview(button)
+        }
+        percent.isBordered = false
+        percent.target = self
+        percent.action = #selector(reset)
+        percent.toolTip = "Content zoom: click for 100% (⌃⌘0)"
+        addSubview(percent)
+    }
+
+    required init?(coder: NSCoder) { fatalError("unused") }
+
+    nonisolated override var isFlipped: Bool { true }
+
+    /// The control's width as it shows now: the percentage, and − and + beside it when expanded.
+    var fittedWidth: CGFloat { Self.percentWidth + (expanded ? 2 * Self.buttonWidth : 0) }
+
+    func show(zoom: Double, expanded: Bool, canZoomOut: Bool, canZoomIn: Bool) {
+        self.expanded = expanded
+        let text = ObjectZoom.percent(zoom)
+        percent.attributedTitle = NSAttributedString(string: text, attributes: [.font: TileFrameView.zoomLabelFont, .foregroundColor: NSColor.secondaryLabelColor])
+        percent.setAccessibilityLabel("Content zoom \(text), reset to 100%")
+        minus.isHidden = !expanded
+        plus.isHidden = !expanded
+        minus.isEnabled = canZoomOut
+        plus.isEnabled = canZoomIn
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let h = bounds.height
+        if expanded {
+            minus.frame = NSRect(x: 0, y: 0, width: Self.buttonWidth, height: h)
+            percent.frame = NSRect(x: Self.buttonWidth, y: 0, width: Self.percentWidth, height: h)
+            plus.frame = NSRect(x: Self.buttonWidth + Self.percentWidth, y: 0, width: Self.buttonWidth, height: h)
+        } else {
+            percent.frame = bounds
+        }
+    }
+
+    @objc private func step(_ sender: NSButton) { onStep?(sender === plus) }
+    @objc private func reset() { onReset?() }
 }
 
 /// A tile's close button, named for accessibility after the tile it closes ("Close notes.md").

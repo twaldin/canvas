@@ -819,6 +819,7 @@ public final class ApiRouter {
             let board = try board(p)
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
             guard var props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
+            try Self.checkProps(p)
             // Just w and h: that size, placed as a create without a frame is (near the caller).
             let frame = try p["frame"].map { value in
                 if value["x"]?.number == nil, value["y"]?.number == nil, let w = value["w"]?.number, let h = value["h"]?.number {
@@ -841,6 +842,7 @@ public final class ApiRouter {
         case "object.update":
             let id = try string(p, "id")
             let board = try board(forObject: id)
+            try Self.checkProps(p)
             let frame = try p["frame"].map { try Self.frame($0, onto: board.object(id).frame) }
             if let root = p["props"]?["root"]?.string, !root.isEmpty, [.note, .html].contains(try board.object(id).type) { try board.checkLinkRoot(root) }
             if let patch = p["props"], try board.object(id).type == .diagram, let problem = DiagramSpec.problem(try board.object(id).props.merging(patch)) {
@@ -1027,6 +1029,7 @@ public final class ApiRouter {
     /// `width`). Paths resolve against the caller's (or the given) board.
     private func measure(_ p: JSONValue) async throws -> JSONValue {
         guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
+        try Self.checkProps(p)
         let props = p["props"] ?? .object([:])
         let size = try await ObjectMeasure.size(type: type, props: props, width: p["width"]?.number, root: pathRoot(try board(p), type: type, props: props, caller: caller(p), creating: true))
         return .object(["w": .number(size.width), "h": .number(size.height)])
@@ -1295,20 +1298,9 @@ public final class ApiRouter {
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
     /// automatically placed) origin; an update that gives no origin re-fits clear of what it
-    /// didn't already cover (`Board.refitFrame`). Without `size`, an update that sets
-    /// `props.scale` with a size-only frame (the tile made bigger to be read from further out)
-    /// makes room the same way (`Board.scaledFrame`).
+    /// didn't already cover (`Board.refitFrame`).
     func fitted(_ method: String, _ p: JSONValue, size: CGSize?) throws -> JSONValue {
-        guard var params = p.object else { return p }
-        guard let size else {
-            guard Self.rescales(method, p) else { return p }
-            let id = try string(p, "id")
-            let board = try board(forObject: id)
-            let current = try board.object(id).frame
-            let given = CGSize(width: p["frame"]?["w"]?.number ?? current.w, height: p["frame"]?["h"]?.number ?? current.h)
-            params["frame"] = try JSONValue.encode(try board.scaledFrame(id, to: given))
-            return .object(params)
-        }
+        guard var params = p.object, let size else { return p }
         params.removeValue(forKey: "size")
         let origin: (x: Double, y: Double)
         if method == "object.update" {
@@ -1331,10 +1323,10 @@ public final class ApiRouter {
         return .object(params)
     }
 
-    /// Whether `p` is an `object.update` that sets `props.scale` with a size-only frame (`w`
-    /// and/or `h`, no origin): its frame is placed by `Board.scaledFrame`.
-    static func rescales(_ method: String, _ p: JSONValue) -> Bool {
-        method == "object.update" && p["props"]?["scale"] != nil && p["frame"] != nil && p["frame"]?["x"]?.number == nil && p["frame"]?["y"]?.number == nil
+    /// Why an `object.create`/`object.update` can't be applied before it reaches the board: a
+    /// `props.scale`, which `zoom` and `textSize` replaced (`ObjectZoom.retiredProblem`).
+    static func checkProps(_ p: JSONValue) throws {
+        if let problem = ObjectZoom.retiredProblem(p["props"]) { throw Failure("invalid_params", problem) }
     }
 
     /// A fitted `object.create`/`object.update` result with `overlaps`, the objects the fitted
@@ -1452,8 +1444,8 @@ public final class ApiRouter {
                 }
             }
         }
-        // Fitted and rescaled objects report what they cover once the whole batch has laid them out.
-        for index in results.indices where sizes[index] != nil || Self.rescales(ops[index]["method"]?.string ?? "", ops[index]["params"] ?? .null) {
+        // Fitted objects report what they cover once the whole batch has laid them out.
+        for index in results.indices where sizes[index] != nil {
             results[index] = withOverlaps(results[index])
         }
         // Arrows report the route the whole batch leaves them on (a tile a later op adds may be in
@@ -1585,7 +1577,7 @@ public final class ApiRouter {
             return sizes
         }
         // Code: the rows' own extent, wrapped at the frame's (natural) width, so only the height
-        // can overflow, scaled like the tile; a caption too long for the frame is `truncated`.
+        // can overflow, zoomed like the tile; a caption too long for the frame is `truncated`.
         let code = measurable.filter { $0.type == .code }
         let (report, codeSizes, captionMissing) = await offPool { [scope] in
             var sizes: [ObjectID: CGSize] = [:]
@@ -1593,11 +1585,11 @@ public final class ApiRouter {
             for object in code {
                 guard let excerpt = excerpts[object.id] else { continue }
                 let caption = object.props["caption"]?.string.flatMap { $0.isEmpty ? nil : $0 }
-                let scale = object.scale
+                let zoom = object.zoom
                 let rows = ObjectMeasure.codeRows(lines: excerpt.lines, fileLineCount: excerpt.fileLineCount, caption: caption != nil, follow: false,
                                                   maxWidth: CGFloat(object.naturalFrame.w))
-                sizes[object.id] = CGSize(width: rows.width * scale, height: rows.height * scale)
-                if let caption { missing[object.id] = (ObjectMeasure.captionWidth(caption) - object.naturalFrame.w) * scale }
+                sizes[object.id] = ObjectZoom.zoomed(rows, zoom: zoom)
+                if let caption { missing[object.id] = (ObjectMeasure.captionWidth(caption) - object.naturalFrame.w) * zoom }
             }
             return (geometry.layoutCheck(scope: scope, rows: rows), sizes, missing)
         }
@@ -1619,11 +1611,11 @@ public final class ApiRouter {
             } else if object.type == .note {
                 // Wrapped at the frame's (natural) width; a table too wide for it even with its
                 // cells wrapped is cut, `truncated`.
-                let scale = CGFloat(object.scale)
+                let zoom = CGFloat(object.zoom)
                 let measured = await ObjectMeasure.note(object.props, width: CGFloat(object.naturalFrame.w), root: root)
-                size = CGSize(width: measured.size.width * scale, height: measured.size.height * scale)
+                size = ObjectZoom.zoomed(measured.size, zoom: zoom)
                 if measured.tableShortfall >= 1 {
-                    truncated.append(.object(["id": .string(object.id), "what": .string("table"), "x": .number((measured.tableShortfall * scale).rounded(.up))]))
+                    truncated.append(.object(["id": .string(object.id), "what": .string("table"), "x": .number((measured.tableShortfall * zoom).rounded(.up))]))
                 }
             } else {
                 // Text wraps at the frame's width.

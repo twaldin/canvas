@@ -97,7 +97,8 @@ enum TerminalRender {
     static func grid(for size: CGSize, known: Grid?, style: TerminalConfig.Style) -> Grid {
         if let known { return known }
         let cell = fonts(size: style.fontSize, cellWidth: nil).cell
-        return Grid(columns: max(1, Int((size.width - 2 * style.padding.width) / cell.width)), rows: max(1, Int((size.height - 2 * style.padding.height) / cell.height)), cell: cell)
+        let fitted = TerminalGrid.size(of: size, cell: cell, padding: style.padding)
+        return Grid(columns: fitted.columns, rows: fitted.rows, cell: cell)
     }
 
     /// What the screen shows: the output ends on the cursor's row, and rows below it are blank.

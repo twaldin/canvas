@@ -104,13 +104,12 @@ public struct DiagramLayout: Equatable, Sendable {
     }
 
     /// Where a diagram tile at `frame` with `props` draws node `id`, in canvas coordinates (title
-    /// bar and `props.scale` included): what an arrow bound to the node attaches to.
+    /// bar and `props.zoom` included): what an arrow bound to the node attaches to.
     public static func canvasRect(of id: String, frame: Frame, props: JSONValue) -> CGRect? {
         guard let graph = DiagramGraph(props["graph"]) else { return nil }
-        let scale = CGFloat(ObjectScale.of(props))
-        let body = CGSize(width: CGFloat(frame.w) / scale, height: max(0, CGFloat(frame.h) / scale - CGFloat(RenderMath.tileTitleHeight)))
+        let zoom = ObjectZoom.of(props), natural = ObjectZoom.natural(frame, zoom: zoom)
+        let body = CGSize(width: CGFloat(natural.w), height: max(0, CGFloat(natural.h - RenderMath.tileTitleHeight)))
         guard let rect = DiagramLayout(graph).rect(of: id, in: body) else { return nil }
-        return CGRect(x: CGFloat(frame.x) + scale * rect.minX, y: CGFloat(frame.y) + scale * (CGFloat(RenderMath.tileTitleHeight) + rect.minY),
-                      width: scale * rect.width, height: scale * rect.height)
+        return ObjectZoom.canvasRect(rect, inBodyOf: frame, zoom: zoom)
     }
 }

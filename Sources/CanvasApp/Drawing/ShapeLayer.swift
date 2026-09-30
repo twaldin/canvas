@@ -168,7 +168,7 @@ final class ShapeLayer: NSView {
     /// A code tile's rows or a diagram's nodes moved inside it: arrows bound to its lines or
     /// nodes follow.
     @objc private func anchorsMoved(_ note: Notification) {
-        guard let content = note.object as? NSView, let tile = content.superview as? TileFrameView, tile.superview === canvas.document,
+        guard let content = note.object as? NSView, let tile = content.superview?.superview as? TileFrameView, tile.superview === canvas.document,
               let arrows = arrowsBound[tile.objectID] else { return }
         var moved = false
         for id in arrows {
@@ -448,13 +448,15 @@ final class ShapeLayer: NSView {
     /// (`CodeTile.lineY`), a diagram node's box as drawn, anything else by its outline. Lines or
     /// nodes of other tiles bind the whole tile.
     func end(of id: ObjectID, lines: LineRange?, node: String? = nil) -> DrawingGeometry.ArrowEnd? {
+        // The title bar is 1×; the body below it shows the content at the tile's zoom.
         if let lines, let tile = canvas.tiles[id], let code = tile.content as? CodeTile {
-            let scale = tile.scale
-            return .row(tile.frame, y: tile.frame.minY + scale * code.lineY(lines.start, frameHeight: tile.frame.height / scale))
+            let zoom = tile.zoom, title = TileFrameView.titleHeight
+            let y = code.lineY(lines.start, frameHeight: title + (tile.frame.height - title) / zoom)
+            return .row(tile.frame, y: tile.frame.minY + title + zoom * (y - title))
         }
         if let node, let tile = canvas.tiles[id], let diagram = tile.content as? DiagramTile, let box = diagram.rect(ofNode: node) {
-            let scale = tile.scale, top = tile.frame.minY + scale * TileFrameView.titleHeight
-            return .bound(.rect(CGRect(x: tile.frame.minX + scale * box.minX, y: top + scale * box.minY, width: scale * box.width, height: scale * box.height)))
+            let zoom = tile.zoom, top = tile.frame.minY + TileFrameView.titleHeight
+            return .bound(.rect(CGRect(x: tile.frame.minX + zoom * box.minX, y: top + zoom * box.minY, width: zoom * box.width, height: zoom * box.height)))
         }
         return outline(of: id).map { .bound($0) }
     }

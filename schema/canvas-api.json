@@ -59,12 +59,12 @@
       "additionalProperties": false,
       "description": "how an anchored range (a note fence, a code tile's range) resolves against disk now"
     },
-    "Scale": {
+    "Zoom": {
       "type": "number",
       "minimum": 0.25,
       "maximum": 8,
       "default": 1,
-      "description": "how much bigger the object draws its content than its natural size: a tile lays out at frame size ÷ scale and draws magnified (header, text, page, terminal cells), so resizing the frame by the same factor keeps its layout; a text shape scales its font. Out-of-range values clamp; 1 is written as absent. An object.update that sets it with a size-only frame (w/h, no x/y) makes room on a tile: grown up or left, else moved to a free spot nearby, else to the nearest free spot farther off, never over its neighbours. The user sets it with ⌥-drag on a tile corner, a text shape's corner, or Object › Scale (Bigger ⌃⌘=, Smaller ⌃⌘-, Actual Size ⌃⌘0)"
+      "description": "how big the tile's content draws inside its frame, in place (1.5 is 150%): the frame never changes with it and the title bar stays at 1×; the body lays out at body ÷ zoom and draws zoom× (terminal: bigger text, fewer columns and rows, the program gets the new grid; browser, html: like page zoom, the viewport is body ÷ zoom; code, note, changes: text bigger and rewrapped; diagram: bigger). An object.update that sets it never changes the frame: resize the tile for more room. Out-of-range values clamp; 1 is written as absent. Not on image tiles (the picture is already fitted to the frame; make the tile bigger). The user sets it with the title bar's − % + (the % resets to 100%) or Object › Content Zoom (Zoom Content In ⌃⌘=, Out ⌃⌘-, the presets, Reset Content Zoom ⌃⌘0). Replaces `scale`, which object.create/update/upsert/batch and object.measure reject with invalid_params"
     },
     "Lifecycle": {
       "type": "object",
@@ -97,7 +97,7 @@
         },
         "lifecycle": { "$ref": "#/definitions/Lifecycle" },
         "follow": { "type": "boolean", "default": true, "description": "follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again" },
-        "scale": { "$ref": "#/definitions/Scale" },
+        "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" },
         "worktree": { "type": "string", "description": "written by Canvas: the top level of the worktree of the board's repository the terminal was created in (its `cwd`'s); what it started in, not updated when the shell moves" },
         "branch": { "type": "string", "description": "written by Canvas with `worktree`: the branch checked out there when the terminal was created; absent on a detached HEAD" }
@@ -111,7 +111,7 @@
         "url": { "type": "string" },
         "title": { "type": "string", "description": "names the tile; the app never overwrites it" },
         "pageTitle": { "type": "string", "description": "written by the app: the page's own title; shown when `title` is unset; never bumps rev" },
-        "scale": { "$ref": "#/definitions/Scale" },
+        "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
@@ -147,7 +147,7 @@
         "ref": { "type": "string", "description": "a branch (or any ref) the tile is anchored to instead of one checkout; `path` is relative to the board root's place in the repository (an absolute path in any worktree of the repository means the same repo path). While a worktree of the repository has the ref checked out the tile reads that working tree live: gutter against `diffBase` (default its merge-base), edits reload (header: \"live in <worktree>\"). Otherwise it reads git objects at the ref, read-only like `pinnedCommit` (\"<ref> @ <sha>\"). Once the ref no longer resolves (worktree and branch deleted) it reads `refSha`: when the default branch contains it, at the commit that merged it (\"merged in <sha>\"), else at `refSha` itself (\"branch gone, showing <sha>\") while its objects exist. `pinnedCommit`, when also set, wins and the ref is ignored. A ref that resolves to nothing (and no `refSha` whose objects remain) is `not_found` on create or update" },
         "refSha": { "type": "string", "description": "written by Canvas: the full SHA `ref` last resolved to (the live worktree's HEAD, or the ref's commit), recorded on every resolve without a rev or undo step, so the tile keeps reading once its worktree and branch are deleted. May be given with `ref` (e.g. by a script that knows the tip)" },
         "pinnedCommit": { "type": "string", "description": "a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: \"pinned at <sha>\"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so, and a create or update that needs its text (`size: fit`, a symbol) fails with `not_found`. A path in another worktree of the repository (absolute) is read in that worktree" },
-        "scale": { "$ref": "#/definitions/Scale" },
+        "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
@@ -164,7 +164,7 @@
         "ref": { "type": "string", "description": "a branch (or any ref) whose tree the note's paths resolve in, instead of `root` (which it overrides): the worktree that has it checked out, live, else git objects at the ref, falling back like CodeProps.ref once it is merged or deleted (via `refSha`). Excerpt fences without their own `@<sha>` read there; path:line links open code tiles with the same `ref`. The markdown stays inline, and images still load from the board's checkout when no worktree has the ref" },
         "refSha": { "type": "string", "description": "written by Canvas: the SHA `ref` last resolved to (as CodeProps.refSha)" },
         "root": { "type": "string", "description": "the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params" },
-        "scale": { "$ref": "#/definitions/Scale" },
+        "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
@@ -180,7 +180,7 @@
         "root": { "type": "string", "description": "the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root" },
         "allowNetwork": { "type": "array", "items": { "type": "string", "description": "host, host:port, or *.host; http/https/ws to anything else is blocked" }, "default": [] },
         "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" },
-        "scale": { "$ref": "#/definitions/Scale" },
+        "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
@@ -218,7 +218,7 @@
           }
         },
         "viewed": { "type": "object", "additionalProperties": { "type": "string" }, "description": "written by the tile: files the user marked Viewed (path → a fingerprint of their diff then). A file counts as viewed (folded, `changes.files[].viewed`) only while its diff is unchanged" },
-        "scale": { "$ref": "#/definitions/Scale" },
+        "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
@@ -230,7 +230,6 @@
         "path": { "type": "string", "description": "the image file: board-relative or absolute (png, jpg, gif, webp, heic, tiff, bmp, svg, or a pdf's first page). The tile shows it at its aspect ratio and reloads when the file changes on disk, so re-save a chart to the same path to update it" },
         "caption": { "type": "string", "description": "one line under the picture (truncated when longer than the tile is wide)" },
         "title": { "type": "string", "description": "shown in the title bar and Go to (default: the file name)" },
-        "scale": { "$ref": "#/definitions/Scale" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
@@ -292,7 +291,7 @@
             "computedAt": { "type": "string", "format": "date-time" }
           }
         },
-        "scale": { "$ref": "#/definitions/Scale" },
+        "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
@@ -306,7 +305,7 @@
         "points": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 }, "description": "ink points [x, y, pressure?] in object-local coordinates" },
         "color": { "type": "string", "description": "palette name (black, grey, blue, green, orange, red, violet) or #rrggbb" },
         "fill": { "enum": ["none", "semi", "solid"], "default": "none", "description": "rect/ellipse interior; only filled interiors hit-test, so an unfilled shape never blocks what is beneath it" },
-        "scale": { "$ref": "#/definitions/Scale", "description": "text shapes only: font scale (the frame grows with it); ignored on other kinds" },
+        "textSize": { "type": "number", "minimum": 0.25, "maximum": 8, "default": 1, "description": "text shapes only: a multiplier of the 20-pt text font; the frame grows with it (a corner drag on a text shape scales text and box together, as does Object › Content Zoom). Rect and ellipse labels don't take it; ignored on other kinds" },
         "key": { "$ref": "#/definitions/ObjectKey" }
       },
       "additionalProperties": false
@@ -671,7 +670,7 @@
         "pixelRect": { "$ref": "#/definitions/Frame", "description": "image pixels, top-left origin; a tile's rect is its frame (its 26 pt title bar is inside it)" },
         "state": { "enum": ["rendered", "placeholder", "failed"], "description": "placeholder: content not loaded in time or not renderable (a stand-in was drawn); failed: rendering errored" },
         "reason": { "type": "string", "description": "why a tile is a placeholder or failed" },
-        "contentSize": { "type": "object", "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "description": "the content's own extent in canvas points at the tile's width, below its title bar (tiles only; a scaled tile's layout extent times its `scale`); code: its range's rows and longest line under the header, the whole file without a range (what size \"fit\" shows)" },
+        "contentSize": { "type": "object", "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "description": "the content's own extent in canvas points at the tile's width, below its title bar (tiles only; a zoomed tile's layout extent times its `zoom`); code: its range's rows and longest line under the header, the whole file without a range (what size \"fit\" shows)" },
         "overflow": { "type": "object", "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "description": "canvas points of content beyond the frame (right, bottom); absent when it fits" }
       }
     },
@@ -928,7 +927,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
@@ -948,12 +947,12 @@
           "rev": { "type": "integer" },
           "frame": { "$ref": "#/definitions/FramePatch" },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false
       },
-      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "present when a `size: fit` refit covers others, or a `frame` given outright (e.g. a browser tile widened to a desktop viewport) makes the object cover one it didn't before (by layout.check's overlap rule; in a batch, only fits and `props.scale` resizes, once the whole batch is laid out): the ids of everything it covers. Grow away from neighbours or move it (layout.place) rather than leave the user's tiles buried" } } }
+      "result": { "type": "object", "required": ["object"], "properties": { "object": { "$ref": "#/definitions/CanvasObject" }, "warnings": { "type": "array", "items": { "type": "string" }, "description": "present when `props` has keys this type doesn't define (typos like `colour`): each names the key and the type's props. The props are kept anyway" }, "overlaps": { "type": "array", "items": { "$ref": "#/definitions/Id" }, "description": "present when a `size: fit` refit covers others, or a `frame` given outright (e.g. a browser tile widened to a desktop viewport) makes the object cover one it didn't before (by layout.check's overlap rule; in a batch, only fits, once the whole batch is laid out): the ids of everything it covers. Grow away from neighbours or move it (layout.place) rather than leave the user's tiles buried" } } }
     },
     "object.upsert": {
       "description": "Create or update by key, so a script that rebuilds part of the board (a region per ticket) can run again and again without keeping ids: when an object on the board holds `key` it is updated (`props` shallow-merged, `frame` and `size` as object.update; its type must be `type`, else `conflict`), else one is created as object.create would with `key` added to its props. Either way the result names the object's id; `created` says which happened. In object.batch, later ops can name it as \"$n\" either way, and an upsert of a key an earlier op of the batch creates updates that one.",
@@ -984,14 +983,14 @@
       "result": { "type": "object", "properties": {} }
     },
     "object.measure": {
-      "description": "Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). Other types are `unsupported`.",
+      "description": "Intrinsic size: the whole frame (tile title bar included, exactly the box the tile draws) that shows the content without scrolling. code: exactly `range` (or the symbol, or the whole file), as wide as its longest line up to `width` (default 960) with longer lines soft-wrapped and counted in the height, with the caption strip when `caption` is set, and wide enough for the whole caption up to that same maximum (a longer caption truncates); note: the rendered markdown (live fences resolved) at `width` (default 280); shape: text at `width` (default one unwrapped line per paragraph), rect/ellipse around their text; html: `width` wide (default 640) and as tall as the page's document laid out at that width, once it has rendered (Mermaid, excerpts), at most 4000 (a longer page scrolls; layout.check reports the rest); changes: the file list and every file and hunk row under its header (deleted and viewed files folded, as the tile starts), as wide as the longest line up to `width` (default 960, at least 480), longer lines wrapped, at most 4000 tall; image: its picture at one point per pixel, at most `width` (default 960) wide, plus the caption strip (`not_found` when the file isn't a readable image). A tile with `zoom` lays out at `width` ÷ zoom, and its frame is the 26-pt title bar plus that body times zoom (as wide as its natural width times zoom). Other types are `unsupported`.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
@@ -1419,7 +1418,7 @@
       }
     },
     "view.render": {
-      "description": "Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn.",
+      "description": "Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame.",
       "params": {
         "type": "object",
         "required": ["target"],

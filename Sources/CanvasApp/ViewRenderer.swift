@@ -35,9 +35,10 @@ extension CanvasView {
             for id in ids {
                 guard var frame = outline(of: id) else { continue }
                 if let object = board.objects[id], let render = renders[id], request.full {
-                    // Grown in the tile's own points, then scaled like the tile.
+                    // Grown in the content's own points, then zoomed like the tile's body.
                     let grown = RenderMath.extended(object.naturalFrame, body: RenderMath.body(of: object), content: render.image?.size ?? render.contentSize)
-                    frame = Frame(x: frame.x, y: frame.y, w: grown.w * object.scale, h: grown.h * object.scale)
+                    let size = ObjectZoom.zoomed(CGSize(width: grown.w, height: grown.h), zoom: object.zoom)
+                    frame = Frame(x: frame.x, y: frame.y, w: size.width, h: size.height)
                 }
                 outlines[id] = frame
             }
@@ -79,10 +80,10 @@ extension CanvasView {
 
         var drawn: [RenderedObject] = []
         func record(_ object: CanvasObject, _ frame: Frame, _ render: TileRender? = nil) {
-            // Tiles lay out in their own points; the report is in canvas points, like `frame`.
-            let tileScale = CGFloat(object.scale), natural = RenderMath.body(of: object)
-            let body = CGSize(width: natural.width * tileScale, height: natural.height * tileScale)
-            let content = render.map { CGSize(width: $0.contentSize.width * tileScale, height: $0.contentSize.height * tileScale) }
+            // Content lays out in its own points; the report is in canvas points, like `frame`.
+            let zoom = CGFloat(object.zoom), natural = RenderMath.body(of: object)
+            let body = CGSize(width: natural.width * zoom, height: natural.height * zoom)
+            let content = render.map { CGSize(width: $0.contentSize.width * zoom, height: $0.contentSize.height * zoom) }
             drawn.append(RenderedObject(
                 id: object.id, type: object.type, pixelRect: RenderMath.pixelRect(frame, in: region, scale: scale),
                 state: render?.state ?? .rendered, reason: render?.reason,
@@ -118,12 +119,10 @@ extension CanvasView {
             @MainActor func paint(_ object: CanvasObject) {
                 guard let render = renders[object.id] else { return }
                 let frame = outlines[object.id] ?? object.frame
-                // Chrome and content in the tile's own points, magnified by its scale.
-                let tileScale = CGFloat(object.scale)
+                // Chrome at 1×, the content at the tile's zoom inside the body.
                 cg.saveGState()
                 cg.translateBy(x: frame.x + origin.x, y: frame.y + origin.y)
-                cg.scaleBy(x: tileScale, y: tileScale)
-                drawTile(object, render: render, in: NSRect(x: 0, y: 0, width: frame.w / tileScale, height: frame.h / tileScale), chrome: request.chrome)
+                drawTile(object, render: render, in: NSRect(x: 0, y: 0, width: frame.w, height: frame.h), zoom: CGFloat(object.zoom), chrome: request.chrome)
                 cg.restoreGState()
                 record(object, frame, render)
             }
@@ -173,10 +172,10 @@ extension CanvasView {
         group.frame.w > 0 && group.frame.h > 0 ? CanvasView.docRect(group.frame) : nil
     }
 
-    /// A tile's content at its natural size, at enough pixels per point for its scale.
+    /// A tile's content at its natural size, at enough pixels per point for its zoom.
     private func tileJob(_ id: ObjectID, scale: Double, full: Bool, appearance: NSAppearance) -> TileJob? {
         guard let object = board.objects[id], let tile = tiles[id] else { return nil }
-        let request = TileRenderRequest(size: RenderMath.body(of: object), scale: scale * object.scale, full: full, appearance: appearance)
+        let request = TileRenderRequest(size: RenderMath.body(of: object), scale: scale * object.zoom, full: full, appearance: appearance)
         return TileJob(object: object, content: tile.content, request: request)
     }
 
@@ -208,9 +207,10 @@ extension CanvasView {
     }
 
     /// Tile chrome as `TileFrameView` draws it live (rounded card, title bar, lifecycle badge,
-    /// close glyph, border) around the content image, or a labelled stand-in without one.
-    /// Without `chrome`, as Hide Canvas Chrome shows it: no author mark or close glyph.
-    private func drawTile(_ object: CanvasObject, render: TileRender, in rect: NSRect, chrome: Bool) {
+    /// content zoom percentage, close glyph, border) around the content image drawn at `zoom`,
+    /// or a labelled stand-in without one. Without `chrome`, as Hide Canvas Chrome shows it: no
+    /// author mark or close glyph.
+    private func drawTile(_ object: CanvasObject, render: TileRender, in rect: NSRect, zoom: CGFloat, chrome: Bool) {
         let title = TileFrameView.titleHeight
         let card = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
         NSGraphicsContext.saveGraphicsState()
@@ -231,7 +231,8 @@ extension CanvasView {
         style.lineBreakMode = .byTruncatingMiddle
         let name = tiles[object.id]?.title ?? TileFrameView.title(for: object)
         let author = chrome ? tiles[object.id]?.author : nil
-        let frames = TileFrameView.titleFrames(width: rect.width, title: name, author: author)
+        let zoomLabel = TileFrameView.zoomLabelFrame(width: rect.width, zoom: Double(zoom))
+        let frames = TileFrameView.titleFrames(width: rect.width - (zoomLabel.map { $0.width + 4 } ?? 0), title: name, author: author)
         (name as NSString).draw(in: frames.title.offsetBy(dx: rect.minX, dy: rect.minY), withAttributes: [
             .font: TileFrameView.titleFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: style,
         ])
@@ -244,12 +245,19 @@ extension CanvasView {
                 .font: TileFrameView.authorFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: tail,
             ])
         }
+        if let zoomLabel {
+            let centered = NSMutableParagraphStyle()
+            centered.alignment = .center
+            (ObjectZoom.percent(Double(zoom)) as NSString).draw(in: zoomLabel.offsetBy(dx: rect.minX, dy: rect.minY + 2), withAttributes: [
+                .font: TileFrameView.zoomLabelFont, .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: centered,
+            ])
+        }
         if chrome {
             ("✕" as NSString).draw(at: NSPoint(x: rect.maxX - 22, y: rect.minY + 5), withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
         }
         let body = NSRect(x: rect.minX, y: rect.minY + title, width: rect.width, height: rect.height - title)
         if let image = render.image {
-            image.drawUpright(in: NSRect(origin: body.origin, size: CGSize(width: min(body.width, image.size.width), height: min(body.height, image.size.height))))
+            image.drawUpright(in: NSRect(origin: body.origin, size: CGSize(width: min(body.width, image.size.width * zoom), height: min(body.height, image.size.height * zoom))))
         } else {
             NSColor.quaternaryLabelColor.setFill()
             body.fill()

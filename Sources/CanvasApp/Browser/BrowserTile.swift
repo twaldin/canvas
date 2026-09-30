@@ -100,8 +100,9 @@ final class BrowserTile: NSView, TileContent {
         objectID = object.id
         self.board = board
         self.object = object
+        zoom = CGFloat(object.zoom)
         super.init(frame: NSRect(origin: .zero, size: RenderMath.body(of: object)))
-        chrome.autoresizingMask = [.width]
+        chrome.autoresizingMask = []
         chrome.onBack = { [weak self] in
             self?.credit.user()
             self?.webView?.goBack()
@@ -141,8 +142,16 @@ final class BrowserTile: NSView, TileContent {
 
     nonisolated override var isFlipped: Bool { true }
 
+    /// The tile's content zoom (`props.zoom`): the page draws at it, like a browser's page zoom,
+    /// while the address bar stays its size on the canvas (it takes `chromeHeight / zoom` of the
+    /// view's points, drawn at `zoom` times by the tile, and its bounds undo the zoom).
+    private var zoom: CGFloat
+
+    /// The address bar's height in this view's points.
+    private var chromeExtent: CGFloat { Self.chromeHeight / zoom }
+
     private var pageFrame: NSRect {
-        NSRect(x: 0, y: Self.chromeHeight, width: bounds.width, height: max(0, bounds.height - Self.chromeHeight))
+        NSRect(x: 0, y: chromeExtent, width: bounds.width, height: max(0, bounds.height - chromeExtent))
     }
 
     /// The web view's frame: the page area, its size rounded up to whole device pixels at the
@@ -176,7 +185,13 @@ final class BrowserTile: NSView, TileContent {
 
     /// A detached web view still gets the tile's size, so pages lay out as they will be seen.
     private func layoutParts() {
-        chrome.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.chromeHeight)
+        chrome.frame = NSRect(x: 0, y: 0, width: bounds.width, height: chromeExtent)
+        let chromeBounds = NSSize(width: bounds.width * zoom, height: Self.chromeHeight)
+        if chrome.bounds.size != chromeBounds {
+            chrome.setBoundsSize(chromeBounds)
+            // Its buttons and field lay out from its bounds, which a frame change alone leaves scaled.
+            chrome.resizeSubviews(withOldSize: chrome.frame.size)
+        }
         cover.frame = pageFrame
         failureView.frame = pageFrame
         webView?.frame = webViewFrame
@@ -790,7 +805,7 @@ final class BrowserTile: NSView, TileContent {
         return PageElements(url: url, elements: found.elements.map { .init(selector: $0.selector, text: $0.text) }, more: found.more)
     }
 
-    var headerHeight: CGFloat { Self.chromeHeight }
+    var headerHeight: CGFloat { chromeExtent }
 
     func outline(for target: MentionTarget) -> NSRect? {
         if case .console(_, _, let entry) = target { return problemOutline(entry) }
@@ -870,8 +885,8 @@ final class BrowserTile: NSView, TileContent {
             let image = request.image { bounds in
                 NSColor.textBackgroundColor.setFill()
                 bounds.fill()
-                bar?.drawUpright(in: NSRect(x: 0, y: 0, width: bounds.width, height: Self.chromeHeight))
-                failed?.drawUpright(in: NSRect(x: 0, y: Self.chromeHeight, width: bounds.width, height: max(0, bounds.height - Self.chromeHeight)))
+                bar?.drawUpright(in: NSRect(x: 0, y: 0, width: bounds.width, height: chromeExtent))
+                failed?.drawUpright(in: NSRect(x: 0, y: chromeExtent, width: bounds.width, height: max(0, bounds.height - chromeExtent)))
             }
             return TileRender(image: image, contentSize: request.size, state: .rendered, reason: loadFailure.summary)
         }
@@ -889,8 +904,8 @@ final class BrowserTile: NSView, TileContent {
         let image = request.image { bounds in
             NSColor.textBackgroundColor.setFill()
             bounds.fill()
-            bar?.drawUpright(in: NSRect(x: 0, y: 0, width: bounds.width, height: Self.chromeHeight))
-            shown?.drawUpright(in: NSRect(x: 0, y: Self.chromeHeight, width: bounds.width, height: max(0, bounds.height - Self.chromeHeight)))
+            bar?.drawUpright(in: NSRect(x: 0, y: 0, width: bounds.width, height: chromeExtent))
+            shown?.drawUpright(in: NSRect(x: 0, y: chromeExtent, width: bounds.width, height: max(0, bounds.height - chromeExtent)))
         }
         return TileRender(image: image, contentSize: request.size, state: page == nil ? .placeholder : .rendered, reason: page == nil ? reason : nil)
     }
@@ -908,6 +923,10 @@ final class BrowserTile: NSView, TileContent {
     func update(_ object: CanvasObject) {
         let previous = self.object.props["url"]?.string
         self.object = object
+        if CGFloat(object.zoom) != zoom {
+            zoom = CGFloat(object.zoom)
+            layoutParts()
+        }
         guard let url = object.props["url"]?.string, url != previous else { return }
         // A released page reloads from props.url when it comes back.
         guard let webView else { return chrome.setAddress(url) }
@@ -1322,8 +1341,8 @@ extension BrowserTile {
     fileprivate func placeProblems() {
         guard let list = problemsList else { return }
         let width = min(PageProblemsView.preferredWidth, bounds.width - 12)
-        let height = min(list.fittingHeight(width: width), max(80, (bounds.height - Self.chromeHeight) * 0.7))
-        list.frame = NSRect(x: bounds.width - width - 6, y: Self.chromeHeight + 2, width: width, height: height)
+        let height = min(list.fittingHeight(width: width), max(80, (bounds.height - chromeExtent) * 0.7))
+        list.frame = NSRect(x: bounds.width - width - 6, y: chromeExtent + 2, width: width, height: height)
     }
 
     /// A Hyper-click on a row of the list: that entry, as a `console` mention.

@@ -285,17 +285,43 @@ final class ApiRouterTests {
         #expect(away["result"]?["overlaps"] == nil)
     }
 
-    @Test func aScaleUpdateWithOnlyASizeMakesRoomLikeARefit() async throws {
-        let tile = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
-        let below = board.create(type: .note, props: .object(["markdown": "b"]), frame: Frame(x: 0, y: 340, w: 400, h: 300))
+    @Test func aZoomUpdateNeverChangesTheFrame() async throws {
+        let tile = board.create(type: .terminal, props: .object(["cwd": "/"]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        let below = board.create(type: .note, props: .object(["markdown": "b"]), frame: Frame(x: 0, y: 660, w: 400, h: 300))
         let client = try connect()
-        let doubled = try await call(client, "object.update", ["id": .string(tile.id), "props": .object(["scale": 2]), "frame": .object(["w": 800, "h": 600])])
-        #expect(try doubled["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 0, y: -300, w: 800, h: 600), "grown up, off the note below")
-        #expect(doubled["result"]?["overlaps"] == nil)
-        // An origin given with the scale is taken as it is, and the result names what it covers.
-        let placed = try await call(client, "object.update", ["id": .string(tile.id), "props": .object(["scale": .number(2.5)]), "frame": .object(["x": 0, "y": 0, "w": 1000, "h": 750])])
-        #expect(try placed["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 0, y: 0, w: 1000, h: 750))
-        #expect(placed["result"]?["overlaps"] == .array([.string(below.id)]))
+        let zoomed = try await call(client, "object.update", ["id": .string(tile.id), "props": .object(["zoom": .number(1.5)])])
+        #expect(try zoomed["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 0, y: 0, w: 1000, h: 620))
+        #expect(try board.object(tile.id).zoom == 1.5 && zoomed["result"]?["overlaps"] == nil)
+        // Out again, in a batch, with a size given too: the size is the frame, the zoom only the content.
+        let batch = try await call(client, "object.batch", ["ops": .array([
+            .object(["method": "object.update", "params": .object(["id": .string(tile.id), "props": .object(["zoom": .number(0.67)]), "frame": .object(["w": 1200])])]),
+        ])])
+        #expect(batch["error"] == nil)
+        #expect(try board.object(tile.id).frame == Frame(x: 0, y: 0, w: 1200, h: 620) && board.object(tile.id).zoom == 0.67)
+        #expect(try board.object(below.id).frame == Frame(x: 0, y: 660, w: 400, h: 300))
+        let reset = try await call(client, "object.update", ["id": .string(tile.id), "props": .object(["zoom": .null])])
+        #expect(try reset["result"]?["object"]?["frame"]?.decode(Frame.self) == Frame(x: 0, y: 0, w: 1200, h: 620) && board.object(tile.id).zoom == 1)
+    }
+
+    @Test func scaleIsRejectedNamingZoom() async throws {
+        let tile = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 400, h: 300))
+        let client = try connect()
+        let calls: [(String, [String: JSONValue])] = [
+            ("object.create", ["type": "note", "props": .object(["markdown": "b", "scale": 2])]),
+            ("object.create", ["type": "shape", "props": .object(["kind": "text", "text": "hi", "scale": 2])]),
+            ("object.update", ["id": .string(tile.id), "props": .object(["scale": 2]), "frame": .object(["w": 800, "h": 600])]),
+            ("object.upsert", ["key": "k", "type": "note", "props": .object(["markdown": "c", "scale": 2])]),
+            ("object.measure", ["type": "note", "props": .object(["markdown": "d", "scale": 2])]),
+            ("object.batch", ["ops": .array([.object(["method": "object.update", "params": .object(["id": .string(tile.id), "props": .object(["scale": 2])])])])]),
+        ]
+        for (method, params) in calls {
+            let response = try await call(client, method, params)
+            #expect(response["error"]?["code"] == "invalid_params", "\(method)")
+            let message = response["error"]?["message"]?.string ?? ""
+            #expect(message.contains("props.zoom") && message.contains("props.textSize"), "\(method): \(message)")
+        }
+        #expect(try board.object(tile.id).frame == Frame(x: 0, y: 0, w: 400, h: 300) && board.object(tile.id).props["scale"] == nil)
+        #expect(board.objects.count == 1, "nothing was created")
     }
 
     @Test func aNoteIsStoredWithTheAnchorsItsTileWouldWriteBack() async throws {

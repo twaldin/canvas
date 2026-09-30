@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import Testing
 import CanvasCore
 
@@ -112,7 +112,7 @@ struct BoardTests {
         try board.stage(.object(note.id))
         try board.update(note.id, frame: Frame(x: 400, y: 300, w: 640, h: 480))
         try board.update(note.id, z: 99)
-        try board.update(note.id, props: .object(["scale": .number(2)]))
+        try board.update(note.id, props: .object(["zoom": .number(2)]))
         #expect(!board.tray[0].edited)
         try board.update(note.id, props: .object(["markdown": .string("v2")]))
         #expect(board.tray[0].edited)
@@ -717,12 +717,12 @@ struct BoardTests {
         #expect(!over.contains(page.id))
         #expect(!over.contains("\(straddling.id) \"rect\" (drawn by user) · over"), "a box that only partly covers a tile isn't drawn on it")
 
-        // On a tile at 2×, the same spot is half as many of the tile's own points in, below a title bar twice as tall.
-        let scaled = board.create(type: .browser, props: .object(["url": .string("http://localhost/c"), "scale": .number(2)]), frame: Frame(x: 3000, y: 0, w: 1200, h: 800))
-        let mark = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 3480, y: 452, w: 250, h: 240))
+        // On a tile whose content is at 2×, the same spot is half as many content points in, below the 1× title bar.
+        let zoomed = board.create(type: .browser, props: .object(["url": .string("http://localhost/c"), "zoom": .number(2)]), frame: Frame(x: 3000, y: 0, w: 1200, h: 800))
+        let mark = board.create(type: .shape, props: .object(["kind": .string("ellipse")]), frame: Frame(x: 3480, y: 426, w: 250, h: 240))
         try board.stage(.object(mark.id))
-        let onScaled = await board.drain().context
-        #expect(onScaled.contains("\(mark.id) \"ellipse\" (drawn by user) · over browser \(scaled.id) at (240, 200) 125×120"))
+        let onZoomed = await board.drain().context
+        #expect(onZoomed.contains("\(mark.id) \"ellipse\" (drawn by user) · over browser \(zoomed.id) at (240, 200) 125×120"))
     }
 
     @Test func drawingMentionsCarryTheWholeNoteWhatTheyAreOnAndThePageUnderThem() async throws {
@@ -799,5 +799,80 @@ struct BoardTests {
         encoder.dateEncodingStrategy = .iso8601
         let reloaded = Board(snapshot: try decoder.decode(BoardSnapshot.self, from: try encoder.encode(saved)))
         #expect(try reloaded.object("obj_code").frame.h == 266, "a format-2 board loads as saved")
+    }
+
+    @Test func savedScaleBecomesZoomWithTheFrameKeptAndReloadingChangesNothing() throws {
+        // Before zoom, `scale` magnified a tile's title bar and content inside its frame, and a
+        // text shape's font.
+        func object(_ id: String, _ type: String, _ frame: String, _ props: String) -> String {
+            #"{"id":"\#(id)","type":"\#(type)","frame":\#(frame),"z":1,"rev":1,"createdBy":{"kind":"user"},"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","props":\#(props)}"#
+        }
+        let saved = """
+        {"format":2,"id":"brd_scaled","root":"/tmp","revision":3,"objects":[
+          \(object("obj_term", "terminal", #"{"x":0,"y":0,"w":1500,"h":930}"#, #"{"cwd":"/","scale":1.5}"#)),
+          \(object("obj_code", "code", #"{"x":1600,"y":0,"w":640,"h":446}"#, #"{"path":"a.swift","scale":0.75,"zoom":1.25}"#)),
+          \(object("obj_page", "browser", #"{"x":0,"y":1000,"w":1000,"h":726}"#, #"{"url":"http://localhost/","scale":1}"#)),
+          \(object("obj_pic", "image", #"{"x":1100,"y":1000,"w":640,"h":506}"#, #"{"path":"a.png","scale":2}"#)),
+          \(object("obj_text", "shape", #"{"x":0,"y":2000,"w":90,"h":58}"#, #"{"kind":"text","text":"hi","scale":2}"#)),
+          \(object("obj_box", "shape", #"{"x":200,"y":2000,"w":100,"h":50}"#, #"{"kind":"rect","scale":2}"#))
+        ]}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let board = Board(snapshot: try decoder.decode(BoardSnapshot.self, from: Data(saved.utf8)))
+        let terminal = try board.object("obj_term")
+        #expect(terminal.frame == Frame(x: 0, y: 0, w: 1500, h: 930), "the tile keeps its size on screen")
+        #expect(terminal.props == .object(["cwd": "/", "zoom": .number(1.5)]) && terminal.zoom == 1.5, "its content keeps its size")
+        #expect(try board.object("obj_code").props == .object(["path": "a.swift", "zoom": .number(1.25)]), "a zoom already there wins")
+        #expect(try board.object("obj_page").props == .object(["url": "http://localhost/"]), "1 is no zoom")
+        #expect(try board.object("obj_pic").props == .object(["path": "a.png"]), "images don't zoom")
+        let text = try board.object("obj_text")
+        #expect(text.props == .object(["kind": "text", "text": "hi", "textSize": 2]) && text.frame == Frame(x: 0, y: 2000, w: 90, h: 58))
+        #expect(try board.object("obj_box").props == .object(["kind": "rect"]))
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let reloaded = Board(snapshot: try decoder.decode(BoardSnapshot.self, from: try encoder.encode(board.snapshot)))
+        #expect(reloaded.objects == board.objects, "migrating again is a no-op")
+    }
+
+    @Test func aRenamedTextShapeDrawsItsTextAtTheSameSize() async throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let saved = #"{"format":2,"id":"brd_text","root":"/tmp","revision":1,"objects":[{"id":"obj_text","type":"shape","frame":{"x":0,"y":0,"w":90,"h":58},"z":1,"rev":1,"createdBy":{"kind":"user"},"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z","props":{"kind":"text","text":"Deploy step","scale":1.5}}]}"#
+        let text = try Board(snapshot: try decoder.decode(BoardSnapshot.self, from: Data(saved.utf8))).object("obj_text")
+        let spec = try #require(ShapeSpec(text.props))
+        // What `scale: 1.5` drew: the 20-point text font at 30 points.
+        #expect(DrawingStyle.textPointSize * spec.textSize == 30)
+        let label = DrawingStyle.text("Deploy step", size: 30, color: .labelColor).boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin]).size
+        let measured = try await ObjectMeasure.size(type: .shape, props: text.props, width: nil, root: root)
+        #expect(measured.width >= label.width && measured.width <= label.width + 4 && measured.height >= label.height && measured.height <= label.height + 4)
+        #expect(TextShapeLayout.size("Deploy step", textSize: spec.textSize, wrapWidth: nil) == measured, "typing into it keeps that size")
+    }
+
+    @Test func zoomingATerminalsContentGivesItFewerBiggerCellsInTheSameFrame() throws {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": "/"]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        let cell = CGSize(width: 8.4, height: 17), padding = CGSize(width: 2, height: 2)
+        let actual = TerminalGrid.size(of: terminal, cell: cell, padding: padding)
+        #expect(actual.columns == 118 && actual.rows == 34)
+        let zoomed = try board.update(terminal.id, props: .object(["zoom": .number(1.5)]))
+        #expect(zoomed.frame == terminal.frame)
+        let grid = TerminalGrid.size(of: zoomed, cell: cell, padding: padding)
+        #expect(grid.columns == 78 && grid.rows == 23, "the body is 666 × 396 content points at 150%")
+        let out = try board.update(terminal.id, props: .object(["zoom": .number(0.67)]))
+        #expect(TerminalGrid.size(of: out, cell: cell, padding: padding).columns == 177 && out.frame == terminal.frame)
+    }
+
+    @Test func aTileIsReadableAtTheBoardsMagnificationTimesItsContentZoom() {
+        let board = makeBoard()
+        let plain = board.create(type: .terminal, props: .object(["cwd": "/"]), frame: Frame(x: 0, y: 0, w: 1000, h: 620))
+        let zoomedIn = board.create(type: .terminal, props: .object(["cwd": "/", "zoom": 2]), frame: Frame(x: 0, y: 700, w: 1000, h: 620))
+        let zoomedOut = board.create(type: .code, props: .object(["path": "a.swift", "zoom": .number(0.5)]), frame: Frame(x: 1100, y: 0, w: 640, h: 446))
+        let picture = board.create(type: .image, props: .object(["path": "a.png", "zoom": 2]), frame: Frame(x: 1100, y: 700, w: 640, h: 506))
+        #expect(RenderMath.isZoomedOut(plain, magnification: 0.2) && !RenderMath.isZoomedOut(zoomedIn, magnification: 0.2), "200% content on a 20% board shows at 40%")
+        #expect(!RenderMath.isZoomedOut(plain, magnification: 0.5) && RenderMath.isZoomedOut(zoomedOut, magnification: 0.5), "50% content on a 50% board shows at 25%")
+        #expect(RenderMath.isZoomedOut(picture, magnification: 0.2), "an image doesn't zoom")
     }
 }

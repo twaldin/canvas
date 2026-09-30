@@ -15,6 +15,8 @@ enum AppPaths {
         .appendingPathComponent("Chalkwork", isDirectory: true)
     static let apiSocket = support.appendingPathComponent("chalkwork.sock").path
     static let cmuxSocket = support.appendingPathComponent("cmux.sock").path
+    /// Held by the one instance running on this support directory (`InstanceLock`).
+    static let instanceLock = support.appendingPathComponent("instance.lock").path
     /// Launching the app with CMUX_SOCKET_PASSWORD makes the cmux socket require it; terminal
     /// tiles get it in their environment. Without it the socket relies on its 0600 mode.
     static let cmuxPassword: String? = ProcessInfo.processInfo.environment["CMUX_SOCKET_PASSWORD"].flatMap { $0.isEmpty ? nil : $0 }

@@ -287,13 +287,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return roots.map { URL(fileURLWithPath: $0) }
     }
 
-    /// CHALKWORK_ROOT, else the first non-flag argument, else the working directory (home when launched from Finder).
+    /// The requested root, else home (launched from Finder or `open` without a root).
     static func initialRoot() -> URL {
+        requestedRoot() ?? URL(fileURLWithPath: NSHomeDirectory())
+    }
+
+    /// CHALKWORK_ROOT, else the first non-flag argument, else the working directory unless it's
+    /// `/` (Finder and `open` launch there, so it names no directory).
+    static func requestedRoot() -> URL? {
         let env = ProcessInfo.processInfo.environment
         if let root = env["CHALKWORK_ROOT"] { return URL(fileURLWithPath: root) }
         if let argument = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) { return URL(fileURLWithPath: argument) }
         let cwd = FileManager.default.currentDirectoryPath
-        return URL(fileURLWithPath: cwd == "/" ? NSHomeDirectory() : cwd)
+        return cwd == "/" ? nil : URL(fileURLWithPath: cwd)
     }
 
     /// The board the user is on (`CanvasWindowController.frontmost`).

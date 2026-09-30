@@ -50,9 +50,15 @@ export CHALKWORK_SOCKET="$home/chalkwork.sock"
 # zmx keys its socket directory off TMPDIR; match the GUI app's.
 zmx_env() { TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)" "$@"; }
 
-# The pid file counts only while that process owns this home's socket. A home copied from
-# another instance's carries its pid file, and trusting it quit the user's own instance.
+# The instance running on this home: the holder of its instance lock (the pid it wrote there,
+# while that process has the file open), else, for an instance from before the lock, the pid
+# file's while that process owns this home's socket. Neither file counts alone: a home copied
+# from another instance's carries both, and trusting them quit the user's own instance. With a
+# holder missed (a stale pid file), `start` would remove its socket, leaving it with no API,
+# while the new launch hands over to it and exits.
 running_pid() {
+  pid="$(cat "$home/instance.lock" 2>/dev/null)"
+  if [ -n "$pid" ] && lsof -t "$home/instance.lock" 2>/dev/null | grep -qx "$pid"; then echo "$pid"; return; fi
   [ -f "$home/pid" ] || return 1
   pid="$(cat "$home/pid")"
   kill -0 "$pid" 2>/dev/null || return 1

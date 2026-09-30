@@ -2,6 +2,12 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
+## Unreleased
+
+### Fixed
+
+- **One Chalkwork per home.** Opening Chalkwork while it already runs on the same boards (a second `open -n`, a login restore beside the running app) no longer starts a second instance that takes over the first one's socket, leaving one of them with no API (`chalkwork` CLI calls failing `unavailable`): the new launch asks the running one to open its folder's board and bring it forward, then exits. Development homes each run their own instance, as before.
+
 ## 0.3.1
 
 Fixes from watching people use Chalkwork for the first time: typing goes where you aimed, the tray says what each chip is and where it goes, mentions follow the worktree an agent works in, and a finished agent stays green until you look.

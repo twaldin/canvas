@@ -41,6 +41,10 @@ final class BrowserTile: NSView, TileContent {
     /// The loaded page's background luminance (`PageSurface`), kept while the page is detached.
     private(set) var surfaceLuminance: Double?
     private let chrome = BrowserChrome()
+    /// The page area under the address bar, holding the web view: WebKit docks the Web Inspector
+    /// inside the web view's superview (at its bottom, laid out from its bounds), so there it
+    /// shares the page's room and never covers the address bar.
+    private let pageHost = NSView()
     /// Covers the web view while `view.snapshot` renders (WebKit draws outside `cacheDisplay`).
     private let cover = NSImageView()
     private var cachedImage: NSImage?
@@ -76,7 +80,8 @@ final class BrowserTile: NSView, TileContent {
     /// The page's error count as it last reported it (`PageCapture`), and its own document's
     /// HTTP error status: the chrome's badge counts both.
     fileprivate var pageErrors = 0
-    fileprivate var documentFailure: PageLogEntry?
+    fileprivate var documentStatus = DocumentFailureTracker<ObjectIdentifier>()
+    fileprivate var documentFailure: PageLogEntry? { documentStatus.current }
     /// The badge's list of the page's errors, while open.
     fileprivate var problemsList: PageProblemsView?
     /// The log of the page Chalkwork last released (`PageReport.previous`), read from it as it went
@@ -125,6 +130,7 @@ final class BrowserTile: NSView, TileContent {
         }
         chrome.setAddress(object.props["url"]?.string ?? "")
         addSubview(chrome)
+        addSubview(pageHost)
         cover.imageScaling = .scaleAxesIndependently
         cover.autoresizingMask = [.width, .height]
         cover.isHidden = true
@@ -154,7 +160,7 @@ final class BrowserTile: NSView, TileContent {
         NSRect(x: 0, y: chromeExtent, width: bounds.width, height: max(0, bounds.height - chromeExtent))
     }
 
-    /// The web view's frame: the page area, its size rounded up to whole device pixels at the
+    /// The web view's frame in `pageHost`: the page area, its size rounded up to whole device pixels at the
     /// tile's on-screen scale (the sliver past the tile is clipped). WebKit sizes the page's
     /// viewport from the view's size in device pixels, rounded to whole pixels, then scaled
     /// back and cut to whole CSS pixels: at 90% zoom a 648 pt tile is 1166.4 px, rounded to
@@ -170,13 +176,13 @@ final class BrowserTile: NSView, TileContent {
             let up = (length * pixelsPerPoint - 0.001).rounded(.up) / pixelsPerPoint
             return up.rounded(.down) == length.rounded(.down) ? up : length
         }
-        return NSRect(x: page.minX, y: page.minY, width: snapped(page.width, abs(unit.width) * backing),
+        return NSRect(x: 0, y: 0, width: snapped(page.width, abs(unit.width) * backing),
                       height: snapped(page.height, abs(unit.height) * backing))
     }
 
     /// The canvas zoom settled at a new value: the web view's device-pixel size changed.
     func zoomChanged() {
-        if let webView, webView.superview === self { webView.frame = webViewFrame }
+        if let webView, webView.superview === pageHost { webView.frame = webViewFrame }
     }
 
     override func resizeSubviews(withOldSize oldSize: NSSize) {
@@ -194,6 +200,7 @@ final class BrowserTile: NSView, TileContent {
         }
         cover.frame = pageFrame
         failureView.frame = pageFrame
+        pageHost.frame = pageFrame
         webView?.frame = webViewFrame
         placeProblems()
     }
@@ -335,9 +342,9 @@ final class BrowserTile: NSView, TileContent {
             webView.isHidden = false
             if !WebStage.isParked(webView) { WebStage.park(webView, frame: webViewFrame) }
         } else {
-            if webView.superview !== self {
+            if webView.superview !== pageHost {
                 webView.frame = webViewFrame
-                addSubview(webView, positioned: .below, relativeTo: failureView)
+                pageHost.addSubview(webView)
             }
             webView.isHidden = visibility == .hidden
             if isLive {
@@ -352,7 +359,7 @@ final class BrowserTile: NSView, TileContent {
 
     /// The page is in its live tile, in a window on screen and not covered: someone can see it.
     private var pageOnScreen: Bool {
-        guard isLive, let webView, webView.superview === self, let window else { return false }
+        guard isLive, let webView, webView.superview === pageHost, let window else { return false }
         return window.isVisible && window.occlusionState.contains(.visible)
     }
 
@@ -408,7 +415,7 @@ final class BrowserTile: NSView, TileContent {
             self.problemsChanged()
         }
         pageErrors = 0
-        documentFailure = nil
+        documentStatus.reset()
         pageActivity = false
         observations = []
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
@@ -483,16 +490,16 @@ final class BrowserTile: NSView, TileContent {
         guard let webView else { return }
         WebStage.setOcclusionDetection(true, on: webView)
         // Back from the stage into its tile, or hidden there when nobody can see it.
-        let inTile = webView.superview === self
+        let inTile = webView.superview === pageHost
         placePage()
         if inTile { refreshOcclusion(webView) }
     }
 
     /// WebKit re-reads occlusion only on the next window change; re-parenting in the tile forces it.
     private func refreshOcclusion(_ webView: WKWebView) {
-        guard webView.superview === self else { return }
+        guard webView.superview === pageHost else { return }
         webView.removeFromSuperview()
-        addSubview(webView, positioned: .below, relativeTo: failureView)
+        pageHost.addSubview(webView)
     }
 
     func load(_ address: String) {
@@ -733,7 +740,7 @@ final class BrowserTile: NSView, TileContent {
 
     /// A point in this view → CSS pixels in the page's viewport; nil over the chrome.
     private func pagePoint(_ point: NSPoint) -> CGPoint? {
-        guard let webView, webView.superview === self else { return nil }
+        guard let webView, webView.superview === pageHost else { return nil }
         var local = webView.convert(point, from: self)
         guard webView.bounds.contains(local) else { return nil }
         if !webView.isFlipped { local.y = webView.bounds.height - local.y }
@@ -742,7 +749,7 @@ final class BrowserTile: NSView, TileContent {
     }
 
     private func viewRect(_ pageRect: CGRect) -> NSRect? {
-        guard let webView, webView.superview === self else { return nil }
+        guard let webView, webView.superview === pageHost else { return nil }
         let zoom = webView.pageZoom * webView.magnification
         var rect = NSRect(x: pageRect.minX * zoom, y: pageRect.minY * zoom, width: pageRect.width * zoom, height: pageRect.height * zoom)
         if !webView.isFlipped { rect.origin.y = webView.bounds.height - rect.maxY }
@@ -794,7 +801,7 @@ final class BrowserTile: NSView, TileContent {
     }
 
     func pageElements(in rect: NSRect) async -> PageElements? {
-        guard let webView, webView.superview === self else { return nil }
+        guard let webView, webView.superview === pageHost else { return nil }
         var local = webView.convert(rect, from: self).intersection(webView.bounds)
         guard !local.isNull, local.width > 0, local.height > 0 else { return nil }
         if !webView.isFlipped { local.origin.y = webView.bounds.height - local.maxY }
@@ -834,7 +841,7 @@ final class BrowserTile: NSView, TileContent {
 
     /// Ready once the attached page has loaded and that frame is on screen.
     private func checkReady() {
-        guard !readyWaiters.isEmpty, isLive, let webView, webView.superview === self, !webView.isLoading else { return }
+        guard !readyWaiters.isEmpty, isLive, let webView, webView.superview === pageHost, !webView.isLoading else { return }
         WebStage.afterNextPresentationUpdate(webView) { [weak self] in
             guard let self else { return }
             let waiters = self.readyWaiters
@@ -912,7 +919,7 @@ final class BrowserTile: NSView, TileContent {
 
     func showSnapshot(_ show: Bool) {
         // A failed page's state is drawn by AppKit, which `cacheDisplay` captures as it is.
-        let covering = show && loadFailure == nil && webView?.superview === self && cachedImage != nil
+        let covering = show && loadFailure == nil && webView?.superview === pageHost && cachedImage != nil
         cover.image = covering ? cachedImage : nil
         cover.isHidden = !covering
     }
@@ -965,12 +972,12 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         decisionHandler(.allow)
     }
 
-    /// The page's own document with an HTTP error status is its first problem (`PageLog`).
+    /// The page's own document with an HTTP error status is its first problem (`PageLog`), once
+    /// its navigation commits (`DocumentFailureTracker`).
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
         if navigationResponse.isForMainFrame {
             let status = (navigationResponse.response as? HTTPURLResponse)?.statusCode ?? 0
-            documentFailure = status >= 400 ? PageLog.documentFailure(url: navigationResponse.response.url?.absoluteString ?? "", status: status) : nil
-            problemsChanged()
+            documentStatus.responded(url: navigationResponse.response.url?.absoluteString ?? "", status: status)
         }
         // What WebKit does without this method: show what it can, never download.
         decisionHandler(navigationResponse.canShowMIMEType ? .allow : .cancel)
@@ -978,6 +985,7 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         if !uncommittedNavigations.contains(where: { $0 === navigation }) { uncommittedNavigations.append(navigation) }
+        documentStatus.started()
         signalChange()
     }
 
@@ -985,13 +993,14 @@ extension BrowserTile: WKNavigationDelegate, WKUIDelegate {
         uncommittedNavigations.removeAll { $0 === navigation }
         clearLoadFailure()
         commitURL()
+        // The committed document's own HTTP error, or none; a page back from the back/forward
+        // cache has no response of its own and takes its history entry's (Back from a 404: none).
+        documentStatus.committed(into: webView.backForwardList.currentItem.map(ObjectIdentifier.init))
         // The page loaded again after a release is the first document since; the next one
         // (a navigation, a reload) leaves the released page's log behind.
         commitsSinceRelease += 1
-        if commitsSinceRelease > 1, previousLoad != nil {
-            previousLoad = nil
-            problemsChanged()
-        }
+        if commitsSinceRelease > 1 { previousLoad = nil }
+        problemsChanged()
         signalChange()
     }
 
@@ -1357,15 +1366,37 @@ extension BrowserTile {
         return convert(rect, from: list)
     }
 
-    /// Opens Safari's Web Inspector for the page (the page's own Inspect Element opens it too).
-    /// `_inspector` is WKWebView's own inspector handle (`isInspectable` makes it available);
-    /// false when the page isn't loaded or WebKit has no such handle.
+    /// Safari's Web Inspector for the page, docked in the page area under the address bar
+    /// (`pageHost`). `_inspector` is WKWebView's own inspector handle (`isInspectable` makes it
+    /// available); nil when the page isn't loaded or WebKit has no such handle.
+    private var inspector: NSObject? {
+        guard let webView, webView.url != nil, webView.responds(to: NSSelectorFromString("_inspector")) else { return nil }
+        return webView.value(forKey: "_inspector") as? NSObject
+    }
+
+    /// Whether the page's Web Inspector is open (View ▸ Hide Web Inspector then).
+    var inspectorVisible: Bool {
+        guard let inspector, inspector.responds(to: NSSelectorFromString("isVisible")) else { return false }
+        return (inspector.value(forKey: "isVisible") as? Bool) == true
+    }
+
+    /// Opens the Web Inspector (the object menu's Inspect Element; the page's own Inspect Element
+    /// opens it too). False without an inspector.
     @discardableResult
     func showInspector() -> Bool {
-        guard let webView, webView.url != nil, webView.responds(to: NSSelectorFromString("_inspector")),
-              let inspector = webView.value(forKey: "_inspector") as? NSObject, inspector.responds(to: NSSelectorFromString("show")) else { return false }
+        guard let inspector, inspector.responds(to: NSSelectorFromString("show")) else { return false }
         inspector.perform(NSSelectorFromString("show"))
         return true
+    }
+
+    /// ⌥⌘I, View ▸ Show/Hide Web Inspector: closes an open inspector, else opens it.
+    func toggleInspector() {
+        guard inspectorVisible else {
+            showInspector()
+            return
+        }
+        guard let inspector, inspector.responds(to: NSSelectorFromString("close")) else { return }
+        inspector.perform(NSSelectorFromString("close"))
     }
 
     var canShowInspector: Bool { webView?.url != nil }

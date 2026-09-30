@@ -39,7 +39,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         }
         guard let worktree = GitWorktree.containing(directory.standardizedFileURL.path), worktree.commonDir == board.repo?.commonDir,
               !worktree.isMain, let region = board.region(for: worktree) else { return }
-        // After the window's first layout, which restores the saved viewport.
+        // On the next turn, once the window has laid the canvas out. The view opens at 100%
+        // wherever layout puts it: the board doesn't save its viewport.
         DispatchQueue.main.async { [weak self] in self?.canvas.reveal(region) }
     }
 
@@ -671,7 +672,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.deleteSelection()
     }
 
+    /// Edit ▸ Select All reaching the board: a text field or view holding the keyboard (a browser
+    /// tile's address, a filter, a note being edited) selects its own text; else every object.
     @objc func selectAllObjects(_ sender: Any?) {
+        if let text = window?.firstResponder as? NSText { return text.selectAll(sender) }
         canvas.selectAll()
     }
 
@@ -773,9 +777,17 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     @objc func copyNoteAsMarkdown(_ sender: Any?) { selected(.note).map(canvas.copyNoteMarkdown) }
     @objc func saveNoteAsMarkdown(_ sender: Any?) { selected(.note).map(canvas.saveNoteMarkdown) }
 
-    /// View ▸ Show Web Inspector: Safari's Web Inspector for the focused, else the one selected,
-    /// browser tile's page.
-    @objc func showWebInspector(_ sender: Any?) { inspectableBrowser?.showInspector() }
+    /// View ▸ Show/Hide Web Inspector (⌥⌘I): Safari's Web Inspector for the focused, else the one
+    /// selected, browser tile's page, opened or closed.
+    @objc func toggleWebInspector(_ sender: Any?) { inspectableBrowser?.toggleInspector() }
+
+    /// View ▸ Reload Page (⌘R): the focused, else the one selected, browser tile's page, as its
+    /// reload button does.
+    @objc func reloadPage(_ sender: Any?) {
+        guard let page = keyboardBrowser?.tile else { return }
+        page.credit.user()
+        page.reload()
+    }
 
     /// File ▸ Snapshot Page to Image: the focused, else the one selected, browser tile's page.
     @objc func snapshotPage(_ sender: Any?) { keyboardBrowser.map { canvas.snapshotPage($0.id) } }
@@ -856,7 +868,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         case #selector(saveHTMLTile(_:)), #selector(openHTMLTileInBrowser(_:)): return selected(.html) != nil
         case #selector(openPageInBrowser(_:)): return selected(.browser) != nil
         case #selector(copyNoteAsMarkdown(_:)), #selector(saveNoteAsMarkdown(_:)): return selected(.note) != nil
-        case #selector(showWebInspector(_:)): return inspectableBrowser != nil
+        case #selector(toggleWebInspector(_:)):
+            item.title = inspectableBrowser?.inspectorVisible == true ? "Hide Web Inspector" : "Show Web Inspector"
+            return inspectableBrowser != nil
+        case #selector(reloadPage(_:)): return keyboardBrowser != nil
         case #selector(snapshotPage(_:)): return keyboardBrowser != nil
         case #selector(toggleFollowFiles(_:)):
             guard let terminal = canvas.followTerminal else {

@@ -262,6 +262,34 @@ struct PageLogTests {
         #expect(log.problems.map(\.resource) == [nil, "document"])
     }
 
+    /// Persona study B17: Back from a 404 to the page before still showed "1 error".
+    @Test func aPageBackFromTheCacheShowsItsOwnHTTPErrorNotThePreviousPages() {
+        var status = DocumentFailureTracker<String>()
+        status.started()
+        status.responded(url: "http://localhost:8000/", status: 200)
+        status.committed(into: "home")
+        status.started()
+        status.responded(url: "http://localhost:8000/missing", status: 404)
+        #expect(status.current == nil, "the answer is the page's once its navigation commits")
+        status.committed(into: "missing")
+        #expect(status.current?.status == 404)
+
+        // Back and Forward: pages restored from the back/forward cache, without a response.
+        status.started()
+        status.committed(into: "home")
+        #expect(status.current == nil)
+        status.started()
+        status.committed(into: "missing")
+        #expect(status.current?.status == 404)
+
+        status.started()
+        status.responded(url: "http://localhost:8000/gone", status: 500)
+        status.started()
+        status.responded(url: "http://localhost:8000/missing", status: 200)
+        status.committed(into: "missing")
+        #expect(status.current == nil, "an answer to a navigation that never committed doesn't carry over")
+    }
+
     @Test func aConsoleMentionCarriesTheMessageSourceAndStack() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

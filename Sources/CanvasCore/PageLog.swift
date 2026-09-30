@@ -240,6 +240,51 @@ public struct PageLog: Equatable, Sendable {
     }
 }
 
+/// A browser tile's page's own document's HTTP error (`PageLog.documentFailure`) across
+/// navigations. A main-frame response's status waits for its navigation to commit, and the
+/// commit makes it the page's (or none), remembered for the history entry it committed into
+/// (`Entry`: the back/forward item). A page back from the back/forward cache has no response of
+/// its own: it takes what its entry had, so Back from a 404 to the page before drops the error
+/// and Forward to the 404 shows it again.
+public struct DocumentFailureTracker<Entry: Hashable & Sendable>: Sendable {
+    /// The committed page's error, nil while it has none.
+    public private(set) var current: PageLogEntry?
+    /// The in-flight navigation's answer: nil before one arrives, `.some(nil)` for a success.
+    private var pending: PageLogEntry??
+    private var byEntry: [Entry: PageLogEntry] = [:]
+
+    public init() {}
+
+    /// A navigation started: nothing it commits has answered yet.
+    public mutating func started() {
+        pending = nil
+    }
+
+    /// The main frame answered the navigation in flight.
+    public mutating func responded(url: String, status: Int, at date: Date = Date()) {
+        pending = .some(status >= 400 ? PageLog.documentFailure(url: url, status: status, at: date) : nil)
+    }
+
+    /// The navigation in flight committed into history entry `entry`: its answer is the page's;
+    /// without one, whatever that entry's page had.
+    public mutating func committed(into entry: Entry?) {
+        if let answer = pending {
+            current = answer
+            if let entry { byEntry[entry] = answer }
+        } else {
+            current = entry.flatMap { byEntry[$0] }
+        }
+        pending = nil
+    }
+
+    /// The page and its history went away (the tile released it).
+    public mutating func reset() {
+        current = nil
+        pending = nil
+        byEntry = [:]
+    }
+}
+
 /// What `object.get` says about a browser tile's page (`page`): whether anyone sees it now
 /// (`visibility`), what its current document reported (`log`), and the log of the page Chalkwork
 /// last released (`previous`), kept so a page released out of view doesn't take its errors

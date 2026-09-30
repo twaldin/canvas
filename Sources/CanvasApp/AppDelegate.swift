@@ -366,7 +366,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openPageInBrowser(_ sender: Any?) { keyController?.openPageInBrowser(sender) }
     @objc func copyNoteAsMarkdown(_ sender: Any?) { keyController?.copyNoteAsMarkdown(sender) }
     @objc func saveNoteAsMarkdown(_ sender: Any?) { keyController?.saveNoteAsMarkdown(sender) }
-    @objc func showWebInspector(_ sender: Any?) { keyController?.showWebInspector(sender) }
+    @objc func toggleWebInspector(_ sender: Any?) { keyController?.toggleWebInspector(sender) }
+    @objc func reloadPage(_ sender: Any?) { keyController?.reloadPage(sender) }
     @objc func snapshotPage(_ sender: Any?) { keyController?.snapshotPage(sender) }
     @objc func clearBrowsingData(_ sender: Any?) {
         guard let controller = keyController, let window = controller.window else { return }
@@ -526,8 +527,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Zoom to Fit", #selector(zoomToFit(_:)), "9"),
             .separator(),
             item("Clear Attention Markers", #selector(clearAttentionMarkers(_:)), ""),
-            // ⌥⌘I as in Safari's Develop menu: the focused or selected browser tile's page.
-            item("Show Web Inspector", #selector(showWebInspector(_:)), "i", [.option, .command]),
+            // ⌘R and ⌥⌘I as in Safari: the focused or selected browser tile's page. Disabled
+            // otherwise, so the key goes on to whoever has the keyboard.
+            item("Reload Page", #selector(reloadPage(_:)), "r"),
+            // Show or Hide (`CanvasWindowController.validate`), docked under the address bar.
+            item("Show Web Inspector", #selector(toggleWebInspector(_:)), "i", [.option, .command]),
             // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
             // ⌥⌘T as AppKit's Show/Hide Toolbar; Ghostty binds nothing to it.
             item("Hide Canvas Chrome", #selector(toggleCanvasChrome(_:)), "t", [.option, .command]),

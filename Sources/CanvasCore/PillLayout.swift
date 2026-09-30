@@ -9,7 +9,8 @@ import CoreGraphics
 /// else below, wherever that covers no other tile; failing that, in the nearest free stretch
 /// near one of those spots, cut short to fit it, or on its own object's body; failing that too,
 /// slid along one of those sides, or as near to one of those or to the top of the object's
-/// body as the other pills allow, weighing what it hides (other tiles' title bars count most).
+/// body as the other pills allow, weighing what it hides (other tiles' title bars count most),
+/// within `maxStray` of its ring unless pills leave no closer spot.
 /// It never covers the object's own header (a tile's title bar, a browser's address bar), whose
 /// controls stay clickable. Edge pills are compact and cover no tile: each slides along its edge
 /// to a stretch with nothing under it, else goes to the window chrome's band (`bands`: the free
@@ -191,6 +192,10 @@ public enum PillLayout {
         func covered(_ rect: CGRect) -> CGFloat {
             otherRects.reduce(0) { $0 + area($1, rect) } + (headerWeight - 1) * otherHeaders.reduce(0) { $0 + area($1, rect) }
         }
+        // How far the rect is from the ring (0 when they touch or overlap).
+        func gap(_ rect: CGRect) -> CGFloat {
+            hypot(max(0, ring.minX - rect.maxX, rect.minX - ring.maxX), max(0, ring.minY - rect.maxY, rect.minY - ring.maxY))
+        }
         // A spot outside that the clear area holds without pushing it onto the ring, covering
         // neither a pill nor more than a sliver of a tile.
         if let clean = outside.first(where: { !$0.intersects(ring) && !overlapsPill($0, placed) && covered($0) < 100 }) { return clean }
@@ -220,7 +225,7 @@ public enum PillLayout {
                 let width = min(size.width, stretch.end - stretch.start)
                 for x in [ring.minX, ring.maxX + spacing, ring.minX - spacing - width] {
                     let rect = CGRect(x: min(max(x, stretch.start), stretch.end - width), y: level, width: width, height: size.height)
-                    let gap = hypot(max(0, ring.minX - rect.maxX, rect.minX - ring.maxX), max(0, ring.minY - rect.maxY, rect.minY - ring.maxY))
+                    let gap = gap(rect)
                     guard gap <= maxStray else { continue }
                     let cost = area(rect, target) / size.height + 2 * gap + (size.width - width) / 2
                     if roomy == nil || cost < roomy!.cost { roomy = (rect, cost) }
@@ -228,12 +233,14 @@ public enum PillLayout {
             }
         }
         if let roomy { return roomy.rect }
-        // Else, covering no pill and not the header, the spot with the least hidden (other
-        // tiles, and its own object's body) plus distance moved from one of those spots (hidden
-        // area counts as the length of bubble it hides, so a bubble never strays far from its
-        // object to spare a sliver); ties go to the preferred spot. Above and below, a bubble
-        // slides sideways along its side past the tiles there; beside, up and down.
-        var best: (rect: CGRect, cost: (Int, Int, CGFloat, Int))?
+        // Else, covering no pill and not the header, within `maxStray` of its ring, the spot with
+        // the least hidden (other tiles, and its own object's body) plus distance moved from one
+        // of those spots (hidden area counts as the length of bubble it hides, so a bubble never
+        // strays far from its object to spare a sliver); ties go to the preferred spot. Above and
+        // below, a bubble slides sideways along its side past the tiles there; beside, up and
+        // down. Issue #3: at fit zoom in a packed board, a blocked terminal's bubble slid past
+        // every covered spot to an empty band 320 pt away, where it read as another tile's.
+        var best: (rect: CGRect, cost: (Int, Int, Int, CGFloat, Int))?
         for (index, base) in (outside + [inside]).enumerated() {
             let alongX = index == 0 || index == 3
             let alongY = index == 1 || index == 2
@@ -247,8 +254,9 @@ public enum PillLayout {
                     let pill = overlapsPill(rect, placed) ? 1 : 0
                     if let best, pill > best.cost.0 { continue }
                     let chrome = rect.intersects(header) ? 1 : 0
+                    let stray = gap(rect) > maxStray ? 1 : 0
                     let distance = hypot(rect.minX - base.minX, rect.minY - base.minY)
-                    let cost = (pill, chrome, ((covered(rect) + area(rect, target)) / size.height + distance).rounded(), index)
+                    let cost = (pill, chrome, stray, ((covered(rect) + area(rect, target)) / size.height + distance).rounded(), index)
                     if best == nil || cost < best!.cost { best = (rect, cost) }
                 }
             }

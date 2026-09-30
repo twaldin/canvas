@@ -199,6 +199,27 @@ struct PillLayoutTests {
         #expect(abs(bubble.minY - (log.maxY + 10 + PillLayout.spacing)) < 1, "\(bubble) is not against the ring's bottom")
     }
 
+    @Test func aBlockedBubbleStaysNearItsRingWhenEveryNearbySpotCoversATile() {
+        // Issue #3 (persona study X11): at fit zoom a blocked terminal sits in a packed grid of
+        // small tiles, so every spot within `maxStray` of its ring covers a neighbour. The bubble
+        // went to the empty band above the grid, 320 pt away, beside unrelated tiles.
+        var tiles: [PillLayout.Tile] = []
+        for row in 0..<10 {
+            for column in 0..<12 {
+                let rect = CGRect(x: 488 + CGFloat(column) * 101, y: 184 + CGFloat(row) * 81, width: 95, height: 75)
+                if clear.intersects(rect) { tiles.append(.init(id: "\(row)-\(column)", rect: rect, header: 9)) }
+            }
+        }
+        let terminal = try! #require(tiles.first { $0.id == "4-6" })
+        let blocked = PillLayout.Marker(id: terminal.id, target: terminal.rect, ringInset: 10, size: CGSize(width: 378, height: 28), header: 9, blocked: true)
+        let rect = try! #require(PillLayout.place(markers: [blocked], edges: [], tiles: tiles, clear: clear).blocked[terminal.id])
+        let ring = terminal.rect.insetBy(dx: -10, dy: -10)
+        let gap = hypot(max(0, ring.minX - rect.maxX, rect.minX - ring.maxX), max(0, ring.minY - rect.maxY, rect.minY - ring.maxY))
+        #expect(gap <= PillLayout.maxStray, "\(rect) is \(Int(gap)) pt from its ring")
+        #expect(!rect.intersects(terminal.rect.divided(atDistance: 9, from: .minYEdge).slice), "\(rect) covers the terminal's title bar")
+        #expect(clear.contains(rect))
+    }
+
     @Test func anEdgePillNeverCoversTheLineBeingTyped() {
         // Warp study 4: a focused shell fills the left of the view, its prompt on the row at
         // y 800…820; the marked object offscreen to the left is level with that row.

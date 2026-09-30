@@ -141,10 +141,10 @@ struct WorktreeTests {
         #expect(board.defaultLinkRoot(for: fees.id) == worktree.path)
         #expect(board.defaultLinkRoot(for: main.id) == nil)
         #expect(board.defaultLinkRoot(for: nil) == nil, "the user's notes resolve against the board root")
-        // The shell's reported directory wins over props.cwd.
-        board.reportedDirectory = { $0 == main.id ? worktree.path : nil }
+        // Where it works now (its program's or shell's directory) wins over props.cwd.
+        board.terminalWorks(main.id, in: worktree.path)
         #expect(board.defaultLinkRoot(for: main.id) == worktree.path)
-        board.reportedDirectory = { _ in nil }
+        board.terminalWorks(main.id, in: repo.root.path)
 
         // Links written in the worktree agent's note open its checkout's file; absolute ones stay.
         let note = board.create(type: .note, props: .object(["markdown": .string("tests/x.ts:16"), "root": .string(worktree.path)]))

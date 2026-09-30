@@ -268,4 +268,46 @@ struct RepoBoardTests {
         #expect(registry.open(root: repo.root) === board)
         #expect(board.defaultTerminalDirectory == board.root.path)
     }
+
+    /// A terminal made at the board root in which `cd <directory> && <kind>` runs an agent: the
+    /// shell reports nothing until the agent exits, the agent's process works in `directory`
+    /// (read from the process table, as the app reads it).
+    func agent(_ kind: String, in directory: URL, on board: Board) throws -> ObjectID {
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string(board.root.path)])).id
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["30"]
+        process.currentDirectoryURL = directory
+        try process.run()
+        defer { process.terminate() }
+        board.terminalWorks(terminal, in: try #require(SessionProcesses.directory(of: process.processIdentifier)))
+        try board.reportLifecycle(tile: terminal, kind: kind, state: .idle, message: nil, seq: 1, source: "canvas-\(kind)")
+        return terminal
+    }
+
+    @Test func aTerminalBelongsToTheWorktreeItsAgentWorksInAndThatWorktreesMentionsGoThere() async throws {
+        let (repo, worktree) = try await fixture()
+        let other = dir.appendingPathComponent("wt-other")
+        try await repo.git("worktree", "add", "-q", "-b", "other", other.path)
+        let board = BoardRegistry(store: BoardStore(directory: boards, debounce: 60)).open(root: repo.root)
+        let codex = try agent("codex", in: worktree.appendingPathComponent("src"), on: board)
+        let claude = try agent("claude", in: other, on: board)
+        #expect(board.objects[codex]?.props["worktree"] == .string(GitWorktree.normalized(worktree.path)))
+        #expect(board.objects[codex]?.props["branch"] == .string("feature"))
+        #expect(board.objects[claude]?.props["branch"] == .string("other"))
+        #expect(board.repo?.worktrees.contains { $0.branch == "other" } == true, "recorded on the board")
+        #expect(board.objects(ofBranch: "feature").contains(codex))
+
+        // A line of wt-feature's file staged while claude is the target goes to codex.
+        let file = worktree.appendingPathComponent("src/a.txt").path
+        let code = board.create(type: .code, props: .object(["path": .string(file)]))
+        let checkout = try #require(PromptTarget.checkout(of: .code(object: code.id, path: file, lines: LineRange(start: 1, end: 1)), on: board))
+        #expect(PromptTarget.affinity(checkout: checkout, current: claude, checkouts: PromptTarget.checkouts(on: board), objects: board.objects) == codex)
+
+        // Back in the board's checkout it is main's again; outside the repository nothing changes.
+        board.terminalWorks(codex, in: repo.root.path)
+        #expect(board.objects[codex]?.props["branch"] == .string("main"))
+        board.terminalWorks(codex, in: "/")
+        #expect(board.objects[codex]?.props["branch"] == .string("main"))
+    }
 }

@@ -7,6 +7,7 @@ Each version's section is its GitHub release's notes (release.yml puts it above 
 ### Fixed
 
 - **A reply that lands while you look elsewhere stays green.** Looking at an agent (or typing in it) while it still works no longer counts as seeing its answer: a turn that ends after you moved on is done and unseen until you look at it, and ⌘J goes there. ⌘J covers the board you're on; the README said "whoever".
+- **Mentions route by worktree after `cd ../wt && codex`.** A terminal's `worktree` and `branch` follow where its program (else its shell) works, read from the process table, not only where the tile started: a line from that worktree goes to the agent working there, as the README promised, and `board.get` files the terminal under that branch.
 
 ## 0.3.0
 

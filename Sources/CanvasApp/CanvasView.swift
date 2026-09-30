@@ -223,8 +223,6 @@ final class CanvasView: NSScrollView {
         center.addObserver(self, selector: #selector(boundsChanged), name: NSApplication.didResignActiveNotification, object: nil)
         // Placement aims at what the user can see: the viewport clear of the toolbar and tray.
         board.viewport = { [weak self] in self?.clearViewport }
-        // Where each terminal's shell last reported: an agent's checkout (link roots, affinity).
-        board.reportedDirectory = { [weak self] id in (self?.tiles[id]?.content as? TerminalTile)?.reportedCwd }
         // A mention of a shape drawn on a page lists the elements under it.
         board.pageElements = { [weak self] id, rect in await self?.pageElements(id, canvasRect: rect) }
         // Mentions name a terminal as its header does, one of a whole terminal carries its screen,

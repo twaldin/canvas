@@ -262,11 +262,15 @@ final class TerminalTile: NSView, TileContent {
     /// Reads the foreground program again (a few syscalls once the session's shell is known).
     /// A program starting clears the header's last-command status (the integration's title,
     /// when it comes, does too); back at the prompt, an agent reporting by notification has
-    /// exited (`Board.terminalProgram`).
+    /// exited (`Board.terminalProgram`). Where it works goes to the board too (`worksIn`).
     func refreshProgram() {
-        guard let shell else { return findShell() }
-        let state = ForegroundProgram.state(shell: shell)
+        guard let shell else {
+            worksIn(reportedCwd)
+            return findShell()
+        }
+        let (state, directory) = ForegroundProgram.foreground(shell: shell)
         if state == .gone { self.shell = nil }
+        worksIn(directory ?? reportedCwd)
         let program: String? = switch state {
         case .running(let argv): TerminalName.program(argv: argv)
         case .gone, .prompt: nil
@@ -277,6 +281,17 @@ final class TerminalTile: NSView, TileContent {
         if self.program == nil, program != nil { onStatus?(nil, false, nil) }
         self.program = program
         publishLabel()
+    }
+
+    /// The directory last told to the board (`worksIn`).
+    private var workingDirectory: String?
+
+    /// The terminal works in `directory` (the foreground program's, else the shell's, else the
+    /// shell's last report): the board files it under that checkout (`Board.terminalWorks`).
+    private func worksIn(_ directory: String?) {
+        guard let directory, directory != workingDirectory else { return }
+        workingDirectory = directory
+        board.terminalWorks(objectID, in: directory)
     }
 
     /// Inside tmux, what its active pane runs (`ForegroundProgram.tmuxPane`); nil otherwise.
@@ -704,7 +719,7 @@ final class TerminalTile: NSView, TileContent {
     // MARK: References
 
     /// The directory the shell last reported (OSC 7), which relative references resolve against
-    /// first, and where an agent started in it works (`Board.reportedDirectory`).
+    /// first; where the terminal works until its shell's process is found (`worksIn`).
     fileprivate(set) var reportedCwd: String?
 
     /// The `path:line` reference (or source file named alone) drawn at `point` (terminal view

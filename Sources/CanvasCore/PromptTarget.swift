@@ -102,10 +102,9 @@ public enum PromptTarget {
     /// board's repository) than the one the current target works in goes to the agent working
     /// in that checkout, when exactly one agent terminal does (`runsAgent`); otherwise the
     /// target stays. `checkout` is the mention's checkout; `checkouts` the checkout each
-    /// terminal works in (its shell's reported directory, else `props.cwd`, else the board
-    /// root), keyed by terminal. Checkouts are compared by git directory, so `/tmp` and
-    /// `/private/tmp` spellings agree. Returns the terminal to target, or nil to keep the
-    /// current one.
+    /// terminal works in (`checkouts(on:)`), keyed by terminal. Checkouts are compared by git
+    /// directory, so `/tmp` and `/private/tmp` spellings agree. Returns the terminal to target,
+    /// or nil to keep the current one.
     public static func affinity(checkout: GitWorktree, current: ObjectID?, checkouts: [ObjectID: GitWorktree], objects: [ObjectID: CanvasObject]) -> ObjectID? {
         if let current, checkouts[current]?.gitDir == checkout.gitDir { return nil }
         let agents = checkouts.filter { id, worktree in
@@ -113,6 +112,16 @@ public enum PromptTarget {
         }
         guard agents.count == 1, let agent = agents.first?.key, agent != current else { return nil }
         return agent
+    }
+
+    /// The checkout each terminal of `board` works in (`Board.workingDirectory(of:)`: its
+    /// program's or shell's directory, else `props.cwd`, else the board root), for `affinity`.
+    @MainActor public static func checkouts(on board: Board) -> [ObjectID: GitWorktree] {
+        var checkouts: [ObjectID: GitWorktree] = [:]
+        for terminal in board.objects.values where terminal.type == .terminal {
+            checkouts[terminal.id] = GitWorktree.containing(board.workingDirectory(of: terminal.id))
+        }
+        return checkouts
     }
 
     /// The checkout a mention's file lies in: a code line's or image pixel's file, or for a

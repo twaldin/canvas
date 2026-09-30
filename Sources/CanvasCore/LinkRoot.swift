@@ -35,10 +35,10 @@ extension Board {
         }
     }
 
-    /// The directory a terminal works in: where its shell last reported, else `props.cwd`, else
-    /// the board root.
+    /// The directory a terminal works in: its program's or shell's as the app last read it
+    /// (`terminalWorks(_:in:)`), else `props.cwd`, else the board root.
     public func workingDirectory(of terminal: ObjectID) -> String {
-        reportedDirectory(terminal) ?? objects[terminal]?.props["cwd"]?.string ?? root.path
+        workingDirectories[terminal] ?? objects[terminal]?.props["cwd"]?.string ?? root.path
     }
 
     /// The `root` a note or HTML tile gets when `caller` (an agent's terminal) creates it

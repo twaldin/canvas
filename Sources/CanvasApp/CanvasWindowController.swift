@@ -294,11 +294,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let staged = tray.last { !trayMentions.contains($0.id) }
         trayMentions = Set(tray.map(\.id))
         guard let staged, let checkout = PromptTarget.checkout(of: staged.target, on: board) else { return }
-        var checkouts: [ObjectID: GitWorktree] = [:]
-        for terminal in board.objects.values where terminal.type == .terminal {
-            checkouts[terminal.id] = GitWorktree.containing(board.workingDirectory(of: terminal.id))
-        }
-        guard let agent = PromptTarget.affinity(checkout: checkout, current: canvas.promptTarget, checkouts: checkouts, objects: board.objects) else { return }
+        guard let agent = PromptTarget.affinity(checkout: checkout, current: canvas.promptTarget, checkouts: PromptTarget.checkouts(on: board), objects: board.objects) else { return }
         board.promptTarget.focused(agent)
         settlePromptTarget()
         affinity = (agent, checkout.name)

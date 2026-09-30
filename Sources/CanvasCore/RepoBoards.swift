@@ -115,17 +115,36 @@ extension Board {
 
     /// Worktree and branch a terminal created with `props` starts in, stamped on its props
     /// (`worktree`, `branch`) when its `cwd` lies in the board's repository; a linked worktree is
-    /// recorded on the board.
+    /// recorded on the board. `terminalWorks(_:in:)` keeps them current.
     func stampingWorktree(_ props: JSONValue) -> JSONValue {
         guard var fields = props.object else { return props }
         fields.removeValue(forKey: "worktree")
         fields.removeValue(forKey: "branch")
-        guard let repo, let cwd = fields["cwd"]?.string, !cwd.isEmpty,
-              let worktree = GitWorktree.containing(absoluteURL(cwd).standardizedFileURL.path), worktree.commonDir == repo.commonDir else { return .object(fields) }
-        fields["worktree"] = .string(GitWorktree.normalized(worktree.toplevel))
-        if let branch = worktree.branch { fields["branch"] = .string(branch) }
-        if !worktree.isMain { record(worktree) }
+        guard let cwd = fields["cwd"]?.string, !cwd.isEmpty, let stamp = worktreeStamp(absoluteURL(cwd).standardizedFileURL.path) else { return .object(fields) }
+        fields.merge(stamp.filter { $0.value != .null }) { $1 }
         return .object(fields)
+    }
+
+    /// Terminal `tile` works in `directory` now: its foreground program's current directory, else
+    /// its shell's (the app reads them from the process table as a program starts and at each
+    /// prompt). `workingDirectory(of:)` answers it, and the terminal's `worktree` and `branch`
+    /// follow the checkout it lies in when that is one of the board's repository, so after
+    /// `cd ../wt && codex` the terminal and its agent are `wt`'s: worktree affinity routes that
+    /// worktree's mentions there and Review Changes reviews it. Written as bookkeeping (no rev,
+    /// undo step or log); a directory outside the repository leaves them as they were.
+    public func terminalWorks(_ tile: ObjectID, in directory: String) {
+        guard let terminal = objects[tile], terminal.type == .terminal else { return }
+        workingDirectories[tile] = directory
+        guard let stamp = worktreeStamp(directory) else { return }
+        commitBookkeeping(terminal, props: .object(stamp))
+    }
+
+    /// `worktree` and `branch` (null on a detached HEAD) of the checkout `directory` lies in when
+    /// that is one of the board's repository, a linked one recorded on the board; else nil.
+    private func worktreeStamp(_ directory: String) -> [String: JSONValue]? {
+        guard let repo, let worktree = GitWorktree.containing(directory), worktree.commonDir == repo.commonDir else { return nil }
+        if !worktree.isMain { record(worktree) }
+        return ["worktree": .string(GitWorktree.normalized(worktree.toplevel)), "branch": worktree.branch.map(JSONValue.string) ?? .null]
     }
 
     private func record(_ worktree: GitWorktree) {

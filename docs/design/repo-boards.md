@@ -31,11 +31,11 @@ The snapshot gains `repo`:
 }
 ```
 
-- `worktrees` records every worktree the board has seen: ones it was opened from, ones a terminal tile started in, and the roots of the legacy boards merged into it. `branch` is the branch last seen checked out there (absent on a detached HEAD); `region` is the group holding what a merged legacy board held.
+- `worktrees` records every worktree the board has seen: ones it was opened from, ones a terminal tile worked in, and the roots of the legacy boards merged into it. `branch` is the branch last seen checked out there (absent on a detached HEAD); `region` is the group holding what a merged legacy board held.
 - `board.list` reports each repository board's `repo` and its `worktrees`: the recorded ones and every live worktree of the repository (from `<common>/worktrees/*/gitdir`), each with `path`, `branch` (live `HEAD` when the worktree exists, else as recorded), `live` (the directory still is a worktree of this repository), `main` (it's the canonical root) and `region` when there is one.
 - `board.open --root <worktree>` answers the repository board, plus `worktree: {path, branch, region?}` for the worktree it was opened from. Opening a worktree directory from anywhere (`board.open`, `open -n Chalkwork.app --args <worktree>`, the Open Board panel, a saved tab) lands on the repository board; the window's subtitle names the worktree and branch, and when the worktree has a region the view scrolls to it.
 - The worktree a board was last opened from is the board's **working worktree** (in memory, not saved): New Terminal starts there (at the canonical root's place in it) instead of the canonical root.
-- **Terminal tiles** record where they started: `props.worktree` (the worktree's top level) and `props.branch` (absent on a detached HEAD), stamped when the tile is created with a `cwd` in the board's repository. They are what they started in; an agent that switches branch later doesn't restamp them.
+- **Terminal tiles** record the checkout they work in: `props.worktree` (the worktree's top level) and `props.branch` (absent on a detached HEAD), stamped when the tile is created with a `cwd` in the board's repository and kept current as it works elsewhere (`Board.terminalWorks`): the app reads the directory of the terminal's foreground program, else of its shell, from the process table as a program starts and at each prompt, so after `cd ../wt && codex` the terminal and its agent are `wt`'s. A directory outside the repository leaves them as they were. Written as bookkeeping: no rev, undo step or log.
 
 ## Per-object `root` and `ref` after the merge
 

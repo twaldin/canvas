@@ -159,9 +159,8 @@ public final class Board {
     /// The canvas rect the board's window shows (canvas coordinates); nil without a window.
     /// Placement prefers slots inside it.
     public var viewport: () -> Frame? = { nil }
-    /// The directory a terminal's shell last reported (OSC 7), where the program in it (an
-    /// agent) was started; nil when unknown or without a window. Set by the app.
-    public var reportedDirectory: (ObjectID) -> String? = { _ in nil }
+    /// The directory each terminal works in, as the app last read it (`terminalWorks(_:in:)`).
+    var workingDirectories: [ObjectID: String] = [:]
     /// An arrow's routed line as currently drawn (canvas coordinates, at least two points), so
     /// deleting what it points at keeps its end exactly where the user saw it and its reported
     /// frame is what is drawn. Without it, routes come from object frames.
@@ -912,9 +911,9 @@ public final class Board {
     /// that is still working (or waiting on an approval) doesn't count: its answer isn't there
     /// yet, so a turn that ends after the user looked away stays `done` until they look again.
     public func markSeen(_ tile: ObjectID) {
+        guard let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }
         let state = terminal.props["lifecycle"]?["state"]?.string
         guard state != LifecycleState.working.rawValue, state != LifecycleState.blocked.rawValue else { return }
-        guard let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }
         seenSinceWorking.insert(tile)
         guard state == LifecycleState.done.rawValue else { return }
         var seen: [String: JSONValue] = ["state": .string(LifecycleState.idle.rawValue), "seen": .bool(true)]

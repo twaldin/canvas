@@ -1,3 +1,5 @@
+import Darwin
+
 /// What runs in a terminal's session, for the close sheet to name what closing ends: the
 /// foreground program (`omp`) and the processes the shell or that program started that keep
 /// running beside it (a dev server an agent started: `next dev`).
@@ -73,6 +75,16 @@ public struct SessionProcesses: Equatable, Sendable {
             }
         }
         return found
+    }
+
+    /// The current directory of process `pid` (libproc; the path as the kernel names it, symlinks
+    /// resolved: `/private/tmp/…`); nil when the process is gone or not the user's.
+    public static func directory(of pid: Int32) -> String? {
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        let path = withUnsafeBytes(of: info.pvi_cdir.vip_path) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        return path.isEmpty ? nil : path
     }
 
     /// The close sheet's text for these sessions (nil: not known, the shell not found yet):

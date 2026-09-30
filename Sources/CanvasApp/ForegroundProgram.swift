@@ -36,6 +36,15 @@ enum ForegroundProgram {
         return leader.flatMap(arguments).map(State.running) ?? .prompt
     }
 
+    /// `state`, and the directory what runs works in: the foreground job's current directory
+    /// (`cd ../wt && codex` runs codex in `wt`, which the shell reports only at its next
+    /// prompt), at the prompt the shell's own; nil when the shell is gone or it can't be read.
+    static func foreground(shell: pid_t) -> (state: State, directory: String?) {
+        guard let leader = leader(shell: shell) else { return (.gone, nil) }
+        guard let pid = leader, let argv = arguments(pid) else { return (.prompt, SessionProcesses.directory(of: shell)) }
+        return (.running(argv), SessionProcesses.directory(of: pid))
+    }
+
     /// What process `pid` runs, as a person names it (`TerminalName.program`; a login shell's
     /// `-zsh` is `zsh`).
     static func name(_ pid: pid_t) -> String? {

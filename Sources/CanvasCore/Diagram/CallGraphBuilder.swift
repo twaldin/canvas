@@ -213,26 +213,35 @@ public enum CallGraphBuilder {
             }
             let projects = await languages.projects(await mentioningFiles(base), boardRoot: boardRoot).prefix(CallGraphBuilder.maxSymbolProjects)
             guard !projects.isEmpty else { throw Failure.unresolved("no file of the board that a language server reads mentions \(base); give props.path") }
-            var answers = try await languages.workspaceSymbols(base, files: Array(projects), boardRoot: boardRoot)
-            // A server that just started may answer before it has read the project.
+            let wanted = container.map(Self.containerNames) ?? []
+            /// The answers that are declarations of `symbol` in the board's files, once each.
+            func declarations() async throws -> [(path: String, symbol: LSPSymbol, containers: [String])] {
+                var found: [(path: String, symbol: LSPSymbol, containers: [String])] = []
+                for answer in try await languages.workspaceSymbols(base, files: Array(projects), boardRoot: boardRoot) where names(name, answer.name) {
+                    let path = boardPath(answer.location.url)
+                    guard !path.hasPrefix("/") else { continue }
+                    let line = answer.location.range.start.line
+                    let declared = (try? await documentSymbols(answer.location.url)) ?? []
+                    guard let entry = declared.first(where: { entry in
+                        names(name, entry.symbol.name) && (entry.symbol.selectionRange.start.line == line || entry.symbol.range.start.line == line)
+                    }), entry.containers.map(baseName).reversed().starts(with: wanted.map(baseName).reversed()) else { continue }
+                    guard !found.contains(where: { $0.path == path && $0.symbol.selectionRange.start == entry.symbol.selectionRange.start }) else { continue }
+                    found.append((path, entry.symbol, entry.containers))
+                }
+                return found
+            }
+            // A server still reading the project answers with part of it (tsserver, just
+            // started: the opened file's declarations only), so an answer counts once the next
+            // one, `loadingRetry` later, finds the same declarations.
+            var found = try await declarations()
             var waited = Duration.zero
-            while answers.isEmpty, waited < CallGraphBuilder.loadingWait {
+            while waited < CallGraphBuilder.loadingWait {
                 try await Task.sleep(for: CallGraphBuilder.loadingRetry)
                 waited += CallGraphBuilder.loadingRetry
-                answers = try await languages.workspaceSymbols(base, files: Array(projects), boardRoot: boardRoot)
-            }
-            let wanted = container.map(Self.containerNames) ?? []
-            var found: [(path: String, symbol: LSPSymbol, containers: [String])] = []
-            for answer in answers where names(name, answer.name) {
-                let path = boardPath(answer.location.url)
-                guard !path.hasPrefix("/") else { continue }
-                let line = answer.location.range.start.line
-                let declared = (try? await documentSymbols(answer.location.url)) ?? []
-                guard let entry = declared.first(where: { entry in
-                    names(name, entry.symbol.name) && (entry.symbol.selectionRange.start.line == line || entry.symbol.range.start.line == line)
-                }), entry.containers.map(baseName).reversed().starts(with: wanted.map(baseName).reversed()) else { continue }
-                guard !found.contains(where: { $0.path == path && $0.symbol.selectionRange.start == entry.symbol.selectionRange.start }) else { continue }
-                found.append((path, entry.symbol, entry.containers))
+                let again = try await declarations()
+                let same = again.map(\.path) == found.map(\.path) && again.map(\.symbol.selectionRange.start) == found.map(\.symbol.selectionRange.start)
+                found = again
+                if same, !found.isEmpty { break }
             }
             let callables = found.filter { callableKinds.contains($0.symbol.kind) }
             if !callables.isEmpty { found = callables }

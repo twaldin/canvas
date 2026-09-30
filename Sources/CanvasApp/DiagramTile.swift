@@ -192,7 +192,7 @@ final class DiagramTile: NSView, TileContent {
         let levels = Dictionary(graph.nodes.map { ($0.id, $0.level) }, uniquingKeysWith: { first, _ in first })
         for edge in graph.edges {
             guard let from = layout.rects[edge.from], let to = layout.rects[edge.to] else { continue }
-            drawEdge(from: from, to: to, forward: (levels[edge.from] ?? 0) < (levels[edge.to] ?? 0), stale: edge.stale == true, in: context)
+            drawEdge(from: from, to: to, step: (levels[edge.to] ?? 0) - (levels[edge.from] ?? 0), stale: edge.stale == true, in: context)
         }
         for node in graph.nodes {
             guard let rect = layout.rects[node.id] else { continue }
@@ -204,7 +204,14 @@ final class DiagramTile: NSView, TileContent {
     private func drawHeader(in bounds: CGRect) {
         let text: String
         var color = NSColor.secondaryLabelColor
-        if let error = graph?.error {
+        if let error = graph?.error, graph?.nodes.isEmpty ?? true {
+            // Nothing to draw: the whole reason, wrapped (an ambiguous name lists its candidates).
+            let shown = (computing ? "Asking the language server again… " : "") + error
+            NSAttributedString(string: shown, attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.systemOrange])
+                .draw(with: CGRect(x: 10, y: 8, width: max(0, bounds.width - 20), height: max(0, bounds.height - 16)),
+                      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            return
+        } else if let error = graph?.error {
             text = (computing ? "Asking the language server again… " : "") + error
             color = .systemOrange
         } else if computing {
@@ -232,21 +239,31 @@ final class DiagramTile: NSView, TileContent {
             .draw(with: CGRect(x: 10, y: 7, width: max(0, bounds.width - 20), height: 16), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
     }
 
-    private func drawEdge(from: CGRect, to: CGRect, forward: Bool, stale: Bool, in context: CGContext) {
+    /// `step`: columns from the caller to the callee. Rightward calls run from the caller's
+    /// right edge to the callee's left; a call within one column (a caller of the root that also
+    /// calls another caller) loops out left of the column, clear of the boxes; a leftward one
+    /// (recursion through a cycle) runs from the caller's left edge to the callee's right.
+    private func drawEdge(from: CGRect, to: CGRect, step: Int, stale: Bool, in context: CGContext) {
         let path = NSBezierPath()
         let start: CGPoint, end: CGPoint, c1: CGPoint, c2: CGPoint
-        if forward {
+        if step > 0 {
             start = CGPoint(x: from.maxX, y: from.midY)
             end = CGPoint(x: to.minX - 1, y: to.midY)
             let reach = max(24, (end.x - start.x) / 2)
             c1 = CGPoint(x: start.x + reach, y: start.y)
             c2 = CGPoint(x: end.x - reach, y: end.y)
-        } else {
-            // A call back toward the root (recursion through a cycle): around the outside.
-            start = CGPoint(x: from.maxX, y: from.midY)
+        } else if step == 0 {
+            let reach = DiagramLayout.margin - 4
+            start = CGPoint(x: from.minX, y: from.midY)
             end = CGPoint(x: to.minX - 1, y: to.midY)
-            c1 = CGPoint(x: start.x + 60, y: start.y - 40)
-            c2 = CGPoint(x: end.x - 60, y: end.y - 40)
+            c1 = CGPoint(x: start.x - reach, y: start.y)
+            c2 = CGPoint(x: end.x - reach, y: end.y)
+        } else {
+            start = CGPoint(x: from.minX, y: from.midY)
+            end = CGPoint(x: to.maxX + 1, y: to.midY)
+            let reach = max(24, (start.x - end.x) / 2)
+            c1 = CGPoint(x: start.x - reach, y: start.y)
+            c2 = CGPoint(x: end.x + reach, y: end.y)
         }
         path.move(to: start)
         path.curve(to: end, controlPoint1: c1, controlPoint2: c2)

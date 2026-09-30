@@ -9,7 +9,8 @@ public struct DiagramLayout: Equatable, Sendable {
     public static let nodeWidth: CGFloat = 300
     public static let columnGap: CGFloat = 76
     public static let rowGap: CGFloat = 14
-    public static let margin: CGFloat = 18
+    /// Room around the columns: a call within one column loops out into it.
+    public static let margin: CGFloat = 36
     /// The status strip above the graph (what it shows, when computed, why it failed).
     public static let headerHeight: CGFloat = 28
     public static let padding: CGFloat = 8

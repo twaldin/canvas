@@ -2,7 +2,11 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
-## Unreleased
+## 0.3.2
+
+Codex asks once for Chalkwork's commands, a resumed Codex session keeps reporting its state, a second launch goes to the Chalkwork already running, and approval bubbles stay beside the agent that asks.
+
+**Still on Canvas 0.2?** Read the 0.3.0 notes' "Upgrading from Canvas" first: the first launch of Chalkwork moves your boards over, and agents started under Canvas need a restart.
 
 ### Fixed
 
@@ -10,6 +14,14 @@ Each version's section is its GitHub release's notes (release.yml puts it above 
 - **One Chalkwork per home.** Opening Chalkwork while it already runs on the same boards (a second `open -n`, a login restore beside the running app) no longer starts a second instance that takes over the first one's socket, leaving one of them with no API (`chalkwork` CLI calls failing `unavailable`): the new launch asks the running one to open its folder's board and bring it forward, then exits. Development homes each run their own instance, as before.
 - **Codex asks once for canvas commands, not on every call.** Chalkwork told Codex to pass payloads as `--json @"$TMPDIR/…"`, and Codex can't match a command with `$TMPDIR` in it to "don't ask again for commands that start with `chalkwork`", so every draw stopped on an approval again, even after you allowed `chalkwork`. Codex now gets the temp directory's real path and asks to allow every `chalkwork` command, so a new Codex user answers one approval, once; the HTML explainer guide no longer renders to `--out "$TMPDIR/…"` either.
 - **A resumed Codex session reports like a fresh one when you pass it `-c`.** `codex resume <id> -c …` in a tile (for example with the folder's `trust_level` for a session you started outside Chalkwork) dropped Chalkwork's hooks: Codex keeps only the `-c` options given after `resume`, and the wrapper put its own before it. The tile stayed idle through the whole turn, with no ring and nothing for ⌘J while Codex waited on an approval. The wrapper now puts its `-c` beside yours, after `resume` or `fork` too.
+
+### Install
+
+Download `Chalkwork-0.3.2.zip`, unzip, move `Chalkwork.app` to `/Applications` (replacing the older one; quit Chalkwork first and choose Keep Running, and your terminals reattach). It's ad-hoc signed, not notarized: run `xattr -dr com.apple.quarantine /Applications/Chalkwork.app`, or open it once and choose Open Anyway in System Settings › Privacy & Security. Then `brew install neurosnap/tap/zmx oven-sh/bun/bun`. Requires macOS 14 or later on Apple silicon. Full steps in the README.
+
+### Licensing
+
+Chalkwork statically links GNU libintl (GNU gettext 0.24, LGPL-2.1-or-later) through libghostty. Its source, `gettext-0.24.tar.gz`, is attached to this release, and so is `THIRD_PARTY_NOTICES.md`, the list of third-party components and their licenses (the same file is inside `Chalkwork.app`). `THIRD_PARTY_NOTICES.md` also says how to relink Chalkwork with a modified libintl.
 
 ## 0.3.1
 

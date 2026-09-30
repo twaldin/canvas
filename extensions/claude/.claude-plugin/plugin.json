@@ -1,5 +1,5 @@
 {
   "name": "chalkwork",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Chalkwork integration: lifecycle, session resume, follow mode, selection-tray mentions, and the chalkwork skill. Loaded by Chalkwork's claude wrapper inside Chalkwork terminal tiles only."
 }

@@ -129,7 +129,7 @@ When you lay things out deliberately:
 - `size: "fit"` sizes a tile to its content.
 - `layout.place`/`layout.stack`/`layout.grid` position objects (groups move whole; `grid` lines up columns across lanes), and `layout.translate` moves a finished build into place.
 - `object.batch` applies a whole layout as one ⌘Z step with `"$0"` references to objects it creates.
-- `layout.check` reports overlaps, arrows through tiles, arrow labels on tiles or each other, content that doesn't fit (HTML pages too), code tiles that scroll, and cut-off captions and note tables.
+- `layout.check` reports overlaps, arrows through tiles, arrows on top of or crossing each other, arrow labels on tiles, titles, lines or each other, content that doesn't fit (HTML pages too), code tiles that scroll, and cut-off captions and note tables.
   It judges what is drawn, so an empty report means the picture is clean. Unfilled rects and ellipses are annotations and never count as overlaps.
 
 Details and an example: `references/api.md` "Layout".
@@ -220,6 +220,14 @@ Read `references/html-explainers.md` before building an explainer: components, p
 - `group`: `{"members": [ids], "title": "…", "color": "blue"}` is a titled, tinted region that always wraps its members; use one per lane or cluster instead of a rect plus a label.
 
 Colors, fills, text sizes, arrow routing and binding rules: `references/shapes.md`.
+
+**Readable diagrams** (a flow of tiles joined by arrows):
+
+1. One group per stage, laid out in reading order: stage columns left to right, or rows top to bottom. Set the outer group's `flow` (`"right"`, `"down"`) when the layout alone doesn't say which way it reads.
+2. Leave room for the arrows: about 120 pt between columns and 60 pt between stacked tiles where arrows run between them, more for a column many arrows fan into.
+3. `route: "avoid"` for every arrow that crosses the diagram; in each column, order tiles the way their arrows go, so fans don't cross.
+4. Label an arrow only when the relation isn't obvious from its ends, in two or three words; detail goes in the tile.
+5. `layout.check`, then fix what it reports: `arrowOverlaps`, `labelOverlaps` (a label on a tile, title, label, or another arrow's `lines`), and the `arrowIntersections` a tile order or a wider gap removes.
 `canvas get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
 
 ### Boards a script keeps current

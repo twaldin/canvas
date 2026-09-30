@@ -519,21 +519,22 @@ final class LayoutApiTests {
         #expect(try await result("layout.check", .object(["ids": .array([.string(cut.id)])]))["truncated"] == .array([]))
     }
 
-    @Test func labelsOnTilesOrOnEachOtherAreReported() async throws {
+    @Test func labelsOnTilesAreReportedAndLabelsKeepOffEachOther() async throws {
+        // Two notes 30 pt apart, walled in above and below: nowhere near the route is clear.
         let a = board.create(type: .note, props: .object(["markdown": "a"]), frame: Frame(x: 0, y: 0, w: 200, h: 100))
         let b = board.create(type: .note, props: .object(["markdown": "b"]), frame: Frame(x: 230, y: 0, w: 200, h: 100))
+        let above = board.create(type: .note, props: .object(["markdown": "above"]), frame: Frame(x: -300, y: -700, w: 1030, h: 695))
+        let below = board.create(type: .note, props: .object(["markdown": "below"]), frame: Frame(x: -300, y: 105, w: 1030, h: 695))
         let squeezed = board.create(type: .arrow, props: .object(["from": .object(["object": .string(a.id)]), "to": .object(["object": .string(b.id)]), "label": "this.forward() → bridgeFetch()"]))
         let one = board.create(type: .arrow, props: .object(["from": .object(["point": [1000, 0]]), "to": .object(["point": [1400, 0]]), "label": "BridgeConfig.load()"]))
         let two = board.create(type: .arrow, props: .object(["from": .object(["point": [1000, 8]]), "to": .object(["point": [1400, 8]]), "label": "start() writes"]))
-        let clear = board.create(type: .arrow, props: .object(["from": .object(["point": [1000, 400]]), "to": .object(["point": [1400, 400]]), "label": "alone"]))
         let report = try await result("layout.check", .object([:]))
         let entries = report["labelOverlaps"]?.array ?? []
         func under(_ arrow: CanvasObject) -> Set<String> {
             Set(entries.first { $0["arrow"] == .string(arrow.id) }?["overlaps"]?.array?.compactMap(\.string) ?? [])
         }
-        #expect(under(squeezed) == [a.id, b.id], "a 30 pt gap has no room beside the route: the label sits on both ends")
-        #expect(under(one) == [two.id] && under(two) == [one.id], "labels touching read as one")
-        #expect(under(clear).isEmpty)
+        #expect(!under(squeezed).isEmpty && under(squeezed).isSubset(of: [a.id, b.id, above.id, below.id]), "no room anywhere near the route: reported with what it lies on")
+        #expect(under(one).isEmpty && under(two).isEmpty, "arrows 8 pt apart label their outer sides, not on each other: \(entries)")
     }
 
     /// A tile put down over an arrow's label: checking just that tile reports the label (its
@@ -920,17 +921,15 @@ struct LayoutBoardTests {
         #expect(G.distance(forward[0], toPath: back) > 15)
     }
 
-    @Test func labelsSitBesideTheRouteAndClearOfBoxes() {
+    @Test func aLabelSitsBesideItsRouteClearOfBoxes() {
         let path = [CGPoint(x: 0, y: 100), CGPoint(x: 400, y: 100)]
         let size = CGSize(width: 80, height: 20)
-        let free = G.labelRect(along: path, size: size, side: 0, obstacles: [])
-        #expect(!G.path(path, crosses: free) && free.maxY <= 100 - G.labelClearance + 0.5, "above a horizontal line by default")
-        let box = CGRect(x: 150, y: 50, width: 100, height: 45)
-        let moved = G.labelRect(along: path, size: size, side: 0, obstacles: [box])
-        #expect(!moved.intersects(box) && !G.path(path, crosses: moved))
-        // An arrow shifted right of its travel (negative offset) labels that outer side.
-        let other = G.labelRect(along: path, size: size, side: -1, obstacles: [])
-        #expect(other.minY >= 100)
+        let free = G.label(along: path, size: size, obstacles: []).rect
+        #expect(!G.path(path, crosses: free) && (free.maxY <= 100 - G.labelClearance + 0.5 || free.minY >= 100 + G.labelClearance - 0.5), "beside the line")
+        #expect(free.minX >= 0 && free.maxX <= 400, "along it, not past its ends")
+        let box = CGRect(x: 0, y: 50, width: 400, height: 45)
+        let moved = G.label(along: path, size: size, obstacles: [box]).rect
+        #expect(!moved.intersects(box) && !G.path(path, crosses: moved), "the other side when a box covers one")
     }
 
     // MARK: Translate and grid
@@ -1013,11 +1012,11 @@ struct LayoutBoardTests {
         // Labels are placed (and checked) only for arrows that draw one.
         let hidden = board.create(type: .arrow, props: .object(["from": .object(["object": .string(a.id)]), "to": .object(["object": .string(b.id)]), "relation": "calls", "label": ""]))
         let shown = board.create(type: .arrow, props: .object(["from": .object(["object": .string(b.id)]), "to": .object(["object": .string(a.id)]), "relation": "calls"]))
-        let labels = board.geometry.labelRects(routes: board.geometry.routes())
+        let labels = board.geometry.routing().labels
         #expect(labels[hidden.id] == nil && labels[shown.id] != nil)
         // Clearing the label back to absent brings the relation back.
         try board.update(hidden.id, props: .object(["label": .null]))
-        #expect(board.geometry.labelRects(routes: board.geometry.routes())[hidden.id] != nil)
+        #expect(board.geometry.routing().labels[hidden.id] != nil)
     }
 
     // MARK: Line-bound arrows

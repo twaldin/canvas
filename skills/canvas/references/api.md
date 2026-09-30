@@ -25,7 +25,7 @@ Results are objects, never bare values:
 | `object.upsert` | `{object, created}`; `object.find` → what `object.get` returns (with `key`) or `{objects}` (with `keyPrefix`) |
 | `object.batch` | `{results, revision}`: each op's result in order (`results[0]["object"]["id"]`) |
 | `layout.place`/`stack`/`translate` | `{frames: {id: frame}}`; `layout.grid` adds `columns` and `rows` |
-| `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, overflow, scrolls, truncated}` |
+| `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, arrowOverlaps, arrowIntersections, overflow, scrolls, truncated}` |
 | `view.render`, `view.snapshot` | `{path, width, height, scale, objects}` plus `canvasRect` (render) or `viewport` (snapshot) |
 | `agent.prompt` | `{agent, waitable, submittedAt}`; `agent.wait` → `{agent}`; `agent.read` → `{agent, text, lines}` (`truncated` with `since`) |
 
@@ -138,7 +138,9 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   ```
 - `canvas.layout.check(ids=[…])`, `canvas.layout.check(rect={"x": 0, "y": 0, "w": 4000, "h": 3000})`, or the whole board with neither → `overlaps` (pairs),
   `arrowCrossings` (`{arrow, crosses}`: routes through tiles, text, or filled shapes other than the arrow's own ends),
-  `labelOverlaps` (`{arrow, label, frame, overlaps}`: the arrow's label text, placed as drawn at `frame` (an arrow's own frame leaves its label out), lies on these tiles, text, or filled shapes, its own ends included, or on these arrows' labels; widen the gap, shorten the label, or move the tile),
+  `labelOverlaps` (`{arrow, label, frame, overlaps, lines}`: the arrow's label text, placed as drawn at `frame` (an arrow's own frame leaves its label out), lies on these tiles, text, or filled shapes (its own ends included), these groups' titles, or these arrows' labels (`overlaps`), or on these arrows' lines (`lines`); widen the gap, shorten the label, or move the tile),
+  `arrowOverlaps` (`{arrows, length, at}`: two arrows drawn on top of each other for `length` points: give them room, e.g. a wider gap between columns),
+  `arrowIntersections` (`{arrows, count, at}`: two arrows whose lines cross; often a tile order that follows the arrows removes them),
   `overflow` (`{id, x, y}`: points of note/text/HTML content beyond the frame; for HTML, its page laid out at the frame's width),
   `scrolls` (`{id, y}`: code tiles whose range's rows, wrapped at the frame's width, are `y` points taller than the frame, so the tile scrolls to the range; fine for a viewer meant to scroll, refit with `size: "fit"` when the whole range should show),
   `truncated` (`{id, what, x}`, `x` points short: `caption`, a code caption the frame cuts off; `table`, a note table with too many columns for the note's width even with its cells wrapped: widen the note or split the table).
@@ -147,7 +149,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   It judges what is drawn (whole tile frames, routes and line-bound ends as drawn), so an empty report means a clean picture. Run it after a layout pass instead of screenshots.
 - Groups are regions: `{"members": [...], "title": "…", "color": "blue", "padding": 24}`. The frame is always the members' bounds plus padding and a 32 pt title band, updated as members move;
   it is what `encloses` uses. One group per lane replaces a rect + title text + group.
-- Arrows: `route: "straight"` (default), `"orthogonal"` (horizontal/vertical with one jog), or `"avoid"` (horizontal/vertical around every tile in the way).
+- Arrows: `route: "straight"` (default), `"orthogonal"` (horizontal/vertical with one jog), or `"avoid"` (horizontal/vertical around every tile in the way, routed with the board's other `avoid` arrows: own ports, parallel tracks, the group's `flow`).
   Arrows between the same two objects, in either direction, are drawn apart automatically, and labels sit beside the route, clear of boxes where there is room (`labelOverlaps` says where there wasn't).
   An end bound to `{object, lines}` on a code tile attaches to its left or right edge at the row of `lines.start`, where the tile shows it:
   scrolled to its range with up to 3 rows of context above (none in a fit tile); a line scrolled out of view pins to the top of the code or the bottom of the tile.

@@ -16,6 +16,9 @@ public struct GroupSpec: Equatable, Sendable {
     /// Palette name or #rrggbb, as ShapeProps.color; nil draws a neutral region.
     public var color: String?
     public var padding: Double
+    /// Which way the diagram inside reads; arrows among its members leave downstream sides and
+    /// enter upstream ones (`ConnectorRouter.Flow`). Nil infers it from the arrows.
+    public var flow: ConnectorRouter.Flow?
 
     public init?(_ props: JSONValue) {
         guard let members = props["members"]?.array else { return nil }
@@ -23,6 +26,7 @@ public struct GroupSpec: Equatable, Sendable {
         title = props["title"]?.string
         color = props["color"]?.string
         padding = max(0, props["padding"]?.number ?? Self.defaultPadding)
+        flow = props["flow"]?.string.flatMap(ConnectorRouter.Flow.init(rawValue:))
     }
 
     /// The region around member rects (any coordinates): their union, `padding` on every side,

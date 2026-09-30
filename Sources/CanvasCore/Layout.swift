@@ -585,9 +585,13 @@ extension BoardGeometry {
         public var overlaps: [[ObjectID]]
         /// Arrows whose route runs through objects other than their own ends.
         public var crossings: [Crossing]
-        /// Arrows whose label lies on a tile, text, or filled shape (their own ends included), or
-        /// on another arrow's label.
+        /// Arrows whose label lies on a tile, text, or filled shape (their own ends included), a
+        /// group's title, another arrow's label, or another arrow's line.
         public var labelOverlaps: [LabelOverlap]
+        /// Pairs of arrows drawn on top of each other along some length.
+        public var arrowOverlaps: [ConnectorRouter.Overlap]
+        /// Pairs of arrows whose lines cross.
+        public var arrowIntersections: [ConnectorRouter.Intersection]
     }
 
     public struct Crossing: Equatable, Sendable {
@@ -601,8 +605,10 @@ extension BoardGeometry {
         public var label: String
         /// Where the label chip is drawn; an arrow's own `frame` doesn't include it.
         public var frame: Frame
-        /// Objects under the label; an arrow id means that arrow's label.
+        /// Objects under the label; an arrow id means that arrow's label, a group id its title.
         public var overlaps: [ObjectID]
+        /// Other arrows whose line runs under the label.
+        public var lines: [ObjectID]
     }
 
     /// Whether an object can overlap others by accident: not arrows, ink, or unfilled rects and
@@ -647,19 +653,21 @@ extension BoardGeometry {
         return overlaps
     }
 
-    /// Overlaps, arrow crossings, and label overlaps involving `scope` (every object when nil):
-    /// an arrow crossing or a label lying on a scoped object is reported whether or not the
-    /// arrow is in scope, so checking a new tile finds the labels it covers.
+    /// Overlaps, arrow crossings, label overlaps, and arrows overlapping or crossing each other,
+    /// involving `scope` (every object when nil): an arrow crossing or a label lying on a scoped
+    /// object is reported whether or not the arrow is in scope, so checking a new tile finds the
+    /// labels it covers.
     /// Not overlaps: a group and its (nested) members, and anything with an unfilled rect or
     /// ellipse (an annotation drawn over or around things, like ink). Arrow routes and labels
-    /// are computed as drawn (parallel offsets, `avoid`, line-bound ends with `rows`, labels
-    /// placed by `labelRect`); an arrow never crosses its own ends or what contains them.
+    /// are computed as drawn (`routing`: offsets, the board's `avoid` routing, line-bound ends
+    /// with `rows`, label placement); an arrow never crosses its own ends or what contains them.
     public func layoutCheck(scope: Set<ObjectID>? = nil, rows: [ObjectID: CodeRows] = [:]) -> LayoutReport {
         func involved(_ arrow: ObjectID, _ others: [ObjectID]) -> Bool {
             scope == nil || scope!.contains(arrow) || others.contains { scope!.contains($0) }
         }
         let overlaps = overlaps(scope: scope)
-        let routes = routes(rows: rows)
+        let routing = routing(rows: rows)
+        let routes = routing.paths
         let blockers = objects.values.filter(Self.blocksRoutes).sorted { $0.id < $1.id }
         var crossings: [Crossing] = []
         for (arrowID, path) in routes.sorted(by: { $0.key < $1.key }) {
@@ -667,11 +675,10 @@ extension BoardGeometry {
             var endRects: [CGRect] = []
             var endIDs: Set<ObjectID> = []
             for binding in [spec.from, spec.to] {
-                switch binding {
-                case .object(let id, _, _, _):
+                if let id = binding.objectID {
                     endIDs.insert(id)
                     if let frame = objects[id]?.frame.rect { endRects.append(frame) }
-                case .point(let point):
+                } else if case .point(let point) = binding {
                     endRects.append(CGRect(origin: point, size: .zero))
                 }
             }
@@ -682,15 +689,20 @@ extension BoardGeometry {
             }.map(\.id)
             if !crossed.isEmpty, involved(arrowID, crossed) { crossings.append(Crossing(arrow: arrowID, crosses: crossed)) }
         }
-        let labels = labelRects(routes: routes)
+        let titles = regions.map { ($0.id, $0.title) }
+        let labels = routing.labels.mapValues(\.rect)
         var labelOverlaps: [LabelOverlap] = []
         for (arrowID, label) in labels.sorted(by: { $0.key < $1.key }) {
             let inner = label.insetBy(dx: 0.5, dy: 0.5)
             let under = blockers.filter { $0.frame.rect.intersects(inner) }.map(\.id)
+                + titles.filter { $0.1.intersects(inner) }.map(\.0)
                 + labels.filter { $0.key != arrowID && $0.value.intersects(inner) }.map(\.key).sorted()
-            guard !under.isEmpty, involved(arrowID, under), let spec = objects[arrowID].flatMap({ ArrowSpec($0.props) }) else { continue }
-            labelOverlaps.append(LabelOverlap(arrow: arrowID, label: spec.label ?? spec.relation ?? "", frame: Frame(label), overlaps: under))
+            let lines = routes.filter { $0.key != arrowID && zip($0.value, $0.value.dropFirst()).contains { DrawingGeometry.segment($0, $1, intersects: inner) } }.map(\.key).sorted()
+            guard !under.isEmpty || !lines.isEmpty, involved(arrowID, under + lines), let spec = objects[arrowID].flatMap({ ArrowSpec($0.props) }) else { continue }
+            labelOverlaps.append(LabelOverlap(arrow: arrowID, label: spec.label ?? spec.relation ?? "", frame: Frame(label), overlaps: under, lines: lines))
         }
-        return LayoutReport(overlaps: overlaps, crossings: crossings, labelOverlaps: labelOverlaps)
+        let arrowOverlaps = ConnectorRouter.overlaps(routes).filter { involved($0.arrows[0], [$0.arrows[1]]) }
+        let arrowIntersections = ConnectorRouter.intersections(routes).filter { involved($0.arrows[0], [$0.arrows[1]]) }
+        return LayoutReport(overlaps: overlaps, crossings: crossings, labelOverlaps: labelOverlaps, arrowOverlaps: arrowOverlaps, arrowIntersections: arrowIntersections)
     }
 }

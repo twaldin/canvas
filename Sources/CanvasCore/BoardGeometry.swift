@@ -9,10 +9,14 @@ public struct BoardGeometry: Sendable {
     /// Label chip sizes by arrow (`DrawingStyle.arrowLabel`, measured on the main actor);
     /// arrows without a caption have none.
     public let labelSizes: [ObjectID: CGSize]
+    /// The routing drawn last (`Board.settledRouting`): routes nothing has touched since stay
+    /// as drawn.
+    public let settled: ConnectorRouter.Result?
 
-    public init(objects: [ObjectID: CanvasObject], labelSizes: [ObjectID: CGSize]) {
+    public init(objects: [ObjectID: CanvasObject], labelSizes: [ObjectID: CGSize], settled: ConnectorRouter.Result? = nil) {
         self.objects = objects
         self.labelSizes = labelSizes
+        self.settled = settled
     }
 
     /// Whether arrows route around this object and count as crossing it: tiles, text, and filled
@@ -45,22 +49,40 @@ public struct BoardGeometry: Sendable {
     }
 
     /// Every arrow's routed polyline from object frames alone (the app routes the same way from
-    /// what it draws): parallel arrows offset apart, `avoid` routes around blocking objects, an
-    /// end bound to `lines` of a code tile at that line's row (`CodeMetrics.lineY`, freshly
-    /// aimed; `rows` gives a tile's visual rows when known, else one row per line). `only`
-    /// routes just those arrows (offsets still account for all of them).
+    /// what it draws; see `routing`). `only` returns just those arrows (all are routed together).
     public func routes(rows: [ObjectID: CodeRows] = [:], only: Set<ObjectID>? = nil) -> [ObjectID: [CGPoint]] {
-        let arrows = objects.values.filter { $0.type == .arrow }.compactMap { arrow in ArrowSpec(arrow.props).map { (arrow, $0) } }
-        let offsets = DrawingGeometry.parallelOffsets(arrows.map { ($0.0.id, $0.1.from.objectID, $0.1.to.objectID) })
-        let blockers = objects.values.filter(Self.blocksRoutes)
-        var result: [ObjectID: [CGPoint]] = [:]
-        for (arrow, spec) in arrows where only?.contains(arrow.id) ?? true {
+        let paths = routing(rows: rows).paths
+        guard let only else { return paths }
+        return paths.filter { only.contains($0.key) }
+    }
+
+    /// Every arrow's route and label placement, as drawn: straight and orthogonal arrows between
+    /// the same two objects offset apart; `avoid` arrows routed together around blocking objects
+    /// (`ConnectorRouter`: distinct ports, nudged tracks, the flow of their groups); an end bound
+    /// to `lines` of a code tile at that line's row (`CodeMetrics.lineY`, freshly aimed; `rows`
+    /// gives a tile's visual rows when known, else one row per line); captions (`labelSizes`)
+    /// clear of tiles, group titles, other arrows, and each other where there is room. Routes
+    /// that nothing has touched since `settled` keep their way.
+    public func routing(rows: [ObjectID: CodeRows] = [:]) -> ConnectorRouter.Result {
+        let arrows = objects.values.filter { $0.type == .arrow }.sorted { $0.id < $1.id }.compactMap { arrow in ArrowSpec(arrow.props).map { (arrow, $0) } }
+        let offsets = DrawingGeometry.parallelOffsets(arrows.filter { $0.1.route != .avoid }.map { ($0.0.id, $0.1.from.objectID, $0.1.to.objectID) })
+        var connectors: [ConnectorRouter.Connector] = []
+        for (arrow, spec) in arrows {
             guard let from = arrowEnd(spec.from, rows: rows), let to = arrowEnd(spec.to, rows: rows) else { continue }
-            let ends = Set([spec.from.objectID, spec.to.objectID].compactMap { $0 })
-            let obstacles = spec.route == .avoid ? blockers.filter { !ends.contains($0.id) }.map(\.frame.rect) : []
-            result[arrow.id] = DrawingGeometry.path(from: from, to: to, style: spec.route, offset: offsets[arrow.id] ?? 0, obstacles: obstacles)
+            let path = spec.route == .avoid ? nil : DrawingGeometry.path(from: from, to: to, style: spec.route, offset: offsets[arrow.id] ?? 0)
+            connectors.append(.init(id: arrow.id, from: from, to: to, fromObject: spec.from.objectID, toObject: spec.to.objectID,
+                                    label: labelSizes[arrow.id], path: path))
         }
-        return result
+        let obstacles = objects.values.filter(Self.blocksRoutes).sorted { $0.id < $1.id }.map { ConnectorRouter.Obstacle(id: $0.id, rect: $0.frame.rect) }
+        return ConnectorRouter(connectors: connectors, obstacles: obstacles, regions: regions).route(previous: settled)
+    }
+
+    /// The board's groups as the router sees them: frame, leaf members, and `flow`.
+    public var regions: [ConnectorRouter.Region] {
+        objects.values.filter { $0.type == .group }.sorted { $0.id < $1.id }.compactMap { group in
+            guard let spec = GroupSpec(group.props) else { return nil }
+            return ConnectorRouter.Region(id: group.id, frame: group.frame.rect, members: Set(Self.leafMembers(of: group.id, in: objects)), flow: spec.flow)
+        }
     }
 
     /// What a binding attaches to: a point, an object's frame (an ellipse's curve), the row of
@@ -80,21 +102,6 @@ public struct BoardGeometry: Sendable {
             return .bound(isEllipse ? .ellipse(object.frame.rect) : .rect(object.frame.rect))
         }
     }
-
-    /// Where each captioned arrow's label sits along `routes`, as the drawing layer places it
-    /// (`labelSizes`, `DrawingGeometry.labelRect`): beside the route, clear of blocking objects
-    /// where it can be.
-    public func labelRects(routes: [ObjectID: [CGPoint]]) -> [ObjectID: CGRect] {
-        let arrows = objects.values.filter { $0.type == .arrow }.compactMap { arrow in ArrowSpec(arrow.props).map { (arrow, $0) } }
-        let offsets = DrawingGeometry.parallelOffsets(arrows.map { ($0.0.id, $0.1.from.objectID, $0.1.to.objectID) })
-        let blockers = objects.values.filter(Self.blocksRoutes).map(\.frame.rect)
-        var result: [ObjectID: CGRect] = [:]
-        for (arrow, _) in arrows {
-            guard let path = routes[arrow.id], let size = labelSizes[arrow.id] else { continue }
-            result[arrow.id] = DrawingGeometry.labelRect(along: path, size: size, side: offsets[arrow.id] ?? 0, obstacles: blockers)
-        }
-        return result
-    }
 }
 
 extension Board {
@@ -106,6 +113,6 @@ extension Board {
             guard let spec = ArrowSpec(object.props), let label = DrawingStyle.arrowLabel(spec) else { continue }
             labelSizes[object.id] = label.size
         }
-        return BoardGeometry(objects: objects, labelSizes: labelSizes)
+        return BoardGeometry(objects: objects, labelSizes: labelSizes, settled: settledRouting?())
     }
 }

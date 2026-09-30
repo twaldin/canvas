@@ -171,6 +171,10 @@ public final class Board {
     /// `reported` calls it outside an open step: a batch reports its arrows once its step closes,
     /// routing them once, not once per op. Set by the app.
     public var settleArrows: (() -> Void)?
+    /// The drawing layer's last routing of the board (`ConnectorRouter.Result`, canvas
+    /// coordinates), which `geometry` routes on from, so layout math keeps the routes drawn for
+    /// what hasn't changed since. Set by the app.
+    public var settledRouting: (() -> ConnectorRouter.Result?)?
     /// The page elements under a canvas rect of a browser or HTML tile, for mentions of shapes
     /// drawn on it; nil when the page can't answer quickly (not loaded, not live). Set by the app.
     public var pageElements: (@MainActor (ObjectID, CGRect) async -> PageElements?)?

@@ -430,7 +430,7 @@ final class ApiRouterTests {
         ])])
         let id = try #require(created["result"]?["object"]?["id"]?.string)
         let around = bounds(try #require(board.geometry.routes()[id]))
-        #expect(around.y < -100, "the route goes over the wall")
+        #expect(around.y < -100 || around.y + around.h > 200, "the route goes around the wall")
         #expect(try created["result"]?["object"]?["frame"]?.decode(Frame.self) == around, "not the provisional straight line")
         #expect(layer.paths[id].map(bounds) == around, "what is drawn next")
         #expect(try await reportedFrames(client, id) == [around, around])

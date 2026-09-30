@@ -1632,7 +1632,15 @@ public final class ApiRouter {
                 return .object(["arrow": .string(overlap.arrow), "label": .string(overlap.label),
                                 "frame": .object(["x": .number(frame.x.rounded(.down)), "y": .number(frame.y.rounded(.down)),
                                                   "w": .number(frame.w.rounded(.up)), "h": .number(frame.h.rounded(.up))]),
-                                "overlaps": .array(overlap.overlaps.map(JSONValue.string))])
+                                "overlaps": .array(overlap.overlaps.map(JSONValue.string)), "lines": .array(overlap.lines.map(JSONValue.string))])
+            }),
+            "arrowOverlaps": .array(report.arrowOverlaps.map { overlap in
+                .object(["arrows": .array(overlap.arrows.map(JSONValue.string)), "length": .number(overlap.length.rounded()),
+                         "at": .object(["x": .number(overlap.at.x.rounded()), "y": .number(overlap.at.y.rounded())])])
+            }),
+            "arrowIntersections": .array(report.arrowIntersections.map { crossing in
+                .object(["arrows": .array(crossing.arrows.map(JSONValue.string)), "count": .number(Double(crossing.count)),
+                         "at": .object(["x": .number(crossing.at.x.rounded()), "y": .number(crossing.at.y.rounded())])])
             }),
             "overflow": .array(overflow),
             "scrolls": .array(scrolls),

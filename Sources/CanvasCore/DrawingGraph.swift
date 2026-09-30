@@ -57,7 +57,7 @@ extension Board {
             if let drawn = arrowPath?(id), drawn.count >= 2 { paths[id] = drawn } else { missing.insert(id) }
         }
         if !missing.isEmpty {
-            paths.merge(BoardGeometry(objects: objects, labelSizes: [:]).routes(only: missing)) { drawn, _ in drawn }
+            paths.merge(BoardGeometry(objects: objects, labelSizes: [:], settled: settledRouting?()).routes(only: missing)) { drawn, _ in drawn }
         }
         return paths
     }

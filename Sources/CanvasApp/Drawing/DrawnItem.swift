@@ -22,6 +22,8 @@ struct DrawnItem {
     let fillAlpha: CGFloat
     let label: NSAttributedString?
     let labelRect: NSRect?
+    /// An arrow caption's leader: a line from the route to a chip placed away from it.
+    var labelLeader: [CGPoint]?
     /// Ink's painted outline polygon (document coordinates), kept for hit testing.
     var inkOutline: [CGPoint] = []
     /// A shape's label in the default ink resolved dark and light (`InkContrast`), built with the
@@ -103,9 +105,9 @@ struct DrawnItem {
         return item
     }
 
-    /// An arrow along a routed polyline. The label sits beside the route, on the `labelSide`
-    /// first (the sign of its parallel offset), clear of `obstacles` where it can be.
-    static func arrow(_ object: CanvasObject, _ spec: ArrowSpec, path points: [CGPoint], labelSide: CGFloat = 0, obstacles: [CGRect] = []) -> DrawnItem {
+    /// An arrow along a routed polyline, its caption where the board's routing placed it
+    /// (`label`, `ConnectorRouter`), else alone beside the route clear of `obstacles`.
+    static func arrow(_ object: CanvasObject, _ spec: ArrowSpec, path points: [CGPoint], label placement: ConnectorRouter.Label? = nil, obstacles: [CGRect] = []) -> DrawnItem {
         var random = DrawingRough.Random(seed: DrawingRough.seed(object.id))
         let points = points.count >= 2 ? points : [points.first ?? .zero, points.first ?? .zero]
         let end = points[points.count - 1]
@@ -116,16 +118,22 @@ struct DrawnItem {
         let stroke = path(strokes)
         var label: NSAttributedString?
         var labelRect: NSRect?
+        var leader: [CGPoint]?
         if let caption = DrawingStyle.arrowLabel(spec) {
             label = caption.text
-            labelRect = DrawingGeometry.labelRect(along: points, size: caption.size, side: labelSide, obstacles: obstacles)
+            let placed = placement.map { ConnectorRouter.Label(rect: CGRect(origin: $0.rect.origin, size: caption.size), leader: $0.leader) }
+                ?? DrawingGeometry.label(along: points, size: caption.size, obstacles: obstacles)
+            labelRect = placed.rect
+            leader = placed.leader
         }
         let xs = points.map(\.x)
         let ys = points.map(\.y)
         let frame = NSRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
         var bounds = stroke.boundingBoxOfPath.union(frame).insetBy(dx: -6, dy: -6)
         if let labelRect { bounds = bounds.union(labelRect.insetBy(dx: -2, dy: -2)) }
-        return DrawnItem(object: object, kind: .arrow(spec, path: points), frame: frame, bounds: bounds, stroke: stroke, fill: nil, fillAlpha: 0, label: label, labelRect: labelRect)
+        var item = DrawnItem(object: object, kind: .arrow(spec, path: points), frame: frame, bounds: bounds, stroke: stroke, fill: nil, fillAlpha: 0, label: label, labelRect: labelRect)
+        item.labelLeader = leader
+        return item
     }
 
     static func path(_ strokes: [DrawingRough.Stroke]) -> CGPath {
@@ -171,6 +179,14 @@ struct DrawnItem {
         }
         if let label, let labelRect {
             if arrow != nil {
+                if let leader = labelLeader, leader.count == 2 {
+                    context.saveGState()
+                    context.setLineWidth(1)
+                    context.setLineDash(phase: 0, lengths: [3, 3])
+                    context.setStrokeColor(color.withAlphaComponent(0.7).cgColor)
+                    context.strokeLineSegments(between: leader)
+                    context.restoreGState()
+                }
                 // Arrow captions sit on a chip of canvas color so strokes passing by don't cross the text.
                 context.setFillColor(NSColor.underPageBackgroundColor.cgColor)
                 context.addPath(CGPath(roundedRect: labelRect, cornerWidth: 4, cornerHeight: 4, transform: nil))

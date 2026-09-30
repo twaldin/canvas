@@ -1,0 +1,1519 @@
+{
+ "objects": [
+  {
+   "frame": {
+    "h": 44,
+    "w": 1600,
+    "x": 5000,
+    "y": 0
+   },
+   "id": "obj_01M3QNFCG2AHKTTR65",
+   "props": {
+    "kind": "text",
+    "scale": 1.3,
+    "text": "Atlas · Chief of Staff turn: ingress to wake-up"
+   },
+   "type": "shape",
+   "z": 62
+  },
+  {
+   "frame": {
+    "h": 1352,
+    "w": 340,
+    "x": 4980,
+    "y": 84
+   },
+   "id": "obj_01M3QNFCKR035ZTHP0",
+   "props": {
+    "color": "blue",
+    "members": [
+     "obj_01M3QNFCH0CKB0WD7T",
+     "obj_01M3QNFCHSRXFC1NRA",
+     "obj_01M3QNFCJ7VNP6CDEE",
+     "obj_01M3QNFCJEZMGVX8XP",
+     "obj_01M3QNFCJXHT7SKPEC",
+     "obj_01M3QNFCKM4C4XGHZ4"
+    ],
+    "padding": 20,
+    "title": "Ingress"
+   },
+   "type": "group",
+   "z": 69
+  },
+  {
+   "frame": {
+    "h": 423,
+    "w": 340,
+    "x": 5390,
+    "y": 84
+   },
+   "id": "obj_01M3QNFCMRAJ9Y488K",
+   "props": {
+    "color": "violet",
+    "members": [
+     "obj_01M3QNFCM6QTVE3R11",
+     "obj_01M3QNFCMFB5J4AJ5P"
+    ],
+    "padding": 20,
+    "title": "Dispatch & task creation"
+   },
+   "type": "group",
+   "z": 72
+  },
+  {
+   "frame": {
+    "h": 440,
+    "w": 340,
+    "x": 5800,
+    "y": 84
+   },
+   "id": "obj_01M3QNFCNEFQMQYJK2",
+   "props": {
+    "color": "green",
+    "members": [
+     "obj_01M3QNFCMYKDZF36VQ",
+     "obj_01M3QNFCN8CT8EVM01"
+    ],
+    "padding": 20,
+    "title": "Subtask & StateGraph"
+   },
+   "type": "group",
+   "z": 75
+  },
+  {
+   "frame": {
+    "h": 844,
+    "w": 340,
+    "x": 6210,
+    "y": 84
+   },
+   "id": "obj_01M3QNFCPMDBVHVK2J",
+   "props": {
+    "color": "orange",
+    "members": [
+     "obj_01M3QNFCNKZG4XCMH0",
+     "obj_01M3QNFCNYV5805J1H",
+     "obj_01M3QNFCP9STHRBCAQ",
+     "obj_01M3QNFCPHKNZH2000"
+    ],
+    "padding": 20,
+    "title": "AgentStateNode: prompt & tools"
+   },
+   "type": "group",
+   "z": 80
+  },
+  {
+   "frame": {
+    "h": 1019,
+    "w": 340,
+    "x": 6620,
+    "y": 84
+   },
+   "id": "obj_01M3QNFCR0Y5KQ9FHF",
+   "props": {
+    "color": "red",
+    "members": [
+     "obj_01M3QNFCPTGMNR8GBC",
+     "obj_01M3QNFCQ5Y7RABE1S",
+     "obj_01M3QNFCQF8TSYD5E1",
+     "obj_01M3QNFCQWF5AP14RA"
+    ],
+    "padding": 20,
+    "title": "LLM call"
+   },
+   "type": "group",
+   "z": 85
+  },
+  {
+   "frame": {
+    "h": 1802,
+    "w": 340,
+    "x": 7030,
+    "y": 84
+   },
+   "id": "obj_01M3QNFCVZATJ1FYRS",
+   "props": {
+    "color": "grey",
+    "members": [
+     "obj_01M3QNFCRKJTKVKN9K",
+     "obj_01M3QNFCSB97ZKF88S",
+     "obj_01M3QNFCT09MDJZY9H",
+     "obj_01M3QNFCTNRSQS104D",
+     "obj_01M3QNFCV06P1C0RX7",
+     "obj_01M3QNFCVG6PGVX4XD",
+     "obj_01M3QNFCVNYT333M5S"
+    ],
+    "padding": 20,
+    "title": "Action execution & sandbox"
+   },
+   "type": "group",
+   "z": 93
+  },
+  {
+   "frame": {
+    "h": 477,
+    "w": 340,
+    "x": 7440,
+    "y": 84
+   },
+   "id": "obj_01M3QNFCWMH1SN2EM8",
+   "props": {
+    "color": "blue",
+    "members": [
+     "obj_01M3QNFCW2SK6YHMJ0",
+     "obj_01M3QNFCWB4G3ZSWM9"
+    ],
+    "padding": 20,
+    "title": "Delivery"
+   },
+   "type": "group",
+   "z": 96
+  },
+  {
+   "frame": {
+    "h": 688,
+    "w": 340,
+    "x": 7850,
+    "y": 84
+   },
+   "id": "obj_01M3QNFCXJER6Y5ESP",
+   "props": {
+    "color": "violet",
+    "members": [
+     "obj_01M3QNFCWTCJ6EBZY5",
+     "obj_01M3QNFCX6HWNPJK96",
+     "obj_01M3QNFCXAA6FGNTYV"
+    ],
+    "padding": 20,
+    "title": "Post-turn & wake-ups"
+   },
+   "type": "group",
+   "z": 100
+  },
+  {
+   "frame": {
+    "h": 189,
+    "w": 300,
+    "x": 5000,
+    "y": 136
+   },
+   "id": "obj_01M3QNFCH0CKB0WD7T",
+   "props": {
+    "markdown": "**lorem ipsum dolorsi**\n\ntametconse ctetu radipi, scing elitseddoeiu, smodte mporinci/did un tutlab oreetdol, oremag naaliqu aloremipsu.\n\nmdolo: `rsita.metconsec.tetur.adipisc`\n\n```in geli=tseddoei/usmo/dte/mporinci/diduntutlabo/reetdoloremagnaaliq/ualore.mi#psum-dol orsita=\"metcon secte turadipi scingelitseddoeiusmodtemporincididu({\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 63
+  },
+  {
+   "frame": {
+    "h": 247,
+    "w": 300,
+    "x": 5000,
+    "y": 361
+   },
+   "id": "obj_01M3QNFCHSRXFC1NRA",
+   "props": {
+    "markdown": "**ntutlabo reetdo loremagnaali**\n\nqualor emipsu mdolor sit ametc, onsectetur ad ipiscingeli tsedd, oeiusmo dtempo rincidid, untutlabor eetdoloremag.\n\nnaali: `qualo.remipsumd.olors.itametconsecteturadipiscin.gelitse`, `ddoei.usmodtemp.orinc.ididuntutlaboreetdoloremag.naaliqualorem`\n\n```ip sumd=olorsita/metc/ons/ectetura/dipiscingeli/tseddoeiusmodtempor/incididuntutlaboreetdolore.ma#gnaa-liq ualore=\"mipsu mdolorsi tametconsecteturadipiscingelitseddoeiusmodtempor(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 64
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 5000,
+    "y": 644
+   },
+   "id": "obj_01M3QNFCJ7VNP6CDEE",
+   "props": {
+    "markdown": "**inc idi duntutla boreetd**\n\nolorema gnaa liqua/lor-em-ips umdolors, itametco nsecte, turadipis ci ngelitsedd oeiu smodtemp.\n\n```or inci=diduntut/labo/ree/tdolorem/agnaaliqu/aloremips/umdolor/sitametconsecte.tu#rad-ip iscing=\"elitse ddoei usmodtem porincididuntutlabore(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 65
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 5000,
+    "y": 846
+   },
+   "id": "obj_01M3QNFCJEZMGVX8XP",
+   "props": {
+    "markdown": "**etd olor emagnaa**\n\nliqu aloremip sumdo lo rsita metc onsectet, urad ipiscingeli t sedd oei usmod tem porin cidi duntutl.\n\n```ab oree=tdolorem/agna/ali/qualorem/ipsum/dolors/itame.tc#onse-cte turadi=\"piscin gelit seddoeiusmodtemporincidid = untutlaboreetd({\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 66
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 5000,
+    "y": 1048
+   },
+   "id": "obj_01M3QNFCJXHT7SKPEC",
+   "props": {
+    "markdown": "**olore magn aaliqua**\n\nloremi psum, dolorsi tametc onsec teturadi, pisc ingelits eddoeius modtempor in cididu ntutlabo.\n\n```re etdo=loremagn/aaliqual-oremipsum/dol/orsitametconsecteturadip/isc/ingelitseddoeiusmodtem.po#rinc-idi duntut=\"labore etdol oremagna aliqualoremipsumdolors(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 67
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 5000,
+    "y": 1250
+   },
+   "id": "obj_01M3QNFCKM4C4XGHZ4",
+   "props": {
+    "markdown": "**itametcon sectetu radi**\n\npiscin g elitsed doeiu smodtempor (incidid un tutl-ab), oree tdo loremag, naaliqual ore mipsumdo lorsi.\n\n```ta metc=onsectet/urad/ipi/scing/elitsedd/oeiusmodtemporinc.id#idunt-utla boreet=\"dolor emagnaaliqualoremip(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 68
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 5410,
+    "y": 136
+   },
+   "id": "obj_01M3QNFCM6QTVE3R11",
+   "props": {
+    "markdown": "**sumdolo rsitamet**\n\nconsectet uradi piscing eli tseddo eiusmodt emporinc id idunt utl abor-ee td olo-rema gnaaliqual.\n\n```or emip=sumdolor/sita/met/conse/cteturad/ipiscingelitseddo.ei#usmod-temp orinci=\"didun tut(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 70
+  },
+  {
+   "frame": {
+    "h": 149,
+    "w": 300,
+    "x": 5410,
+    "y": 338
+   },
+   "id": "obj_01M3QNFCMFB5J4AJ5P",
+   "props": {
+    "markdown": "**labo ree tdol oremagn**\n\naaliqualoremips umdolorsita met cons ectetur adi pisc ing eli tseddoei usmod tem porin.\n\n```ci didu=ntutlabo/reet/dol/oremagna/aliqu/alore.mi#psum-dol orsita=\"metcon secte turadipiscinge = litseddoeiusmo({\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 71
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 5820,
+    "y": 136
+   },
+   "id": "obj_01M3QNFCMYKDZF36VQ",
+   "props": {
+    "markdown": "**dte mporin cididun**\n\ntutlabor eetdolo remag, naaliqual or, emipsumdol orsitametc, ons ecte tur adipisc ingel itse.\n\n```dd oeiu=smodtemp/orin/cid/idunt/utlaboree.td#olor-ema gnaali=\"qualo remipsum dolorsitametconsecteturadipiscin(gelit: seddoeiusmodtemporinc): ididunt<utla> {\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 73
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 5820,
+    "y": 338
+   },
+   "id": "obj_01M3QNFCN8CT8EVM01",
+   "props": {
+    "markdown": "**bore etdolorema gnaa**\n\nliqua lor emipsum dolor sita met consect eturadipi scin gelitsedd, oeiusmodt emp orinc ididu.\n\n```nt utla=boreetdo/lore/mag/naali/qualoremi/psumd/olorsitame/tconsectet.ur#adi-pi scinge=\"litse ddoe(iusmodtem: porincidi): duntutl<aboreetdol> {\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 74
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 6230,
+    "y": 136
+   },
+   "id": "obj_01M3QNFCNKZG4XCMH0",
+   "props": {
+    "markdown": "**oremagnaal iqua**\n\nlore mip sumd olor, sitametco nsec tetur adi piscingeli, tsed doeiusmod, tempo, ri ncididunt.\n\n```ut labo=reetdolo/rema/gna/aliqu/aloremips/umdol/orsitametc/onsec/teturadipiscin.ge#lits-edd oeiusm=\"odtempo rinci diduntutlaboreetdolore(magna?: aliqualoremipsumdolorsitame): tconsec<teturadipi> {\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 76
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 6230,
+    "y": 338
+   },
+   "id": "obj_01M3QNFCNYV5805J1H",
+   "props": {
+    "markdown": "**scingel itsedd oeiusm**\n\nodtemp orinci did untutla boreet dolorema, gnaa liqualorem, ips umdolorsit-ametcons ecteturadipi.\n\n```sc inge=litseddo/eius/mod/tempo/rincididu/ntutl/aboreetdol/oremag/naaliqualoremi.ps#umdo-lor sitame=\"tconse ctetu radipisc ingelitseddoeiusmodt(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 77
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 6230,
+    "y": 540
+   },
+   "id": "obj_01M3QNFCP9STHRBCAQ",
+   "props": {
+    "markdown": "**emporin cididuntu tlabore**\n\netdolore magna, aliqual, oremipsu, mdo lor sitame tconsec tet ura dipi; scingeli tseddo eiu smod tempor.\n\n```in cidi=duntutla/bore/etd/olore/magnaaliq/ualor/emipsumdol/orsit/ametconsectetu.ra#dipi-sci ngelit=\"seddoe iusmo dtempori ncididuntutlaboreet(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 78
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 6230,
+    "y": 742
+   },
+   "id": "obj_01M3QNFCPHKNZH2000",
+   "props": {
+    "markdown": "**dolor ema gnaa liqualo**\n\nremipsu mdolors it ametcon, secteturad ipiscinge litseddo eiusm, odt empor inci did untutl aboreet.\n\n```do lore=magnaali/qual/ore/mipsu/mdolorsit/ametc/onsectetur/adipi/scingelitseddoeiusmod.te#mpor-inc ididun=\"tutlabore etdol oremagnaaliqualoremipsumdo(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 79
+  },
+  {
+   "frame": {
+    "h": 233,
+    "w": 300,
+    "x": 6640,
+    "y": 136
+   },
+   "id": "obj_01M3QNFCPTGMNR8GBC",
+   "props": {
+    "markdown": "**lorsit ametconse ctetu**\n\nradipisc inge, lits, eddo, eiusmod-tempo, rincididun tut laboree tdolo remagnaali qua lor emip.\n\nsumdo: `lorsi.tametcons.ecteturadipis`, `cinge-litseddoei`, `usmod.temporinc.ididuntutlaboreetdol.oremagnaali`\n\n```qu alor=emipsumd/olor/sit/ametc/onsectetu/radip/isc/ingelitseddoeiu.sm#odt-em porinc=\"ididun tutlabor eetdoloremagnaa(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 81
+  },
+  {
+   "frame": {
+    "h": 220,
+    "w": 300,
+    "x": 6640,
+    "y": 405
+   },
+   "id": "obj_01M3QNFCQ5Y7RABE1S",
+   "props": {
+    "markdown": "**liqua loremips umdolorsit**\n\nametcon sectetu rad ipiscingeli, tseddoe iusmodte, mporinc ididu, ntutlab oreet, doloremagn aaliqualo.\n\nremip: `sum.dolorsitametconsect`, `etu.radipisc.ingelitseddoei`, `usm.odtempor.incididuntu`\n\n```tl abor=eetdolor/emag/naa/liqua/lor/emipsumdolorsitame.tc#onsec-tetu radipi=\"scing elitseddoeius({\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 82
+  },
+  {
+   "frame": {
+    "h": 220,
+    "w": 300,
+    "x": 6640,
+    "y": 661
+   },
+   "id": "obj_01M3QNFCQF8TSYD5E1",
+   "props": {
+    "markdown": "**modt empo rincididu**\n\nntutla boreetd, olorema gnaali, qualorem/ipsum dol orsi-tamet conse ctetur adipisci ngel itseddo.\n\neiusm: `odt.emporincid.iduntut`, `lab.oreetdolor.emagnaaliqua`, `lor.emipsumdol.orsitametconsecteturadi`\n\n```pi scin=gelitsed/doei/usm/odtem/por/inc/ididuntutl.ab#ore-et dolore=\"magnaa liqua loremips umdolorsitametconsecte(turadi: {\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 83
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 6640,
+    "y": 917
+   },
+   "id": "obj_01M3QNFCQWF5AP14RA",
+   "props": {
+    "markdown": "**piscingel itseddoe iusmod**\n\ntemporinc ididuntu tlabore: etdolor emagnaa liq ualo remipsu, mdolors itametco, nsecte tura dip isci ngeli.\n\n```ts eddo=eiusmodt/empo/rin/cidid/unt/utlabo/reetdolor.em#agnaa-liqu alorem=\"ipsumdol orsit *_ametconsectetu({\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 84
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 7050,
+    "y": 136
+   },
+   "id": "obj_01M3QNFCRKJTKVKN9K",
+   "props": {
+    "markdown": "**radipis cinge litsed**\n\ndoeiusm od temporin cid iduntu-tlab oreet, dolorema gnaaliqua lorem, ipsum dol orsita, metcons ectetu.\n\n```ra dipi=scingeli/tsed/doe/iusmo/dtemporin/cidid/untutlaboreetdolore.ma#gnaal-iqua loremi=\"psumd olorsitamet<c = onsecte>(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 86
+  },
+  {
+   "frame": {
+    "h": 216,
+    "w": 300,
+    "x": 7050,
+    "y": 338
+   },
+   "id": "obj_01M3QNFCSB97ZKF88S",
+   "props": {
+    "markdown": "**turadip iscingeli tseddoeiu**\n\nsmodtemp orinc ididuntut la boreet-dolor emagn aal iqual ore mipsumd olorsitam, et consect etura.\n\ndipis: `cinge.litseddoe.iusmo.dtemporincidi.duntutlaboreetdol`\n\n```or emag=naaliqua/lore/mip/sumdo/lorsitame/tcons/ecteturadipiscingel.it#seddo-eius modtem=\"porin cididuntutlaboreetdoloremagnaal(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 87
+  },
+  {
+   "frame": {
+    "h": 247,
+    "w": 300,
+    "x": 7050,
+    "y": 590
+   },
+   "id": "obj_01M3QNFCT09MDJZY9H",
+   "props": {
+    "markdown": "**iqualor emipsu mdolorsi**\n\ntametcon sect eturadi/piscingel itsedd oei usmodtem p orincidi duntu-tlaboreetd olorem agnaa.\n\nliqua: `lorem.ipsumdolo.rsita.metconsecteturadipiscingeli.tseddoe`, `iusmo.dtemporin.cididuntutlaboreetdoloremagna`\n\n```al iqua=loremips/umdo/lor/sitam/etconsect/etura/dipiscingelitseddoe.iu#smodt-empo rincid=\"iduntut labor eetdoloremagnaaliqualoremipsumdolors({\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 88
+  },
+  {
+   "frame": {
+    "h": 247,
+    "w": 300,
+    "x": 7050,
+    "y": 873
+   },
+   "id": "obj_01M3QNFCTNRSQS104D",
+   "props": {
+    "markdown": "**itametco nsecte turad ipisc**\n\ningeli tseddoei, usmod, te mporincidi/duntutl-aboree tdolore; magnaa liqualoremip sumdol-orsita metco.\n\nnsect: `etura.dipiscing.elits.eddoeiusmodtemporinc.ididunt`, `utlaboreetdo.loremagnaal.iqualoremipsum`\n\n```do lors=itametco/nsec/tet/uradi/piscingel/itsed/doeiusmodtemporinci.di#duntu-tlab oreetd=\"olorema gnaaliqualoremipsumdolorsitametco(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 89
+  },
+  {
+   "frame": {
+    "h": 233,
+    "w": 300,
+    "x": 7050,
+    "y": 1156
+   },
+   "id": "obj_01M3QNFCV06P1C0RX7",
+   "props": {
+    "markdown": "**nsectet uradipi scing**\n\nelitse ddoeiusm odt empori ncididun tu tlabo reetdolo re magn-aali qua-loremip su mdolorsit.\n\nametc: `onsec.teturadip.iscingelitse.ddoeiusm.odtempo`, `rinci-di-duntu-tlab-oree-tdolo`, `remag.naaliqual.oremipsumdo.lorsita`\n\n```me tcon=sectetur/adip/isc/ingel/itsed/doeiu/smodtem/porinci/did.un#tutl-abo reetdo=\"lorema gnaal iqualore mipsumdolorsitametconsectetur(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 90
+  },
+  {
+   "frame": {
+    "h": 216,
+    "w": 300,
+    "x": 7050,
+    "y": 1425
+   },
+   "id": "obj_01M3QNFCVG6PGVX4XD",
+   "props": {
+    "markdown": "**adipisci ngelit seddoei**\n\nusmodte mporinc idid untutla bo reetdol; oremag naali qu-alore mipsumdolorsitametc ons ecteturad ipisc ingel.\n\nitsed: `doeiu.smodtempo.rincididuntu.tlaboree.tdoloremagnaal`\n\n```iq ualo=remipsum/dolo/rsi/tamet/conse/ctetu/radipis/cingeli/tseddoeiusm.od#temp-ori ncidid=\"untutl abore etdolore magnaaliqualoremipsumdolors(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 91
+  },
+  {
+   "frame": {
+    "h": 189,
+    "w": 300,
+    "x": 7050,
+    "y": 1677
+   },
+   "id": "obj_01M3QNFCVNYT333M5S",
+   "props": {
+    "markdown": "**ita metconsect eturad ipis**\n\ncing el itseddo e iusmod temp, orincididu ntutla boreetd, olore ma gnaaliqua, loremips umdolo rsitametco.\n\nnsect: `etura-di-pisci-ngelit-sedd`\n\n```oe iusm=odtempor/inci/did/untut/labor/eetdo/loremag/naaliqu/aloremipsu.md#olor-sit ametco=\"nsecte turad ipiscing elitseddoeius(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 92
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 7460,
+    "y": 136
+   },
+   "id": "obj_01M3QNFCW2SK6YHMJ0",
+   "props": {
+    "markdown": "**modtemp orinc id idun**\n\ntutlabor eet dolor emagnaa, liqual oremipsu mdolors, itametc ons ectet, uradipi sci ngel itseddo.\n\n```ei usmo=dtempori/ncid/idu/ntutl/abore/etdoloremagnaa/liqualo/remipsumdol.or#sita-met consec=\"tetura dipis cingelitsed = doeiusmodtemporincidid(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 94
+  },
+  {
+   "frame": {
+    "h": 203,
+    "w": 300,
+    "x": 7460,
+    "y": 338
+   },
+   "id": "obj_01M3QNFCWB4G3ZSWM9",
+   "props": {
+    "markdown": "**untutlab oreet dolorem**\n\nagnaaliq ualoremip sumd olor, sitametcon secteturadi piscinge, lits eddoei us modtem p orin cidid.\n\nuntut: `labor-ee-tdolo-remagna-aliqual-oremips-umdo`\n\n```lo rsit=ametcons/ecte/tur/adipi/scingelit/seddoeiusmodte/mporincididuntutlabore.et#dolo-rem agnaal=\"iqualore mipsu mdolorsitametconsect(): eturadi<pisc> {\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 95
+  },
+  {
+   "frame": {
+    "h": 189,
+    "w": 300,
+    "x": 7870,
+    "y": 136
+   },
+   "id": "obj_01M3QNFCWTCJ6EBZY5",
+   "props": {
+    "markdown": "**ingel itseddoei usmodtemp**\n\norinc ididuntu tlab oreetdolo, remagna aliqua loremip sum dolo rsitam et consec t eturadip iscingel.\n\nitsed: `doeiu.smodtemporinc`\n\n```id idun=tutlabor/eetd/olo/remag/naaliqual/oremipsumdolor/sitametconsectetura.di#pisc-ing elitse=\"ddoeiusm odtem porincididuntutlaboreetd({\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 97
+  },
+  {
+   "frame": {
+    "h": 189,
+    "w": 300,
+    "x": 7870,
+    "y": 361
+   },
+   "id": "obj_01M3QNFCX6HWNPJK96",
+   "props": {
+    "markdown": "**olore magnaaliq-ualo remips**\n\numdolor sitametco nsec tetur adi piscingel itseddoei us mod tempor incid iduntu tlaboree.\n\ntdolo: `remagnaaliq.ualoremipsumdolo`\n\n```rs itam=etconsec/tetu/rad/ipiscing/elitseddoeiusmodtemp.or#incid-idun tutlab=\"oreetd olore magnaali qualoremipsumdolorsitametconse(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 98
+  },
+  {
+   "frame": {
+    "h": 166,
+    "w": 300,
+    "x": 7870,
+    "y": 586
+   },
+   "id": "obj_01M3QNFCXAA6FGNTYV",
+   "props": {
+    "markdown": "**cteturad ipisci ngel-it**\n\nseddoeiusm odtem, porincidi duntut-labore etdolor emagnaal, iqualor e mips-um dolorsi ta met cons.\n\n```ec tetu=radipisc/inge/lit/seddo/eiusm/odtem/porinci/diduntut.la#bor-ee tdolor=\"emagna aliqu aloremip = sumdolorsita(\"\n```",
+    "root": "/tmp/atlas"
+   },
+   "type": "note",
+   "z": 99
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCXK4P07CWQV",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCH0CKB0WD7T"
+    },
+    "label": "ambient candidate",
+    "relation": "emits",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCHSRXFC1NRA"
+    }
+   },
+   "type": "arrow",
+   "z": 101
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCXNC6QTX1G2",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCH0CKB0WD7T"
+    },
+    "label": "mention or DM",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCM6QTVE3R11"
+    }
+   },
+   "type": "arrow",
+   "z": 102
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCXRAK5W04X2",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCHSRXFC1NRA"
+    },
+    "label": "continuation triggers",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCM6QTVE3R11"
+    }
+   },
+   "type": "arrow",
+   "z": 103
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCXVVCK7XFK5",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCJ7VNP6CDEE"
+    },
+    "label": "text trigger",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCM6QTVE3R11"
+    }
+   },
+   "type": "arrow",
+   "z": 104
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCXWMHZAC91E",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCJEZMGVX8XP"
+    },
+    "label": "matching routines",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCM6QTVE3R11"
+    }
+   },
+   "type": "arrow",
+   "z": 105
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCY131AF4PVD",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCJEZMGVX8XP"
+    },
+    "label": "new chat task",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCMFB5J4AJ5P"
+    }
+   },
+   "type": "arrow",
+   "z": 106
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCY3X7G9TA89",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCJXHT7SKPEC"
+    },
+    "label": "legacy email triggers",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCM6QTVE3R11"
+    }
+   },
+   "type": "arrow",
+   "z": 107
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCY5Z6BE9AN0",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCKM4C4XGHZ4"
+    },
+    "label": "timer occurrence",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCM6QTVE3R11"
+    }
+   },
+   "type": "arrow",
+   "z": 108
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCY7R634029Y",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCM6QTVE3R11"
+    },
+    "label": "new-task outcome",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCMFB5J4AJ5P"
+    }
+   },
+   "type": "arrow",
+   "z": 109
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYAV86ZJFAB",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCM6QTVE3R11"
+    },
+    "label": "wake existing subtask",
+    "relation": "writes",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCMYKDZF36VQ"
+    }
+   },
+   "type": "arrow",
+   "z": 110
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYBDJAME6R2",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCMFB5J4AJ5P"
+    },
+    "label": "queued input",
+    "relation": "next",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCMYKDZF36VQ"
+    }
+   },
+   "type": "arrow",
+   "z": 111
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYGFQXBEQ1K",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCMYKDZF36VQ"
+    },
+    "label": "RailsAgent loop",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCN8CT8EVM01"
+    }
+   },
+   "type": "arrow",
+   "z": 112
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYJ6J57D4CM",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCN8CT8EVM01"
+    },
+    "label": "refresh preferred model",
+    "relation": "reads",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCPTGMNR8GBC"
+    }
+   },
+   "type": "arrow",
+   "z": 113
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYM805NM5DH",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCN8CT8EVM01"
+    },
+    "label": "step node",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCNKZG4XCMH0"
+    }
+   },
+   "type": "arrow",
+   "z": 114
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYQFG4BRVVQ",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCNKZG4XCMH0"
+    },
+    "label": "collect tools",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCP9STHRBCAQ"
+    }
+   },
+   "type": "arrow",
+   "z": 115
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYSNQ8N72W0",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCNKZG4XCMH0"
+    },
+    "label": "system prompt",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCNYV5805J1H"
+    }
+   },
+   "type": "arrow",
+   "z": 116
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYVN81VG5AZ",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCP9STHRBCAQ"
+    },
+    "label": "to tool schemas",
+    "relation": "next",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCPHKNZH2000"
+    }
+   },
+   "type": "arrow",
+   "z": 117
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCYYEVRYBD0S",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCNYV5805J1H"
+    },
+    "label": "system prompt",
+    "relation": "next",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCQ5Y7RABE1S"
+    }
+   },
+   "type": "arrow",
+   "z": 118
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZ2X0TXXS8A",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCPHKNZH2000"
+    },
+    "label": "tool schemas",
+    "relation": "next",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCQ5Y7RABE1S"
+    }
+   },
+   "type": "arrow",
+   "z": 119
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZ5EEQ7BR3Q",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCPTGMNR8GBC"
+    },
+    "label": "preferred model",
+    "relation": "next",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCQ5Y7RABE1S"
+    }
+   },
+   "type": "arrow",
+   "z": 120
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZ74P6BYFKJ",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCQ5Y7RABE1S"
+    },
+    "label": "shrink gate",
+    "relation": "gated_by",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCQF8TSYD5E1"
+    }
+   },
+   "type": "arrow",
+   "z": 121
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZA0WG15RWK",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCQ5Y7RABE1S"
+    },
+    "label": "stream attempt",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCQWF5AP14RA"
+    }
+   },
+   "type": "arrow",
+   "z": 122
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZDP9F8ZPVA",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCNKZG4XCMH0"
+    },
+    "label": "execute tool calls",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    }
+   },
+   "type": "arrow",
+   "z": 123
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZJ078A37WE",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    },
+    "label": "bind actor",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCSB97ZKF88S"
+    }
+   },
+   "type": "arrow",
+   "z": 124
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZPX7MTSSK2",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    },
+    "label": "shared thread policy",
+    "relation": "gated_by",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCTNRSQS104D"
+    }
+   },
+   "type": "arrow",
+   "z": 125
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZSK1VG4A7Y",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    },
+    "label": "consume grant",
+    "relation": "gated_by",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCT09MDJZY9H"
+    }
+   },
+   "type": "arrow",
+   "z": 126
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFCZYA5FF9Q6M",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    },
+    "label": "runShell action",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCV06P1C0RX7"
+    }
+   },
+   "type": "arrow",
+   "z": 127
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD01D68KQD4A",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    },
+    "label": "python action",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCVNYT333M5S"
+    }
+   },
+   "type": "arrow",
+   "z": 128
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD07NENCS1CW",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCV06P1C0RX7"
+    },
+    "label": "code mode on",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCVG6PGVX4XD"
+    }
+   },
+   "type": "arrow",
+   "z": 129
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD0CW92BT5D1",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCVNYT333M5S"
+    },
+    "label": "cell actions",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCVG6PGVX4XD"
+    }
+   },
+   "type": "arrow",
+   "z": 130
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD0JH69WFW1Y",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCVG6PGVX4XD"
+    },
+    "label": "nested action",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    }
+   },
+   "type": "arrow",
+   "z": 131
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD0REVW83JPB",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    },
+    "label": "replyToUser action",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCW2SK6YHMJ0"
+    }
+   },
+   "type": "arrow",
+   "z": 132
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD0XQM0J3DAV",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCNKZG4XCMH0"
+    },
+    "label": "step done",
+    "relation": "emits",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCWB4G3ZSWM9"
+    }
+   },
+   "type": "arrow",
+   "z": 133
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD10K0TT6JHS",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCWB4G3ZSWM9"
+    },
+    "label": "route to channel",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCW2SK6YHMJ0"
+    }
+   },
+   "type": "arrow",
+   "z": 134
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD16BZSN77J5",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCRKJTKVKN9K"
+    },
+    "label": "setTimer action",
+    "relation": "calls",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCXAA6FGNTYV"
+    }
+   },
+   "type": "arrow",
+   "z": 135
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD1A44N70Z7V",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCXAA6FGNTYV"
+    },
+    "label": "wake-up fires later",
+    "relation": "emits",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCKM4C4XGHZ4"
+    }
+   },
+   "type": "arrow",
+   "z": 136
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD1FJJ8T6X3Z",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCMYKDZF36VQ"
+    },
+    "label": "execution terminal",
+    "relation": "emits",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCWTCJ6EBZY5"
+    }
+   },
+   "type": "arrow",
+   "z": 137
+  },
+  {
+   "frame": {
+    "h": 0,
+    "w": 0,
+    "x": 1006,
+    "y": 30
+   },
+   "id": "obj_01M3QNFD1NKHE0SFS0",
+   "props": {
+    "color": "grey",
+    "from": {
+     "object": "obj_01M3QNFCMYKDZF36VQ"
+    },
+    "label": "task completed",
+    "relation": "emits",
+    "route": "avoid",
+    "to": {
+     "object": "obj_01M3QNFCX6HWNPJK96"
+    }
+   },
+   "type": "arrow",
+   "z": 138
+  }
+ ],
+ "title": "Atlas · Chief of Staff turn: ingress to wake-up (geometry only: note text replaced by placeholder of the same length)"
+}

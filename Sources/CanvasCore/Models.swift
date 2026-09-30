@@ -95,7 +95,7 @@ public enum ObjectType: String, Codable, Sendable, CaseIterable {
         case .diagram: ["kind", "path", "symbol", "line", "direction", "depth", "expanded", "title", "graph", "scale"]
         case .shape: ["kind", "text", "points", "color", "fill", "scale"]
         case .arrow: ["from", "to", "relation", "label", "color", "route"]
-        case .group: ["members", "title", "color", "padding"]
+        case .group: ["members", "title", "color", "padding", "flow"]
         }
         return own.union(["key"])
     }

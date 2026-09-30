@@ -317,7 +317,7 @@ export type ArrowProps = {
   label?: string;
   /** palette name or #rrggbb, as ShapeProps.color */
   color?: string;
-  /** straight: one segment between the facing sides; orthogonal: horizontal/vertical segments with one jog; avoid: horizontal/vertical segments around every tile (and text or filled shape) in the way. Arrows between the same two objects (either direction) are drawn apart automatically; labels sit beside the route, clear of boxes where possible. */
+  /** straight: one segment between the facing sides; orthogonal: horizontal/vertical segments with one jog; avoid: horizontal/vertical segments around every tile (and text or filled shape) in the way, routed together with the board's other avoid arrows: arrows sharing a side get their own ports, arrows sharing a channel run in parallel tracks, and they follow their group's `flow`. Arrows between the same two objects (either direction) are drawn apart automatically; labels sit beside their own route, clear of boxes, group titles, other arrows and other labels where possible (else a short leader away). */
   route?: "straight" | "orthogonal" | "avoid";
   key?: ObjectKey;
 };
@@ -331,6 +331,8 @@ export type GroupProps = {
   color?: string;
   /** space between the members' bounds and the region's edge */
   padding?: number;
+  /** which way the diagram inside reads: `avoid` arrows among the members leave the side of their source facing downstream and enter their target's upstream side where they can. Absent: inferred from the way arrows between groups point */
+  flow?: "right" | "down" | "left" | "up";
   key?: ObjectKey;
 };
 
@@ -1066,8 +1068,31 @@ export type LayoutCheckResult = {
     label: string;
     /** where the label chip is drawn (an arrow's own frame leaves it out) */
     frame: Frame;
-    /** objects under the label; an arrow id means that arrow's label */
+    /** objects under the label; an arrow id means that arrow's label, a group id that group's title */
     overlaps: Id[];
+    /** other arrows whose line runs under the label */
+    lines: Id[];
+  }[];
+  /** pairs of arrows drawn on top of each other (collinear within 3 points): readers can't tell them apart there */
+  arrowOverlaps: {
+    arrows: Id[];
+    /** points of shared length */
+    length: number;
+    /** the middle of the first shared run */
+    at: {
+      x: number;
+      y: number;
+    };
+  }[];
+  /** pairs of arrows whose lines cross; fewer read better, and moving a tile or reordering a column often removes them */
+  arrowIntersections: {
+    arrows: Id[];
+    count: number;
+    /** the first crossing */
+    at: {
+      x: number;
+      y: number;
+    };
   }[];
   overflow: {
     id: Id;
@@ -1378,7 +1403,7 @@ export interface CanvasApi {
     translate(params: LayoutTranslateParams): Promise<LayoutTranslateResult>;
     /** Place objects in shared columns and rows (one undo step): a column is as wide as its widest cell and a row as tall as its tallest, measured from the cells' current frames, `colGap`/`rowGap` apart, so columns line up across rows even when the cells belong to different groups (their groups re-fit). Row and column numbers only order cells; unused numbers take no space. Groups as cells move whole. Leave `rowGap` room for group padding and title bands between rows of different groups. */
     grid(params: LayoutGridParams): Promise<LayoutGridResult>;
-    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included) or on another label, note/text/html whose content doesn't fit its frame (`overflow`: points missing in x and y; html: its page's document laid out at the frame's width), code tiles whose range's rows are taller than the frame (`scrolls`: the tile scrolls to its range, fine for a viewer meant to scroll; refit with `size: "fit"` when the whole range should show), and code captions or note tables cut off by the frame (`truncated`; a note's table cells wrap within its width, so only a table with too many columns for it is cut). Follow tiles are fixed-size viewers and never count as overflow or truncated. */
+    /** Layout problems for `ids`, for what intersects `rect`, or for the whole board, judged by what is drawn (a tile's frame is its whole box, title bar included; arrows route as drawn, line-bound ends at their lines): overlapping objects (a group and its members don't count; unfilled rects/ellipses are annotations and never overlap anything), arrows whose route runs through tiles, text, or filled shapes other than their own ends, arrow labels lying on a tile, text, or filled shape (their own ends included), a group's title, another label, or another arrow's line, arrows drawn on top of each other (`arrowOverlaps`: shared length) or crossing each other (`arrowIntersections`), note/text/html whose content doesn't fit its frame (`overflow`: points missing in x and y; html: its page's document laid out at the frame's width), code tiles whose range's rows are taller than the frame (`scrolls`: the tile scrolls to its range, fine for a viewer meant to scroll; refit with `size: "fit"` when the whole range should show), and code captions or note tables cut off by the frame (`truncated`; a note's table cells wrap within its width, so only a table with too many columns for it is cut). Follow tiles are fixed-size viewers and never count as overflow or truncated. */
     check(params?: LayoutCheckParams): Promise<LayoutCheckResult>;
   };
   tray: {

@@ -22,7 +22,7 @@ Point the user at Help › Chalkwork Basics (⌥⌘/) for the same text in the a
 - **Groups** are tinted, titled regions of tiles that belong together; an **arrow**'s label says how two things relate, and one into a code tile points at its lines.
   A code tile's **caption** (the line under its header) says why those lines matter. A code tile keeps its range on its code as lines move above or inside it; "⚠︎ stale: …" in its header means that code is gone (the range is left untinted).
 - **⌥⌘-arrows** (↑ ↓ ← →) move between tiles: to the nearest tile that way, and a terminal landed on takes the keyboard.
-  ⌥⌘→ / ⌥⌘← step along the selected tile's `relation: "next_step"` arrows when it has one ("Last step" / "First step" ends a sequence).
+  ⌥⌘→ / ⌥⌘← step along the selected tile's `relation: "next_step"` arrows when it has one ("Last step" / "First step" ends a sequence); ⌥⌘→ on the walkthrough's group, or with nothing selected, starts at its first stop.
   A stop not wholly in view is centered (fitted when larger than the view); an agent's terminal comes with its follow tile when both fit. Each step is a Back entry.
 - **⌘P** finds a tile by title or caption.
 - **Links**: a `path:line` link in a note or page, Go to, a definition and a terminal ⌘-click go to the code tile already showing those lines (exactly, or a captioned tile whose range holds them) wherever it is, else open them beside the source.
@@ -65,7 +65,7 @@ Point the user at Help › Chalkwork Basics (⌥⌘/) for the same text in the a
 ## Reviewing work
 
 - **Review Changes** (File › Review Changes ⇧⌘R, or right-click the canvas) opens a changes tile, or goes to the one already there for the same root and base; File › Review Branch reviews everything the branch changed. Both review the checkout the focused or selected terminal works in (a worktree its agent runs in), else the board's; Review Branch on the default branch with no terminal to go by offers the repository's worktrees. Each changed file shows its changes (hunks), green added, red removed. Its summary is a picker: Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed); a code tile's base picker uses the same words, the exact base (merge-base, sha) in its tooltip.
-- **Stage** marks a change ready for the next commit, **Unstage** takes the mark off; neither changes files. **Discard** throws an uncommitted change away from the files: it asks first (the button turns into "Discard?" for a few seconds, or `r` twice), then a notice names what went with "⌘Z undoes". Committed hunks have no Discard.
+- **Stage** marks a change ready for the next commit, **Unstage** takes the mark off; neither changes files. **Discard** throws an uncommitted change away from the files: it asks first (the button turns into "Discard?" until you click it again or do something else, or `r` twice), then a notice names what went with "⌘Z undoes". Committed hunks have no Discard.
 - **committed**: already in the branch's history (a branch review); **Viewed** folds a file until it changes. The tile's keys work once Return (or a click) gives it the keyboard; while it is only selected they say so.
 
 ## Zoom and keys

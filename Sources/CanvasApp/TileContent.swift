@@ -112,6 +112,10 @@ protocol TileContent: NSView {
     func keyboardMention(hasKeyboard: Bool) async -> MentionTarget?
     /// Outline for a target in this view's coordinates, for the hover highlight.
     func outline(for target: MentionTarget) -> NSRect?
+    /// A click on the target's tray chip: scroll the content so the mentioned part (a line or
+    /// range, a note block) shows, for `outline(for:)` to find and the canvas to flash. Nothing
+    /// for content that shows all of itself or can't find it.
+    func scrollToMention(_ target: MentionTarget)
     /// The page elements under `rect` (this view's coordinates), for a mention of a shape drawn
     /// over the tile; nil for tiles without a page, and while the page isn't there to ask.
     func pageElements(in rect: NSRect) async -> PageElements?
@@ -150,6 +154,8 @@ extension TileContent {
     func keyboardMention(hasKeyboard: Bool) async -> MentionTarget? { nil }
 
     func pageElements(in rect: NSRect) async -> PageElements? { nil }
+
+    func scrollToMention(_ target: MentionTarget) {}
 
     var headerHeight: CGFloat { 0 }
 

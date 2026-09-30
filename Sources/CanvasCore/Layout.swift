@@ -229,6 +229,25 @@ public enum Layout {
             y: axis(rect.minY, rect.midY, rect.height, clearMin: clear.minY, clearMid: clear.midY, clearLength: clear.height)))
     }
 
+    /// A tray chip's click (`MentionReveal`): `rect` (the mentioned objects, document
+    /// coordinates) shown at the zoom the view has, with the least pan, nothing when it is in
+    /// view already; the zoom changes only when `rect` can't show whole, and then only down.
+    /// `readable`: the mention is a part of a tile (a line, a block) that only a live tile can
+    /// scroll to and flash, so below that zoom `rect` is fitted at `readable`…the most instead,
+    /// like Go to; at or above it the zoom stays and a tile too big to show whole shows its top
+    /// left (the part is revealed inside it next). The zoom never goes past `limits` (100%).
+    public static func revealMention(_ rect: CGRect, readable: CGFloat?, from jump: Jump, clear: CGRect, padding: CGFloat, zoom limits: ClosedRange<CGFloat>) -> Jump {
+        if let readable, jump.zoom < readable {
+            return fit(rect, in: clear, padding: padding, zoom: min(readable, limits.upperBound)...limits.upperBound)
+        }
+        let shown = jump.shown(clear)
+        let padded = rect.insetBy(dx: -padding, dy: -padding)
+        if readable != nil || padded.width <= shown.width && padded.height <= shown.height {
+            return reveal(rect, from: jump, clear: clear, padding: padding)
+        }
+        return fit(rect, in: clear, padding: padding, zoom: limits.lowerBound...min(max(jump.zoom, limits.lowerBound), limits.upperBound))
+    }
+
     /// The least pan that brings `rect` (with `padding`) into view clear of the chrome, from a
     /// viewport at `jump`; along an axis where it doesn't fit, its left or top edge shows, or
     /// with `bottomFirst` its bottom edge (a terminal's question sits there), not moving while

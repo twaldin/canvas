@@ -229,6 +229,7 @@ final class CodeRowsView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
+        if let mention = CanvasView.mentionItem(in: self, for: event) { menu.addItem(mention) }
         if canEdit {
             let edit = NSMenuItem(title: "Edit Here", action: #selector(editHere(_:)), keyEquivalent: "")
             edit.target = self

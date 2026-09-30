@@ -118,4 +118,10 @@ final class HtmlChannelHandler: NSObject, WKScriptMessageHandlerWithReply {
 final class HtmlWebView: WKWebView {
     override var acceptsFirstResponder: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// WebKit's context menu leads with Mention: the element under the right-click.
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        CanvasView.insertMention(into: menu, in: self, for: event)
+    }
 }

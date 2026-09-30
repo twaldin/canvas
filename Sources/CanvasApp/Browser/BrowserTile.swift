@@ -1051,6 +1051,12 @@ final class BrowserWebView: WKWebView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// WebKit's context menu leads with Mention: the element under the right-click.
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        CanvasView.insertMention(into: menu, in: self, for: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
         onUserInput?()
         super.mouseDown(with: event)

@@ -749,6 +749,12 @@ final class NoteTile: NSView, TileContent {
         return found
     }
 
+    func scrollToMention(_ target: MentionTarget) {
+        guard !isEditing, case .note(_, let item) = target, display.frame.height > displayScroll.contentSize.height + 1,
+              let found = (item.lines.start...item.lines.end).lazy.compactMap({ self.fragment(where: .noteMarkdownLine, is: $0) }).first else { return }
+        display.scroll(textRow(of: found).origin)
+    }
+
     func outline(for target: MentionTarget) -> NSRect? {
         if case .note(_, let item) = target { return rect(ofLines: item.lines) ?? bounds }
         guard case .code(_, let path, let lines, _, let symbol, let commit, _) = target else { return bounds }
@@ -776,6 +782,13 @@ final class NoteTile: NSView, TileContent {
 /// A note is short; lay all of it out once per content change instead. NSTextView implements
 /// this viewport delegate method without exposing it to Swift, hence the selector.
 final class NoteDisplayView: NSTextView {
+    /// The text's context menu leads with Mention: the block under the right-click.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = (super.menu(for: event)?.copy() as? NSMenu) ?? NSMenu()
+        CanvasView.insertMention(into: menu, in: self, for: event)
+        return menu
+    }
+
     @objc(viewportBoundsForTextViewportLayoutController:)
     func wholeTextViewport(_ controller: NSTextViewportLayoutController) -> CGRect {
         bounds

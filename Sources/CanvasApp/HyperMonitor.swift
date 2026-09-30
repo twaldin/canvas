@@ -51,14 +51,14 @@ final class HyperMonitor {
         case .leftMouseDown where hyper:
             let focus = event.window?.firstResponder
             if let shape = canvas.shape(atWindowPoint: event.locationInWindow) {
-                canvas.board.toggle(MentionContext.drawingTarget(shape, selection: canvas.selection, on: canvas.board))
+                canvas.toggleMention(MentionContext.drawingTarget(shape, selection: canvas.selection, on: canvas.board))
                 Self.keepFocus(focus, in: event.window)
             } else if let (tile, point) = canvas.tile(atWindowPoint: event.locationInWindow) {
                 let content = tile.content
                 let fallback = MentionTarget.object(tile.objectID)
                 let window = event.window
                 Task { @MainActor in
-                    canvas.board.toggle(await content.resolveMention(at: point) ?? fallback)
+                    canvas.toggleMention(await content.resolveMention(at: point) ?? fallback)
                     Self.keepFocus(focus, in: window)
                 }
             } else {
@@ -80,7 +80,7 @@ final class HyperMonitor {
                 let point = canvas.document.convert(event.locationInWindow, from: nil)
                 switch current.press.release(at: point, window: event.locationInWindow) {
                 case .group(let id):
-                    if let target = GroupMention.target(id, on: canvas.board) { canvas.board.toggle(target) }
+                    if let target = GroupMention.target(id, on: canvas.board) { canvas.toggleMention(target) }
                 case .marquee(let rect):
                     let ids = canvas.objects(inDocRect: rect)
                     if ids.count == 1 { _ = try? canvas.board.stage(.object(ids[0])) }

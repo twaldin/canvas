@@ -25,6 +25,10 @@ final class SceneOverlay: NSView {
     var marquee: NSBezierPath? {
         didSet { invalidate(oldValue.map { $0.bounds.insetBy(dx: -$0.lineWidth, dy: -$0.lineWidth) }, marquee.map { $0.bounds.insetBy(dx: -$0.lineWidth, dy: -$0.lineWidth) }) }
     }
+    /// What a tray chip's click revealed (document coordinates), fading out: `strength` 1 → 0.
+    var flash: (rect: NSRect, strength: CGFloat)? {
+        didSet { invalidate(oldValue?.rect, flash?.rect) }
+    }
     /// Entered group: everything but these rects is dimmed. Nil when no group is entered.
     var focusHoles: [NSRect]? { didSet { needsDisplay = true } }
 
@@ -60,6 +64,14 @@ final class SceneOverlay: NSView {
             marquee.setLineDash([4 * marquee.lineWidth, 3 * marquee.lineWidth], count: 2, phase: 0)
             NSColor.controlAccentColor.setStroke()
             marquee.stroke()
+        }
+        if let flash {
+            let path = NSBezierPath(roundedRect: flash.rect.insetBy(dx: -2, dy: -2), xRadius: 4, yRadius: 4)
+            path.lineWidth = 3
+            NSColor.systemPurple.withAlphaComponent(flash.strength).setStroke()
+            NSColor.systemPurple.withAlphaComponent(0.3 * flash.strength).setFill()
+            path.fill()
+            path.stroke()
         }
         if let outline {
             let path = NSBezierPath(roundedRect: outline.insetBy(dx: -2, dy: -2), xRadius: 4, yRadius: 4)

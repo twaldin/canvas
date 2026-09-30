@@ -408,7 +408,11 @@ final class CanvasView: NSScrollView {
         tile.onMoveDragged = { [weak self] event in self?.dragMove(event) }
         tile.onMoveEnded = { [weak self] event in self?.endMove(event) }
         tile.onTitleDoubleClick = { [weak self] in self?.focus(tile: id) }
-        tile.onMenu = { [weak self] in self?.objectMenu(for: id) }
+        tile.onMenu = { [weak self, weak tile] event in
+            // A right-click on the tile's body mentions what is under it; on its title bar, the tile.
+            let point = tile.map { $0.content.convert(event.locationInWindow, from: nil) }
+            return self?.objectMenu(for: id, at: point.flatMap { point in tile?.content.bounds.contains(point) == true ? point : nil })
+        }
         // Created where it wouldn't be live (a batch building a board zoomed out or offscreen),
         // a code, note, or HTML tile starts as its card rather than building its live view for
         // the liveness pass to swap out. Terminals and browsers start live: they run a session
@@ -1291,7 +1295,7 @@ final class CanvasView: NSScrollView {
 
     // MARK: Context menus
 
-    func objectMenu(for id: ObjectID) -> NSMenu {
+    func objectMenu(for id: ObjectID, at point: NSPoint? = nil) -> NSMenu {
         if !selection.contains(id) { select(id, extend: false) }
         let count = selection.count
         let menu = NSMenu()
@@ -1301,6 +1305,10 @@ final class CanvasView: NSScrollView {
             leave.keyEquivalent = "\u{1b}"
             leave.keyEquivalentModifierMask = .command
             menu.addItem(leave)
+            menu.addItem(.separator())
+        }
+        if count == 1 {
+            menu.addItem(mentionItem(for: id, at: point))
             menu.addItem(.separator())
         }
         menu.addItem(MenuAction.item(count > 1 ? "Close \(count) Objects" : "Close") { [weak self] in self?.deleteSelection() })
@@ -1733,7 +1741,120 @@ final class CanvasView: NSScrollView {
                                           padding: Self.jumpPadding / magnification))
     }
 
+    // MARK: Tray chips
+
+    /// A click on a tray chip: what its mention points at selected and brought into view
+    /// (`MentionReveal`; `Layout.revealMention` keeps the zoom unless a tile must turn live to
+    /// show the part, never past 100%), then the mentioned lines or note block scrolled to in
+    /// the tile, shown, and flashed; a whole object flashes whole. The keyboard stays where it
+    /// is, so the prompt still goes where the tray says. One step of Navigate Back.
+    func revealMention(_ target: MentionTarget) {
+        guard let reveal = MentionReveal(target, on: board) else { return }
+        let rects = reveal.objects.compactMap(docFrame)
+        guard var rect = rects.first else { return }
+        for other in rects.dropFirst() { rect = rect.union(other) }
+        let tile = reveal.part.flatMap { tiles[$0] }
+        let readable = tile.map { max(Self.readableZoom, $0.content.liveZoom / max($0.zoom, 0.01)) }
+        let from = viewport
+        navigationDepth += 1
+        apply(Layout.revealMention(rect, readable: readable, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification,
+                                   zoom: minMagnification...maxMagnification))
+        setSelection(Set(reveal.objects))
+        navigationDepth -= 1
+        guard let tile else {
+            flashMention(rect)
+            return recordNavigation(from: from)
+        }
+        revealPart(target, in: tile, from: from)
+    }
+
+    /// The part once the tile is live and has loaded it (a code tile reads its file first):
+    /// scrolled to inside the tile, panned to when it is out of view, and flashed. A tile that
+    /// can't find it within `partWait` tries flashes whole instead.
+    private func revealPart(_ target: MentionTarget, in tile: TileFrameView, from: Viewport, attempt: Int = 0) {
+        if tile.isLive {
+            tile.content.scrollToMention(target)
+            if let outline = tile.content.outline(for: target), !outline.isEmpty {
+                let part = document.convert(outline, from: tile.content)
+                apply(Layout.reveal(part, keeping: tile.frame, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification))
+                flashMention(part)
+                return recordNavigation(from: from)
+            }
+        }
+        guard attempt < Self.partWait else {
+            flashMention(tile.frame)
+            return recordNavigation(from: from)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak tile] in
+            guard let self, let tile, tile.superview != nil else { return }
+            self.revealPart(target, in: tile, from: from, attempt: attempt + 1)
+        }
+    }
+
+    /// Tries, 50 ms apart, for a revealed part to show.
+    private static let partWait = 30
+
+    /// The revealed mention (document rect) lit for most of a second, then faded out over the
+    /// next two (a code tile's own edit flash lasts three).
+    private func flashMention(_ rect: NSRect) {
+        mentionFlash?.cancel()
+        overlay.flash = (rect, 1)
+        mentionFlash = Task { @MainActor [weak self] in
+            let steps = 60
+            try? await Task.sleep(for: .milliseconds(800))
+            for step in 1...steps {
+                guard !Task.isCancelled, let self else { return }
+                let t = CGFloat(step) / CGFloat(steps)
+                self.overlay.flash = step == steps ? nil : (rect, 1 - t * t)
+                try? await Task.sleep(for: .milliseconds(33))
+            }
+        }
+    }
+
+    /// A Hyper-click, ⇧⌘M, or a context menu's Mention: stages `target`, or takes it out of the
+    /// tray when it is there already, and says so, since the chip leaving is easy to miss.
+    func toggleMention(_ target: MentionTarget) {
+        if case .unstaged(let mention) = board.toggle(target) { showNotice(TrayChips.unstagedNotice(mention)) }
+    }
+
+    /// A context menu's Mention item (⇧⌘M's shortcut shown): what is under `point` (the
+    /// right-click, in the tile content's coordinates), as a Hyper-click there would stage it,
+    /// else the whole tile; for a drawn shape or arrow, what a Hyper-click on it stages.
+    func mentionItem(for id: ObjectID, at point: NSPoint?) -> NSMenuItem {
+        let item = MenuAction.item("Mention") { [weak self] in
+            guard let self else { return }
+            guard let content = self.tiles[id]?.content else {
+                // A shape or arrow: what a Hyper-click on it stages.
+                return self.toggleMention(MentionContext.drawingTarget(id, selection: self.selection, on: self.board))
+            }
+            Task { @MainActor [weak self] in
+                var target: MentionTarget?
+                if let point { target = await content.resolveMention(at: point) }
+                self?.toggleMention(target ?? .object(id))
+            }
+        }
+        item.keyEquivalent = "m"
+        item.keyEquivalentModifierMask = [.shift, .command]
+        return item
+    }
+
+    /// `mentionItem` for a right-click `event` inside a tile's content view `view` (a code
+    /// tile's rows, a note's text, a page); nil outside any tile.
+    static func mentionItem(in view: NSView, for event: NSEvent) -> NSMenuItem? {
+        guard let tile = sequence(first: view, next: \.superview).lazy.compactMap({ $0 as? TileFrameView }).first,
+              let canvas = sequence(first: tile as NSView, next: \.superview).lazy.compactMap({ $0 as? CanvasView }).first else { return nil }
+        return canvas.mentionItem(for: tile.objectID, at: tile.content.convert(event.locationInWindow, from: nil))
+    }
+
+    /// A content view's own context menu (a page's, a note's text) with `mentionItem` first.
+    static func insertMention(into menu: NSMenu, in view: NSView, for event: NSEvent) {
+        guard let item = mentionItem(in: view, for: event) else { return }
+        if menu.numberOfItems > 0 { menu.insertItem(.separator(), at: 0) }
+        menu.insertItem(item, at: 0)
+    }
+
     private var panAnimation: Task<Void, Never>?
+    private var mentionFlash: Task<Void, Never>?
 
     /// Pans to `jump` (same zoom) over a quarter second, easing out; a newer pan replaces it.
     private func animatePan(to jump: Layout.Jump) {

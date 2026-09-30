@@ -963,6 +963,18 @@ extension CodeTile {
                      symbol: document.enclosingSymbol(lines: lines, side: side), commit: commit)
     }
 
+    func scrollToMention(_ target: MentionTarget) {
+        guard case .code(_, let path, let lines, let side, _, _, _) = target, let document, showsCurrent, path == document.path,
+              let rows = rowsView.painter?.rows else { return }
+        if side == DiffSide.old.rawValue, document.side == .new {
+            guard let sign = document.signs.firstIndex(where: { $0.old.contains(lines.start) }) else { return }
+            scroll(toRow: rows.peekedSigns.contains(sign) ? rows.index(ofPeek: sign, old: lines.start) ?? 0 : rows.edgeRow(ofLine: document.signs[sign].lines.lowerBound))
+        } else {
+            let first = rows.index(ofLine: lines.start)
+            scroll(toRow: first, count: max(1, rows.rows(ofLine: lines.end).upperBound - first))
+        }
+    }
+
     func outline(for target: MentionTarget) -> NSRect? {
         guard case .code(_, let path, let lines, let side, _, _, _) = target, let document, showsCurrent, path == document.path,
               let rows = rowsView.painter?.rows else { return nil }

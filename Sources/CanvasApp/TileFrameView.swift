@@ -43,7 +43,7 @@ final class TileFrameView: NSView {
     var onMoveDragged: ((NSEvent) -> Void)?
     var onMoveEnded: ((NSEvent) -> Void)?
     var onTitleDoubleClick: (() -> Void)?
-    var onMenu: (() -> NSMenu?)?
+    var onMenu: ((NSEvent) -> NSMenu?)?
 
     private var resizeStart: (mouse: NSPoint, frame: NSRect, proportional: Bool)?
     /// The object's `props.zoom` (`ObjectZoom`): how big the content draws inside the body. The
@@ -648,7 +648,7 @@ final class TileFrameView: NSView {
         resizeStart = nil
     }
 
-    override func menu(for event: NSEvent) -> NSMenu? { onMenu?() }
+    override func menu(for event: NSEvent) -> NSMenu? { onMenu?(event) }
 
     override func resetCursorRects() {
         addCursorRect(resizeGrip, cursor: .crosshair)

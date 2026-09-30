@@ -1034,7 +1034,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// Hyper-click on them would (a second `m` unstages it).
     private func mentionCurrent() {
         guard let target = currentMention else { return show(message: Self.pickFirst) }
-        board.toggle(target)
+        if case .unstaged(let mention) = board.toggle(target) { show(message: TrayChips.unstagedNotice(mention)) }
     }
 
     /// A mention names the lines on their side and the base they were diffed against, so the
@@ -1048,6 +1048,26 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             return .code(object: object.id, path: found.path, lines: found.lines, side: nil, symbol: symbol, commit: set.head, diff: found.detail)
         }
         return .code(object: object.id, path: found.path, lines: found.lines, side: set.base == nil ? nil : found.side.rawValue, symbol: symbol, commit: set.base, diff: found.detail)
+    }
+
+    func scrollToMention(_ target: MentionTarget) {
+        guard case .code(let id, let path, let lines, let side, _, _, _) = target, id == object.id, let set else { return }
+        let wanted = side ?? DiffSide.new.rawValue
+        // A folded file shows no lines: unfold the one the mention is in.
+        if let file = set.files.firstIndex(where: { $0.boardPath == path || $0.oldBoardPath == path }), collapsed.contains(set.files[file].boardPath) {
+            collapsed.remove(set.files[file].boardPath)
+            refreshPainter()
+        }
+        guard let painter else { return }
+        for index in painter.rows.rows.indices {
+            guard case .line(let file, let hunk, let line) = painter.rows.rows[index], let location = set.location(file: file, hunk: hunk, line: line),
+                  location.path == path, location.side.rawValue == wanted, lines.start <= location.line, location.line <= lines.end else { continue }
+            reveal(file: file, hunk: hunk)
+            let rect = painter.rect(ofRow: index, width: bounds.width, scroll: scroll)
+            let shown = NSRect(x: 0, y: ChangesMetrics.headerHeight + ChangesMetrics.fileHeight, width: bounds.width, height: viewportHeight - ChangesMetrics.fileHeight)
+            if !shown.contains(rect) { setScroll(painter.rows.tops[index] - ChangesMetrics.fileHeight - 2 * rect.height) }
+            return
+        }
     }
 
     func outline(for target: MentionTarget) -> NSRect? {

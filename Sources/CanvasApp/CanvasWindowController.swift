@@ -74,8 +74,9 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             tray.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             tray.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
             tray.heightAnchor.constraint(equalToConstant: 34),
+            // Its natural width (`TrayBar.intrinsicContentSize`, at least `TrayLayout.minimumWidth`)
+            // up to the window's: staging never widens the window.
             tray.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -40),
-            tray.widthAnchor.constraint(greaterThanOrEqualToConstant: 420),
         ])
         window.contentView = container
         emptyHint.translatesAutoresizingMaskIntoConstraints = false
@@ -159,6 +160,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.onContentInViewChange = { [weak self] inView in self?.nothingHere.isHidden = inView }
 
         tray.onUnstage = { [weak self] id in try? self?.board.unstage(id) }
+        tray.onReveal = { [weak self] mention in self?.canvas.revealMention(mention.target) }
         tray.targetMenu = { [weak self] in self?.targetMenu() }
         canvas.onPromptTargetChange = { [weak self] in self?.refreshTray() }
         canvas.onPromptTargetTitle = { [weak self] in self?.scheduleTrayTitle() }
@@ -202,7 +204,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         var title = target.map { PromptTarget.label($0, shownTitle: canvas.tiles[$0.id]?.title) }
         if let affinity, affinity.target == target?.id { title = title.map { "\($0) · works in \(affinity.checkout)" } }
         tray.show(board.tray, targetTitle: title, targetDrains: target.map(PromptTarget.drains) ?? false,
-                  hasTerminal: board.objects.values.contains { $0.type == .terminal })
+                  hasTerminal: board.objects.values.contains { $0.type == .terminal }, board: board)
         refreshGetStarted(target: target)
     }
 
@@ -728,7 +730,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                 self?.canvas.showNotice("Nothing to mention: select a tile, or put the cursor on a line")
                 return
             }
-            board.toggle(target)
+            self?.canvas.toggleMention(target)
         }
     }
 

@@ -743,13 +743,23 @@ public final class Board {
         trayChanged()
     }
 
+    /// What a toggle did.
+    public enum Toggled: Equatable, Sendable {
+        case staged(Mention)
+        /// It was in the tray already, and came out (the app says so: `TrayChips.unstagedNotice`).
+        case unstaged(Mention)
+        /// Something it points at is gone.
+        case failed
+    }
+
     /// What a Hyper-click does: stages `target`, or unstages it when it is already in the tray.
-    public func toggle(_ target: MentionTarget) {
+    @discardableResult
+    public func toggle(_ target: MentionTarget) -> Toggled {
         if let staged = tray.first(where: { $0.target == target }) {
             try? unstage(staged.id)
-        } else {
-            _ = try? stage(target)
+            return .unstaged(staged)
         }
+        return (try? stage(target)).map(Toggled.staged) ?? .failed
     }
 
     /// Resolve every staged mention at its current revision and return the prompt context.

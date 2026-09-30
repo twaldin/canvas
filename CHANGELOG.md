@@ -6,6 +6,8 @@ Each version's section is its GitHub release's notes (release.yml puts it above 
 
 Canvas is now Chalkwork: the same app under a new name. Its first launch brings a Canvas 0.2 install along.
 
+Chalkwork has an app icon (Canvas had none): a chalk box whose stroke runs on as an arrow into a box of code, on slate.
+
 ### Upgrading from Canvas
 
 1. Quit Canvas (its terminal sessions keep running), unzip `Chalkwork-0.3.0.zip`, move `Chalkwork.app` to `/Applications` and open it. The first launch moves `~/Library/Application Support/Canvas` to `~/Library/Application Support/Chalkwork` (every board, archived boards, the `pre-repo-migration/` backups, snapshots, open tabs) and `~/.canvas` (your compositions) to `~/.chalkwork`, moves the browser tiles' logins and site data, and brings over Canvas's settings and window frames. While Canvas is still running it moves nothing; quit Canvas and open Chalkwork again.

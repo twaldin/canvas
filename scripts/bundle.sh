@@ -27,6 +27,9 @@ cp -R schema bin cli skills extensions LICENSE THIRD_PARTY_NOTICES.md "$app/Cont
 # The hooks' tests (`bun test extensions/agent-hooks`) stay in the checkout.
 find "$app/Contents/Resources/extensions" -name '*.test.ts' -delete
 [ -d resources ] && cp -R resources "$app/Contents/Resources/resources"
+# The app icon (Info.plist CFBundleIconFile). It is drawn from the brand mark by the site's
+# `bun scripts/app-icon.ts <out.icns>` (an .iconset with every size, packed by iconutil).
+cp scripts/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cp -R clients/ts/src "$app/Contents/Resources/clients/ts/src"
 # Tiles put clients/python on PYTHONPATH: only the SDK, so no other package (its tests) shadows
 # the user's, and no stale bytecode.
@@ -47,6 +50,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>net.waldin.chalkwork</string>
   <key>CFBundleName</key><string>Chalkwork</string>
   <key>CFBundleExecutable</key><string>Chalkwork</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$version</string>
   <key>CFBundleVersion</key><string>$build</string>

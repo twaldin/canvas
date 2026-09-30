@@ -3,8 +3,9 @@ import CanvasCore
 
 /// App-wide Hyper (⌃⌥⇧⌘, Caps Lock via Karabiner) handling, installed ahead of every tile so
 /// native ⌘-click keeps working inside terminals, browsers, and code:
-///  - Hyper-click stages a mention of whatever is under the cursor (element-level where the tile supports it)
-///  - Hyper-drag on empty canvas stages the enclosed tiles as one group mention
+///  - Hyper-click stages a mention of whatever is under the cursor (element-level where the tile
+///    supports it); on a group's title or empty interior, the whole group
+///  - Hyper-drag on empty canvas (or a group's empty interior) stages the enclosed tiles as one group mention
 ///  - holding Hyper outlines what would be mentioned
 @MainActor
 final class HyperMonitor {
@@ -12,7 +13,8 @@ final class HyperMonitor {
 
     private var monitor: Any?
     private let canvasFor: (NSWindow?) -> CanvasView?
-    private var marquee: (canvas: CanvasView, start: NSPoint, focus: NSResponder?)?
+    /// A Hyper press away from tiles and drawings: a click on the group under it, or a marquee.
+    private var press: (canvas: CanvasView, press: GroupMention.Press, focus: NSResponder?)?
     /// Where Hyper is being held, so an async hover answer from a tile can redraw the outline.
     private var hoverContext: (canvas: CanvasView, point: NSPoint)?
 
@@ -49,47 +51,50 @@ final class HyperMonitor {
         case .leftMouseDown where hyper:
             let focus = event.window?.firstResponder
             if let shape = canvas.shape(atWindowPoint: event.locationInWindow) {
-                Self.toggle(MentionContext.drawingTarget(shape, selection: canvas.selection, on: canvas.board), on: canvas.board)
+                canvas.board.toggle(MentionContext.drawingTarget(shape, selection: canvas.selection, on: canvas.board))
                 Self.keepFocus(focus, in: event.window)
             } else if let (tile, point) = canvas.tile(atWindowPoint: event.locationInWindow) {
                 let content = tile.content
                 let fallback = MentionTarget.object(tile.objectID)
                 let window = event.window
                 Task { @MainActor in
-                    Self.toggle(await content.resolveMention(at: point) ?? fallback, on: canvas.board)
+                    canvas.board.toggle(await content.resolveMention(at: point) ?? fallback)
                     Self.keepFocus(focus, in: window)
                 }
             } else {
-                marquee = (canvas, canvas.document.convert(event.locationInWindow, from: nil), focus)
+                let start = canvas.document.convert(event.locationInWindow, from: nil)
+                press = (canvas, GroupMention.Press(start: start, window: event.locationInWindow, group: canvas.group(atWindowPoint: event.locationInWindow)?.objectID), focus)
             }
             return nil
-        case .leftMouseDragged where marquee != nil:
-            guard let marquee else { return nil }
-            let current = canvas.document.convert(event.locationInWindow, from: nil)
-            canvas.overlay.outline = canvas.overlay.convert(Self.rect(marquee.start, current), from: canvas.document)
-            return nil
-        case .leftMouseUp where marquee != nil:
-            if let marquee {
-                let current = canvas.document.convert(event.locationInWindow, from: nil)
-                let ids = canvas.objects(inDocRect: Self.rect(marquee.start, current))
-                if ids.count == 1 { _ = try? canvas.board.stage(.object(ids[0])) }
-                if ids.count > 1 { _ = try? canvas.board.stage(.group(objects: ids, name: nil)) }
-                Self.keepFocus(marquee.focus, in: event.window)
+        case .leftMouseDragged where press != nil:
+            guard var current = press else { return nil }
+            current.press.move(window: event.locationInWindow)
+            press = current
+            if current.press.dragging {
+                let point = canvas.document.convert(event.locationInWindow, from: nil)
+                canvas.overlay.outline = canvas.overlay.convert(Self.rect(current.press.start, point), from: canvas.document)
             }
-            marquee = nil
+            return nil
+        case .leftMouseUp where press != nil:
+            if var current = press {
+                let point = canvas.document.convert(event.locationInWindow, from: nil)
+                switch current.press.release(at: point, window: event.locationInWindow) {
+                case .group(let id):
+                    if let target = GroupMention.target(id, on: canvas.board) { canvas.board.toggle(target) }
+                case .marquee(let rect):
+                    let ids = canvas.objects(inDocRect: rect)
+                    if ids.count == 1 { _ = try? canvas.board.stage(.object(ids[0])) }
+                    if ids.count > 1 { _ = try? canvas.board.stage(.group(objects: ids, name: nil)) }
+                case .nothing:
+                    break
+                }
+                Self.keepFocus(current.focus, in: event.window)
+            }
+            press = nil
             canvas.overlay.outline = nil
             return nil
         default:
             return event
-        }
-    }
-
-    /// Hyper-click stages a target, or unstages it when it is already in the tray.
-    static func toggle(_ target: MentionTarget, on board: Board) {
-        if let staged = board.tray.first(where: { $0.target == target }) {
-            try? board.unstage(staged.id)
-        } else {
-            _ = try? board.stage(target)
         }
     }
 
@@ -100,9 +105,9 @@ final class HyperMonitor {
     }
 
     private func hover(_ canvas: CanvasView, at point: NSPoint, active: Bool) {
-        guard active, marquee == nil else {
+        guard active, press == nil else {
             hoverContext = nil
-            if marquee == nil { canvas.showOutline(nil, in: nil) }
+            if press == nil { canvas.showOutline(nil, in: nil) }
             return
         }
         hoverContext = (canvas, point)
@@ -112,7 +117,10 @@ final class HyperMonitor {
             let rects = ids.compactMap { canvas.shapeOutline?($0) ?? canvas.docFrame($0) }
             return canvas.showOutline(docRect: rects.dropFirst().reduce(rects.first) { $0?.union($1) })
         }
-        guard let (tile, local) = canvas.tile(atWindowPoint: point) else { return canvas.showOutline(nil, in: nil) }
+        guard let (tile, local) = canvas.tile(atWindowPoint: point) else {
+            // A group's title or empty interior: the click mentions the whole group.
+            return canvas.showOutline(docRect: canvas.group(atWindowPoint: point)?.region)
+        }
         let target = tile.content.mentionTarget(at: local) ?? .object(tile.objectID)
         canvas.showOutline(tile.content.outline(for: target) ?? tile.content.bounds, in: tile)
     }

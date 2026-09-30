@@ -1030,7 +1030,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// Hyper-click on them would (a second `m` unstages it).
     private func mentionCurrent() {
         guard let target = currentMention else { return show(message: Self.pickFirst) }
-        HyperMonitor.toggle(target, on: board)
+        board.toggle(target)
     }
 
     /// A mention names the lines on their side and the base they were diffed against, so the

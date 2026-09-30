@@ -764,6 +764,15 @@ public final class Board {
         trayChanged()
     }
 
+    /// What a Hyper-click does: stages `target`, or unstages it when it is already in the tray.
+    public func toggle(_ target: MentionTarget) {
+        if let staged = tray.first(where: { $0.target == target }) {
+            try? unstage(staged.id)
+        } else {
+            _ = try? stage(target)
+        }
+    }
+
     /// Resolve every staged mention at its current revision and return the prompt context.
     /// `peek` leaves the tray intact for a later `commit` of exactly these ids. `caller` is the
     /// terminal the context goes to: mentions of it say so, other terminals are named. The

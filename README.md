@@ -12,7 +12,7 @@ Requires macOS 14 or later on Apple silicon. [Download the latest release](https
 
 ## Show your agent the code
 
-Hyper-click a line of code, a DOM element, a note paragraph, a command's output or a shape to stage a mention in the tray at the bottom of the window. It goes with the next prompt you submit to the terminal the tray targets (`→ name ▾`); a mention from another worktree targets the agent working there. ⇧⌘M mentions whatever the keyboard is on. For an agent without an integration, Hyper-V (⌃⌥⇧⌘V) pastes the mentions into the terminal you're typing in, without pressing Return.
+Hyper-click a line of code, a DOM element, a note paragraph, a command's output, a shape or a group's title (the whole group, with the arrows between its members) to stage a mention in the tray at the bottom of the window. It goes with the next prompt you submit to the terminal the tray targets (`→ name ▾`); a mention from another worktree targets the agent working there. ⇧⌘M mentions whatever the keyboard is on. For an agent without an integration, Hyper-V (⌃⌥⇧⌘V) pastes the mentions into the terminal you're typing in, without pressing Return.
 
 Hyper means all four modifiers, ⌃⌥⇧⌘. Hold them and click, or give yourself one key that sends all four: Caps Lock mapped to Hyper with [Karabiner-Elements](https://karabiner-elements.pqrs.org) is the usual setup, and any remapper that sends ⌃⌥⇧⌘ works.
 

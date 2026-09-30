@@ -728,7 +728,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                 self?.canvas.showNotice("Nothing to mention: select a tile, or put the cursor on a line")
                 return
             }
-            HyperMonitor.toggle(target, on: board)
+            board.toggle(target)
         }
     }
 

@@ -5,9 +5,10 @@ Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
 ## Pointing an agent at things
 
-- **Hyper-click** (⌃⌥⇧⌘-click: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win; Caps Lock mapped to Hyper with a key remapper): stages a mention of a code line, page element, drawing, image pixel, or tile in the **tray**, the bar at the bottom of the window.
-  Hyper-drag on empty canvas mentions everything inside the box as one group.
-- **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles.
+- **Hyper-click** (⌃⌥⇧⌘-click: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win; Caps Lock mapped to Hyper with a key remapper): stages a mention of a code line, page element, drawing, image pixel, tile, or group in the **tray**, the bar at the bottom of the window.
+  On a group's title or empty interior it mentions the whole group (the innermost there; the chip reads its title), holding Hyper outlines the region, and a second Hyper-click unstages it.
+  Hyper-drag on empty canvas, or inside a group, mentions everything inside the box as one group.
+- **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles, or the selected group as a whole.
 - **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so): the terminal the user last typed in that runs an agent, else the board's only agent terminal (a dev-server shell beside it never takes it), else the last terminal typed in.
   Clicking "→ name" opens a menu of the board's terminals (agents first) to pick another; it is kept across restarts. ⌃⌥⇧⌘V pastes them, for an agent without an integration, into the terminal the user is typing in, else into that target.
 - **Help › Get Started** walks a new user through a first mention on a practice note: Hyper-click it (or ⇧⌘M), then send it with a prompt; each step turns green when done. It opens by itself only on a first launch, until closed; a user who never set up Hyper can reopen it there.

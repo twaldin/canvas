@@ -42,10 +42,10 @@ flowchart TB
 | Right-click | Context menu |
 | Shift-click | Add/remove from selection (a title bar, drawing or group label; inside a tile ⇧-click extends the tile's own text or line selection and selects just that tile) |
 | Drag on empty canvas | Marquee select (box or lasso, a setting): the tiles and drawings it encloses, the groups whose whole region it encloses, and the arrows whose two ends are bound to what it selects (`SelectionScope.marquee`), wherever their route bends |
-| Hyper-click (Caps Lock → ⌃⌥⇧⌘ via Karabiner) | Stage/unstage a mention |
-| Hyper-drag on empty canvas | Marquee mention (one group mention) |
-| Hold Hyper | Outline what would be mentioned under the cursor |
-| ⇧⌘M | Edit ▸ Mention: stage what the keyboard is on (a changes tile's hunk or lines, a code selection or range, a note's block, a page's selection, a terminal's selection or last command; else the selected tiles; see Selection tray) |
+| Hyper-click (Caps Lock → ⌃⌥⇧⌘ via Karabiner) | Stage/unstage a mention; on a group's title or empty interior, the whole group (the innermost, named by its title: its members with their text and the arrows among them) |
+| Hyper-drag on empty canvas | Marquee mention (one group mention); inside a group too, once the pointer moves 4 pt (less is a click on the group) |
+| Hold Hyper | Outline what would be mentioned under the cursor (a group's whole region over its title or empty interior) |
+| ⇧⌘M | Edit ▸ Mention: stage what the keyboard is on (a changes tile's hunk or lines, a code selection or range, a note's block, a page's selection, a terminal's selection or last command; else the selected tiles, or the selected group as a group mention; see Selection tray) |
 | ⌘G / double-click group | Named group; double-click enters it (zoom + dim the rest) |
 | ⌘P | Go to… navigator (see Navigation) |
 | ⌘= (⌘+) / ⌘- / ⌘0 / ⌘9 | Zoom in / zoom out, through browser-like levels (10, 15, 25, 33, 50, 67, 75, 90, 100%) / actual size (100%; with a selection, the selection at 100%) / zoom to fit |

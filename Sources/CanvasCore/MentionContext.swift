@@ -96,17 +96,8 @@ public enum MentionContext {
             let symbolText = symbol.map { " (symbol \($0))" } ?? ""
             let diffText = diff.map { " · \($0)" } ?? ""
             lines.append("[\(index)] code \(path):\(range.start)-\(range.end)\(symbolText) · tile \(object)\(provenance(of: object, side: side, commit: commit, explicit: diff != nil, on: board))\(diffText)\(edited)")
-            let url = board.absoluteURL(path)
-            if let commit, side != DiffSide.new.rawValue {
-                // The mention names its commit, so the excerpt never depends on what the tile
-                // shows now.
-                let text = await GitDiffEngine.shared.text(of: url, at: commit)
-                lines.append(contentsOf: text.map { excerpt($0, range) } ?? ["    (\(path) is not readable at \(commit.prefix(7)))"])
-            } else if let text = try? String(contentsOf: url, encoding: .utf8) {
-                lines.append(contentsOf: excerpt(SideText(text), range))
-            } else {
-                lines.append("    (file unreadable: \(url.path))")
-            }
+            let text = await codeText(path, side: side, commit: commit, on: board)
+            lines.append(contentsOf: text.text.map { excerpt($0, range) } ?? [text.failure])
         case .dom(let object, let url, let selector, let text, let point):
             let textPart = text.map { " \"\(clip($0, 80))\"" } ?? ""
             let pointPart = point.map { " · pixel (\($0.x), \($0.y)) of \($0.w)×\($0.h), from its top-left" } ?? ""
@@ -128,12 +119,7 @@ public enum MentionContext {
             }
             lines.append(contentsOf: terminalLines(part == .rows ? text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : TerminalExcerpt.lines(text)))
         case .group(let objects, let name):
-            lines.append("[\(index)] group \(name.map { "\"\($0)\" " } ?? "")of \(objects.count) objects\(edited)")
-            for id in objects {
-                guard let object = board.objects[id] else { continue }
-                lines.append("    - \(describe(object, on: board, caller: caller))")
-                lines.append(contentsOf: await pageLines(under: object, on: board, indent: "      "))
-            }
+            lines.append(contentsOf: await groupLines(objects, name: name, index: index, edited: edited, on: board, caller: caller))
         case .image(let object, let path, let x, let y):
             let file = LocalImage.tileFile(path, root: board.root)
             let size = await offPool { LocalImage.naturalSize(of: file) }
@@ -196,6 +182,124 @@ public enum MentionContext {
         TerminalExcerpt.trim(lines, head: terminalHead, tail: terminalTail).map { "    \($0)" }
     }
 
+    /// A group mention carries at most this many lines past its first. Every member's line comes
+    /// before any member's text; the block says what it left out.
+    static let maxGroupLines = 120
+    /// Lines of each code or note member's text in a group mention, and how long one may run.
+    static let groupExcerptLines = 6
+    static let groupLineCharacters = 200
+    static let maxGroupArrows = 40
+
+    /// A group: each member (a nested group's members under it) as a mention of it alone leads,
+    /// cut short (code: the lines it shows; a note: its first lines; a page: its URL), then the
+    /// arrows among the members, which carry the diagram's meaning.
+    static func groupLines(_ objects: [ObjectID], name: String?, index: Int, edited: String, on board: Board, caller: ObjectID?) async -> [String] {
+        let group = board.objects.values.first { $0.type == .group && GroupSpec($0.props)?.members == objects }
+        var lines = ["[\(index)] group \(name.map { "\"\($0)\" " } ?? "")of \(objects.count) objects\(group.map { " · group \($0.id)" } ?? "")\(edited)"]
+        var entries: [(object: CanvasObject, depth: Int)] = []
+        var seen: Set<ObjectID> = []
+        func walk(_ ids: [ObjectID], depth: Int) {
+            for id in ids where seen.insert(id).inserted {
+                guard let object = board.objects[id] else { continue }
+                entries.append((object, depth))
+                if object.type == .group, let spec = GroupSpec(object.props) { walk(spec.members, depth: depth + 1) }
+            }
+        }
+        walk(objects, depth: 0)
+        let order = Dictionary(entries.enumerated().map { ($0.element.object.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        // Arrow members, and every arrow with both ends on members.
+        let arrows = board.objects.values.compactMap { arrow -> (arrow: CanvasObject, spec: ArrowSpec)? in
+            guard arrow.type == .arrow, let spec = ArrowSpec(arrow.props) else { return nil }
+            let between = spec.from.objectID.flatMap { order[$0] } != nil && spec.to.objectID.flatMap { order[$0] } != nil
+            return order[arrow.id] != nil || between ? (arrow, spec) : nil
+        }.sorted { a, b in
+            func key(_ arrow: (arrow: CanvasObject, spec: ArrowSpec)) -> (Int, Int, ObjectID) {
+                (arrow.spec.from.objectID.flatMap { order[$0] } ?? .max, arrow.spec.to.objectID.flatMap { order[$0] } ?? .max, arrow.arrow.id)
+            }
+            return key(a) < key(b)
+        }
+        let arrowIDs = Set(arrows.map(\.arrow.id))
+        var arrowLines = arrows.prefix(maxGroupArrows).map { "      \(arrowLine($0.arrow, $0.spec, on: board))" }
+        if arrows.count > maxGroupArrows { arrowLines.append("      … \(arrows.count - maxGroupArrows) more arrows") }
+        let budget = max(maxGroupLines - arrowLines.count - 1, maxGroupLines / 2)
+        let listed = entries.filter { !arrowIDs.contains($0.object.id) }
+        let shown = listed.prefix(budget)
+        var room = budget - shown.count
+        var cutTexts = 0
+        for (object, depth) in shown {
+            let indent = "    " + String(repeating: "  ", count: depth)
+            let detail = await memberDetail(object, indent: indent, on: board)
+            lines.append("\(indent)- \(describe(object, on: board, caller: caller, omittingArrows: arrowIDs))\(detail.suffix)")
+            if detail.lines.count <= room {
+                lines.append(contentsOf: detail.lines.map { clip($0, groupLineCharacters) })
+                room -= detail.lines.count
+            } else {
+                cutTexts += 1
+            }
+        }
+        let cutMembers = listed.count - shown.count
+        if !arrowLines.isEmpty {
+            lines.append("    arrows among them:")
+            lines.append(contentsOf: arrowLines)
+        }
+        var cut: [String] = []
+        if cutTexts > 0 { cut.append("the text of \(cutTexts) member\(cutTexts == 1 ? "" : "s")") }
+        if cutMembers > 0 { cut.append("\(cutMembers) more member\(cutMembers == 1 ? "" : "s")") }
+        if !cut.isEmpty {
+            let more = group.map { "canvas get \($0.id) --as graph" } ?? "canvas get <id>"
+            lines.append("    (left out to keep this short: \(cut.joined(separator: " and ")); read them with \(more))")
+        }
+        return lines
+    }
+
+    /// What a group mention adds to a member's line (`suffix`) and under it: a code tile's lines
+    /// (as a code mention of them reads), a note's first lines past its title, a page's URL, the
+    /// page under a drawn shape, a nested group's size.
+    static func memberDetail(_ object: CanvasObject, indent: String, on board: Board) async -> (suffix: String, lines: [String]) {
+        switch object.type {
+        case .code:
+            if case .code(_, let path, let range, let side, _, let commit, _)? = try? HandoffMention(object: object.id).target(on: board) {
+                let text = await codeText(path, side: side, commit: commit, on: board)
+                let suffix = " · lines \(range.start)-\(range.end)\(provenance(of: object.id, side: side, commit: commit, on: board))"
+                return (suffix, text.text.map { excerpt($0, range, limit: groupExcerptLines, indent: indent) } ?? [indent + text.failure])
+            }
+            // The whole file: its first lines.
+            guard let path = object.props["path"]?.string, !path.isEmpty else { return ("", []) }
+            let commit = object.props["pinnedCommit"]?.string.flatMap { $0.isEmpty ? nil : $0 }
+            let text = await codeText(path, side: nil, commit: commit, on: board)
+            guard let file = text.text else { return ("", [indent + text.failure]) }
+            return ("", excerpt(file, LineRange(start: 1, end: max(1, file.lineCount)), limit: groupExcerptLines, indent: indent))
+        case .note:
+            guard let markdown = object.props["markdown"]?.string else { return ("", []) }
+            // Its first line is the title the member's line already shows; blank lines only
+            // spread the few lines it gets.
+            let source = NoteSource.lines(of: markdown)
+            let titled = source.first.map { NoteMarkdown.plainText(ofLine: $0) == title(of: object, on: board) } == true
+            let body = source.dropFirst(titled ? 1 : 0).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            return ("", noteLines(body.joined(separator: "\n"), of: object.id, limit: groupExcerptLines, characters: groupExcerptLines * groupLineCharacters, indent: indent + "  "))
+        case .browser:
+            guard let url = object.props["url"]?.string, !url.isEmpty, url != title(of: object, on: board) else { return ("", []) }
+            return (" · \(url)", [])
+        case .shape:
+            return ("", await pageLines(under: object, on: board, indent: indent + "  "))
+        case .group:
+            return (" of \(GroupSpec(object.props)?.members.count ?? 0) objects", [])
+        default:
+            return ("", [])
+        }
+    }
+
+    /// An arrow among a group's members: `from "title" → to "title" · "label" (relation) · arrow id`.
+    static func arrowLine(_ arrow: CanvasObject, _ spec: ArrowSpec, on board: Board) -> String {
+        func end(_ binding: ArrowBinding) -> String {
+            let name = binding.objectID.flatMap { board.objects[$0] }.map { title(of: $0, on: board) } ?? ""
+            return endName(binding) + (name.isEmpty ? "" : " \"\(clip(name, 40))\"")
+        }
+        let label = spec.label.flatMap { $0.isEmpty ? nil : " · \"\(clip($0, 60))\"" } ?? ""
+        let relation = spec.relation.map { " (\($0))" } ?? ""
+        return "\(end(spec.from)) → \(end(spec.to))\(label)\(relation) · arrow \(arrow.id)"
+    }
+
     /// What a Hyper-click on a drawn object mentions: the whole selection when the object is
     /// part of a selection of several; else every drawing of its group when the group holds only
     /// drawings (a sketch made of strokes, a box and its note); else the object alone.
@@ -242,7 +346,8 @@ public enum MentionContext {
     }
 
     /// One-line description with spatial relations: what a shape encloses, what it's drawn on, and its arrows.
-    static func describe(_ object: CanvasObject, on board: Board, caller: ObjectID? = nil) -> String {
+    /// `omittingArrows`: arrows said elsewhere (a group mention's arrows among its members).
+    static func describe(_ object: CanvasObject, on board: Board, caller: ObjectID? = nil, omittingArrows: Set<ObjectID> = []) -> String {
         let author = object.createdBy == .user ? "drawn by user" : "by agent"
         var parts = ["\(object.type.rawValue) \(object.id)"]
         let title = title(of: object, on: board)
@@ -270,7 +375,7 @@ public enum MentionContext {
                                     Double(local.minX), Double(local.minY), Double(local.width), Double(local.height)))
             }
         }
-        for arrow in board.objects.values where arrow.type == .arrow {
+        for arrow in board.objects.values where arrow.type == .arrow && !omittingArrows.contains(arrow.id) {
             let relation = arrow.props["relation"]?.string.map { " (\($0))" } ?? ""
             if arrow.props["from"]?["object"]?.string == object.id, let to = arrow.props["to"]?["object"]?.string {
                 parts.append("· arrow → \(to)\(relation)")
@@ -347,33 +452,43 @@ public enum MentionContext {
     }
 
     /// The mentioned lines marked `>`, plus up to `contextLines` unmarked lines on each side while
-    /// the whole excerpt fits in `maxExcerptLines`, so a one-line mention still reads in context.
-    static func excerpt(_ text: SideText, _ range: LineRange) -> [String] {
+    /// the whole excerpt fits in `limit` lines, so a one-line mention still reads in context.
+    static func excerpt(_ text: SideText, _ range: LineRange, limit: Int = maxExcerptLines, indent: String = "") -> [String] {
         let start = max(1, range.start)
         let end = min(text.lineCount, range.end)
-        guard start <= end else { return ["    (range \(range.start)-\(range.end) is outside the file)"] }
-        let pad = min(contextLines, max(0, maxExcerptLines - (end - start + 1)) / 2)
+        guard start <= end else { return ["\(indent)    (range \(range.start)-\(range.end) is outside the file)"] }
+        let pad = min(contextLines, max(0, limit - (end - start + 1)) / 2)
         let from = max(1, start - pad)
-        let to = min(text.lineCount, end + pad, from + maxExcerptLines - 1)
+        let to = min(text.lineCount, end + pad, from + limit - 1)
         var lines = (from...to).map { number in
             let marker = (start...end).contains(number) ? "  > " : "    "
-            return marker + String(number).padding(toLength: 5, withPad: " ", startingAt: 0) + text.line(number)
+            return indent + marker + String(number).padding(toLength: 5, withPad: " ", startingAt: 0) + text.line(number)
         }
-        if range.end > to { lines.append("    …") }
+        if range.end > to { lines.append("\(indent)    …") }
         return lines
     }
 
-    /// A whole note: its markdown up to `maxNoteLines` lines and `maxNoteCharacters` characters.
-    static func noteLines(_ markdown: String, of id: ObjectID) -> [String] {
+    /// The file a code mention reads: at `commit` when the mention names one (so the excerpt
+    /// never depends on what the tile shows now), else the working tree; else why it can't.
+    static func codeText(_ path: String, side: String?, commit: String?, on board: Board) async -> (text: SideText?, failure: String) {
+        let url = board.absoluteURL(path)
+        if let commit, side != DiffSide.new.rawValue {
+            return (await GitDiffEngine.shared.text(of: url, at: commit), "    (\(path) is not readable at \(commit.prefix(7)))")
+        }
+        return ((try? String(contentsOf: url, encoding: .utf8)).map(SideText.init), "    (file unreadable: \(url.path))")
+    }
+
+    /// A whole note: its markdown up to `limit` lines and `characters` characters.
+    static func noteLines(_ markdown: String, of id: ObjectID, limit: Int = maxNoteLines, characters: Int = maxNoteCharacters, indent: String = "    ") -> [String] {
         var lines: [String] = []
         var count = 0
         let source = NoteSource.lines(of: markdown)
-        for line in source.prefix(maxNoteLines) {
-            guard count + line.count <= maxNoteCharacters else { break }
-            lines.append("    \(line)")
+        for line in source.prefix(limit) {
+            guard count + line.count <= characters else { break }
+            lines.append("\(indent)\(line)")
             count += line.count + 1
         }
-        if source.count > lines.count { lines.append("    … \(source.count - lines.count) more lines (canvas get \(id))") }
+        if source.count > lines.count { lines.append("\(indent)… \(source.count - lines.count) more lines (canvas get \(id))") }
         return lines
     }
 

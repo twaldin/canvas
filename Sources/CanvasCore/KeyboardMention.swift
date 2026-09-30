@@ -8,14 +8,15 @@ public enum KeyboardMention {
     /// selection or last command block), else, with the canvas's keyboard, the one selected
     /// tile's (only an explicit sub-selection: a hunk, selected text). Without a `current`: the
     /// keyboard tile itself; else the selection: one object (a drawing brings the sketch it is
-    /// part of, as a Hyper-click does), several as one group in reading order. Nil: nothing to
-    /// mention.
+    /// part of, as a Hyper-click does; a group its members, named by its title), several as one
+    /// group in reading order. Nil: nothing to mention.
     @MainActor public static func target(keyboardTile: ObjectID?, selection: Set<ObjectID>, current: MentionTarget?, on board: Board) -> MentionTarget? {
         if let tile = keyboardTile, board.objects[tile] != nil { return current ?? .object(tile) }
         let selected = selection.compactMap { board.objects[$0] }
         if selected.count == 1, let only = selected.first {
             if let current { return current }
             if only.type == .shape || only.type == .arrow { return MentionContext.drawingTarget(only.id, selection: selection, on: board) }
+            if only.type == .group, let group = GroupMention.target(only.id, on: board) { return group }
             return .object(only.id)
         }
         guard selected.count > 1 else { return nil }

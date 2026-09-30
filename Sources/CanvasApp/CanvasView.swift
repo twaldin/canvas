@@ -2030,6 +2030,12 @@ final class CanvasView: NSScrollView {
         shapeHitTest?(document.convert(point, from: nil))
     }
 
+    /// The innermost shown group whose region (title band or interior) holds a window point.
+    func group(atWindowPoint point: NSPoint) -> GroupView? {
+        let regions = groups.values.filter { !$0.isHidden && !$0.region.isEmpty }.map { GroupMention.Region(id: $0.objectID, frame: $0.region) }
+        return GroupMention.innermost(at: document.convert(point, from: nil), in: regions).flatMap { groups[$0] }
+    }
+
     /// How long a mention waits for a page to list the elements under a shape drawn on it.
     static let pageElementsLimit: Duration = .milliseconds(400)
 

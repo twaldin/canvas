@@ -88,7 +88,8 @@ final class TerminalTile: NSView, TileContent {
     }
 
     /// Shell-quoted command string (Ghostty takes a string, not argv). zmx ignores the trailing
-    /// command when the session already exists, so it only runs for a new session.
+    /// command when the session already exists, so it only runs for a new session. A session
+    /// that doesn't answer is waited for first (`SessionReach`), then its owner checked.
     /// `keep`: the tile's own variables. `env -u` runs after Ghostty applied them, so an inherited
     /// variable of the same name (a dev instance launched with CANVAS_SOCKET set) must not unset them.
     /// Everything else the app inherited is unset (`LoginSession.strippedForTile`): the shell starts
@@ -103,7 +104,8 @@ final class TerminalTile: NSView, TileContent {
         let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(homeLabel)"
         let attach = ["/usr/bin/env"] + strip + [zmx, "attach", "--labels", labels, session] + start
         let refusal = #"printf '\nThis terminal session (%s) belongs to another Canvas instance (%s).\nNot attaching: this copy of the board can neither type into it nor end it.\n' "$2" "$owner"; exec sleep 2147483647"#
-        return quote(["/bin/sh", "-c", ownerGuard(refusal: refusal) + "shift 3\nexec \"$@\"", "canvas-attach", zmx, session, homeLabel] + attach)
+        let prologue = SessionReach.prologue() + ownerGuard(refusal: refusal)
+        return quote(["/bin/sh", "-c", prologue + "shift 3\nexec \"$@\"", "canvas-attach", zmx, session, homeLabel] + attach)
     }
 
     /// A prologue for `sh -c` with $1 = zmx, $2 = session name, $3 = this instance's home label:

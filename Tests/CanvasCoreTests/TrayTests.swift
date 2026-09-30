@@ -76,6 +76,28 @@ struct TrayTests {
         #expect(TrayChips.unstagedNotice(staged).contains(staged.label), "the notice names what left the tray")
     }
 
+    @Test func aShrunkCodeChipDropsItsDirectoryFirstAndAlwaysKeepsItsLines() throws {
+        let board = makeBoard()
+        let tile = code("src/checkout.ts", on: board)
+        let range = try board.stage(.code(object: tile.id, path: "src/checkout.ts", lines: LineRange(start: 10, end: 45), symbol: "checkout10"))
+        let measure: (String) -> CGFloat = { CGFloat($0.count) * 7 }
+        func fitted(_ width: CGFloat) -> String { TrayChips.fittedLabel(range, width: width, measure: measure) }
+
+        #expect(fitted(1000) == "src/checkout.ts:10-45 checkout10", "room to spare: the whole label")
+        #expect(fitted(CGFloat("checkout.ts:10-45 checkout10".count) * 7) == "checkout.ts:10-45 checkout10", "the directory goes first")
+        #expect(fitted(CGFloat("checkout.ts:10-45".count) * 7) == "checkout.ts:10-45", "then the symbol")
+        #expect(fitted(CGFloat("chec…t.ts:10-45".count) * 7) == "chec…t.ts:10-45", "then the middle of the file name")
+        // The label's room in a chip shrunk to the 128 pt floor: insets, number, gaps and ✕ take the rest.
+        let floor = TrayLayout.minimumChip - 58
+        #expect(fitted(floor).hasSuffix(":10-45") && !fitted(floor).contains("src/"), "at the floor the lines still show: \(fitted(floor))")
+        #expect(measure(fitted(floor)) <= floor)
+        #expect(fitted(10).hasSuffix(":10-45"), "however narrow, the lines stay")
+
+        let note = board.create(type: .note, props: .object(["markdown": .string("# Plan\n\ncheck tax")]), frame: Frame(x: 0, y: 600, w: 280, h: 200))
+        let block = try board.stage(.note(object: note.id, item: try #require(NoteItem.at(line: 3, in: "# Plan\n\ncheck tax"))))
+        #expect(TrayChips.fittedLabel(block, width: 30, measure: measure) == block.label, "a note keeps its label; the chip cuts its tail, keeping the title's start")
+    }
+
     // MARK: Click to reveal
 
     @Test func aChipRevealsTheLinesOnlyWhileItsTileStillShowsThatFile() throws {

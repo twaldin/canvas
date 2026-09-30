@@ -162,6 +162,8 @@ private final class TrayChip: NSView {
     private let label: NSTextField
     private let changed: NSTextField?
     private let remove = NSButton(title: "✕", target: nil, action: nil)
+    /// The whole label's width, measured before `layout` cuts it to fit.
+    private var labelWidth: CGFloat = 0
     var onRemove: ((MentionID) -> Void)?
     var onReveal: ((Mention) -> Void)?
 
@@ -179,7 +181,10 @@ private final class TrayChip: NSView {
         label.font = .systemFont(ofSize: 12)
         // DOM labels lead with what a person recognizes and end with the CSS path; code
         // locations keep both the file name's start and its line.
-        if case .dom = mention.target { label.lineBreakMode = .byTruncatingTail } else { label.lineBreakMode = .byTruncatingMiddle }
+        // What doesn't fit is cut by `TrayChips.fittedLabel` (code locations) or at the tail:
+        // DOM labels lead with what a person recognizes, notes with their title.
+        label.lineBreakMode = .byTruncatingTail
+        labelWidth = label.drawnWidth
         changed?.font = .systemFont(ofSize: 12)
         changed?.textColor = .secondaryLabelColor
         remove.isBordered = false
@@ -200,7 +205,7 @@ private final class TrayChip: NSView {
     /// (outside the label, so truncation never hides them).
     var widths: TrayLayout.Chip {
         let note = changed.map { Self.gap + $0.drawnWidth } ?? 0
-        let natural = Self.insets.left + number.drawnWidth + Self.gap + min(label.drawnWidth, Self.labelLimit)
+        let natural = Self.insets.left + number.drawnWidth + Self.gap + min(labelWidth, Self.labelLimit)
             + note + Self.gap + ceil(remove.intrinsicContentSize.width) + Self.insets.right
         return TrayLayout.Chip(natural: natural, minimum: TrayLayout.minimumChip + note)
     }
@@ -222,6 +227,11 @@ private final class TrayChip: NSView {
         let numberWidth = number.drawnWidth
         place(number, x: Self.insets.left, width: numberWidth)
         place(label, x: number.frame.maxX + Self.gap, width: right - number.frame.maxX - Self.gap)
+        let font = label.font ?? .systemFont(ofSize: 12)
+        let padding = label.drawnWidth - ceil(NSAttributedString(string: label.stringValue, attributes: [.font: font]).size().width)
+        label.stringValue = TrayChips.fittedLabel(mention, width: label.frame.width) { text in
+            ceil(NSAttributedString(string: text, attributes: [.font: font]).size().width) + padding
+        }
     }
 
     /// A file outside the board root has a short label (`PathLabel`); the tooltip has its path.

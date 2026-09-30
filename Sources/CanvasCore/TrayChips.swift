@@ -10,6 +10,28 @@ public enum TrayChips {
         tray.enumerated().map { ($0.offset + 1, $0.element) }
     }
 
+    /// A chip's label cut to `width` (text widths as `measure` gives them). A code location
+    /// keeps what tells it apart: it drops its directory first (`cart.ts:15 cart15`), then its
+    /// symbol, then cuts the middle of the file name (`chec…ut.ts:10-45`), and always keeps its
+    /// `:line` or `:a-b`. Anything else keeps its label whole: its chip cuts the tail, so a note
+    /// keeps its title's start.
+    public static func fittedLabel(_ mention: Mention, width: CGFloat, measure: (String) -> CGFloat) -> String {
+        guard measure(mention.label) > width, case .code(_, let path, let lines, let side, let symbol, _, _) = mention.target else { return mention.label }
+        let range = lines.start == lines.end ? "\(lines.start)" : "\(lines.start)-\(lines.end)"
+        let suffix = ":\(range)" + (side == DiffSide.old.rawValue ? " (old)" : "")
+        let name = (path as NSString).lastPathComponent
+        for candidate in [symbol.map { name + suffix + " " + $0 }, name + suffix].compactMap({ $0 }) where measure(candidate) <= width {
+            return candidate
+        }
+        let characters = Array(name)
+        for kept in stride(from: characters.count - 1, through: 1, by: -1) {
+            let head = String(characters.prefix((kept + 1) / 2)), tail = String(characters.suffix(kept / 2))
+            let candidate = head + "…" + tail + suffix
+            if measure(candidate) <= width { return candidate }
+        }
+        return "…" + suffix
+    }
+
     /// The chip's number as the context writes it.
     public static func badge(_ number: Int) -> String { "[\(number)]" }
 

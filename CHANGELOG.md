@@ -2,13 +2,33 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
-## Unreleased
+## 0.3.1
+
+Fixes from watching people use Chalkwork for the first time: typing goes where you aimed, the tray says what each chip is and where it goes, mentions follow the worktree an agent works in, and a finished agent stays green until you look.
+
+**Still on Canvas 0.2?** Read the 0.3.0 notes' "Upgrading from Canvas" first: the first launch of Chalkwork moves your boards over, and agents started under Canvas need a restart.
 
 ### Fixed
 
 - **A reply that lands while you look elsewhere stays green.** Looking at an agent (or typing in it) while it still works no longer counts as seeing its answer: a turn that ends after you moved on is done and unseen until you look at it, and ⌘J goes there. ⌘J covers the board you're on; the README said "whoever".
 - **Mentions route by worktree after `cd ../wt && codex`.** A terminal's `worktree` and `branch` follow where its program (else its shell) works, read from the process table, not only where the tile started: a line from that worktree goes to the agent working there, as the README promised, and `board.get` files the terminal under that branch.
 - **Review Changes (⇧⌘R) and Review Branch review the focused or selected terminal's worktree,** not always the board's checkout ("Changes: main"). With no terminal to go by, Review Branch on the default branch offers the repository's worktrees.
+- **Typing goes where you aimed.** A press anywhere on a tile's title bar (but its buttons) takes the tile and the keyboard, the first click included. The tray says "→ codex · you're typing in zsh" when the keyboard isn't in the terminal it will send to. Tab never types into a selected tile, and Esc and Tab reach Get Started. Go to (⌘P) selects the lines it showed, so ⇧⌘M mentions just those, and clicking a row goes there.
+- **Discard from the keyboard asks first:** in a changes tile `r` only asks, and ⌘⌫ confirms, so prose typed into the wrong tile can't discard your work. The question and its hint agree, and it stays until you answer or do something else.
+- **Tray chips are numbered** [1], [2]… as the agent receives them, so "[2]" in your prompt is the second chip. Clicking a chip shows what it points at: it selects it, brings it into view, and scrolls to and flashes code lines and note blocks. A chip whose page navigated says "page changed", and a second Hyper-click that takes something out of the tray says so.
+- **The tray never widens the window.** Its "→ target" label stays whole; chips shrink (a code chip keeps its lines: the directory goes first, then the symbol, then the middle of the file name) and then scroll sideways.
+- **⌘Z brings back chips** a tile delete or Hyper-V (⌃⌥⇧⌘V) took out of the tray, in their old places and numbers. The Edit menu has the tray's commands: Remove Last Mention (⌥⇧⌘M), Remove Mention ▸, Clear Mentions and Send Mentions To ▸, and tile context menus lead with Mention (⇧⌘M).
+- **Browser tiles:** ⌘A selects the address you're typing in, ⌥⌘I shows and hides the Web Inspector docked under the address bar, ⌘R (View › Reload Page) reloads, and Back no longer shows the previous page's error badge.
+- **Walkthroughs start at their first stop:** ⌥⌘→ on the walkthrough's group, or with nothing selected, goes to the first stop, and a stop stepped to from far out is framed readably. A Start here marker's edge pill selects its walkthrough.
+- **A growing changes tile never covers its neighbours.**
+
+### Install
+
+Download `Chalkwork-0.3.1.zip`, unzip, move `Chalkwork.app` to `/Applications` (replacing 0.3.0; quit Chalkwork first and choose Keep Running, and your terminals reattach). It's ad-hoc signed, not notarized: run `xattr -dr com.apple.quarantine /Applications/Chalkwork.app`, or open it once and choose Open Anyway in System Settings › Privacy & Security. Then `brew install neurosnap/tap/zmx oven-sh/bun/bun`. Requires macOS 14 or later on Apple silicon. Full steps in the README.
+
+### Licensing
+
+Chalkwork statically links GNU libintl (GNU gettext 0.24, LGPL-2.1-or-later) through libghostty. Its source, `gettext-0.24.tar.gz`, is attached to this release, and so is `THIRD_PARTY_NOTICES.md`, the list of third-party components and their licenses (the same file is inside `Chalkwork.app`). `THIRD_PARTY_NOTICES.md` also says how to relink Chalkwork with a modified libintl.
 
 ## 0.3.0
 

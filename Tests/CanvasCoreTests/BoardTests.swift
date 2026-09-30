@@ -198,6 +198,32 @@ struct BoardTests {
         #expect(board.objects[terminal.id]?.props["lifecycle"]?["state"]?.string == "idle")
     }
 
+    @Test func lookingAtAnAgentAtWorkDoesNotSeeTheAnswerItHasNotGivenYet() throws {
+        let board = makeBoard()
+        let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/"), "command": .array([])]))
+        func lifecycle() -> JSONValue? { board.objects[terminal.id]?.props["lifecycle"] }
+        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
+        board.markSeen(terminal.id)
+        #expect(lifecycle()?["state"] == .string("working"), "seeing it work changes nothing")
+        // The user looked away; the turn ends off-screen.
+        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .idle, message: nil, seq: 2, source: "canvas-omp")
+        #expect(lifecycle()?["state"] == .string("done"))
+        #expect(lifecycle()?["seen"] == .bool(false))
+        #expect(NeedsYou.of(board.objects.values) == NeedsYou(level: .done, terminals: [terminal.id], message: nil), "⌘J goes there")
+        board.markSeen(terminal.id)
+        #expect(lifecycle()?["state"] == .string("idle"), "seen once it has answered")
+        #expect(lifecycle()?["seen"] == .bool(true))
+
+        // Seen while it waited on an approval and after, then answered once the user left: done too.
+        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .working, message: nil, seq: 3, source: "canvas-omp")
+        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .blocked, message: "approve Edit?", seq: 4, source: "canvas-omp", call: "c1")
+        board.markSeen(terminal.id)
+        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .working, message: nil, seq: 5, source: "canvas-omp", call: "c1")
+        board.markSeen(terminal.id)
+        try board.reportLifecycle(tile: terminal.id, kind: "omp", state: .idle, message: nil, seq: 6, source: "canvas-omp")
+        #expect(lifecycle()?["state"] == .string("done"))
+    }
+
     @Test func staleLifecycleSeqIsIgnored() throws {
         let board = makeBoard()
         let terminal = board.create(type: .terminal, props: .object(["cwd": .string("/"), "command": .array([])]))

@@ -908,11 +908,15 @@ public final class Board {
         try? reportLifecycle(tile: tile, kind: "gemini", state: .idle, message: nil, seq: Int(now.timeIntervalSince1970 * 1_000_000), source: "canvas-gemini")
     }
 
-    /// The user has looked at this terminal; a `done` agent becomes `idle`.
+    /// The user has looked at this terminal; a `done` agent becomes `idle`. Looking at an agent
+    /// that is still working (or waiting on an approval) doesn't count: its answer isn't there
+    /// yet, so a turn that ends after the user looked away stays `done` until they look again.
     public func markSeen(_ tile: ObjectID) {
+        let state = terminal.props["lifecycle"]?["state"]?.string
+        guard state != LifecycleState.working.rawValue, state != LifecycleState.blocked.rawValue else { return }
         guard let terminal = objects[tile], terminal.type == .terminal, !seenSinceWorking.contains(tile) else { return }
         seenSinceWorking.insert(tile)
-        guard terminal.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue else { return }
+        guard state == LifecycleState.done.rawValue else { return }
         var seen: [String: JSONValue] = ["state": .string(LifecycleState.idle.rawValue), "seen": .bool(true)]
         if let via = terminal.props["lifecycle"]?["via"] { seen["via"] = via }
         let lifecycle: JSONValue = .object(seen)

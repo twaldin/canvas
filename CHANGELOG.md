@@ -2,6 +2,12 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
+## Unreleased
+
+### Fixed
+
+- **A reply that lands while you look elsewhere stays green.** Looking at an agent (or typing in it) while it still works no longer counts as seeing its answer: a turn that ends after you moved on is done and unseen until you look at it, and ⌘J goes there. ⌘J covers the board you're on; the README said "whoever".
+
 ## 0.3.0
 
 Canvas is now Chalkwork: the same app under a new name. Its first launch brings a Canvas 0.2 install along.

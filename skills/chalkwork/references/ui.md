@@ -48,7 +48,7 @@ Point the user at Help › Chalkwork Basics (⌥⌘/) for the same text in the a
   Bubbles sit beside their tile, off other tiles (cut short, the whole message in the tooltip, when that's what keeps them off) and never over the terminal the user is typing in.
 - **Edge pill** (arrow + the start of the message; the whole message in its tooltip): something that needs the user is off screen that way; clicking it goes there.
   It sits on a stretch of the view's edge with no tile under it; when the edge is covered, it is a chip in the toolbar row beside the drawing toolbar.
-- **⌘J**: the next thing that needs the user, blocked agents first, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
+- **⌘J**: the next thing on this board that needs the user, blocked agents first, then markers, then agents that finished unseen; "Nothing needs you" when there's nothing.
 
 ## Agents' tiles
 

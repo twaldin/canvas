@@ -1910,7 +1910,8 @@ final class CanvasView: NSScrollView {
     }
 
     /// What the user can actually look at now: the key window of the active app, at readable zoom,
-    /// with at least half of the object (or half the viewport) on screen.
+    /// with at least half of the object (or half the viewport) on screen. Of the terminals only
+    /// finished ones: watching an agent work doesn't see its answer (`Board.markSeen`).
     private func updateSeen() {
         guard let window, window.isKeyWindow, NSApp.isActive, magnification >= Self.liveThreshold else {
             return seen.update(visible: [])
@@ -1918,8 +1919,7 @@ final class CanvasView: NSScrollView {
         let visible = documentVisibleRect
         var candidates = Set(markers.keys)
         for (id, tile) in tiles where tile.content is TerminalTile && !seenLocally.contains(id) {
-            let state = board.objects[id]?.props["lifecycle"]?["state"]?.string
-            if state == "working" || state == "blocked" || state == "done" { candidates.insert(id) }
+            if board.objects[id]?.props["lifecycle"]?["state"]?.string == LifecycleState.done.rawValue { candidates.insert(id) }
         }
         seen.update(visible: candidates.filter { id in
             guard let rect = docFrame(id) else { return false }

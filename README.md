@@ -24,7 +24,7 @@ Terminal tiles are rendered by libghostty and use your Ghostty config (theme, co
 
 ## See which agent needs you
 
-Each agent's state is on its tile: blue working, orange needs you (an approval or a question, in a bubble with its message), green done and not yet seen. ⌘J goes to whoever needs you next: blocked agents first, then marked tiles, then finished agents you haven't seen. When Chalkwork isn't in front, macOS notifications tell you, and a background board's tab shows a dot.
+Each agent's state is on its tile: blue working, orange needs you (an approval or a question, in a bubble with its message), green done and not yet seen. ⌘J goes to whoever on this board needs you next: blocked agents first, then marked tiles, then finished agents you haven't seen. A turn that ends while its tile is off-screen stays green until you look at it. When Chalkwork isn't in front, macOS notifications tell you, and a background board's tab shows a dot.
 
 Which agents report their state and get your mentions:
 

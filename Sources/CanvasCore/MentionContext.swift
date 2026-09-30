@@ -194,7 +194,7 @@ public enum MentionContext {
     /// cut short (code: the lines it shows; a note: its first lines; a page: its URL), then the
     /// arrows among the members, which carry the diagram's meaning.
     static func groupLines(_ objects: [ObjectID], name: String?, index: Int, edited: String, on board: Board, caller: ObjectID?) async -> [String] {
-        let group = board.objects.values.first { $0.type == .group && GroupSpec($0.props)?.members == objects }
+        let group = board.objects.values.first { $0.type == .group && GroupMention.target($0.id, on: board)?.objectIDs == objects }
         var lines = ["[\(index)] group \(name.map { "\"\($0)\" " } ?? "")of \(objects.count) objects\(group.map { " · group \($0.id)" } ?? "")\(edited)"]
         var entries: [(object: CanvasObject, depth: Int)] = []
         var seen: Set<ObjectID> = []

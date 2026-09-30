@@ -74,12 +74,16 @@ struct GroupMentionTests {
         #expect(board.tray.map(\.label) == ["2 objects"], "a second Hyper-click unstages it")
     }
 
-    @Test func mentionCommandOnASelectedGroupMentionsTheGroup() {
+    @Test func mentionCommandOnASelectedGroupMentionsTheGroup() throws {
         let board = makeBoard()
         let a = board.create(type: .note, props: .object(["markdown": "a"]))
         let term = board.create(type: .terminal, props: .object(["cwd": "/"]))
         let region = group([a.id, term.id], title: "Ingress", on: board)
         #expect(KeyboardMention.target(keyboardTile: nil, selection: [region.id], current: nil, on: board) == .group(objects: [a.id, term.id], name: "Ingress"))
+        try board.delete(term.id)
+        let rest = try #require(KeyboardMention.target(keyboardTile: nil, selection: [region.id], current: nil, on: board))
+        #expect(rest == .group(objects: [a.id], name: "Ingress"), "a member deleted since is left out")
+        try board.stage(rest)
     }
 
     @Test func aGroupMentionListsEachMemberAndTheArrowsAmongThem() async throws {

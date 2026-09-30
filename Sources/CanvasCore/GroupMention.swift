@@ -25,11 +25,12 @@ public enum GroupMention {
         regions.filter { $0.frame.contains(point) }.min { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }?.id
     }
 
-    /// The mention of a group: its members, named by its title (unnamed without one). Nil for
-    /// anything but a group with members.
+    /// The mention of a group: its members still on the board, named by its title (unnamed
+    /// without one). Nil for anything but a group with members.
     @MainActor public static func target(_ group: ObjectID, on board: Board) -> MentionTarget? {
-        guard let object = board.objects[group], object.type == .group, let spec = GroupSpec(object.props), !spec.members.isEmpty else { return nil }
-        return .group(objects: spec.members, name: spec.title.flatMap { $0.isEmpty ? nil : $0 })
+        guard let object = board.objects[group], object.type == .group, let spec = GroupSpec(object.props) else { return nil }
+        let members = spec.members.filter { board.objects[$0] != nil }
+        return members.isEmpty ? nil : .group(objects: members, name: spec.title.flatMap { $0.isEmpty ? nil : $0 })
     }
 
     /// A Hyper press on the canvas away from any tile or drawing: released where it began (within

@@ -1112,6 +1112,8 @@ export type LayoutCheckResult = {
     /** points of width missing to show all of it */
     x: number;
   })[];
+  /** present when there is advice that isn't a fault: more than 6 labelled arrows all one color (label chips are outlined in their arrow's color, so one color can't show which line a label names): color arrows by lane or flow */
+  hints?: string[];
 };
 
 export type TrayListParams = {

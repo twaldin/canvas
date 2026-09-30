@@ -618,7 +618,13 @@ extension BoardGeometry {
         public var arrowOverlaps: [ConnectorRouter.Overlap]
         /// Pairs of arrows whose lines cross.
         public var arrowIntersections: [ConnectorRouter.Intersection]
+        /// Advice that isn't a fault: more than `sameColorLimit` labelled arrows all one color,
+        /// where a label chip (outlined in its arrow's color) can't show which line it names.
+        public var hints: [String] = []
     }
+
+    /// Labelled arrows past which one shared color gets a hint to color them by lane or flow.
+    public static let sameColorLimit = 6
 
     public struct Crossing: Equatable, Sendable {
         public var arrow: ObjectID
@@ -729,6 +735,18 @@ extension BoardGeometry {
         }
         let arrowOverlaps = ConnectorRouter.overlaps(routes).filter { involved($0.arrows[0], [$0.arrows[1]]) }
         let arrowIntersections = ConnectorRouter.intersections(routes).filter { involved($0.arrows[0], [$0.arrows[1]]) }
-        return LayoutReport(overlaps: overlaps, crossings: crossings, labelOverlaps: labelOverlaps, arrowOverlaps: arrowOverlaps, arrowIntersections: arrowIntersections)
+        var hints: [String] = []
+        // Arrows drawn with a caption (`label`, else `relation`), as `DrawingStyle.arrowLabel`.
+        let labelled = objects.values.compactMap { object -> ArrowSpec? in
+            guard object.type == .arrow, let spec = ArrowSpec(object.props), !(spec.label ?? spec.relation ?? "").isEmpty,
+                  involved(object.id, [spec.from.objectID, spec.to.objectID].compactMap { $0 }) else { return nil }
+            return spec
+        }
+        let colors = Set(labelled.map { $0.color?.lowercased() ?? "black" })
+        if labelled.count > Self.sameColorLimit, colors.count == 1, let color = colors.first {
+            hints.append("\(labelled.count) labelled arrows are all \(color): color them by lane or flow (props.color, e.g. blue for the request path, green for replies) so each label reads with its own line")
+        }
+        return LayoutReport(overlaps: overlaps, crossings: crossings, labelOverlaps: labelOverlaps, arrowOverlaps: arrowOverlaps,
+                            arrowIntersections: arrowIntersections, hints: hints)
     }
 }

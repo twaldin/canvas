@@ -20,6 +20,7 @@ import Foundation
 ///    of tiles and off group borders and title bands.
 /// 5. **Labels.** Each caption goes beside its own arrow's longest segment that no other arrow runs
 ///    along, clear of tiles, group titles, other arrows and other labels; else a short leader away.
+///    Beside a bundle of parallel lines, a chip is led to its own stub, where its line runs alone.
 ///
 /// A pure function of its input: the same board routes the same way, and a route whose
 /// neighbourhood doesn't change stays put when something elsewhere moves.
@@ -180,10 +181,16 @@ public struct ConnectorRouter: Sendable {
     /// Leader lengths tried when a label fits nowhere beside its route.
     static let leaderReaches: [CGFloat] = [24, 44, 72, 96, 120, 160]
     /// A label spot's cost for a leader (so a spot right by its line with another line close by
-    /// wins over one away from it), and for each other arrow's line under the chip (a spot is
-    /// acceptable below it).
+    /// wins over one away from it), one more for a leader longer than `shortLeader` that
+    /// isn't a tether, and for each other arrow's line under the chip (a spot is acceptable
+    /// below it).
     static let leaderCost = 2
+    static let shortLeader: CGFloat = 72
     static let underCost = 5
+    /// A spot beside a stretch other arrows run alongside, or a leader from one: the chip reads
+    /// as naming the whole bundle, so a spot on its own line, by its stub where it still runs
+    /// alone, or tethered to that stub wins.
+    static let bundleCost = 3
     /// A label spot's cost for each tile, title band, or label it covers.
     static let coverCost = 12
 
@@ -223,7 +230,7 @@ public struct ConnectorRouter: Sendable {
             Self.nudge(&routes, movable: movable, obstacles: rects + chips, soft: soft, vertical: true)
             Self.nudge(&routes, movable: movable, obstacles: rects + chips, soft: soft, vertical: false)
             for index in routes.indices where movable[index] { routes[index] = DrawingGeometry.simplified(routes[index]) }
-            return Self.placeLabels(connectors: connectors, routes: routes, obstacles: rects, titles: titles)
+            return Self.placeLabels(connectors: connectors, routes: routes, obstacles: rects, titles: titles, groups: regions.map(\.frame))
         }
         var labels = settle(&routes, around: [])
         // A label left on another arrow's line: nudge that line's track clear of the chip, and
@@ -1340,19 +1347,26 @@ public struct ConnectorRouter: Sendable {
         var leader: [CGPoint]?
         /// Centred on its own route (the chip interrupts the line).
         var onLine = false
+        /// Beside a stretch of its route that other arrows run alongside (a bundle), or led from
+        /// one: the chip reads as naming the whole bundle.
+        var bundled = false
+        /// Beside a bundled stretch of its own line, led to a stretch where its line runs alone
+        /// (its stub before it joins the bundle), so the chip names that one line.
+        var tethered = false
     }
 
     /// Where each caption goes: beside its arrow's segments, the ones no other arrow runs along
     /// first (longest first), from their middles outward; then on the line itself (the chip
     /// interrupting it); then `leaderReaches` away with a leader. A spot must keep off tiles,
     /// title bands, other arrows' lines and labels, and (beside or on the route) have no other
-    /// arrow nearer than its own. Labels with the fewest clear spots go first; one left without
-    /// takes a spot a single other label is in the way of when that one can move, else the spot
-    /// with the fewest collisions (`layout.check` reports it).
-    static func placeLabels(connectors: [Connector], routes: [[CGPoint]], obstacles: [CGRect], titles: [CGRect]) -> [ObjectID: Label] {
+    /// arrow nearer than its own. A spot beside a stretch other lines run alongside costs more,
+    /// and is tried first tethered to a stretch where its line runs alone. Labels with the fewest
+    /// clear spots go first; one left without takes a spot a single other label is in the way of
+    /// when that one can move, else the spot with the fewest collisions (`layout.check` reports it).
+    static func placeLabels(connectors: [Connector], routes: [[CGPoint]], obstacles: [CGRect], titles: [CGRect], groups: [CGRect] = []) -> [ObjectID: Label] {
         let labelled = connectors.indices.filter { connectors[$0].label != nil && routes[$0].count >= 2 }
         guard !labelled.isEmpty else { return [:] }
-        let segments = LabelSegments(routes: routes, obstacles: obstacles, titles: titles)
+        let segments = LabelSegments(routes: routes, obstacles: obstacles, titles: titles, groups: groups)
         var candidates: [Int: [LabelCandidate]] = [:]
         var clear: [Int: Int] = [:]
         for index in labelled {
@@ -1412,7 +1426,8 @@ public struct ConnectorRouter: Sendable {
         return result
     }
 
-    /// Every route's segments, tiles, and title bands, for label collision tests.
+    /// Every route's segments, tiles, title bands, and group frames (whose borders a tether
+    /// keeps off), for label collision tests.
     struct LabelSegments {
         var owners: [Int] = []
         var starts: [CGPoint] = []
@@ -1421,11 +1436,13 @@ public struct ConnectorRouter: Sendable {
         let routes: [[CGPoint]]
         let obstacles: [CGRect]
         let titles: [CGRect]
+        let groups: [CGRect]
 
-        init(routes: [[CGPoint]], obstacles: [CGRect], titles: [CGRect]) {
+        init(routes: [[CGPoint]], obstacles: [CGRect], titles: [CGRect], groups: [CGRect]) {
             self.routes = routes
             self.obstacles = obstacles
             self.titles = titles
+            self.groups = groups
             for (owner, route) in routes.enumerated() {
                 for (a, b) in zip(route, route.dropFirst()) {
                     owners.append(owner)
@@ -1491,6 +1508,7 @@ public struct ConnectorRouter: Sendable {
             if count >= limit { return count }
             if let leader = candidate.leader, leader.count == 2 {
                 count += ConnectorRouter.leaderCost
+                if !candidate.tethered, hypot(leader[1].x - leader[0].x, leader[1].y - leader[0].y) > ConnectorRouter.shortLeader + DrawingGeometry.labelClearance { count += 1 }
                 if under == 0, othersNear(rect, owner: owner, reach: 3) { count += 1 }
                 count += 3 * othersCrossing(leader[0], leader[1], owner: owner)
                 for obstacle in obstacles where DrawingGeometry.segment(leader[0], leader[1], intersects: obstacle.insetBy(dx: 0.5, dy: 0.5)) { count += coverCost }
@@ -1498,6 +1516,8 @@ public struct ConnectorRouter: Sendable {
             } else if under == 0, !candidate.onLine, othersNear(rect, owner: owner, reach: DrawingGeometry.labelClearance - 1) {
                 count += 1
             }
+            // A leader from a bundle costs what a spot beside it does.
+            if candidate.bundled { count += candidate.leader == nil ? ConnectorRouter.bundleCost : ConnectorRouter.bundleCost - ConnectorRouter.leaderCost }
             if count < limit, !candidate.onLine, DrawingGeometry.distance(fromPath: routes[owner], to: rect) < DrawingGeometry.labelClearance - 1 { count += coverCost }
             return count
         }
@@ -1507,24 +1527,30 @@ public struct ConnectorRouter: Sendable {
         let spacing = DrawingGeometry.parallelSpacing * 1.5
         // Each segment's length that no other arrow runs alongside (within 1.5 track spacings).
         var ranked: [(index: Int, distinct: CGFloat, length: CGFloat)] = []
+        // The stretches of each segment other arrows run alongside, where the route is bundled,
+        // and those no other line runs closer to than half a track spacing, where a leader's
+        // foot names this line alone.
+        var bundles: [Int: [(CGFloat, CGFloat)]] = [:]
+        var alone: [Int: [(CGFloat, CGFloat)]] = [:]
         for (index, (a, b)) in zip(route, route.dropFirst()).enumerated() {
             let horizontal = abs(a.y - b.y) < 0.5
             let vertical = abs(a.x - b.x) < 0.5
             let length = hypot(b.x - a.x, b.y - a.y)
             guard length > 0.5 else { continue }
+            let low = horizontal ? min(a.x, b.x) : min(a.y, b.y)
+            let high = horizontal ? max(a.x, b.x) : max(a.y, b.y)
             var covered: [(CGFloat, CGFloat)] = []
+            var close: [(CGFloat, CGFloat)] = []
             if horizontal || vertical {
-                let low = horizontal ? min(a.x, b.x) : min(a.y, b.y)
-                let high = horizontal ? max(a.x, b.x) : max(a.y, b.y)
                 for k in segments.owners.indices where segments.owners[k] != owner {
                     let p = segments.starts[k], q = segments.ends[k]
-                    if horizontal, abs(p.y - q.y) < 0.5, abs(p.y - a.y) < spacing {
-                        let l = max(low, min(p.x, q.x)), h = min(high, max(p.x, q.x))
-                        if h > l { covered.append((l, h)) }
-                    } else if vertical, abs(p.x - q.x) < 0.5, abs(p.x - a.x) < spacing {
-                        let l = max(low, min(p.y, q.y)), h = min(high, max(p.y, q.y))
-                        if h > l { covered.append((l, h)) }
-                    }
+                    let parallel = horizontal ? abs(p.y - q.y) < 0.5 : abs(p.x - q.x) < 0.5
+                    let gap = horizontal ? abs(p.y - a.y) : abs(p.x - a.x)
+                    guard parallel, gap < spacing else { continue }
+                    let l = max(low, horizontal ? min(p.x, q.x) : min(p.y, q.y)), h = min(high, horizontal ? max(p.x, q.x) : max(p.y, q.y))
+                    guard h > l else { continue }
+                    covered.append((l, h))
+                    if gap < DrawingGeometry.parallelSpacing / 2 { close.append((l, h)) }
                 }
             }
             var union: CGFloat = 0
@@ -1535,6 +1561,16 @@ public struct ConnectorRouter: Sendable {
                 reach = max(reach, h)
             }
             ranked.append((index, length - union, length))
+            bundles[index] = covered
+            guard horizontal || vertical else { continue }
+            var free: [(CGFloat, CGFloat)] = []
+            var open = low
+            for (l, h) in close.sorted(by: { $0.0 < $1.0 }) {
+                if l > open { free.append((open, l)) }
+                open = max(open, h)
+            }
+            if high > open { free.append((open, high)) }
+            alone[index] = free.filter { $0.1 - $0.0 >= 8 }
         }
         ranked.sort { ($0.distinct, $0.length, -$0.index) > ($1.distinct, $1.length, -$1.index) }
         /// Spots along a segment of `length`, from its middle outward, about every 12 points.
@@ -1546,6 +1582,48 @@ public struct ConnectorRouter: Sendable {
         let clearance = DrawingGeometry.labelClearance
         let first = route[0], last = route[route.count - 1]
         var result: [LabelCandidate] = []
+        /// Whether a chip beside segment `index` spanning `low...high` along it (a leader: its
+        /// foot) sits by a bundled stretch.
+        func bundled(_ index: Int, _ low: CGFloat, _ high: CGFloat) -> Bool {
+            bundles[index, default: []].contains { min($0.1, high) - max($0.0, low) > 0 }
+        }
+        /// The shortest leader from `chip` straight to a stretch where the route runs alone,
+        /// within the chip's extent, longer than the chip's clearance (a stretch right beside it
+        /// is where it already sits) and no longer than the longest leader.
+        func tether(_ chip: CGRect) -> [CGPoint]? {
+            var best: [CGPoint]?
+            var shortest = leaderReaches.last! + clearance
+            for (index, stretches) in alone.sorted(by: { $0.key < $1.key }) {
+                let a = route[index], b = route[index + 1]
+                let horizontal = abs(a.y - b.y) < 0.5
+                let (across, span) = horizontal ? (a.y, (chip.minX + 4, chip.maxX - 4)) : (a.x, (chip.minY + 4, chip.maxY - 4))
+                let (near, far) = horizontal ? (chip.minY, chip.maxY) : (chip.minX, chip.maxX)
+                guard across < near || across > far else { continue }
+                let edge = across < near ? near : far
+                let length = abs(edge - across)
+                guard length > clearance + 1, length < shortest else { continue }
+                for (l, h) in stretches {
+                    let from = max(l, span.0), to = min(h, span.1)
+                    guard to >= from else { continue }
+                    // Off group borders it would run along: the spot in the stretch farthest from
+                    // them (up to `borderClearance`), nearest its middle.
+                    let (low, high) = (min(across, edge), max(across, edge))
+                    let borders = segments.groups.flatMap { frame -> [CGFloat] in
+                        let (start, end) = horizontal ? (frame.minY, frame.maxY) : (frame.minX, frame.maxX)
+                        guard start < high, end > low else { return [] }
+                        return horizontal ? [frame.minX, frame.maxX] : [frame.minY, frame.maxY]
+                    }
+                    let middle = (from + to) / 2
+                    let spots = [middle, from, to] + borders.flatMap { [$0 - borderClearance, $0 + borderClearance] }.filter { $0 >= from && $0 <= to }
+                    func room(_ t: CGFloat) -> CGFloat { min(borderClearance, borders.map { abs($0 - t) }.min() ?? borderClearance) }
+                    let t = spots.max { (room($0), -abs($0 - middle)) < (room($1), -abs($1 - middle)) }!
+                    best = horizontal ? [CGPoint(x: t, y: across), CGPoint(x: t, y: edge)] : [CGPoint(x: across, y: t), CGPoint(x: edge, y: t)]
+                    shortest = length
+                    break
+                }
+            }
+            return best
+        }
         // Beside the route (0), on it (-1), then leaders.
         for reach in [clearance, -1] + leaderReaches.map({ $0 + clearance }) {
             let onLine = reach < 0
@@ -1569,8 +1647,10 @@ public struct ConnectorRouter: Sendable {
                         for shift in shifts {
                             let above = CGRect(x: x - w / 2 + shift, y: a.y - reach - h, width: w, height: h)
                             let below = CGRect(x: x - w / 2 + shift, y: a.y + reach, width: w, height: h)
-                            result.append(LabelCandidate(rect: above, leader: leader ? [CGPoint(x: x, y: a.y), CGPoint(x: x, y: above.maxY)] : nil))
-                            result.append(LabelCandidate(rect: below, leader: leader ? [CGPoint(x: x, y: a.y), CGPoint(x: x, y: below.minY)] : nil))
+                            result.append(LabelCandidate(rect: above, leader: leader ? [CGPoint(x: x, y: a.y), CGPoint(x: x, y: above.maxY)] : nil,
+                                                         bundled: leader ? bundled(segment.index, x - 0.5, x + 0.5) : bundled(segment.index, above.minX, above.maxX)))
+                            result.append(LabelCandidate(rect: below, leader: leader ? [CGPoint(x: x, y: a.y), CGPoint(x: x, y: below.minY)] : nil,
+                                                         bundled: leader ? bundled(segment.index, x - 0.5, x + 0.5) : bundled(segment.index, below.minX, below.maxX)))
                         }
                     } else if vertical {
                         let low = min(a.y, b.y), high = max(a.y, b.y)
@@ -1582,8 +1662,9 @@ public struct ConnectorRouter: Sendable {
                         }
                         let right = CGRect(x: a.x + reach, y: y - h / 2, width: w, height: h)
                         let left = CGRect(x: a.x - reach - w, y: y - h / 2, width: w, height: h)
-                        result.append(LabelCandidate(rect: right, leader: leader ? [CGPoint(x: a.x, y: y), CGPoint(x: right.minX, y: y)] : nil))
-                        result.append(LabelCandidate(rect: left, leader: leader ? [CGPoint(x: a.x, y: y), CGPoint(x: left.maxX, y: y)] : nil))
+                        let spanBundled = leader ? bundled(segment.index, y - 0.5, y + 0.5) : bundled(segment.index, y - h / 2, y + h / 2)
+                        result.append(LabelCandidate(rect: right, leader: leader ? [CGPoint(x: a.x, y: y), CGPoint(x: right.minX, y: y)] : nil, bundled: spanBundled))
+                        result.append(LabelCandidate(rect: left, leader: leader ? [CGPoint(x: a.x, y: y), CGPoint(x: left.maxX, y: y)] : nil, bundled: spanBundled))
                     } else {
                         let length = hypot(b.x - a.x, b.y - a.y)
                         let point = CGPoint(x: a.x + (b.x - a.x) * fraction, y: a.y + (b.y - a.y) * fraction)
@@ -1605,8 +1686,13 @@ public struct ConnectorRouter: Sendable {
                 }
             }
         }
-        // A chip on the line never hides the arrowhead or the tail.
-        return result.filter { !$0.onLine || (!$0.rect.insetBy(dx: -12, dy: -12).contains(last) && !$0.rect.insetBy(dx: -6, dy: -6).contains(first)) }
+        // A chip on the line never hides the arrowhead or the tail; one beside a bundle is tried
+        // first led to where its line runs alone.
+        return result.flatMap { spot -> [LabelCandidate] in
+            if spot.onLine { return spot.rect.insetBy(dx: -12, dy: -12).contains(last) || spot.rect.insetBy(dx: -6, dy: -6).contains(first) ? [] : [spot] }
+            guard spot.bundled, spot.leader == nil, let leader = tether(spot.rect) else { return [spot] }
+            return [LabelCandidate(rect: spot.rect, leader: leader, tethered: true), spot]
+        }
     }
 
     /// Whether segments a–b and c–d cross at a point inside both (touching ends or running

@@ -356,7 +356,9 @@ final class ShapeLayer: NSView {
             obstacles.append(.init(id: id, rect: canvasRect(item.frame)))
         }
         obstacles.sort { $0.id < $1.id }
-        let regions = BoardGeometry(objects: board.objects, labelSizes: [:]).regions
+        // Groups as shown: a tile held mid-drag has moved but its groups commit only on drop.
+        let shown = Dictionary(obstacles.map { ($0.id, $0.rect) }, uniquingKeysWith: { first, _ in first })
+        let regions = BoardGeometry(objects: board.objects, labelSizes: [:]).regions(shown: shown)
         let result = ConnectorRouter(connectors: connectors, obstacles: obstacles, regions: regions).route(previous: routing)
         routing = result
         for (item, spec) in arrows {

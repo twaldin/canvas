@@ -25,7 +25,7 @@ Results are objects, never bare values:
 | `object.upsert` | `{object, created}`; `object.find` → what `object.get` returns (with `key`) or `{objects}` (with `keyPrefix`) |
 | `object.batch` | `{results, revision}`: each op's result in order (`results[0]["object"]["id"]`) |
 | `layout.place`/`stack`/`translate` | `{frames: {id: frame}}`; `layout.grid` adds `columns` and `rows` |
-| `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, arrowOverlaps, arrowIntersections, overflow, scrolls, truncated}` |
+| `layout.check` | `{overlaps, arrowCrossings, labelOverlaps, arrowOverlaps, arrowIntersections, overflow, scrolls, truncated}`, plus `hints` when there are any |
 | `view.render`, `view.snapshot` | `{path, width, height, scale, objects}` plus `canvasRect` (render) or `viewport` (snapshot) |
 | `agent.prompt` | `{agent, waitable, submittedAt}`; `agent.wait` → `{agent}`; `agent.read` → `{agent, text, lines}` (`truncated` with `since`) |
 
@@ -145,7 +145,8 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
   `arrowIntersections` (`{arrows, count, at}`: two arrows whose lines cross; often a tile order that follows the arrows removes them),
   `overflow` (`{id, x, y}`: points of note/text/HTML content beyond the frame; for HTML, its page laid out at the frame's width),
   `scrolls` (`{id, y}`: code tiles whose range's rows, wrapped at the frame's width, are `y` points taller than the frame, so the tile scrolls to the range; fine for a viewer meant to scroll, refit with `size: "fit"` when the whole range should show),
-  `truncated` (`{id, what, x}`, `x` points short: `caption`, a code caption the frame cuts off; `table`, a note table with too many columns for the note's width even with its cells wrapped: widen the note or split the table).
+  `truncated` (`{id, what, x}`, `x` points short: `caption`, a code caption the frame cuts off; `table`, a note table with too many columns for the note's width even with its cells wrapped: widen the note or split the table),
+  and, only when there is one, `hints` (advice, not faults: more than 6 labelled arrows all one color, so a label can't show which line it names: color arrows by lane or flow).
   A group and its members, and an unfilled rect around what it contains, are not overlaps. Follow tiles are fixed-size viewers and are never reported.
   With `ids` or `rect`, arrows through the checked objects and labels on them count too, whichever arrow it is: check a new tile by its id to find labels it covers.
   It judges what is drawn (whole tile frames, routes and line-bound ends as drawn), so an empty report means a clean picture. Run it after a layout pass instead of screenshots.

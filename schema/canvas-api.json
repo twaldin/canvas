@@ -1186,6 +1186,11 @@
             "type": "array",
             "description": "text the frame's width cuts off with \"…\": a code tile's caption, or a note's table with more columns than the note has room for even with its cells wrapped",
             "items": { "type": "object", "required": ["id", "what", "x"], "properties": { "id": { "$ref": "#/definitions/Id" }, "what": { "enum": ["caption", "table"] }, "x": { "type": "number", "description": "points of width missing to show all of it" } }, "additionalProperties": false }
+          },
+          "hints": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "present when there is advice that isn't a fault: more than 6 labelled arrows all one color (label chips are outlined in their arrow's color, so one color can't show which line a label names): color arrows by lane or flow"
           }
         }
       }

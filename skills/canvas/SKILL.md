@@ -228,7 +228,8 @@ Colors, fills, text sizes, arrow routing and binding rules: `references/shapes.m
 2. Leave room for the arrows: about 120 pt between columns and 60 pt between stacked tiles where arrows run between them, more for a column many arrows fan into.
 3. `route: "avoid"` for every arrow that crosses the diagram; in each column, order tiles the way their arrows go, so fans don't cross.
 4. Label an arrow only when the relation isn't obvious from its ends, in two or three words; detail goes in the tile.
-5. `layout.check`, then fix what it reports: `arrowOverlaps`, `labelOverlaps` (a label on a tile, title, label, or another arrow's `lines`), and the `arrowIntersections` a tile order or a wider gap removes.
+5. With more than about 6 arrows, color them by lane or flow, so each label (outlined in its arrow's color) reads with its own line: e.g. `"color": "blue"` on every request-path arrow and `"color": "green"` on the replies.
+6. `layout.check`, then fix what it reports: `arrowOverlaps`, `labelOverlaps` (a label on a tile, title, label, or another arrow's `lines`), and the `arrowIntersections` a tile order or a wider gap removes; its `hints` say when many labelled arrows share one color.
 `canvas get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
 
 ### Boards a script keeps current

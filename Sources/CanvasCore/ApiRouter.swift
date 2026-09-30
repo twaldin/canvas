@@ -1633,7 +1633,7 @@ public final class ApiRouter {
                 overflow.append(.object(["id": .string(object.id), "x": .number(x.rounded(.up)), "y": .number(y.rounded(.up))]))
             }
         }
-        return .object([
+        var result: [String: JSONValue] = [
             "overlaps": .array(report.overlaps.map { .array($0.map(JSONValue.string)) }),
             "arrowCrossings": .array(report.crossings.map { .object(["arrow": .string($0.arrow), "crosses": .array($0.crosses.map(JSONValue.string))]) }),
             "labelOverlaps": .array(report.labelOverlaps.map { overlap in
@@ -1654,7 +1654,9 @@ public final class ApiRouter {
             "overflow": .array(overflow),
             "scrolls": .array(scrolls),
             "truncated": .array(truncated),
-        ])
+        ]
+        if !report.hints.isEmpty { result["hints"] = .array(report.hints.map(JSONValue.string)) }
+        return .object(result)
     }
 
     /// The visual rows line anchors sit on for each of `tiles` (code tiles with an excerpt): its

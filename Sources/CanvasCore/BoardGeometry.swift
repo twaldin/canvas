@@ -85,6 +85,38 @@ public struct BoardGeometry: Sendable {
         }
     }
 
+    /// The groups as they are shown while objects are shown away from their frames (tiles held
+    /// mid-drag, which commit on drop): a group holding such a member, nested groups included,
+    /// takes the frame the drop will fit it to (`GroupSpec.frame(around:)`, as `Board`
+    /// re-fits); every other group keeps its frame. So routing the board mid-drag sees the
+    /// regions the drop commits, and the drop changes nothing more.
+    public func regions(shown: [ObjectID: CGRect]) -> [ConnectorRouter.Region] {
+        let moved = Set(shown.compactMap { id, rect in objects[id].map { $0.frame.rect != rect } == true ? id : nil })
+        guard !moved.isEmpty else { return regions }
+        var fitted: [ObjectID: CGRect?] = [:]
+        func frame(ofGroup id: ObjectID, visiting: Set<ObjectID>) -> CGRect? {
+            if let known = fitted[id] { return known }
+            guard let group = objects[id], let spec = GroupSpec(group.props) else { return nil }
+            let leaves = Self.leafMembers(of: id, in: objects)
+            var result = group.frame.rect
+            if leaves.contains(where: moved.contains) {
+                let rects = spec.members.compactMap { member -> CGRect? in
+                    guard member != id, !visiting.contains(member), let object = objects[member], object.type != .arrow else { return nil }
+                    if object.type == .group { return frame(ofGroup: member, visiting: visiting.union([id])) }
+                    return shown[member] ?? object.frame.rect
+                }
+                result = spec.frame(around: rects) ?? result
+            }
+            fitted[id] = result
+            return result
+        }
+        return regions.map { region in
+            var region = region
+            region.frame = frame(ofGroup: region.id, visiting: []) ?? region.frame
+            return region
+        }
+    }
+
     /// What a binding attaches to: a point, an object's frame (an ellipse's curve), the row of
     /// the first of `lines` on a code tile, or a diagram node's box. Nil when the object is gone.
     func arrowEnd(_ binding: ArrowBinding, rows: [ObjectID: CodeRows]) -> DrawingGeometry.ArrowEnd? {

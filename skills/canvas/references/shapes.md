@@ -23,7 +23,8 @@ The full rules behind SKILL.md's summary.
   - `route`: `straight` (default), `orthogonal`, or `avoid` (goes around tiles in the way).
     `avoid` arrows are routed together: arrows sharing a side get their own ports, arrows sharing a gap run in parallel tracks, and each leaves the side of its source that faces downstream (its group's `flow`).
     Arrows between the same two objects are drawn apart automatically, both directions.
-    A label sits beside its own arrow where no other line runs, else on its line, else a dashed leader away; `layout.check` reports any that couldn't.
+    A label sits beside its own arrow where no other line runs, else on its line, else a dashed leader away; in a bundle of parallel lines it is led to its own stub, where its line still runs alone. `layout.check` reports any that couldn't.
+    Label chips are outlined in their arrow's color: on a diagram with more than about 6 arrows, color them by lane or flow so each label reads with its line.
 - `group`: `{"members": [ids], "title": "…", "color": "blue", "padding": 24, "flow": "down"}` is a titled, tinted region whose frame always wraps its members
   (plus padding and a title band) as they move; use one per lane or cluster instead of a rect plus a text label.
   `flow` (`right`, `down`, `left`, `up`) says which way the diagram inside reads, for `avoid` arrows among its members; without it the board's arrows between groups decide.

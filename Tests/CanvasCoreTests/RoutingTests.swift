@@ -39,13 +39,13 @@ final class RoutingTests {
                             createdBy: .user, createdAt: Date(timeIntervalSince1970: 0), props: .object(props))
     }
 
-    /// Label chips sized as the drawing layer sizes them.
-    private func geometry(_ objects: [CanvasObject]) -> BoardGeometry {
+    /// Label chips sized as the drawing layer sizes them, routed on from `settled`.
+    private func geometry(_ objects: [CanvasObject], settled: ConnectorRouter.Result? = nil) -> BoardGeometry {
         var labels: [ObjectID: CGSize] = [:]
         for object in objects where object.type == .arrow {
             if let spec = ArrowSpec(object.props), let label = DrawingStyle.arrowLabel(spec) { labels[object.id] = label.size }
         }
-        return BoardGeometry(objects: Dictionary(uniqueKeysWithValues: objects.map { ($0.id, $0) }), labelSizes: labels)
+        return BoardGeometry(objects: Dictionary(uniqueKeysWithValues: objects.map { ($0.id, $0) }), labelSizes: labels, settled: settled)
     }
 
     /// Eight sources in a column, one target to their right.
@@ -190,6 +190,88 @@ final class RoutingTests {
         #expect(check.labelOverlaps.isEmpty, "no label on a tile, title, label, or line: \(check.labelOverlaps.map { ($0.label, $0.overlaps, $0.lines) })")
     }
 
+    /// The Atlas board with its lowest Ingress note moved by `dx`, `dy`: that note's frame, and
+    /// the board as the drop commits it (the note moved, its group re-fitted around it).
+    private func atlasDrop(dx: Double, dy: Double) throws -> (objects: [CanvasObject], note: ObjectID, held: CGRect, committed: [CanvasObject]) {
+        let objects = try atlas()
+        let ingress = objects.first { $0.type == .group && $0.props["title"]?.string == "Ingress" }!
+        let spec = GroupSpec(ingress.props)!
+        let note = objects.filter { spec.members.contains($0.id) }.max { $0.frame.y < $1.frame.y }!
+        let held = note.frame.rect.offsetBy(dx: dx, dy: dy)
+        var committed = objects.map { $0.id == note.id ? { var moved = $0; moved.frame = Frame(held); return moved }($0) : $0 }
+        let members = committed.filter { spec.members.contains($0.id) }.map(\.frame.rect)
+        committed = committed.map { $0.id == ingress.id ? { var group = $0; group.frame = Frame(spec.frame(around: members)!); return group }($0) : $0 }
+        return (objects, note.id, held, committed)
+    }
+
+    @Test func aHeldTileRoutesWithTheGroupFramesItsDropCommits() throws {
+        let drop = try atlasDrop(dx: 40, dy: 120)
+        let committed = geometry(drop.committed).regions
+        // Mid-drag the model still has the note and its group where they were.
+        let held = geometry(drop.objects).regions(shown: [drop.note: drop.held])
+        #expect(held.map(\.id) == committed.map(\.id))
+        #expect(held.map(\.frame) == committed.map(\.frame), "the held note's group as the drop fits it, the others as they are")
+        #expect(geometry(drop.objects).regions.map(\.frame) != committed.map(\.frame), "the model's own frames are stale until the drop")
+        #expect(geometry(drop.objects).regions(shown: [drop.note: drop.objects.first { $0.id == drop.note }!.frame.rect]).map(\.frame)
+                == geometry(drop.objects).regions.map(\.frame), "nothing shown away from its frame: the board's regions")
+    }
+
+    @Test func aHeldTileRefitsNestedGroupsOutward() {
+        let a = tile(0, 0), b = tile(0, 200), c = tile(400, 0), d = tile(1200, 0), e = tile(1200, 200)
+        let inner = group([a, b])
+        let outer = group([c])
+        var outerProps = outer.props.object!
+        outerProps["members"] = .array([.string(inner.id), .string(c.id)])
+        var nested = outer
+        nested.props = .object(outerProps)
+        let innerRect = GroupSpec(inner.props)!.frame(around: [a.frame.rect, b.frame.rect])!
+        nested.frame = Frame(GroupSpec(nested.props)!.frame(around: [innerRect, c.frame.rect])!)
+        let apart = group([d, e])
+        let held = b.frame.rect.offsetBy(dx: -150, dy: 300)
+        let regions = geometry([a, b, c, d, e, inner, nested, apart]).regions(shown: [b.id: held])
+        let innerHeld = GroupSpec(inner.props)!.frame(around: [a.frame.rect, held])!
+        #expect(regions.first { $0.id == inner.id }?.frame == innerHeld)
+        #expect(regions.first { $0.id == nested.id }?.frame == GroupSpec(nested.props)!.frame(around: [innerHeld, c.frame.rect]))
+        #expect(regions.first { $0.id == apart.id }?.frame == apart.frame.rect, "a group without the held tile stays put")
+    }
+
+    /// Routes on GCD, off the main actor and the cooperative pool: the Atlas board takes seconds
+    /// in a debug build, and the socket tests running alongside need both.
+    private func route(_ geometry: BoardGeometry) async -> ConnectorRouter.Result {
+        await withCheckedContinuation { done in
+            DispatchQueue.global().async { done.resume(returning: geometry.routing()) }
+        }
+    }
+
+    @Test func aDropSettlesOnceAndSettlingAgainChangesNothing() async throws {
+        let drop = try atlasDrop(dx: 40, dy: 120)
+        let before = await route(geometry(drop.objects))
+        // The settle while the note is held (routed with the regions the drop commits) …
+        let held = await route(geometry(drop.committed, settled: before))
+        #expect(held.paths != before.paths, "the held note's arrows follow it")
+        // … is what the drop settles to: settling the same board again changes nothing.
+        let dropped = await route(geometry(drop.committed, settled: held))
+        #expect(dropped.paths == held.paths && dropped.labels == held.labels)
+    }
+
+    @Test func aLabelInABundleNamesItsOwnLine() async throws {
+        let objects = try atlas()
+        let routing = await route(geometry(objects))
+        let spacing = DrawingGeometry.parallelSpacing
+        // The fan-in from Ingress into Dispatch: six lines share one trunk 8 pt apart.
+        for caption in ["text trigger", "matching routines", "timer occurrence", "continuation triggers"] {
+            let arrow = objects.first { $0.props["label"]?.string == caption }!
+            let label = routing.labels[arrow.id]!, own = routing.paths[arrow.id]!
+            let others = routing.paths.filter { $0.key != arrow.id }.map(\.value)
+            if others.contains(where: { DrawingGeometry.path($0, crosses: label.rect.insetBy(dx: -1.5 * spacing, dy: -1.5 * spacing)) }) {
+                // Beside the bundle, the chip is led to a stretch of its own line no other line runs by.
+                let foot = try #require(label.leader?.first, "\(caption) sits by other lines with nothing tying it to its own")
+                #expect(DrawingGeometry.distance(foot, toPath: own) < 0.5, "\(caption)'s leader starts on its own line")
+                #expect(others.allSatisfy { DrawingGeometry.distance(foot, toPath: $0) >= spacing / 2 }, "\(caption)'s leader starts where its line runs alone")
+            }
+        }
+    }
+
     @Test func layoutCheckReportsArrowsOnTopOfOrCrossingEachOther() {
         let under = line(from: CGPoint(x: 0, y: 100), to: CGPoint(x: 400, y: 100))
         let over = line(from: CGPoint(x: 200, y: 100), to: CGPoint(x: 600, y: 100))
@@ -200,5 +282,23 @@ final class RoutingTests {
         #expect(check.arrowIntersections.contains { Set($0.arrows) == [under.id, across.id] && $0.count == 1 })
         #expect(!check.arrowIntersections.contains { Set($0.arrows) == [over.id, across.id] })
         #expect(geometry([under, over, across]).layoutCheck(scope: [over.id]).arrowIntersections.isEmpty, "scoped to what's involved")
+    }
+
+    @Test func layoutCheckHintsAtColoringManyLabelledArrowsThatShareOneColor() {
+        let fan = fanIn(labels: true)
+        func colored(_ arrow: CanvasObject, _ color: String) -> CanvasObject {
+            var object = arrow
+            var props = arrow.props.object!
+            props["color"] = .string(color)
+            object.props = .object(props)
+            return object
+        }
+        let grey = fan.arrows.map { colored($0, "grey") }
+        let tiles = fan.sources + [fan.target]
+        let hints = geometry(tiles + grey).layoutCheck().hints
+        #expect(hints.count == 1 && hints[0].contains("8 labelled arrows are all grey"), "\(hints)")
+        #expect(geometry(tiles + Array(grey.prefix(6))).layoutCheck().hints.isEmpty, "six are few enough to tell apart")
+        #expect(geometry(tiles + grey.dropLast() + [colored(grey.last!, "blue")]).layoutCheck().hints.isEmpty, "already colored by flow")
+        #expect(geometry(tiles + fan.arrows).layoutCheck().hints.count == 1, "the default ink counts as one color")
     }
 }

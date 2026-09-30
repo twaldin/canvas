@@ -1,7 +1,7 @@
 # What the user sees
 
-The legend behind Help › Chalkwork Basics, so you can answer "what is this?" without reading Chalkwork's source.
-Point the user at Help › Chalkwork Basics (⌥⌘/) for the same text in the app.
+The legend behind Help › Canvas Basics, so you can answer "what is this?" without reading Canvas's source.
+Point the user at Help › Canvas Basics (⌥⌘/) for the same text in the app.
 
 ## Pointing an agent at things
 
@@ -27,7 +27,7 @@ Point the user at Help › Chalkwork Basics (⌥⌘/) for the same text in the a
 - **⌘P** finds a tile by title or caption.
 - **Links**: a `path:line` link in a note or page, Go to, a definition and a terminal ⌘-click go to the code tile already showing those lines (exactly, or a captioned tile whose range holds them) wherever it is, else open them beside the source.
 - **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
-- **View › Hide Canvas Chrome** (⌥⌘T; also a button in Chalkwork Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
+- **View › Hide Canvas Chrome** (⌥⌘T; also a button in Canvas Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
   Esc on the canvas or the item again brings them back.
 
 ## Agents
@@ -35,7 +35,7 @@ Point the user at Help › Chalkwork Basics (⌥⌘/) for the same text in the a
 - **Lifecycle dot** in a terminal's title bar (its tooltip says the same):
   blue *working* (busy), orange *blocked* (waits for the user to approve or answer), green *done* (finished, not seen yet), grey *idle* (waiting for the next prompt).
   No dot: no agent reports a lifecycle in that terminal.
-  An agent without an integration (aider through Chalkwork's `aider` wrapper, any CLI that sends a terminal notification or bell) turns green *done* when it says it waits and has no dot while it may be working; it never shows blue or orange.
+  An agent without an integration (aider through Canvas's `aider` wrapper, any CLI that sends a terminal notification or bell) turns green *done* when it says it waits and has no dot while it may be working; it never shows blue or orange.
 - **Blocked**: the terminal also gets an orange ring and a bubble with a raised hand and the approval text; clicking the bubble brings the terminal into view (its bottom, where the question is, when it is taller than the window) and puts the keyboard in it.
   Off screen, an orange pill at the edge of the view points at it.
 - **Tab dot** on a board's tab: orange, an agent there is blocked; green, one finished unseen.
@@ -79,7 +79,7 @@ Point the user at Help › Chalkwork Basics (⌥⌘/) for the same text in the a
 - ⌘-click a `path:line` in terminal output opens it in that terminal's preview tile; ⌥⌘-click opens a separate tile the user keeps.
 - Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
   In a terminal or a web page Esc belongs to the program or page: ⌘Esc (View › Leave Tile) leaves any tile.
-- Code › Go to Definition ⌃⌘J (Open Definition in New Tile ⌃⌥⌘J), Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter), and code tiles' hover use the language's server (sourcekit-lsp, pyright-langserver, typescript-language-server, gopls, rust-analyzer), found through the login shell: `CHALKWORK_LSP_<LANGUAGE>` (e.g. `CHALKWORK_LSP_RUST`) if set, else PATH, else nvim's mason bin, `~/go/bin`, `rustup which rust-analyzer`; without one they answer by text search, labelled so, and the panel says where Chalkwork looked.
+- Code › Go to Definition ⌃⌘J (Open Definition in New Tile ⌃⌥⌘J), Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter), and code tiles' hover use the language's server (sourcekit-lsp, pyright-langserver, typescript-language-server, gopls, rust-analyzer), found through the login shell: `CANVAS_LSP_<LANGUAGE>` (e.g. `CANVAS_LSP_RUST`) if set, else PATH, else nvim's mason bin, `~/go/bin`, `rustup which rust-analyzer`; without one they answer by text search, labelled so, and the panel says where Canvas looked.
 - A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.
 - A note's menu has Copy as Markdown and Save as Markdown…: its markdown as written (links, fences), for a doc or a chat.
 - Save as PNG…, Save as HTML…, Save as Markdown… and File › Export Selection as PNG… (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.

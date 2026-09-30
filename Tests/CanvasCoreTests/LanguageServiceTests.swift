@@ -167,7 +167,7 @@ final class LoginShellTests {
         let located = try tool(dir.path + "/toolchain")
         let config = LanguageServerConfig(language: "fake", command: "fake-ls", languageIDs: [:], rootMarkers: [], locators: ["echo \(located)"])
         func locate(path: String, variable: String? = nil, home: String = home, _ config: LanguageServerConfig = config) async throws -> String? {
-            let exported = variable.map { "export CHALKWORK_LSP_FAKE=\($0)\n" } ?? ""
+            let exported = variable.map { "export CANVAS_LSP_FAKE=\($0)\n" } ?? ""
             let login = LoginShell(shell: try shell("PATH=\(path)\n\(exported)eval \"$2\""), home: home)
             return await offPool { login.locate(config) }?.path
         }
@@ -253,7 +253,7 @@ final class LanguageServiceTests: Sendable {
             models.map { $0.area() }.reduce(0, +)
         }
         """)
-        // Chalkwork turns sourcekit-lsp's background indexing off; the index comes from the user's
+        // Canvas turns sourcekit-lsp's background indexing off; the index comes from the user's
         // own build, as it would for a repo someone works in.
         let build = Process()
         build.executableURL = URL(fileURLWithPath: "/usr/bin/swift")

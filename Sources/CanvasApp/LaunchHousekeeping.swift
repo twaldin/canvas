@@ -3,7 +3,7 @@ import Foundation
 import GhosttyTerminal
 
 extension Housekeeping {
-    /// At launch, off the main thread: deletes the zmx logs of Chalkwork sessions that no longer
+    /// At launch, off the main thread: deletes the zmx logs of Canvas sessions that no longer
     /// run, libghostty's config files already read, and renders older than a day
     /// (`Housekeeping`'s rules; never a file of another name). Without zmx, or when `zmx list`
     /// fails, the logs stay: a log is deleted only when its session is known to be gone.
@@ -35,6 +35,6 @@ extension Housekeeping {
 
     private nonisolated static func remove(_ names: [String], in directory: URL) {
         for name in names { try? FileManager.default.removeItem(at: directory.appendingPathComponent(name)) }
-        if !names.isEmpty { NSLog("Chalkwork: removed %d leftover files from %@", names.count, directory.path) }
+        if !names.isEmpty { NSLog("Canvas: removed %d leftover files from %@", names.count, directory.path) }
     }
 }

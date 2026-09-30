@@ -14,7 +14,7 @@ public enum LoginSession {
 
     /// The variables of `inherited` (the app's environment) to unset for a terminal tile's shell,
     /// sorted: all but the session variables and the passthrough above. `keep` are the tile's
-    /// own variables (`PATH`, `CHALKWORK_*`, …), set before the unset runs.
+    /// own variables (`PATH`, `CANVAS_*`, …), set before the unset runs.
     public static func strippedForTile(_ inherited: [String: String], keep: Set<String>) -> [String] {
         inherited.keys.filter { key in
             !keep.contains(key) && !variables.contains(key) && !tilePassthrough.contains(key)
@@ -25,17 +25,17 @@ public enum LoginSession {
 
 extension LoginSession {
     /// A terminal tile's shell-integration variables for the app's resources at `resources`
-    /// (docs/contracts.md "Terminal tile environment"): Chalkwork's `bin/` first on `PATH`, its
+    /// (docs/contracts.md "Terminal tile environment"): Canvas's `bin/` first on `PATH`, its
     /// `clients/python` on `PYTHONPATH`, `ZDOTDIR` its zsh integration with the user's own in
-    /// `CHALKWORK_ZSH_ZDOTDIR`, and its bash integration in `PROMPT_COMMAND`, each before what the
+    /// `CANVAS_ZSH_ZDOTDIR`, and its bash integration in `PROMPT_COMMAND`, each before what the
     /// app inherited.
     ///
-    /// An app launched from inside a Chalkwork tile (an agent's `scripts/dev.sh restart`, `open` in a
+    /// An app launched from inside a Canvas tile (an agent's `scripts/dev.sh restart`, `open` in a
     /// tile) inherits that tile's integration, possibly of another bundle: taken as the user's own,
-    /// its `ZDOTDIR` made every new tile source Chalkwork's startup files instead of the user's
-    /// (`_canvas_finish: command not found`, no `~/.zshrc`). So every Chalkwork integration found in
+    /// its `ZDOTDIR` made every new tile source Canvas's startup files instead of the user's
+    /// (`_canvas_finish: command not found`, no `~/.zshrc`). So every Canvas integration found in
     /// `inherited` is taken out first (`canvasResources`), and the user's `ZDOTDIR` is what that
-    /// tile kept aside in `CHALKWORK_ZSH_ZDOTDIR`, else none (their startup files are in `HOME`).
+    /// tile kept aside in `CANVAS_ZSH_ZDOTDIR`, else none (their startup files are in `HOME`).
     public static func tileShellIntegration(resources: String, inherited: [String: String]) -> [String: String] {
         let foreign = canvasResources(in: inherited).union([resources])
         func kept(_ list: String?, dropping entry: (String) -> String) -> [String] {
@@ -49,8 +49,8 @@ extension LoginSession {
             "PYTHONPATH": ([python] + kept(inherited["PYTHONPATH"]) { $0 + "/clients/python" }).joined(separator: ":"),
             "ZDOTDIR": resources + "/extensions/shell/zsh",
         ]
-        let zdotdir = [inherited["ZDOTDIR"], inherited["CHALKWORK_ZSH_ZDOTDIR"]].compactMap { $0 }.first { integrationRoot(zsh: $0) == nil }
-        if let zdotdir { env["CHALKWORK_ZSH_ZDOTDIR"] = zdotdir }
+        let zdotdir = [inherited["ZDOTDIR"], inherited["CANVAS_ZSH_ZDOTDIR"]].compactMap { $0 }.first { integrationRoot(zsh: $0) == nil }
+        if let zdotdir { env["CANVAS_ZSH_ZDOTDIR"] = zdotdir }
         let bash = bashIntegration(resources)
         let commands = (inherited["PROMPT_COMMAND"] ?? "").components(separatedBy: "; ").filter { !$0.isEmpty && bashIntegrationRoot($0) == nil }
         env["PROMPT_COMMAND"] = ([bash] + commands).joined(separator: "; ")
@@ -63,21 +63,21 @@ extension LoginSession {
     }
 
     private static let zshDirectory = "/extensions/shell/zsh"
-    private static let bashScript = "/extensions/shell/bash/chalkwork.bash"
+    private static let bashScript = "/extensions/shell/bash/canvas.bash"
 
-    /// The resource directories of the Chalkwork integrations `inherited` carries: a tile's
-    /// `ZDOTDIR` (kept by non-interactive shells and the programs they start), a `CHALKWORK_ZSH_ZDOTDIR`
-    /// an older Chalkwork set from one, and `PROMPT_COMMAND`'s sourcing of `chalkwork.bash` (kept by every
+    /// The resource directories of the Canvas integrations `inherited` carries: a tile's
+    /// `ZDOTDIR` (kept by non-interactive shells and the programs they start), a `CANVAS_ZSH_ZDOTDIR`
+    /// an older Canvas set from one, and `PROMPT_COMMAND`'s sourcing of `canvas.bash` (kept by every
     /// shell), whichever are there.
     static func canvasResources(in inherited: [String: String]) -> Set<String> {
-        var found = Set([inherited["ZDOTDIR"], inherited["CHALKWORK_ZSH_ZDOTDIR"]].compactMap { $0.flatMap(integrationRoot(zsh:)) })
+        var found = Set([inherited["ZDOTDIR"], inherited["CANVAS_ZSH_ZDOTDIR"]].compactMap { $0.flatMap(integrationRoot(zsh:)) })
         for command in (inherited["PROMPT_COMMAND"] ?? "").components(separatedBy: "; ") {
             if let root = bashIntegrationRoot(command) { found.insert(root) }
         }
         return found
     }
 
-    /// `<resources>` when `dir` is `<resources>/extensions/shell/zsh`, Chalkwork's zsh integration.
+    /// `<resources>` when `dir` is `<resources>/extensions/shell/zsh`, Canvas's zsh integration.
     static func integrationRoot(zsh dir: String) -> String? {
         let trimmed = dir.hasSuffix("/") ? String(dir.dropLast()) : dir
         guard trimmed.hasSuffix(zshDirectory), trimmed.count > zshDirectory.count else { return nil }

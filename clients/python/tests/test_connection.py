@@ -16,10 +16,10 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import chalkwork_sdk  # noqa: E402
-from chalkwork_sdk import Chalkwork, CanvasError, connect  # noqa: E402
+import canvas_sdk  # noqa: E402
+from canvas_sdk import Canvas, CanvasError, connect  # noqa: E402
 
-CHALKWORK_ENV = ("CHALKWORK_SOCKET", "CHALKWORK_TILE_ID", "CHALKWORK_BOARD_ID")
+CANVAS_ENV = ("CANVAS_SOCKET", "CANVAS_TILE_ID", "CANVAS_BOARD_ID")
 
 
 class FakeApp:
@@ -113,16 +113,16 @@ class ConnectionTest(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(dir="/tmp")
         self.addCleanup(temp.cleanup)
         self.dir = Path(temp.name)
-        self.path = str(self.dir / "chalkwork.sock")
+        self.path = str(self.dir / "canvas.sock")
         env = mock.patch.dict(os.environ)
         env.start()
         self.addCleanup(env.stop)
-        for key in CHALKWORK_ENV:
+        for key in CANVAS_ENV:
             os.environ.pop(key, None)
-        default = mock.patch.object(chalkwork_sdk, "DEFAULT_SOCKET", str(self.dir / "default.sock"))
+        default = mock.patch.object(canvas_sdk, "DEFAULT_SOCKET", str(self.dir / "default.sock"))
         default.start()
         self.addCleanup(default.stop)
-        lazy = mock.patch.object(chalkwork_sdk._LazyCanvas, "_instance", None)
+        lazy = mock.patch.object(canvas_sdk._LazyCanvas, "_instance", None)
         lazy.start()
         self.addCleanup(lazy.stop)
 
@@ -131,26 +131,26 @@ class ConnectionTest(unittest.TestCase):
         self.addCleanup(app.stop)
         return app
 
-    def client(self, **options) -> Chalkwork:
-        client = Chalkwork(self.path, **options)
+    def client(self, **options) -> Canvas:
+        client = Canvas(self.path, **options)
         self.addCleanup(client.close)
         return client
 
     def test_no_socket_configured_fails_loudly_with_the_fix(self) -> None:
-        for attempt in (Chalkwork, connect, lambda: chalkwork_sdk.canvas.board):
+        for attempt in (Canvas, connect, lambda: canvas_sdk.canvas.board):
             with self.subTest(attempt=attempt), self.assertRaises(CanvasError) as raised:
                 attempt()
             self.assertEqual(raised.exception.code, "unavailable")
             message = str(raised.exception)
-            self.assertIn("CHALKWORK_SOCKET is unset", message)
-            self.assertIn(chalkwork_sdk.DEFAULT_SOCKET, message)
-            self.assertIn("echo $CHALKWORK_SOCKET $CHALKWORK_TILE_ID $CHALKWORK_BOARD_ID", message)
+            self.assertIn("CANVAS_SOCKET is unset", message)
+            self.assertIn(canvas_sdk.DEFAULT_SOCKET, message)
+            self.assertIn("echo $CANVAS_SOCKET $CANVAS_TILE_ID $CANVAS_BOARD_ID", message)
             self.assertIn("connect(socket=..., tile=..., board=...)", message)
 
     def test_env_socket_is_used_when_no_explicit_path(self) -> None:
         app = self.serve()
-        os.environ["CHALKWORK_SOCKET"] = self.path
-        client = Chalkwork()
+        os.environ["CANVAS_SOCKET"] = self.path
+        client = Canvas()
         self.addCleanup(client.close)
         self.assertEqual(client.system.ping()["method"], "system.ping")
         self.assertEqual(len(app.requests), 1)
@@ -210,7 +210,7 @@ class ConnectionTest(unittest.TestCase):
             client.board.get()
         self.assertLess(time.monotonic() - started, 5, "no waiting for an app that is already there")
         self.assertEqual(raised.exception.code, "unavailable")
-        self.assertIn(f"Chalkwork socket {self.path} exists", str(raised.exception))
+        self.assertIn(f"Canvas socket {self.path} exists", str(raised.exception))
         self.assertIn("a sandbox (e.g. Codex's) may be blocking", str(raised.exception))
 
     def test_a_socket_that_is_there_but_unseen_twice_names_a_sandbox_at_once(self) -> None:
@@ -225,7 +225,7 @@ class ConnectionTest(unittest.TestCase):
         with mock.patch.object(socket.socket, "connect", unseen), self.assertRaises(CanvasError) as raised:
             client.board.get()
         self.assertLess(time.monotonic() - started, 5, "no waiting for an app that is already there")
-        self.assertIn(f"Chalkwork socket {self.path} exists but connecting to it failed (ENOENT)", str(raised.exception))
+        self.assertIn(f"Canvas socket {self.path} exists but connecting to it failed (ENOENT)", str(raised.exception))
 
     def test_connection_lost_after_sending_is_not_resent(self) -> None:
         app = self.serve()
@@ -268,10 +268,10 @@ class ConnectionTest(unittest.TestCase):
         app = self.serve()
         canvas = connect(socket=self.path, tile="obj_tile", board="brd_board")
         self.addCleanup(canvas.close)
-        # `canvas` (module level) now targets this client; the environment has no CHALKWORK_* at all.
-        chalkwork_sdk.canvas.object.create(type="note", props={})
-        chalkwork_sdk.canvas.board.get(board="brd_explicit")
-        chalkwork_sdk.canvas.object.get(id="obj_1", as_="graph")
+        # `canvas` (module level) now targets this client; the environment has no CANVAS_* at all.
+        canvas_sdk.canvas.object.create(type="note", props={})
+        canvas_sdk.canvas.board.get(board="brd_explicit")
+        canvas_sdk.canvas.object.get(id="obj_1", as_="graph")
         create, get, obj = (params for _, params in app.requests)
         self.assertEqual((create["caller"], create["board"]), ("obj_tile", "brd_board"))
         self.assertEqual(get["board"], "brd_explicit")

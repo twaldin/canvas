@@ -6,7 +6,7 @@ import Foundation
 ///
 /// It opens by itself at launch until the user closes it once; after that only Help › Get
 /// Started opens it. A home that already has boards the first time this is decided belongs to
-/// someone who used Chalkwork before the guide existed, and never gets it by itself.
+/// someone who used Canvas before the guide existed, and never gets it by itself.
 public enum GetStarted {
     /// The practice note's `props.key`, so reopening the guide finds the note it made.
     public static let practiceKey = "canvas.get-started"
@@ -39,7 +39,7 @@ public enum GetStarted {
         return hasBoards ? (false, State(dismissed: true)) : (true, State(dismissed: false))
     }
 
-    /// The guide's state file in a Chalkwork home (`CHALKWORK_HOME`, else Application Support/Chalkwork),
+    /// The guide's state file in a Canvas home (`CANVAS_HOME`, else Application Support/Canvas),
     /// so each development instance has its own. Unreadable counts as absent.
     public struct Store: Sendable {
         public let url: URL

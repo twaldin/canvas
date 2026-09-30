@@ -1,4 +1,4 @@
-// Replays input into a Chalkwork instance launched with CHALKWORK_DEV_INPUT=1 (see docs/testing.md).
+// Replays input into a Canvas instance launched with CANVAS_DEV_INPUT=1 (see docs/testing.md).
 // Coordinates are window-content points with a top-left origin, matching `view.snapshot` pixels / 2.
 //
 //   dev-input <pid> click <x> <y> [--mods hyper|cmd|shift|opt|ctrl[+…]] [--clicks 2]
@@ -16,7 +16,7 @@
 //   dev-input <pid> scroll <x> <y> <dx> <dy> [--lines]  pan by pixels (a trackpad's precise scroll);
 //                                                    --lines: a mouse wheel's notches (dy 1 = one line up)
 //   dev-input <pid> magnify <x> <y> <amount>         pinch at x,y: zoom × (1 + amount) per step (0.05 in, -0.05 out)
-//   dev-input <pid> perf [ms]                        an idle DevPerf span (CHALKWORK_DEV_PERF=1), default 5000 ms
+//   dev-input <pid> perf [ms]                        an idle DevPerf span (CANVAS_DEV_PERF=1), default 5000 ms
 //   any kind: --repeat N [--interval ms]             a burst (default 8 ms apart); app.log reports the longest gap
 //   scroll --repeat N --gesture                      the burst as one phased trackpad gesture: began and ended
 //                                                    without movement, the steps between as changed

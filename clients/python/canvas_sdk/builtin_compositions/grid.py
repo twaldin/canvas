@@ -21,7 +21,7 @@ def arrange(canvas: Any, ids: list[str], beside: str | None = None, columns: int
     missing = [i for i in ids if i not in objects]
     if missing:
         raise ValueError(f"not on this board: {', '.join(missing)}")
-    anchor_id = beside or os.environ.get("CHALKWORK_TILE_ID")
+    anchor_id = beside or os.environ.get("CANVAS_TILE_ID")
     anchor = objects[anchor_id]["frame"] if anchor_id in objects and anchor_id not in ids else None
     moving = set(ids)
     obstacles = [o["frame"] for o in objects.values() if o["id"] not in moving and o["type"] not in _NON_BLOCKING]

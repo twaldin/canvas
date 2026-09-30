@@ -246,7 +246,7 @@ final class TileFrameView: NSView {
         if state != lifecycleState {
             lifecycleState = state
             applyLayerColors()
-            // What the dot means, in the words of Help › Chalkwork Basics.
+            // What the dot means, in the words of Help › Canvas Basics.
             badge.toolTip = CanvasBasics.lifecycle(state)
             updateTint()
         }

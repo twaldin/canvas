@@ -65,11 +65,11 @@ final class TerminalTile: NSView, TileContent {
 
     static func environment(tile: ObjectID, board: Board) -> [String: String] {
         var env = [
-            "CHALKWORK_ENV": "1",
-            "CHALKWORK_SOCKET": AppPaths.apiSocket,
-            "CHALKWORK_TILE_ID": tile,
-            "CHALKWORK_BOARD_ID": board.id,
-            "CHALKWORK_BOARD_ROOT": board.root.path,
+            "CANVAS_ENV": "1",
+            "CANVAS_SOCKET": AppPaths.apiSocket,
+            "CANVAS_TILE_ID": tile,
+            "CANVAS_BOARD_ID": board.id,
+            "CANVAS_BOARD_ROOT": board.root.path,
             // omp's browser tool drives browser tiles through the cmux subset (docs/contracts.md).
             "CMUX_SOCKET_PATH": AppPaths.cmuxSocket,
             "CMUX_SURFACE_ID": tile,
@@ -77,12 +77,12 @@ final class TerminalTile: NSView, TileContent {
         ]
         if let password = AppPaths.cmuxPassword { env["CMUX_SOCKET_PASSWORD"] = password }
         if let resources = AppPaths.resources {
-            // Shell integration (extensions/shell): after the user's startup files, Chalkwork's bin
+            // Shell integration (extensions/shell): after the user's startup files, Canvas's bin
             // goes back to the front of PATH so its claude/codex wrappers aren't shadowed. An
             // integration the app inherited from a tile it was launched in is not the user's.
             env.merge(LoginSession.tileShellIntegration(resources: resources.path, inherited: ProcessInfo.processInfo.environment)) { _, new in new }
             // Ghostty's own shell integration (prompt marks), which the scripts above load.
-            if let integration = TerminalConfig.shared.shellIntegration { env["CHALKWORK_GHOSTTY_INTEGRATION"] = integration }
+            if let integration = TerminalConfig.shared.shellIntegration { env["CANVAS_GHOSTTY_INTEGRATION"] = integration }
         }
         return env
     }
@@ -91,7 +91,7 @@ final class TerminalTile: NSView, TileContent {
     /// command when the session already exists, so it only runs for a new session. A session
     /// that doesn't answer is waited for first (`SessionReach`), then its owner checked.
     /// `keep`: the tile's own variables. `env -u` runs after Ghostty applied them, so an inherited
-    /// variable of the same name (a dev instance launched with CHALKWORK_SOCKET set) must not unset them.
+    /// variable of the same name (a dev instance launched with CANVAS_SOCKET set) must not unset them.
     /// Everything else the app inherited is unset (`LoginSession.strippedForTile`): the shell starts
     /// like a fresh login session and the user's startup files set their own variables.
     static func command(session: String, object: CanvasObject, board: Board, keep: Set<String>) -> String {
@@ -103,7 +103,7 @@ final class TerminalTile: NSView, TileContent {
         // instances) carry the same board and tile ids, so ids alone can't tell whose session it is.
         let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(homeLabel)"
         let attach = ["/usr/bin/env"] + strip + [zmx, "attach", "--labels", labels, session] + start
-        let refusal = #"printf '\nThis terminal session (%s) belongs to another Chalkwork instance (%s).\nNot attaching: this copy of the board can neither type into it nor end it.\n' "$2" "$owner"; exec sleep 2147483647"#
+        let refusal = #"printf '\nThis terminal session (%s) belongs to another Canvas instance (%s).\nNot attaching: this copy of the board can neither type into it nor end it.\n' "$2" "$owner"; exec sleep 2147483647"#
         let prologue = SessionReach.prologue() + ownerGuard(refusal: refusal)
         return quote(["/bin/sh", "-c", prologue + "shift 3\nexec \"$@\"", "canvas-attach", zmx, session, homeLabel] + attach)
     }
@@ -112,29 +112,21 @@ final class TerminalTile: NSView, TileContent {
     /// runs `refusal` when the session exists labelled for another home. A board copied into
     /// another home has the same tile ids, and `zmx attach --labels` relabels an existing session,
     /// so without this a copy took over the original's sessions and its cleanup ended them.
-    /// Sessions without a home label (older ones) pass, and so do Canvas 0.2's (`legacyHomeLabel`).
+    /// Sessions without a home label (older ones) pass.
     static func ownerGuard(refusal: String) -> String {
-        let legacy = legacyHomeLabel.map { #" && [ "$owner" != '\#($0)' ]"# } ?? ""
-        return #"""
+        #"""
         owner=$("$1" list 2>/dev/null | awk -F'\t' -v n="name=$2" '{ s = $1; sub(/^[ *]+/, "", s) } s == n { for (i = 2; i <= NF; i++) if (index($i, "canvas.home=") == 1) print substr($i, 13) }')
-        if [ -n "$owner" ] && [ "$owner" != "$3" ]\#(legacy); then \#(refusal); fi
+        if [ -n "$owner" ] && [ "$owner" != "$3" ]; then \#(refusal); fi
 
         """#
     }
 
-    /// The support directory as a zmx label value (`label(_:)`).
-    static let homeLabel = label(AppPaths.support.path)
-    /// The default home's sessions from before the rename, labelled with Canvas's support
-    /// directory, which LegacyMigration moved here: this instance's own (attaching relabels them).
-    static let legacyHomeLabel: String? = AppPaths.isDefaultHome
-        ? label(LegacyMigration(home: FileManager.default.homeDirectoryForCurrentUser).legacySupport.path) : nil
-
-    /// A path as a zmx label value, which allows only `[A-Za-z0-9._-]`: every other UTF-8 byte
-    /// becomes `_` (what `tr -c` does in scripts/dev.sh).
-    static func label(_ path: String) -> String {
+    /// The support directory as a zmx label value, which allows only `[A-Za-z0-9._-]`: every other
+    /// UTF-8 byte becomes `_` (what `tr -c` does in scripts/dev.sh).
+    static let homeLabel: String = {
         let legal = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-".utf8)
-        return String(decoding: path.utf8.map { legal.contains($0) ? $0 : UInt8(ascii: "_") }, as: UTF8.self)
-    }
+        return String(decoding: AppPaths.support.path.utf8.map { legal.contains($0) ? $0 : UInt8(ascii: "_") }, as: UTF8.self)
+    }()
 
     /// What a new session runs before dropping to a login shell: after a reboot, resume the
     /// recorded agent session (`AgentResume`: omp, claude, codex, gemini, opencode); otherwise the tile's initial `command`.
@@ -346,7 +338,7 @@ final class TerminalTile: NSView, TileContent {
         let answersKey = lastKeyAt.map { Date().timeIntervalSince($0) <= NotifyingAgent.bellAfterKey } ?? false
         let effect = board.terminalNotified(objectID, message: message, bell: bell, program: program, watched: isWatched, answersKey: answersKey)
         guard effect != .none else { return }
-        NSLog("Chalkwork: terminal %@ %@: %@%@", objectID, bell ? "rang the bell" : "sent a notification", message, effect == .lifecycle ? " (its agent waits)" : "")
+        NSLog("Canvas: terminal %@ %@: %@%@", objectID, bell ? "rang the bell" : "sent a notification", message, effect == .lifecycle ? " (its agent waits)" : "")
     }
 
     /// BEL: named by what rang it (`TerminalCommand.bellMessage`).
@@ -359,7 +351,7 @@ final class TerminalTile: NSView, TileContent {
 
     /// What the shell is running, from the titles Ghostty's shell integration sets.
     fileprivate var commands = TerminalCommandTracker()
-    /// The commands the shell finished since Chalkwork attached (Ghostty's shell integration: OSC
+    /// The commands the shell finished since Canvas attached (Ghostty's shell integration: OSC
     /// 133 D), which name their blocks in the terminal's text (`TerminalCommandLog`).
     private(set) var log = TerminalCommandLog()
     /// The last command the shell finished, and when.
@@ -382,7 +374,7 @@ final class TerminalTile: NSView, TileContent {
         onStatus?(command.status, (command.exit ?? 0) != 0, detail)
         guard (command.durationMs ?? 0) >= TerminalCommand.noticeAfterMs, !isWatched,
               board.raiseTerminalNotice(objectID, message: command.noticeMessage, bell: false) else { return }
-        NSLog("Chalkwork: terminal %@ finished a long command: %@", objectID, command.noticeMessage)
+        NSLog("Canvas: terminal %@ finished a long command: %@", objectID, command.noticeMessage)
     }
 
     // MARK: Mentions
@@ -479,7 +471,7 @@ final class TerminalTile: NSView, TileContent {
                                              atPrompt: shell != nil && program == nil, last: lastCommand?.command)
         guard command?.exit != nil || command?.durationMs != nil else {
             // Starting at the very top of everything the terminal holds, with no prompt above:
-            // text from before Chalkwork reattached to the session, which carries no marks.
+            // text from before Canvas reattached to the session, which carries no marks.
             if output.top == 0, (scrollbar?.offset ?? 0) == 0 { return nil }
             return (output.text, command)
         }
@@ -513,7 +505,7 @@ final class TerminalTile: NSView, TileContent {
         _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, none)
         _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, none)
         ghostty_surface_mouse_pos(handle, -1, -1, none)
-        if ghostty_surface_has_selection(handle) { NSLog("Chalkwork: terminal %@ kept a selection after reading a command block", objectID) }
+        if ghostty_surface_has_selection(handle) { NSLog("Canvas: terminal %@ kept a selection after reading a command block", objectID) }
         guard let output, !output.text.isEmpty, output.text != word?.text else { return nil }
         // `tl_px_y`: the first row's baseline, in points from the top; negative when that row is
         // above the viewport.
@@ -599,10 +591,10 @@ final class TerminalTile: NSView, TileContent {
     func block(_ index: Int) throws -> (command: TerminalCommand, output: String) {
         refreshProgram()
         guard !log.entries.isEmpty else {
-            throw ApiRouter.Failure("unavailable", "no command has finished in terminal \(objectID) since Chalkwork attached to it (its shell needs Ghostty's shell integration; read with lines instead)")
+            throw ApiRouter.Failure("unavailable", "no command has finished in terminal \(objectID) since Canvas attached to it (its shell needs Ghostty's shell integration; read with lines instead)")
         }
         guard let entry = log[fromEnd: index] else {
-            throw ApiRouter.Failure("not_found", "terminal \(objectID) has \(log.entries.count) finished command\(log.entries.count == 1 ? "" : "s") since Chalkwork attached to it: block goes back to -\(log.entries.count)")
+            throw ApiRouter.Failure("not_found", "terminal \(objectID) has \(log.entries.count) finished command\(log.entries.count == 1 ? "" : "s") since Canvas attached to it: block goes back to -\(log.entries.count)")
         }
         guard surface?.handle != nil, grid != nil else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
         if index == -1, let selected = selectedLastBlock() { return selected }
@@ -685,12 +677,12 @@ final class TerminalTile: NSView, TileContent {
             let running = await offPool { Self.sessionExists(session) }
             guard let self, self.board.objects[self.objectID] != nil else { return }
             if running {
-                NSLog("Chalkwork: terminal %@ detached from a running session; reattaching", self.objectID)
+                NSLog("Canvas: terminal %@ detached from a running session; reattaching", self.objectID)
                 let controller = self.terminal.controller
                 self.terminal.controller = nil
                 self.terminal.controller = controller
             } else {
-                NSLog("Chalkwork: terminal %@ exited; closing it", self.objectID)
+                NSLog("Canvas: terminal %@ exited; closing it", self.objectID)
                 self.board.transaction { try? self.board.delete(self.objectID) }
             }
         }
@@ -775,7 +767,7 @@ final class TerminalTile: NSView, TileContent {
             return
         }
         let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile)
-        NSLog("Chalkwork: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
+        NSLog("Canvas: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
               opened.created ? (newTile ? "new tile" : "new preview") : opened.existing ? "existing" : "re-aimed preview")
         let source = grid.map { rects(hit.runs, grid: $0).reduce(NSRect.null) { $0.union($1) } } ?? .null
         onOpenedCode?(opened, source.isNull ? .null : underline.convert(source, to: nil))

@@ -2,7 +2,7 @@
 // session in one process, and fire the tile's hooks for them too:
 //  - subagents (Claude's Task agents, Codex's spawn_agent threads) mark their events with
 //    `agent_id`; their session_id is the parent's (Codex 0.155 fires SubagentStart/SubagentStop
-//    for them, which Chalkwork doesn't register, but their tool and prompt events come through);
+//    for them, which Canvas doesn't register, but their tool and prompt events come through);
 //  - Codex's own internal sessions (memory consolidation, `memories` on) are separate ephemeral
 //    threads: their own session_id, `transcript_path: null`, working in a directory under
 //    CODEX_HOME (~/.codex/memories). They fire SessionStart, UserPromptSubmit, PostToolUse and

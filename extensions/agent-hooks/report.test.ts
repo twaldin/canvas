@@ -1,4 +1,4 @@
-// bun test extensions/agent-hooks — lifecycle reports while Chalkwork is away (report.ts).
+// bun test extensions/agent-hooks — lifecycle reports while Canvas is away (report.ts).
 import { afterEach, expect, jest, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,9 +17,9 @@ function home(): string {
   return dir;
 }
 
-/** A client whose Chalkwork is gone, as the real one reports it (`bun test` treats the socket's own ENOENT as uncaught). */
+/** A client whose Canvas is gone, as the real one reports it (`bun test` treats the socket's own ENOENT as uncaught). */
 function away(socketPath: string): CanvasClient {
-  const fail = () => Promise.reject(new CanvasError("unavailable", `Chalkwork socket ${socketPath}: connect ENOENT (not sent)`));
+  const fail = () => Promise.reject(new CanvasError("unavailable", `Canvas socket ${socketPath}: connect ENOENT (not sent)`));
   return { socketPath, api: { agent: { report: fail, release: fail } } } as unknown as CanvasClient;
 }
 
@@ -30,8 +30,8 @@ function spooled(socket: string, tile: string): Array<{ seq: number; method: str
     .map((name) => JSON.parse(readFileSync(join(dir, name), "utf8")));
 }
 
-test("reports Chalkwork isn't there to take wait beside its socket, in seq order, with their answer", async () => {
-  const socket = join(home(), "chalkwork.sock");
+test("reports Canvas isn't there to take wait beside its socket, in seq order, with their answer", async () => {
+  const socket = join(home(), "canvas.sock");
   const client = away(socket);
   await report(client, { tile: "obj_a1", kind: "codex", state: "working", seq: 1_700_000_000_000_001, source: "canvas-codex" });
   await report(client, { tile: "obj_a1", kind: "codex", state: "idle", seq: 1_700_000_000_000_002, source: "canvas-codex", final: "Fixed." });
@@ -46,8 +46,8 @@ test("reports Chalkwork isn't there to take wait beside its socket, in seq order
   expect(readdirSync(spoolDirectory(socket, "obj_a1")).some((name) => name.startsWith("."))).toBe(false);
 });
 
-test("a report Chalkwork answered, even with an error, is not kept", async () => {
-  const socket = join(home(), "chalkwork.sock");
+test("a report Canvas answered, even with an error, is not kept", async () => {
+  const socket = join(home(), "canvas.sock");
   const server = Bun.listen({
     unix: socket,
     socket: {
@@ -73,15 +73,15 @@ test("a spool that can't be written costs the agent nothing", async () => {
   const dir = home();
   // The socket's directory is a file: nothing can be created under it.
   writeFileSync(join(dir, "blocked"), "");
-  const client = away(join(dir, "blocked", "chalkwork.sock"));
+  const client = away(join(dir, "blocked", "canvas.sock"));
   await expect(report(client, { tile: "obj_a1", kind: "omp", state: "idle", seq: 1, source: "canvas-omp" })).resolves.toBeUndefined();
 });
 
-test("a Codex Stop hook run while Chalkwork is closed spools the turn's end with its answer", async () => {
-  const socket = join(home(), "chalkwork.sock");
+test("a Codex Stop hook run while Canvas is closed spools the turn's end with its answer", async () => {
+  const socket = join(home(), "canvas.sock");
   const hook = Bun.spawn(["bun", join(import.meta.dir, "hook.ts"), "codex", "Stop"], {
     stdin: new Blob([JSON.stringify({ session_id: "s1", cwd: "/tmp", last_assistant_message: "No blocking findings." })]),
-    env: { ...process.env, CHALKWORK_ENV: "1", CHALKWORK_TILE_ID: "obj_codex1", CHALKWORK_SOCKET: socket, CHALKWORK_AGENT_HOOKS: "1" },
+    env: { ...process.env, CANVAS_ENV: "1", CANVAS_TILE_ID: "obj_codex1", CANVAS_SOCKET: socket, CANVAS_AGENT_HOOKS: "1" },
   });
   expect(await hook.exited).toBe(0);
   const [entry] = spooled(socket, "obj_codex1");
@@ -90,8 +90,8 @@ test("a Codex Stop hook run while Chalkwork is closed spools the turn's end with
   expect(entry.seq).toBe(entry.params.seq as number);
 });
 
-test("an integration hears Chalkwork come back after a quit, and after a restart between two checks", () => {
-  const socket = join(home(), "chalkwork.sock");
+test("an integration hears Canvas come back after a quit, and after a restart between two checks", () => {
+  const socket = join(home(), "canvas.sock");
   const listen = () => Bun.listen({ unix: socket, socket: { data() {} } });
   let server = listen();
   let returns = 0;

@@ -122,6 +122,12 @@ final class RoutingTests {
             #expect(!tiles.contains { $0.intersects(inner) } && !title.intersects(inner), "\(id) on a tile or the title")
             #expect(!labels.contains { $0.key != id && $0.value.rect.intersects(inner) }, "\(id) on another label")
             #expect(!routing.paths.contains { $0.key != id && DrawingGeometry.path($0.value, crosses: inner) }, "\(id) on another arrow")
+            let path = routing.paths[id]!
+            let gap = zip(path, path.dropFirst()).map { a, b in
+                let r = label.rect, box = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+                return hypot(max(0, box.minX - r.maxX, r.minX - box.maxX), max(0, box.minY - r.maxY, r.minY - box.maxY))
+            }.min()!
+            #expect(label.leader == nil && gap <= 8, "\(id) right by its own line")
         }
         let check = geometry(objects).layoutCheck()
         #expect(check.labelOverlaps.isEmpty, "\(check.labelOverlaps)")

@@ -187,10 +187,19 @@ struct DrawnItem {
                     context.strokeLineSegments(between: leader)
                     context.restoreGState()
                 }
-                // Arrow captions sit on a chip of canvas color so strokes passing by don't cross the text.
+                // Arrow captions sit on a chip of canvas color so strokes passing by don't cross
+                // the text, outlined in the arrow's color so the pair reads at a glance.
+                let chip = CGPath(roundedRect: labelRect, cornerWidth: 4, cornerHeight: 4, transform: nil)
                 context.setFillColor(NSColor.underPageBackgroundColor.cgColor)
-                context.addPath(CGPath(roundedRect: labelRect, cornerWidth: 4, cornerHeight: 4, transform: nil))
+                context.addPath(chip)
                 context.fillPath()
+                context.saveGState()
+                context.setLineWidth(1)
+                context.setLineDash(phase: 0, lengths: [])
+                context.setStrokeColor(color.withAlphaComponent(0.8).cgColor)
+                context.addPath(CGPath(roundedRect: labelRect.insetBy(dx: 0.5, dy: 0.5), cornerWidth: 4, cornerHeight: 4, transform: nil))
+                context.strokePath()
+                context.restoreGState()
             }
             let shown = ink.flatMap { ink in inkLabels.map { ink == .dark ? $0.dark : $0.light } } ?? label
             shown.draw(with: labelRect, options: [.usesLineFragmentOrigin])

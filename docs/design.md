@@ -102,7 +102,7 @@ Dense diagrams stopped being readable when every `avoid` arrow routed alone: on 
 - **Routes**: A* over an orthogonal grid of obstacle edges ± `avoidMargin`, ports and midlines, with a bend cost of 60, 50 per crossing, 2/pt for sharing a one-track gap, and small costs for running along a group border or through a title band. Pass 1 routes every arrow; ports are then assigned; passes 2 and 3 route in order with the others' routes as congestion, ripping up and rerouting once.
 - **Ports**: arrows sharing a side get distinct ports spread along it, ordered by where their pass-1 routes head, so they don't cross at the node; a row end (a code line) keeps its row.
 - **Nudging**: collinear segments in a channel spread into tracks `parallelSpacing` apart (compressing to 2 pt in a tight gap), ordered by pairwise crossing preferences and kept off tile edges, group borders and title bands.
-- **Labels**: every arrow's label, all route styles, is placed with the rest: beside its own longest free segment, else on it, else a dashed leader up to 160 pt away, never on a tile, title, label or other line where any spot is free; a label left on another arrow's line nudges that line's track clear of it.
+- **Labels**: every arrow's label, all route styles, is placed with the rest: beside its own longest free segment, else on it (the line breaks behind the chip), else beside it with another line close by, else a dashed leader up to 160 pt away that crosses no other arrow, never on a tile, title, label or other line where any spot is free; a label left on another arrow's line nudges that line's track clear of it. The chip is outlined in its arrow's color, so the pair reads at a glance.
 - **Stability**: the result carries a memo (routes before nudging, ends, flows, obstacles, group frames); an arrow keeps its route unless its ends or flow changed, a tile or group border near it changed, or its side's ports moved. The drawing layer keeps its last routing, and `layout.check` routes on from it (`Board.settledRouting`), so both agree.
 - **Dragging**: while a tile moves only its own arrows reroute, alone (0.4 ms on the board above); the board routes once the change pauses 0.25 s, or on drop.
 
@@ -115,7 +115,7 @@ On that board (fixture `Tests/Fixtures/atlas-board.json`, geometry only) and thr
 | Fan-out 1→8 | 1446 → 0 | 0 → 0 | 9 → 16 | 0 → 0 | 0 → 0 |
 | Two crossing buses | 0 → 0 | 16 → 16 | 0 → 0 | 0 → 0 | 0 → 0 |
 
-Fans gain bends because each arrow now reaches its own port instead of joining a trunk; the buses' 16 crossings are inherent. Routing the whole Atlas board takes ~33–93 ms release (the old per-arrow router 1.6–3.7 ms; ranges span machine load), rerouting after moving one note 15–58 ms (7 of 38 routes change: its own 2 and their neighbours), fan-in and fan-out 5–11 ms.
+Labels by their own line (within 8 pt, no leader): Atlas 26 → 29 of 38 (round 1 → round 2 of label placement; the 9 left have no free spot by their line, between tiles and other tracks, and take leaders; one of them crosses another arrow); fan-in, fan-out and buses all of them. Fans gain bends because each arrow now reaches its own port instead of joining a trunk; the buses' 16 crossings are inherent. Routing the whole Atlas board takes ~33–93 ms release (the old per-arrow router 1.6–3.7 ms; ranges span machine load), rerouting after moving one note 15–58 ms (7 of 38 routes change: its own 2 and their neighbours), fan-in and fan-out 5–11 ms.
 
 ### Navigation
 

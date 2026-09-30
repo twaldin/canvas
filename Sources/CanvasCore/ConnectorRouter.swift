@@ -179,6 +179,13 @@ public struct ConnectorRouter: Sendable {
     static let searchReach: CGFloat = 480
     /// Leader lengths tried when a label fits nowhere beside its route.
     static let leaderReaches: [CGFloat] = [24, 44, 72, 96, 120, 160]
+    /// A label spot's cost for a leader (so a spot right by its line with another line close by
+    /// wins over one away from it), and for each other arrow's line under the chip (a spot is
+    /// acceptable below it).
+    static let leaderCost = 2
+    static let underCost = 5
+    /// A label spot's cost for each tile, title band, or label it covers.
+    static let coverCost = 12
 
     // MARK: Routing
 
@@ -1350,7 +1357,12 @@ public struct ConnectorRouter: Sendable {
         var clear: [Int: Int] = [:]
         for index in labelled {
             let all = labelCandidates(route: routes[index], owner: index, size: connectors[index].label!, segments: segments)
-            let open = all.filter { segments.collisions($0, owner: index, labels: [], limit: 1) == 0 }
+            // Acceptable spots, best first: clear beside or on the route, then beside it with
+            // another line close by, then a clear leader.
+            let open = all.enumerated().compactMap { order, spot -> (score: Int, order: Int, spot: LabelCandidate)? in
+                let score = segments.collisions(spot, owner: index, labels: [], limit: underCost)
+                return score < underCost ? (score, order, spot) : nil
+            }.sorted { ($0.score, $0.order) < ($1.score, $1.order) }.map(\.spot)
             candidates[index] = open.isEmpty ? all : open
             clear[index] = open.count
         }
@@ -1454,37 +1466,39 @@ public struct ConnectorRouter: Sendable {
         }
 
         /// How bad a label at `candidate` would be, 0 when clear, counted up to `limit`: a tile,
-        /// title band, placed label, or its own route under it (unless on it) counts 10; another
-        /// arrow's line under it 3; another arrow nearer than its own (beside or on the route) 1;
-        /// each line its leader crosses 1, and a tile or label it crosses 10.
+        /// title band, placed label, or its own route under it (unless on it) counts `coverCost`;
+        /// another arrow's line under it `underCost`; a leader `leaderCost`; another arrow nearer
+        /// than its own (beside the route) 1; each line its leader crosses 3 (a last resort short
+        /// of covering something), and each tile or label `coverCost`.
         func collisions(_ candidate: LabelCandidate, owner: Int, labels: [CGRect], limit: Int) -> Int {
             let rect = candidate.rect
             let inner = rect.insetBy(dx: 0.5, dy: 0.5)
             var count = 0
             for obstacle in obstacles where obstacle.intersects(inner) {
-                count += 10
+                count += coverCost
                 if count >= limit { return count }
             }
             for title in titles where title.intersects(inner) {
-                count += 10
+                count += coverCost
                 if count >= limit { return count }
             }
             for label in labels where label.insetBy(dx: -2, dy: -2).intersects(inner) {
-                count += 10
+                count += coverCost
                 if count >= limit { return count }
             }
             let under = othersUnder(inner, owner: owner)
-            count += 3 * under
+            count += ConnectorRouter.underCost * under
             if count >= limit { return count }
             if let leader = candidate.leader, leader.count == 2 {
+                count += ConnectorRouter.leaderCost
                 if under == 0, othersNear(rect, owner: owner, reach: 3) { count += 1 }
-                count += othersCrossing(leader[0], leader[1], owner: owner)
-                for obstacle in obstacles where DrawingGeometry.segment(leader[0], leader[1], intersects: obstacle.insetBy(dx: 0.5, dy: 0.5)) { count += 10 }
-                for label in labels where DrawingGeometry.segment(leader[0], leader[1], intersects: label) { count += 10 }
-            } else if under == 0, othersNear(rect, owner: owner, reach: DrawingGeometry.labelClearance + 2) {
+                count += 3 * othersCrossing(leader[0], leader[1], owner: owner)
+                for obstacle in obstacles where DrawingGeometry.segment(leader[0], leader[1], intersects: obstacle.insetBy(dx: 0.5, dy: 0.5)) { count += coverCost }
+                for label in labels where DrawingGeometry.segment(leader[0], leader[1], intersects: label) { count += coverCost }
+            } else if under == 0, !candidate.onLine, othersNear(rect, owner: owner, reach: DrawingGeometry.labelClearance - 1) {
                 count += 1
             }
-            if count < limit, !candidate.onLine, DrawingGeometry.distance(fromPath: routes[owner], to: rect) < DrawingGeometry.labelClearance - 1 { count += 10 }
+            if count < limit, !candidate.onLine, DrawingGeometry.distance(fromPath: routes[owner], to: rect) < DrawingGeometry.labelClearance - 1 { count += coverCost }
             return count
         }
     }

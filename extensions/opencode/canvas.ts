@@ -12,7 +12,7 @@
 import { resolve } from "node:path";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { absolute, editLocation, type Location, patchLocation, readLocation } from "../agent-hooks/follow";
-import { report as spooled } from "../agent-hooks/report";
+import { report as spooled, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-opencode";
@@ -41,8 +41,11 @@ export const CanvasPlugin = async ({ directory }: Input) => {
    * answers, and events are delivered one at a time.
    */
   const children = new Set<string>();
+  /** The last report, said again when Canvas comes back (it holds a restored one until then). */
+  let last: [state: "working" | "blocked" | "idle", message?: string, call?: string] = ["idle"];
 
   function report(state: "working" | "blocked" | "idle", message?: string, call?: string): void {
+    last = [state, message, call];
     clearTimeout(idleTimer);
     // By the clock: opencode can load the plugin twice in one process (one instance per
     // project/directory it opens), and a counter from each start would reorder their reports.
@@ -54,7 +57,7 @@ export const CanvasPlugin = async ({ directory }: Input) => {
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
   }
-
+  watchCanvasReturn(client.socketPath, () => report(...last));
 
   function follow(location: Location | undefined): void {
     if (location) void quietly(client.api.follow.report({ tile: tile!, path: location.path, range: location.range, changes: location.changes, action: location.action }));

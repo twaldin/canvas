@@ -9,7 +9,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { numberedDiffChanges } from "../agent-hooks/follow";
-import { release, report } from "../agent-hooks/report";
+import { release, report, watchCanvasReturn } from "../agent-hooks/report";
 import { canvasGuidance } from "../guidance";
 
 const SOURCE = "canvas-omp";
@@ -61,6 +61,10 @@ export default function canvas(pi: ExtensionAPI): void {
     if (state === "idle") idleTimer = setTimeout(send, IDLE_DEBOUNCE_MS);
     else void send();
   }
+
+  // A restarted Canvas holds our last report as `restored` (and refuses prompts to a restored
+  // `working`) until we report again: say where we are as soon as it is back.
+  watchCanvasReturn(client.socketPath, publish);
 
   function reportSession(ctx: ExtensionContext): void {
     if (!reporting) return;
@@ -124,6 +128,8 @@ export default function canvas(pi: ExtensionAPI): void {
     // A debounced idle still pending would land after the release (and replay after it).
     clearTimeout(idleTimer);
     if (reporting) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
+    // Nothing reports for the released tile again (a Canvas coming back) until a session starts.
+    reporting = false;
   });
 
   pi.on("agent_start", () => {

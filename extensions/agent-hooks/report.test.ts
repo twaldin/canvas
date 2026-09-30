@@ -1,10 +1,10 @@
 // bun test extensions/agent-hooks — lifecycle reports while Canvas is away (report.ts).
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, jest, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CanvasClient, CanvasError } from "../../clients/ts/src/index";
-import { release, report, spoolDirectory } from "./report";
+import { release, report, spoolDirectory, watchCanvasReturn } from "./report";
 
 const homes: string[] = [];
 afterEach(() => {
@@ -88,4 +88,35 @@ test("a Codex Stop hook run while Canvas is closed spools the turn's end with it
   expect(entry.method).toBe("agent.report");
   expect(entry.params).toMatchObject({ tile: "obj_codex1", kind: "codex", state: "idle", source: "canvas-codex", final: "No blocking findings." });
   expect(entry.seq).toBe(entry.params.seq as number);
+});
+
+test("an integration hears Canvas come back after a quit, and after a restart between two checks", () => {
+  const socket = join(home(), "canvas.sock");
+  const listen = () => Bun.listen({ unix: socket, socket: { data() {} } });
+  let server = listen();
+  let returns = 0;
+  jest.useFakeTimers();
+  const stop = watchCanvasReturn(socket, () => returns++, 1000);
+  try {
+    jest.advanceTimersByTime(3000);
+    expect(returns).toBe(0);
+    // Quit: the socket goes, and nothing is there to report to.
+    server.stop(true);
+    rmSync(socket, { force: true });
+    jest.advanceTimersByTime(3000);
+    expect(returns).toBe(0);
+    server = listen();
+    jest.advanceTimersByTime(1000);
+    expect(returns).toBe(1);
+    // Restarted faster than a check: the socket file is a new one.
+    server.stop(true);
+    rmSync(socket, { force: true });
+    server = listen();
+    jest.advanceTimersByTime(1000);
+    expect(returns).toBe(2);
+  } finally {
+    stop();
+    jest.useRealTimers();
+    server.stop(true);
+  }
 });

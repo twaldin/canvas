@@ -6,6 +6,7 @@
 // spooling ever throws or waits on anything but its own short IO: the agent carries on as if
 // there were no hook.
 import { randomBytes } from "node:crypto";
+import { statSync } from "node:fs";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { CanvasError, type AgentReleaseParams, type AgentReportParams, type CanvasClient } from "../../clients/ts/src/index";
@@ -33,6 +34,36 @@ async function deliver(client: CanvasClient, method: string, params: { tile: str
     // time (it may be quitting): keep it; a replay of one it did apply is dropped as stale.
     if (error instanceof CanvasError && error.code !== "unavailable" && error.code !== "timeout") return;
     await spool(client.socketPath, params.tile, { seq, method, params }).catch(() => undefined);
+  }
+}
+
+/**
+ * Calls `onReturn` whenever Canvas is back at `socketPath` after being away: quit and started
+ * again, or restarted between two checks (it binds a new socket file each launch). A restarted
+ * Canvas restores a `working` or `blocked` tile as `restored` and refuses prompts to a restored
+ * `working` one until its agent reports again, so an integration that lives as long as its agent
+ * (omp's extension, opencode's plugin) re-reports its state from here. Checks the socket file's
+ * identity every `intervalMs`; the timer never keeps the process alive. Returns a stop function.
+ */
+export function watchCanvasReturn(socketPath: string, onReturn: () => void, intervalMs = 2000): () => void {
+  let seen = socketIdentity(socketPath);
+  const timer = setInterval(() => {
+    const now = socketIdentity(socketPath);
+    if (now === seen) return;
+    seen = now;
+    if (now !== undefined) onReturn();
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+/** Which socket file is at `path` (a new one each time Canvas binds it); undefined when none. */
+function socketIdentity(path: string): string | undefined {
+  try {
+    const stat = statSync(path);
+    return stat.isSocket() ? `${stat.dev}:${stat.ino}:${stat.birthtimeMs}` : undefined;
+  } catch {
+    return undefined;
   }
 }
 

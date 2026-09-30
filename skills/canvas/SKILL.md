@@ -53,7 +53,7 @@ Read these before you build anything; each one cost earlier agents a round trip.
   canvas = connect(socket="…/canvas.sock", tile="obj_…", board="brd_…")   # `from canvas_sdk import canvas` uses it too
   ```
 - **Otherwise: the `canvas` CLI** (on PATH in every tile; it reads `CANVAS_SOCKET`, `CANVAS_TILE_ID`, `CANVAS_BOARD_ID`, so pass them through when you run it from a kernel that lacks them).
-  Methods are `namespace.method`; params are `--key value` (values parse as JSON when they can), a bare `--flag` (true), or `--json '{…}'` (`--json @params.json`, or `@-` for stdin, for big HTML).
+  Methods are `namespace.method`; params are `--key value` (values parse as JSON when they can; an array param takes one item, a comma-separated list of strings, or a repeated flag: `--until working,blocked`, `--ids obj_a --ids obj_b`), a bare `--flag` (true), or `--json '{…}'` (`--json @params.json`, or `@-` for stdin, for big HTML).
   ```sh
   canvas methods                                   # every method with its description
   canvas methods view.render                       # its params (types, defaults, required) and result
@@ -303,7 +303,7 @@ Agents in other terminal tiles (any canvas in the app) are reachable by tile id 
 ```sh
 canvas agent.list                                    # every terminal: tile, kind, name, lifecycle, board, root, `program` (foreground program) and `title` (its OSC title)
 canvas agent.prompt --target reviewer --text "Review the diff in src/store.ts"   # → waitable, submittedAt
-canvas agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `until` narrows it
+canvas agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `--until working` (or `working,blocked`) narrows it
 canvas agent.read --target reviewer --since prompt   # only what came after your last agent.prompt
 ```
 

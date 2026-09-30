@@ -296,7 +296,7 @@ public final class ApiRouter {
 
     private func wait(_ id: JSONValue, _ p: JSONValue, _ connection: SocketServer.Connection) throws -> JSONValue? {
         let (board, terminal) = try agentTile(try string(p, "target"))
-        let until = Set(p["until"]?.array?.compactMap(\.string) ?? ["idle", "done", "blocked"])
+        let until = try waitStates(p["until"])
         let waiter = Waiter(id: id, connection: connection, tile: terminal.id, until: until, firstReportDeadline: Date().addingTimeInterval(firstReportGrace))
         if let reply = reply(to: waiter, on: board) { return reply }
         waiters.append(waiter)
@@ -311,6 +311,20 @@ public final class ApiRouter {
             MainActor.assumeIsolated { self?.recheck(token) }
         }
         return nil
+    }
+
+    /// `agent.wait`'s `until`: an array of lifecycle states, by default the ones a turn ends in.
+    /// Anything else fails rather than falling back to the default.
+    private func waitStates(_ value: JSONValue?) throws -> Set<String> {
+        guard let value, value != .null else { return ["idle", "done", "blocked"] }
+        let states: Set<String> = ["working", "blocked", "idle", "done", "unknown"]
+        guard let items = value.array else { throw Failure("invalid_params", "until must be an array of states, e.g. [\"working\"]") }
+        return Set(try items.map { item in
+            guard let state = item.string, states.contains(state) else {
+                throw Failure("invalid_params", "unknown state \(item) in until; one of \(states.sorted().joined(separator: ", "))")
+            }
+            return state
+        })
     }
 
     /// The response for a satisfied waiter, or nil while it must keep waiting. A terminal with no

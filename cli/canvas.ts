@@ -29,6 +29,7 @@ type Schema = {
   const?: unknown;
   enum?: unknown[];
   oneOf?: Schema[];
+  anyOf?: Schema[];
   properties?: Record<string, Schema>;
   required?: string[];
   items?: Schema;
@@ -61,6 +62,7 @@ function usage(help = false): never {
       "or one type's fields: object props per type are TerminalProps, CodeProps, NoteProps, HtmlProps,",
       "ShapeProps, ArrowProps, GroupProps, BrowserProps (e.g. `canvas methods CodeProps`).",
       "--json @file reads the params from a file (@- or - reads stdin); --key value pairs combine with it, later ones win.",
+      "An array param takes one item, a JSON array, comma-separated strings, or a repeated flag (--until working,blocked).",
       "object.create/update print prop values over 1 KB elided; --full prints them whole.",
       "`canvas browser` drives browser tiles over the cmux subset (docs/contracts.md): `open [url]` opens one beside",
       "this terminal, `list` lists this board's, `close <tile>` closes one, any other verb sends browser.<verb> to <tile>",
@@ -123,16 +125,42 @@ function takesOnlyStrings(schema: Schema | undefined): boolean {
   if (schema.const !== undefined) return typeof schema.const === "string";
   if (schema.enum) return schema.enum.every((value) => typeof value === "string");
   if (schema.oneOf) return schema.oneOf.every(takesOnlyStrings);
+  if (schema.anyOf) return schema.anyOf.every(takesOnlyStrings);
   const types = Array.isArray(schema.type) ? schema.type : schema.type ? [schema.type] : [];
   return types.length > 0 && types.every((type) => type === "string" || type === "null");
 }
 
 /**
+ * The items of `--key value` for a param the method declares as an array: a JSON array as given;
+ * otherwise one item, or, when the items are strings (states, ids, types), a comma-separated list
+ * (`--until working`, `--until working,blocked`, `--ids obj_a,obj_b`).
+ */
+function arrayItems(schema: Schema, value: string): unknown[] {
+  let parsed: unknown = value;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    // plain text
+  }
+  if (Array.isArray(parsed)) return parsed;
+  if (takesOnlyStrings(schemaAt(schema.items, []))) return value.split(",").map((item) => item.trim()).filter((item) => item !== "");
+  return [parsed];
+}
+
+/** Whether a param declared by `schema` only ever holds an array. */
+function takesOnlyArrays(schema: Schema | undefined): schema is Schema {
+  const types = Array.isArray(schema?.type) ? schema.type : schema?.type ? [schema.type] : [];
+  return types.length > 0 && types.every((type) => type === "array");
+}
+
+/**
  * `--key value` (JSON when it parses, except for params the method declares as strings, which
- * keep the text as typed), `--json '{...}'`/`@file`/`@-`, and bare `--flag` (true).
+ * keep the text as typed, and arrays: see `arrayItems`; repeating an array param's flag appends),
+ * `--json '{...}'`/`@file`/`@-`, and bare `--flag` (true).
  */
 function parseArgs(args: string[], params?: Schema): Record<string, unknown> {
   let result: Record<string, unknown> = {};
+  const lists = new Map<string, unknown[]>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg.startsWith("--")) usage();
@@ -145,17 +173,26 @@ function parseArgs(args: string[], params?: Schema): Record<string, unknown> {
     i++;
     if (arg === "--json") {
       result = { ...result, ...jsonParams(value) };
+      lists.clear();
+      continue;
+    }
+    const path = arg.slice(2);
+    const schema = schemaAt(params, path.split("."));
+    if (takesOnlyArrays(schema)) {
+      const list = [...(lists.get(path) ?? []), ...arrayItems(schema, value)];
+      lists.set(path, list);
+      setPath(result, path, list);
       continue;
     }
     let parsed: unknown = value;
-    if (!takesOnlyStrings(schemaAt(params, arg.slice(2).split(".")))) {
+    if (!takesOnlyStrings(schema)) {
       try {
         parsed = JSON.parse(value);
       } catch {
         // plain string
       }
     }
-    setPath(result, arg.slice(2), parsed);
+    setPath(result, path, parsed);
   }
   return result;
 }

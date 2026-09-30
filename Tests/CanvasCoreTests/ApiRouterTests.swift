@@ -85,6 +85,17 @@ final class ApiRouterTests {
         #expect(reply["error"]?["code"] == .string("timeout"))
     }
 
+    @Test func waitRejectsAnUntilThatIsNotAnArrayOfStates() async throws {
+        let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "omp", state: .idle, message: nil, seq: 1, source: "canvas-omp")
+        let client = try connect()
+        for until in [#""working""#, #"["working","busy"]"#] {
+            client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(tile)","until":\#(until)}}"#)
+            let reply = try await client.next()
+            #expect(reply["error"]?["code"] == .string("invalid_params"), "until \(until) must not wait for the default states: \(reply)")
+        }
+    }
+
     @Test func waitFailsWhenTheTerminalCloses() async throws {
         let tile = terminal()
         try board.reportLifecycle(tile: tile, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")

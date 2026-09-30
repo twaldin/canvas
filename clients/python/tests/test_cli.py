@@ -66,6 +66,26 @@ class CliParamsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.sent(), {"target": "2", "lines": 40})
 
+    def test_array_params_take_one_item_a_list_or_repeated_flags(self) -> None:
+        # `--until working` once went out as the string "working", and agent.wait fell back to its default states.
+        cases = (
+            (("agent.wait", "--target", "a", "--until", "working"), {"target": "a", "until": ["working"]}),
+            (("agent.wait", "--target", "a", "--until", "working,blocked"), {"target": "a", "until": ["working", "blocked"]}),
+            (("agent.wait", "--target", "a", "--until", "working", "--until", "idle"), {"target": "a", "until": ["working", "idle"]}),
+            (("agent.wait", "--target", "a", "--until", '["done"]'), {"target": "a", "until": ["done"]}),
+            (("agent.wait", "--json", '{"target": "a", "until": ["idle"]}', "--until", "working"), {"target": "a", "until": ["working"]}),
+            (("layout.translate", "--ids", "obj_1,obj_2", "--dx", "5", "--dy", "0"), {"ids": ["obj_1", "obj_2"], "dx": 5, "dy": 0}),
+            (("board.history", "--kinds", "created"), {"kinds": ["created"]}),
+            (("view.render", "--target", "obj_1", "--exclude", "terminal"), {"target": "obj_1", "exclude": ["terminal"]}),
+            (("agent.prompt", "--target", "a", "--text", "t", "--mentions", '{"object": "obj_1"}'), {"target": "a", "text": "t", "mentions": [{"object": "obj_1"}]}),
+        )
+        for args, params in cases:
+            with self.subTest(args=args):
+                self.app.requests.clear()
+                result = self.run_cli(*args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.sent(), params)
+
     def test_unreadable_or_invalid_files_fail_before_sending(self) -> None:
         (self.dir / "bad.json").write_text("{not json")
         (self.dir / "list.json").write_text("[1, 2]")

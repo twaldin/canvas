@@ -454,3 +454,45 @@ final class DiagramTests {
         #expect(board.overlaps(of: diagram.id).isEmpty)
     }
 }
+
+/// The pan after a user opens a diagram node (`Layout.revealGrown`): a viewport 1000 × 800 at
+/// zoom 1 from (0, 0), padding 20.
+struct DiagramExpandPanTests {
+    let clear = CGRect(x: 0, y: 0, width: 1000, height: 800)
+    let view = Layout.Jump(zoom: 1, origin: .zero)
+
+    func shown(_ jump: Layout.Jump) -> CGRect { jump.shown(clear) }
+
+    @Test func aGrownTileThatFitsIsShownWholeByTheLeastPan() {
+        // Grown up and left past the view's corner.
+        let tile = CGRect(x: -300, y: -200, width: 900, height: 700)
+        let jump = Layout.revealGrown(tile, added: CGRect(x: -280, y: -180, width: 300, height: 600), clicked: CGRect(x: 100, y: 300, width: 300, height: 70),
+                                      from: view, clear: clear, padding: 20)
+        #expect(jump.zoom == 1)
+        #expect(jump.origin == CGPoint(x: -320, y: -220))
+        #expect(shown(jump).contains(tile.insetBy(dx: -20, dy: -20)))
+        // Already in view: nothing moves.
+        let inside = CGRect(x: 100, y: 100, width: 400, height: 300)
+        #expect(Layout.revealGrown(inside, added: inside, clicked: inside, from: view, clear: clear, padding: 20) == view)
+    }
+
+    @Test func aTileTooBigShowsTheAddedNodesWithTheClickedOne() {
+        let tile = CGRect(x: -700, y: -900, width: 1600, height: 1800)
+        let clicked = CGRect(x: 300, y: 380, width: 300, height: 70)
+        // The added column, left of the clicked node, fits with it.
+        let added = CGRect(x: -350, y: 100, width: 300, height: 600)
+        let jump = Layout.revealGrown(tile, added: added, clicked: clicked, from: view, clear: clear, padding: 20)
+        #expect(jump.zoom == 1)
+        #expect(shown(jump).contains(added) && shown(jump).contains(clicked))
+        #expect(jump.origin.y == 0)
+
+        // Added nodes taller than the view: their left and top edges show, and the clicked node
+        // stays wholly in view.
+        let tall = CGRect(x: -350, y: -900, width: 300, height: 1800)
+        let cut = Layout.revealGrown(tile, added: tall, clicked: clicked, from: view, clear: clear, padding: 20)
+        #expect(cut.zoom == 1)
+        #expect(shown(cut).contains(clicked))
+        #expect(shown(cut).minX <= tall.minX - 20)
+        #expect(shown(cut).minY < 0 && shown(cut).maxY >= clicked.maxY)
+    }
+}

@@ -352,6 +352,7 @@ final class DiagramTile: NSView, TileContent {
             expanded.remove(at: index)
         } else if node.expandable == true {
             expanded.append(node.id)
+            pendingExpand = (node.id, Set(graph?.nodes.map(\.id) ?? []))
         } else {
             return super.mouseDown(with: event)
         }
@@ -360,6 +361,12 @@ final class DiagramTile: NSView, TileContent {
 
     /// Set by the canvas: a code tile opened (or found showing the lines) from a node.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
+    /// Set by the canvas: the user opened a node and the graph that came back grew. Canvas
+    /// rects of the tile, the nodes the expansion added (their union; null when none), and the
+    /// node clicked, for the pan that shows them (`Layout.revealGrown`).
+    var onExpanded: ((_ tile: CGRect, _ added: CGRect, _ clicked: CGRect) -> Void)?
+    /// A node the user clicked open, with the nodes shown then, until the next graph arrives.
+    private var pendingExpand: (node: String, shown: Set<String>)?
 
     override func resetCursorRects() {
         guard let graph else { return }
@@ -442,9 +449,23 @@ final class DiagramTile: NSView, TileContent {
             // A node opened (or callers appeared): room for them rather than a smaller drawing.
             fit(growingOnly: true)
         }
+        if let expand = pendingExpand {
+            pendingExpand = nil
+            revealExpansion(expand)
+        }
         watch()
         needsDisplay = true
         laidOut()
+    }
+
+    /// After the user's own expansion: the tile's, added nodes' and clicked node's canvas rects
+    /// as the tile now is (grown or not), to the canvas, which pans to show them.
+    private func revealExpansion(_ expand: (node: String, shown: Set<String>)) {
+        guard let onExpanded, let now = board.objects[object.id], let graph else { return }
+        func rect(_ id: String) -> CGRect? { DiagramLayout.canvasRect(of: id, frame: now.frame, props: now.props) }
+        guard let clicked = rect(expand.node) else { return }
+        let added = graph.nodes.filter { !expand.shown.contains($0.id) }.compactMap { rect($0.id) }.reduce(CGRect.null) { $0.union($1) }
+        onExpanded(now.frame.rect, added, clicked)
     }
 
     /// Sizes the tile to show its graph whole, up to `maxFitBody`: from the default size when

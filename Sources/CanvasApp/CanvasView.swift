@@ -380,6 +380,8 @@ final class CanvasView: NSScrollView {
         (content as? NoteTile)?.onOpenedCode = showCode
         (content as? BrowserTile)?.onOpenedCode = showCode
         (content as? DiagramTile)?.onOpenedCode = showCode
+        // A node the user opened: the pan that shows what it added (never for an agent's expand).
+        (content as? DiagramTile)?.onExpanded = { [weak self] tile, added, clicked in self?.revealExpansion(tile: tile, added: added, clicked: clicked) }
         // A clicked line: user navigation. The changes tile keeps the selection and the keyboard
         // (j/k go on through the hunks; a selected code tile would take the keyboard from it);
         // the least pan that shows the code tile keeps the diff in view too.
@@ -1689,6 +1691,32 @@ final class CanvasView: NSScrollView {
     func reveal(_ id: ObjectID, openedFrom source: NSRect) {
         guard let rect = docFrame(id) else { return }
         apply(Layout.reveal(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification, openedFrom: source))
+    }
+
+    /// A diagram grown by the user's click on a node (canvas rects): an animated least pan that
+    /// shows the whole tile when it fits, else the added nodes with the clicked one
+    /// (`Layout.revealGrown`). Never a zoom.
+    private func revealExpansion(tile: CGRect, added: CGRect, clicked: CGRect) {
+        func doc(_ rect: CGRect) -> CGRect { rect.isNull ? rect : rect.offsetBy(dx: CanvasDocumentView.origin.x, dy: CanvasDocumentView.origin.y) }
+        animatePan(to: Layout.revealGrown(doc(tile), added: doc(added), clicked: doc(clicked), from: currentJump, clear: clearArea,
+                                          padding: Self.jumpPadding / magnification))
+    }
+
+    private var panAnimation: Task<Void, Never>?
+
+    /// Pans to `jump` (same zoom) over a quarter second, easing out; a newer pan replaces it.
+    private func animatePan(to jump: Layout.Jump) {
+        guard jump.zoom == magnification, jump != currentJump else { return }
+        panAnimation?.cancel()
+        let start = contentView.bounds.origin, end = jump.origin, steps = 15
+        panAnimation = Task { @MainActor [weak self] in
+            for step in 1...steps {
+                try? await Task.sleep(for: .milliseconds(16))
+                guard !Task.isCancelled, let self else { return }
+                let t = CGFloat(step) / CGFloat(steps), eased = 1 - pow(1 - t, 3)
+                self.scroll(to: CGPoint(x: start.x + (end.x - start.x) * eased, y: start.y + (end.y - start.y) * eased))
+            }
+        }
     }
 
     /// Code a page's or note's link opened: one step of Navigate Back. A tile that already

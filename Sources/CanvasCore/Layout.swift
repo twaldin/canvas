@@ -277,6 +277,32 @@ public enum Layout {
             y: jump.origin.y + clamp(full.origin.y - jump.origin.y, source.minY, source.maxY, shown.minY, shown.maxY)))
     }
 
+    /// A diagram tile the user just grew by opening a node: the least pan that shows the whole
+    /// `tile` (with `padding`) when it fits in view at this zoom; else the least pan that shows
+    /// the `added` nodes together with the `clicked` one when those fit; else the least pan
+    /// toward the added nodes' left and top edges (with `padding`), cut short where it would take the clicked
+    /// node out of view (when it is in view now). Never a zoom; the same `jump` when nothing
+    /// needs to move.
+    public static func revealGrown(_ tile: CGRect, added: CGRect, clicked: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat) -> Jump {
+        let shown = jump.shown(clear)
+        func fits(_ rect: CGRect, _ room: CGFloat) -> Bool { rect.width + 2 * room <= shown.width && rect.height + 2 * room <= shown.height }
+        if fits(tile, padding) { return reveal(tile, from: jump, clear: clear, padding: padding) }
+        guard !added.isNull, !added.isEmpty else { return reveal(clicked, from: jump, clear: clear, padding: 0) }
+        let both = added.union(clicked)
+        if fits(both, 0) {
+            let room = min(padding, (shown.width - both.width) / 2, (shown.height - both.height) / 2)
+            return reveal(both, from: jump, clear: clear, padding: room)
+        }
+        let full = reveal(added, from: jump, clear: clear, padding: padding)
+        guard shown.contains(clicked) else { return full }
+        func clamp(_ shift: CGFloat, _ keptMin: CGFloat, _ keptMax: CGFloat, _ shownMin: CGFloat, _ shownMax: CGFloat) -> CGFloat {
+            min(max(shift, keptMax - shownMax), keptMin - shownMin)
+        }
+        return Jump(zoom: jump.zoom, origin: CGPoint(
+            x: jump.origin.x + clamp(full.origin.x - jump.origin.x, clicked.minX, clicked.maxX, shown.minX, shown.maxX),
+            y: jump.origin.y + clamp(full.origin.y - jump.origin.y, clicked.minY, clicked.maxY, shown.minY, shown.maxY)))
+    }
+
     /// A stop stepped to (⌥⌘-arrows), like a slide advance: nothing moves while `rect` with
     /// `padding` shows whole; else it is centered at this zoom, or, when it doesn't fit at this
     /// zoom, fitted (`fit`, `readable` for a tall one) so the audience sees the one stop rather

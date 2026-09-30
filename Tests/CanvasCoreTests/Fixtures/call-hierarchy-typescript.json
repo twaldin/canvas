@@ -1,0 +1,541 @@
+{
+ "capabilities": {
+  "callHierarchyProvider": true,
+  "workspaceSymbolProvider": true
+ },
+ "epochs": {
+  "a": {
+   "documentSymbol packages/cli/src/main.ts": [
+    {
+     "children": [
+      {
+       "children": [],
+       "detail": "",
+       "kind": 6,
+       "name": "start",
+       "range": {
+        "end": {
+         "character": 18,
+         "line": 4
+        },
+        "start": {
+         "character": 2,
+         "line": 4
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 7,
+         "line": 4
+        },
+        "start": {
+         "character": 2,
+         "line": 4
+        }
+       }
+      }
+     ],
+     "detail": "",
+     "kind": 5,
+     "name": "Cli",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 5
+      },
+      "start": {
+       "character": 0,
+       "line": 3
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 16,
+       "line": 3
+      },
+      "start": {
+       "character": 13,
+       "line": 3
+      }
+     }
+    },
+    {
+     "children": [
+      {
+       "children": [],
+       "detail": "",
+       "kind": 14,
+       "name": "executor",
+       "range": {
+        "end": {
+         "character": 44,
+         "line": 8
+        },
+        "start": {
+         "character": 8,
+         "line": 8
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 16,
+         "line": 8
+        },
+        "start": {
+         "character": 8,
+         "line": 8
+        }
+       }
+      }
+     ],
+     "detail": "",
+     "kind": 12,
+     "name": "main",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 11
+      },
+      "start": {
+       "character": 0,
+       "line": 7
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 26,
+       "line": 7
+      },
+      "start": {
+       "character": 22,
+       "line": 7
+      }
+     }
+    }
+   ],
+   "documentSymbol packages/core/src/executor.ts": [
+    {
+     "children": [
+      {
+       "children": [],
+       "detail": "",
+       "kind": 6,
+       "name": "callAsAgent",
+       "range": {
+        "end": {
+         "character": 3,
+         "line": 3
+        },
+        "start": {
+         "character": 2,
+         "line": 1
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 19,
+         "line": 1
+        },
+        "start": {
+         "character": 8,
+         "line": 1
+        }
+       }
+      },
+      {
+       "children": [],
+       "detail": "",
+       "kind": 6,
+       "name": "run",
+       "range": {
+        "end": {
+         "character": 3,
+         "line": 7
+        },
+        "start": {
+         "character": 2,
+         "line": 5
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 13,
+         "line": 5
+        },
+        "start": {
+         "character": 10,
+         "line": 5
+        }
+       }
+      }
+     ],
+     "detail": "",
+     "kind": 5,
+     "name": "AgentActionExecutor",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 8
+      },
+      "start": {
+       "character": 0,
+       "line": 0
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 32,
+       "line": 0
+      },
+      "start": {
+       "character": 13,
+       "line": 0
+      }
+     }
+    },
+    {
+     "children": [
+      {
+       "children": [],
+       "detail": "",
+       "kind": 6,
+       "name": "start",
+       "range": {
+        "end": {
+         "character": 18,
+         "line": 11
+        },
+        "start": {
+         "character": 2,
+         "line": 11
+        }
+       },
+       "selectionRange": {
+        "end": {
+         "character": 7,
+         "line": 11
+        },
+        "start": {
+         "character": 2,
+         "line": 11
+        }
+       }
+      }
+     ],
+     "detail": "",
+     "kind": 5,
+     "name": "Scheduler",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 12
+      },
+      "start": {
+       "character": 0,
+       "line": 10
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 22,
+       "line": 10
+      },
+      "start": {
+       "character": 13,
+       "line": 10
+      }
+     }
+    }
+   ],
+   "documentSymbol packages/core/src/tasks.ts": [
+    {
+     "children": [],
+     "detail": "",
+     "kind": 12,
+     "name": "runTask",
+     "range": {
+      "end": {
+       "character": 1,
+       "line": 4
+      },
+      "start": {
+       "character": 0,
+       "line": 2
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 29,
+       "line": 2
+      },
+      "start": {
+       "character": 22,
+       "line": 2
+      }
+     }
+    }
+   ],
+   "incoming callAsAgent": [
+    {
+     "from": {
+      "detail": "",
+      "kind": 12,
+      "name": "runTask",
+      "range": {
+       "end": {
+        "character": 1,
+        "line": 4
+       },
+       "start": {
+        "character": 0,
+        "line": 2
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 29,
+        "line": 2
+       },
+       "start": {
+        "character": 22,
+        "line": 2
+       }
+      },
+      "uri": "file://ROOT/packages/core/src/tasks.ts"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 29,
+        "line": 3
+       },
+       "start": {
+        "character": 18,
+        "line": 3
+       }
+      }
+     ]
+    },
+    {
+     "from": {
+      "detail": "",
+      "kind": 12,
+      "name": "main",
+      "range": {
+       "end": {
+        "character": 1,
+        "line": 11
+       },
+       "start": {
+        "character": 0,
+        "line": 7
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 26,
+        "line": 7
+       },
+       "start": {
+        "character": 22,
+        "line": 7
+       }
+      },
+      "uri": "file://ROOT/packages/cli/src/main.ts"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 28,
+        "line": 9
+       },
+       "start": {
+        "character": 17,
+        "line": 9
+       }
+      }
+     ]
+    }
+   ],
+   "incoming main": [],
+   "incoming runTask": [
+    {
+     "from": {
+      "detail": "",
+      "kind": 12,
+      "name": "main",
+      "range": {
+       "end": {
+        "character": 1,
+        "line": 11
+       },
+       "start": {
+        "character": 0,
+        "line": 7
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 26,
+        "line": 7
+       },
+       "start": {
+        "character": 22,
+        "line": 7
+       }
+      },
+      "uri": "file://ROOT/packages/cli/src/main.ts"
+     },
+     "fromRanges": [
+      {
+       "end": {
+        "character": 15,
+        "line": 10
+       },
+       "start": {
+        "character": 8,
+        "line": 10
+       }
+      }
+     ]
+    }
+   ],
+   "outgoing callAsAgent": [
+    {
+     "fromRanges": [
+      {
+       "end": {
+        "character": 19,
+        "line": 2
+       },
+       "start": {
+        "character": 11,
+        "line": 2
+       }
+      },
+      {
+       "end": {
+        "character": 19,
+        "line": 2
+       },
+       "start": {
+        "character": 11,
+        "line": 2
+       }
+      }
+     ],
+     "to": {
+      "detail": "AgentActionExecutor",
+      "kind": 6,
+      "name": "run",
+      "range": {
+       "end": {
+        "character": 3,
+        "line": 7
+       },
+       "start": {
+        "character": 2,
+        "line": 5
+       }
+      },
+      "selectionRange": {
+       "end": {
+        "character": 13,
+        "line": 5
+       },
+       "start": {
+        "character": 10,
+        "line": 5
+       }
+      },
+      "uri": "file://ROOT/packages/core/src/executor.ts"
+     }
+    }
+   ],
+   "prepare packages/core/src/executor.ts:1:8": [
+    {
+     "detail": "AgentActionExecutor",
+     "kind": 6,
+     "name": "callAsAgent",
+     "range": {
+      "end": {
+       "character": 3,
+       "line": 3
+      },
+      "start": {
+       "character": 2,
+       "line": 1
+      }
+     },
+     "selectionRange": {
+      "end": {
+       "character": 19,
+       "line": 1
+      },
+      "start": {
+       "character": 8,
+       "line": 1
+      }
+     },
+     "uri": "file://ROOT/packages/core/src/executor.ts"
+    }
+   ],
+   "workspaceSymbol callAsAgent": [
+    {
+     "kind": 6,
+     "location": {
+      "range": {
+       "end": {
+        "character": 3,
+        "line": 3
+       },
+       "start": {
+        "character": 2,
+        "line": 1
+       }
+      },
+      "uri": "file://ROOT/packages/core/src/executor.ts"
+     },
+     "name": "callAsAgent"
+    }
+   ],
+   "workspaceSymbol start": [
+    {
+     "kind": 6,
+     "location": {
+      "range": {
+       "end": {
+        "character": 18,
+        "line": 11
+       },
+       "start": {
+        "character": 2,
+        "line": 11
+       }
+      },
+      "uri": "file://ROOT/packages/core/src/executor.ts"
+     },
+     "name": "start"
+    },
+    {
+     "kind": 6,
+     "location": {
+      "range": {
+       "end": {
+        "character": 18,
+        "line": 4
+       },
+       "start": {
+        "character": 2,
+        "line": 4
+       }
+      },
+      "uri": "file://ROOT/packages/cli/src/main.ts"
+     },
+     "name": "start"
+    }
+   ]
+  }
+ },
+ "recordedWith": "typescript-language-server 4 (TypeScript 5) on the project DiagramTests writes (tsProject): workspace/symbol answers carry no containerName"
+}

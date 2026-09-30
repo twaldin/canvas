@@ -131,12 +131,10 @@ public actor LanguageServer {
     }
 
     /// Symbols matching `query` anywhere in the server's project (`workspace/symbol`).
-    public func workspaceSymbols(_ query: String) async throws -> [LSPWorkspaceSymbol] {
-        inFlight += 1
-        defer { inFlight -= 1 }
-        let connection = try await connected()
-        await refreshOpenDocuments(on: connection)
-        let result = try await connection.request("workspace/symbol", .object(["query": .string(query)]), timeout: Self.requestTimeout)
+    /// `file`, one of the project's, is open for the request: tsserver answers only for the
+    /// projects of open files ("No Project" otherwise).
+    public func workspaceSymbols(_ query: String, opening file: URL) async throws -> [LSPWorkspaceSymbol] {
+        let result = try await request("workspace/symbol", file) { _ in .object(["query": .string(query)]) }
         return (result.array ?? []).compactMap(LSPWorkspaceSymbol.init)
     }
 

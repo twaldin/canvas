@@ -92,8 +92,8 @@ public actor LanguageService {
         var answered = false
         for file in projects {
             do {
-                let (server, _) = try await server(for: file, boardRoot: boardRoot)
-                symbols += try await server.workspaceSymbols(query)
+                let (server, file) = try await server(for: file, boardRoot: boardRoot)
+                symbols += try await server.workspaceSymbols(query, opening: file)
                 answered = true
             } catch is CancellationError {
                 throw CancellationError()
@@ -103,6 +103,13 @@ public actor LanguageService {
         }
         if !answered, let failure { throw failure }
         return symbols
+    }
+
+    /// One file per project (language and project root) among `files`, in their order: what
+    /// `workspaceSymbols` would ask one server each for. Files no server answers for are left out.
+    public func projects(_ files: [URL], boardRoot: URL) -> [URL] {
+        var seen: Set<Key> = []
+        return files.filter { file in key(for: file, boardRoot: boardRoot).map { seen.insert($0).inserted } ?? false }
     }
 
     /// The server that would answer for `file`, if one exists (running, crashed, or starting).

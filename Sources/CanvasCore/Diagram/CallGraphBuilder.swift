@@ -10,6 +10,10 @@ public enum CallGraphBuilder {
     public static let maxNodes = 60
     /// Excerpt lines a node shows.
     static let maxExcerptLines = 3
+    /// A bare symbol is looked up in the projects of at most this many of the files mentioning
+    /// it, in at most `maxSymbolProjects` projects.
+    static let maxMentioningFiles = 40
+    static let maxSymbolProjects = 3
     /// How long an empty answer for a function is asked again (a server still loading the
     /// project), every `loadingRetry`.
     static let loadingWait: Duration = .seconds(45)
@@ -183,16 +187,98 @@ public enum CallGraphBuilder {
             }
         }
 
+        // MARK: Finding a bare symbol
+
+        /// The file declaring `symbol` when no path is given. Fast path: the first tracked file
+        /// a declaration keyword names it in (`NoteSource.locate`), when that file's document
+        /// symbols have it. Else the language servers' workspace symbols (`locateInWorkspace`).
+        mutating func locate(_ symbol: String) async throws -> String {
+            if let found = await NoteSource.locate(symbol: symbol, root: boardRoot), try await declaration(symbol, in: url(found)) != nil {
+                return found
+            }
+            return try await locateInWorkspace(symbol)
+        }
+
+        /// Asks `workspace/symbol` for the name of `symbol` in the projects of the files that
+        /// mention it (`git grep`, declaration-like lines first; at most `maxSymbolProjects`
+        /// projects, so a monorepo doesn't start a server per package), keeps the board's files,
+        /// and checks each answer against its file's document symbols (servers such as
+        /// typescript-language-server give no container): the one declaration left is the
+        /// root's file; several are an error listing them.
+        mutating func locateInWorkspace(_ symbol: String) async throws -> String {
+            let (container, name) = CallGraphBuilder.split(symbol)
+            let base = baseName(name)
+            guard !base.isEmpty, base.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else {
+                throw Failure.unresolved("\(symbol) is not a symbol name; give props.path")
+            }
+            let projects = await languages.projects(await mentioningFiles(base), boardRoot: boardRoot).prefix(CallGraphBuilder.maxSymbolProjects)
+            guard !projects.isEmpty else { throw Failure.unresolved("no file of the board that a language server reads mentions \(base); give props.path") }
+            var answers = try await languages.workspaceSymbols(base, files: Array(projects), boardRoot: boardRoot)
+            // A server that just started may answer before it has read the project.
+            var waited = Duration.zero
+            while answers.isEmpty, waited < CallGraphBuilder.loadingWait {
+                try await Task.sleep(for: CallGraphBuilder.loadingRetry)
+                waited += CallGraphBuilder.loadingRetry
+                answers = try await languages.workspaceSymbols(base, files: Array(projects), boardRoot: boardRoot)
+            }
+            let wanted = container.map(Self.containerNames) ?? []
+            var found: [(path: String, symbol: LSPSymbol, containers: [String])] = []
+            for answer in answers where names(name, answer.name) {
+                let path = boardPath(answer.location.url)
+                guard !path.hasPrefix("/") else { continue }
+                let line = answer.location.range.start.line
+                let declared = (try? await documentSymbols(answer.location.url)) ?? []
+                guard let entry = declared.first(where: { entry in
+                    names(name, entry.symbol.name) && (entry.symbol.selectionRange.start.line == line || entry.symbol.range.start.line == line)
+                }), entry.containers.map(baseName).reversed().starts(with: wanted.map(baseName).reversed()) else { continue }
+                guard !found.contains(where: { $0.path == path && $0.symbol.selectionRange.start == entry.symbol.selectionRange.start }) else { continue }
+                found.append((path, entry.symbol, entry.containers))
+            }
+            let callables = found.filter { callableKinds.contains($0.symbol.kind) }
+            if !callables.isEmpty { found = callables }
+            guard found.count <= 1 else {
+                let listed = found.prefix(8).map { "\($0.path):\($0.symbol.selectionRange.start.line + 1) (\(($0.containers + [$0.symbol.name]).joined(separator: ".")))" }
+                throw Failure.unresolved("\(symbol) is declared \(found.count) times; give props.path or a Container.member symbol: \(listed.joined(separator: ", "))")
+            }
+            guard let only = found.first else {
+                throw Failure.unresolved("the language server knows no \(symbol) in the board's files; give props.path")
+            }
+            return only.path
+        }
+
+        /// Tracked files mentioning `name` as a word, those where it looks declared (not after a
+        /// `.`, followed by `(`, `<`, `=` or `:`) first, at most `maxMentioningFiles`.
+        func mentioningFiles(_ name: String) async -> [URL] {
+            guard let data = try? await GitRunner.shared.run(["grep", "-n", "-I", "-w", "-F", "-e", name], in: boardRoot, allowedStatus: [0, 1],
+                                                              maxOutput: NoteSource.maxOutput, timeout: NoteSource.timeout),
+                  let output = String(data: data, encoding: .utf8) else { return [] }
+            let declared = try? NSRegularExpression(pattern: #"(^|[^\w.$])"# + NSRegularExpression.escapedPattern(for: name) + #"\s*[(<=:]"#)
+            var order: [String] = []
+            var looksDeclared: Set<String> = []
+            for line in output.split(separator: "\n") {
+                let parts = line.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
+                guard parts.count == 3 else { continue }
+                let path = String(parts[0]), text = String(parts[2])
+                if !order.contains(path) { order.append(path) }
+                if declared?.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) != nil { looksDeclared.insert(path) }
+            }
+            let ranked = order.filter(looksDeclared.contains) + order.filter { !looksDeclared.contains($0) }
+            return ranked.prefix(CallGraphBuilder.maxMentioningFiles).map { boardRoot.appendingPathComponent($0) }
+        }
+
         // MARK: Root
 
         mutating func resolveRoot(_ spec: DiagramSpec, previous: DiagramGraph?) async throws -> LSPCallHierarchyItem {
             let path: String
             if let given = spec.path {
                 path = given
-            } else if let symbol = spec.symbol, let found = await NoteSource.locate(symbol: symbol, root: boardRoot) {
-                path = found
+            } else if let root = previous?.root.flatMap({ previous?.node($0) }) {
+                // Found before: the root is re-found in its file below.
+                path = root.path
+            } else if let symbol = spec.symbol {
+                path = try await locate(symbol)
             } else {
-                throw Failure.unresolved("no file of the board declares \(spec.symbol ?? "the symbol"); give props.path")
+                throw Failure.unresolved("a calls diagram needs props.symbol or props.path")
             }
             let file = url(path)
             guard FileManager.default.fileExists(atPath: file.path) else {

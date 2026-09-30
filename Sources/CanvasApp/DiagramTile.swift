@@ -432,7 +432,8 @@ final class DiagramTile: NSView, TileContent {
 
     /// Sizes the tile to show its graph whole, up to `maxFitBody`: from the default size when
     /// the first graph arrives, and only ever larger when the graph grows (the user's own
-    /// resize stays unless the graph needs more). The app's write, not an undo step.
+    /// resize stays unless the graph needs more), into free space only (`Board.grownFrame`):
+    /// what doesn't fit is drawn scaled. The app's write, not an undo step.
     private func fit(growingOnly: Bool) {
         let scale = ObjectScale.of(object.props)
         let body = layout.bodySize, current = RenderMath.body(of: object)
@@ -442,9 +443,8 @@ final class DiagramTile: NSView, TileContent {
             h = max(h, current.height)
             guard w > current.width || h > current.height else { return }
         }
-        var frame = object.frame
-        frame.w = w * scale
-        frame.h = (h + RenderMath.tileTitleHeight) * scale
+        guard let frame = try? board.grownFrame(object.id, toward: CGSize(width: w * scale, height: (h + RenderMath.tileTitleHeight) * scale)),
+              frame != object.frame else { return }
         _ = try? board.update(object.id, frame: frame, actor: .system)
     }
 }

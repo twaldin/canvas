@@ -11,6 +11,7 @@ import Testing
 final class DiagramTests {
     let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("cv-diagram-\(UUID().uuidString.prefix(8))")
     static let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/call-hierarchy-sourcekit.json")
+    static let typescriptFixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/call-hierarchy-typescript.json")
 
     static let spool = """
     public enum Spool {
@@ -76,6 +77,8 @@ final class DiagramTests {
     capabilities = json.loads(sys.argv[2]) if len(sys.argv) > 2 else fixture["capabilities"]
     stdin, stdout = sys.stdin.buffer, sys.stdout.buffer
     root_uri = root = None
+    # Like tsserver, workspace/symbol fails while no file of the project is open.
+    opened = set()
 
     def read():
         length = 0
@@ -99,6 +102,10 @@ final class DiagramTests {
         if "id" not in message:
             if method == "exit":
                 sys.exit(0)
+            if method == "textDocument/didOpen":
+                opened.add(params["textDocument"]["uri"])
+            if method == "textDocument/didClose":
+                opened.discard(params["textDocument"]["uri"])
             continue
         if method == "initialize":
             root_uri = params["rootUri"].rstrip("/")
@@ -117,10 +124,15 @@ final class DiagramTests {
                 key = "incoming " + params["item"]["name"]
             elif method == "callHierarchy/outgoingCalls":
                 key = "outgoing " + params["item"]["name"]
+            elif method == "workspace/symbol":
+                key = "workspaceSymbol " + params["query"]
             else:
                 key = None
             result = json.loads(json.dumps(answers.get(key)).replace("file://ROOT", root_uri))
-        body = json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}).encode()
+        reply = {"jsonrpc": "2.0", "id": message["id"], "result": result}
+        if method == "workspace/symbol" and not opened:
+            reply = {"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32603, "message": "No Project."}}
+        body = json.dumps(reply).encode()
         stdout.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
         stdout.flush()
     """#
@@ -140,6 +152,11 @@ final class DiagramTests {
     deinit {
         let service = service, dir = dir
         Task { await service.stopAll(); try? FileManager.default.removeItem(at: dir) }
+    }
+
+    static func typescriptServer(_ script: URL) -> LanguageServerConfig {
+        LanguageServerConfig(language: "typescript", command: "/usr/bin/python3", arguments: [script.path, typescriptFixture.path],
+                             languageIDs: ["ts": "typescript"], rootMarkers: ["tsconfig.json"])
     }
 
     static func server(_ script: URL, capabilities: String? = nil) -> LanguageServerConfig {
@@ -319,5 +336,121 @@ final class DiagramTests {
         let moved = try #require(DiagramLayout.canvasRect(of: Self.warm, frame: try board.object(diagram.id).frame, props: diagram.props))
         #expect(moved != box)
         #expect(moved.insetBy(dx: -6, dy: -6).contains(try end()))
+    }
+
+    // MARK: A bare symbol
+
+    /// The TypeScript project the typescript fixture was recorded on, tracked by git: class
+    /// methods (`async callAsAgent(`) carry no declaration keyword, so only the language
+    /// server's workspace symbols find them.
+    func typescriptProject() throws -> URL {
+        let root = dir.appendingPathComponent("ts")
+        let files = [
+            "tsconfig.json": #"{ "compilerOptions": { "strict": true, "target": "es2020", "module": "commonjs" }, "include": ["packages/**/*.ts"] }"# + "\n",
+            "packages/core/src/executor.ts": """
+            export class AgentActionExecutor {
+              async callAsAgent(action: string): Promise<string> {
+                return this.run(action);
+              }
+
+              private run(action: string): string {
+                return action.toUpperCase();
+              }
+            }
+
+            export class Scheduler {
+              start(): void {}
+            }
+
+            """,
+            "packages/core/src/tasks.ts": """
+            import { AgentActionExecutor } from "./executor";
+
+            export async function runTask(executor: AgentActionExecutor): Promise<string> {
+              return executor.callAsAgent("task");
+            }
+
+            """,
+            "packages/cli/src/main.ts": """
+            import { AgentActionExecutor } from "../../core/src/executor";
+            import { runTask } from "../../core/src/tasks";
+
+            export class Cli {
+              start(): void {}
+            }
+
+            export async function main(): Promise<void> {
+              const executor = new AgentActionExecutor();
+              await executor.callAsAgent("cli");
+              await runTask(executor);
+            }
+
+            """,
+        ]
+        for (path, text) in files { try write("ts/" + path, text) }
+        for arguments in [["init", "-q"], ["add", "-A"]] {
+            let git = Process()
+            git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            git.arguments = arguments
+            git.currentDirectoryURL = root
+            try git.run()
+            git.waitUntilExit()
+        }
+        return root
+    }
+
+    @Test func aBareSymbolWithoutADeclarationKeywordIsFoundThroughTheServersWorkspaceSymbols() async throws {
+        let root = try typescriptProject()
+        let script = dir.appendingPathComponent(".replay.py")
+        let service = LanguageService(configs: [Self.typescriptServer(script)])
+        let graph = try await CallGraphBuilder.build(DiagramSpec(symbol: "AgentActionExecutor.callAsAgent", direction: .incoming),
+                                                     boardRoot: root, previous: nil, languages: service)
+        #expect(graph.error == nil)
+        #expect(graph.root == "packages/core/src/executor.ts#AgentActionExecutor.callAsAgent")
+        #expect(Set(graph.nodes.map(\.id)) == ["packages/core/src/executor.ts#AgentActionExecutor.callAsAgent", "packages/core/src/tasks.ts#runTask",
+                                               "packages/cli/src/main.ts#main"])
+
+        // The server names no container: which `start` is meant comes from the file's symbols.
+        var session = CallGraphBuilder.Session(boardRoot: root, languages: service)
+        #expect(try await session.locate("Cli.start") == "packages/cli/src/main.ts")
+        #expect(try await session.locate("Scheduler.start") == "packages/core/src/executor.ts")
+
+        // Two declarations: the error lists them, ready for props.path.
+        let ambiguous = try await CallGraphBuilder.build(DiagramSpec(symbol: "start", direction: .incoming), boardRoot: root, previous: nil, languages: service)
+        #expect(ambiguous.nodes.isEmpty)
+        #expect(ambiguous.error == "start is declared 2 times; give props.path or a Container.member symbol: packages/core/src/executor.ts:12 (Scheduler.start), packages/cli/src/main.ts:5 (Cli.start)")
+        await service.stopAll()
+    }
+
+    // MARK: Growing
+
+    @Test func aDiagramGrowsIntoFreeSpaceOnlyAndNeverOverANeighbour() throws {
+        let board = Board(id: "brd_grow", root: dir)
+        let diagram = board.create(type: .diagram, props: .object(["symbol": .string("Spool.read")]), frame: Frame(x: 0, y: 0, w: 800, h: 500))
+        let wanted = CGSize(width: 1600, height: 1100)
+
+        // Free all round: the whole size, where it is.
+        #expect(try board.grownFrame(diagram.id, toward: wanted) == Frame(x: 0, y: 0, w: 1600, h: 1100))
+
+        // Neighbours on every side: no corner has room, so it grows right and down up to them.
+        for frame in [Frame(x: 1100, y: 0, w: 400, h: 300), Frame(x: 0, y: 800, w: 400, h: 300),
+                      Frame(x: -500, y: 0, w: 400, h: 300), Frame(x: 0, y: -400, w: 400, h: 300)] {
+            board.create(type: .note, props: .object(["markdown": .string("neighbour")]), frame: frame)
+        }
+        let grown = try board.grownFrame(diagram.id, toward: wanted)
+        #expect(grown.x == 0 && grown.y == 0)
+        #expect(grown.w >= 800 && grown.h >= 500 && grown.w * grown.h > 800 * 500)
+        #expect(grown.maxX <= 1100 - Board.placementGap && grown.maxY <= 800 - Board.placementGap)
+        try board.update(diagram.id, frame: grown)
+        #expect(board.overlaps(of: diagram.id).isEmpty)
+
+        // Hemmed in: it stays as it is rather than cover anything.
+        let current = try board.object(diagram.id).frame
+        board.create(type: .note, props: .object(["markdown": .string("close")]), frame: Frame(x: current.maxX + 10, y: 0, w: 100, h: 100))
+        board.create(type: .note, props: .object(["markdown": .string("close")]), frame: Frame(x: 0, y: current.maxY + 10, w: 100, h: 100))
+        let hemmed = try board.grownFrame(diagram.id, toward: CGSize(width: 3000, height: 3000))
+        #expect(hemmed.w >= current.w && hemmed.h >= current.h)
+        try board.update(diagram.id, frame: hemmed)
+        #expect(board.overlaps(of: diagram.id).isEmpty)
     }
 }

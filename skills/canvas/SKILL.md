@@ -198,10 +198,10 @@ Read what they kept with `object.get` (`changes.files[].hunks[]` with `status` a
 For "show me who calls X" (or what X calls), create a live call graph from the language server instead of drawing one:
 `canvas object.create --type diagram --json '{"props": {"symbol": "AgentReportSpool.read", "direction": "incoming", "depth": 2}}'`.
 
-- `symbol` is `Type.member` or a bare name (labels optional); add `path` when the name is ambiguous or `line` instead of `symbol`. `direction`: `incoming` (callers), `outgoing` (callees) or `both`; `depth` 1–4 (default 2).
+- `symbol` is `Type.member` or a bare name (labels optional), found through the language server's workspace symbols when no path is given; when several functions have that name, `graph.error` lists them (`path:line (Container.name)`): recreate with `path` or a `Container.member` symbol. `line` (with `path`) works instead of `symbol`. `direction`: `incoming` (callers), `outgoing` (callees) or `both`; `depth` 1–4 (default 2).
 - The graph is computed by the language server (sourcekit-lsp answers from the index of the user's last `swift build`; its first answer in a project takes ~20 s). `canvas object.reload --id <tile>` computes it again and waits (up to 60 s); then read `props.graph` with `object.get`: `nodes[]` (`id`, `name`, `container`, `path`, `line`, `lines`, `excerpt`, `level`, `stale`, `expandable`), `edges[]` (`from` caller → `to` callee, call `lines`), `error`.
 - It stays live: a file it shows changing recomputes it; nodes are re-found by symbol, and one whose symbol was deleted stays with a stale badge (`stale: true`). Only functions in the board's files are nodes.
-- Open a node's next level by adding its id to `props.expanded` (the user clicks the node's +). The tile sizes itself to its first graph and grows when a node opens; `size: "fit"` works once it has one.
+- Open a node's next level by adding its id to `props.expanded` (the user clicks the node's +). The tile sizes itself to its first graph and grows into free space when a node opens (never over other objects; what doesn't fit is drawn smaller: resize it or zoom); `size: "fit"` works once it has one.
 - Bind an arrow to a node with `{"object": "<diagram>", "node": "<node id>"}` (e.g. from a note explaining that caller).
 - `error` says why a graph is empty or old (no server for the language, the symbol isn't declared there, an unindexed project); the last good graph stays.
 

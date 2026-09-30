@@ -635,6 +635,33 @@ public final class Board {
         return freeSlot(width: grown.w, height: grown.h, anchor: grown, beside: false, minimum: nil, ignoring: ignoring)!
     }
 
+    /// The frame a tile the app grows for its own content (a diagram whose graph gained nodes)
+    /// takes toward `size`, covering nothing it doesn't already cover and staying where it is
+    /// (never moved off to a free slot like `refitFrame`): the whole `size` from a corner when that is clear
+    /// (`Layout.refit`), else grown from its top-left as far as the free space right of and
+    /// below it allows, `placementGap` short of its neighbours (the largest such frame), never
+    /// smaller than it is where `size` asks for more. What doesn't fit, the tile shows scaled.
+    public func grownFrame(_ id: ObjectID, toward size: CGSize) throws -> Frame {
+        let current = try object(id).frame
+        let containers = Set(objects.values.filter { $0.type == .group && BoardGeometry.leafMembers(of: $0.id, in: objects).contains(id) }.map(\.id))
+        let neighbours = objects.values.filter { $0.id != id && !containers.contains($0.id) && BoardGeometry.countsForOverlaps($0) }.map(\.frame)
+        if let corner = Layout.refit(current, to: size, clearOf: neighbours) { return corner }
+        let gap = Self.placementGap
+        let start = (w: min(Double(size.width), current.w), h: min(Double(size.height), current.h))
+        let reach = Frame(x: current.x, y: current.y, w: Double(size.width) + gap, h: Double(size.height) + gap)
+        let blockers = neighbours.filter { !$0.intersects(current) && $0.intersects(reach) }
+        let widths = Set([Double(size.width)] + blockers.map { $0.x - gap - current.x }).filter { $0 >= start.w && $0 <= Double(size.width) }
+        let heights = Set([Double(size.height)] + blockers.map { $0.y - gap - current.y }).filter { $0 >= start.h && $0 <= Double(size.height) }
+        var best = Frame(x: current.x, y: current.y, w: start.w, h: start.h)
+        for w in widths.union([start.w]) {
+            for h in heights.union([start.h]) where w * h > best.w * best.h || (w * h == best.w * best.h && w > best.w) {
+                let frame = Frame(x: current.x, y: current.y, w: w, h: h)
+                if !blockers.contains(where: { $0.intersects(frame) }) { best = frame }
+            }
+        }
+        return best
+    }
+
     /// The objects `id` overlaps by accident, by `layout.check`'s `overlaps` rule.
     public func overlaps(of id: ObjectID) -> [ObjectID] {
         BoardGeometry(objects: objects, labelSizes: [:]).overlaps(scope: [id]).flatMap { $0 }.filter { $0 != id }

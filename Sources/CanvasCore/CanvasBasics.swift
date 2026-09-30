@@ -69,7 +69,7 @@ public enum CanvasBasics {
             Item(term: "Undo", text: "⌘Z undoes the last change, yours or an agent's, and says so when it was an agent's or changed your files or git index (a Stage or Discard); ⇧⌘Z redoes it. In a terminal, ⌘Z is the terminal's."),
         ]),
         Section(title: "Reviewing work", items: [
-            Item(term: "Review Changes", text: "⇧⌘R (or right-click the canvas) lists what changed, file by file: green lines were added, red ones removed. Click the summary at its top to compare Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed)."),
+            Item(term: "Review Changes", text: "⇧⌘R (or right-click the canvas) lists what changed, file by file, in the worktree of the terminal you're in or have selected: green lines were added, red ones removed. Click the summary at its top to compare Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed)."),
             Item(term: "Stage · Unstage", text: "Stage marks a change ready to go into the next commit; Unstage takes the mark off. Neither changes your files."),
             Item(term: "Discard", text: "throws a change away from your files. It asks first (click again, or r twice) and only puts back work not committed yet."),
             Item(term: "committed · Viewed", text: "committed: already saved in the branch's history, nothing to discard. Viewed folds a file you've read until it changes."),

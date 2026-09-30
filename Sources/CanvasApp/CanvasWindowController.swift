@@ -738,7 +738,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         canvas.reviewChanges()
     }
 
-    /// File ▸ Review Branch: everything the board's branch changed against the default branch.
+    /// File ▸ Review Branch: everything a branch changed against the default branch (`CanvasView.reviewChanges`).
     @objc func reviewBranch(_ sender: Any?) {
         canvas.reviewChanges(base: .branch)
     }
@@ -881,8 +881,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return canvas.keyboardCodeTile?.canNavigate ?? true
         case #selector(leaveTile(_:)): return canvas.focusedTile != nil
         case #selector(reviewBranch(_:)):
-            let defaultBranch = GitWorktree.containing(board.root.path)?.defaultBranch
-            item.title = "Review " + ChangesBaseChoice.branch.title(defaultBranch: defaultBranch)
+            // Names the worktree's branch it will review (`CanvasView.reviewChanges`), "…" when it asks which.
+            let root = board.reviewRoot(terminal: canvas.followTerminal)
+            let worktree = GitWorktree.containing(root ?? board.root.path)
+            let defaultBranch = worktree?.defaultBranch
+            if let branch = root.flatMap({ _ in worktree?.branch }) {
+                item.title = "Review \(branch) vs \(defaultBranch ?? "default branch")"
+            } else {
+                item.title = "Review " + ChangesBaseChoice.branch.title(defaultBranch: defaultBranch) + (root == nil && !board.branchReviewChoices.isEmpty ? "…" : "")
+            }
             return defaultBranch != nil
         default: return true
         }

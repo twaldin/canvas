@@ -310,4 +310,18 @@ struct RepoBoardTests {
         board.terminalWorks(codex, in: "/")
         #expect(board.objects[codex]?.props["branch"] == .string("main"))
     }
+
+    @Test func reviewChangesAndReviewBranchReviewTheWorktreeOfTheTerminalTheyGoBy() async throws {
+        let (repo, worktree) = try await fixture()
+        let board = BoardRegistry(store: BoardStore(directory: boards, debounce: 60)).open(root: repo.root)
+        let codex = try agent("codex", in: worktree, on: board)
+        let shell = board.create(type: .terminal, props: .object(["cwd": .string(repo.root.path)])).id
+        #expect(board.reviewRoot(terminal: codex).map(GitWorktree.normalized) == GitWorktree.normalized(worktree.path))
+        #expect(board.reviewRoot(terminal: shell) == nil, "a terminal in the board's checkout reviews that")
+        #expect(board.reviewRoot(terminal: nil) == nil, "nothing to go by: the board's own checkout")
+        // With nothing to go by, Review Branch of main against main would be empty: it offers the worktrees.
+        #expect(board.branchReviewChoices.map { GitWorktree.normalized($0.toplevel) } == [GitWorktree.normalized(worktree.path)])
+        try await repo.git("switch", "-q", "-c", "topic")
+        #expect(board.branchReviewChoices.isEmpty, "the board's own branch is what it reviews")
+    }
 }

@@ -1197,7 +1197,8 @@ final class CanvasView: NSScrollView {
         return id.flatMap { tiles[$0]?.content as? CodeTile }
     }
 
-    /// The terminal Object ▸ Follow Files toggles: the focused one, else the one selected tile.
+    /// The terminal Object ▸ Follow Files toggles and whose checkout Review Changes and Review
+    /// Branch review: the focused one, else the one selected tile.
     var followTerminal: ObjectID? {
         if let focused = focusedTerminal { return focused }
         guard selection.count == 1, let id = selection.first, board.objects[id]?.type == .terminal else { return nil }
@@ -1244,11 +1245,27 @@ final class CanvasView: NSScrollView {
         return id
     }
 
-    /// File ▸ Review Changes (the board root's uncommitted work) and Review Branch (everything
-    /// its branch changed against the default branch): a changes tile in view.
+    /// File ▸ Review Changes (uncommitted work) and Review Branch (everything the branch changed
+    /// against the default branch): a changes tile in view for the checkout `followTerminal`
+    /// works in, else the board's working worktree, else the board root (`Board.reviewRoot`).
+    /// Review Branch with nothing to go by on the default branch, which it would review against
+    /// itself, offers the repository's worktrees instead (`Board.branchReviewChoices`).
     func reviewChanges(base: ChangesBaseChoice = .uncommitted) {
         let size = Board.defaultSize(.changes), visible = documentVisibleRect
-        createChanges(at: NSPoint(x: visible.midX - size.w / 2, y: visible.midY - size.h / 2), base: base)
+        let point = NSPoint(x: visible.midX - size.w / 2, y: visible.midY - size.h / 2)
+        let root = board.reviewRoot(terminal: followTerminal)
+        let choices = base == .branch && root == nil ? board.branchReviewChoices : []
+        guard !choices.isEmpty, let documentView else { return createChanges(at: point, root: root, base: base) }
+        let menu = NSMenu()
+        menu.addItem(MenuAction.item("Review Branch of", enabled: false) {})
+        for worktree in choices {
+            let item = MenuAction.item("\(worktree.branch ?? "detached") — \(worktree.name)") { [weak self] in
+                self?.createChanges(at: point, root: worktree.toplevel, base: .branch)
+            }
+            item.indentationLevel = 1
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: visible.midX, y: visible.midY), in: documentView)
     }
 
     /// ⌘L: the address field of the focused browser tile, else of the one selected browser tile

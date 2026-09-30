@@ -147,6 +147,26 @@ extension Board {
         return ["worktree": .string(GitWorktree.normalized(worktree.toplevel)), "branch": worktree.branch.map(JSONValue.string) ?? .null]
     }
 
+    /// The checkout Review Changes and Review Branch review, as a changes tile's `root`: the
+    /// linked worktree of the board's repository `terminal` works in (the terminal holding the
+    /// keyboard, else the one selected), else the working worktree (`opened(from:)`); nil for
+    /// the board's own checkout.
+    public func reviewRoot(terminal: ObjectID?) -> String? {
+        let own = GitWorktree.containing(root.path)
+        let worked = terminal.flatMap { objects[$0]?.type == .terminal ? GitWorktree.containing(workingDirectory(of: $0)) : nil }
+        guard let worktree = worked ?? workingWorktree, let own, worktree.commonDir == own.commonDir, worktree.gitDir != own.gitDir else { return nil }
+        return worktree.toplevel
+    }
+
+    /// What Review Branch offers to pick from when it has no worktree to go by (`reviewRoot`
+    /// nil) and the board's own checkout is on the default branch, which it would only review
+    /// against itself: the repository's other worktrees. Empty otherwise.
+    public var branchReviewChoices: [GitWorktree] {
+        guard let own = GitWorktree.containing(root.path), let branch = own.branch, let base = own.defaultBranch,
+              base == branch || base == "origin/\(branch)" else { return [] }
+        return own.siblings.filter { $0.gitDir != own.gitDir }
+    }
+
     private func record(_ worktree: GitWorktree) {
         guard var record = repo, record.record(path: worktree.toplevel, branch: worktree.branch) else { return }
         repo = record

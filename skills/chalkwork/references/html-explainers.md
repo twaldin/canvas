@@ -103,7 +103,7 @@ Put a one-line summary count at the top ("2 bugs, 1 risk, 3 nits").
 
 ## Check your tile
 
-After creating or updating an explainer, look at it: `chalkwork view.snapshot --out "$TMPDIR/c.png"`
-(or `chalkwork render <id> --full --out "$TMPDIR/t.png"`, which renders the whole page offscreen and reports `overflow`) and read the image.
-Write these files under `$TMPDIR`, never in the repo (see SKILL.md, Known surprises).
+After creating or updating an explainer, look at it: `chalkwork view.snapshot`
+(or `chalkwork render <id> --full`, which renders the whole page offscreen and reports `overflow`) and read the image at the `path` it returns.
+Without `--out` the image goes to a new file under `$TMPDIR/chalkwork-renders/`, never in the repo (see SKILL.md, Known surprises).
 Fix overflow, unreadable contrast, or broken diagrams before telling the user it's there. Then point at it with `view.attention` rather than moving their viewport.

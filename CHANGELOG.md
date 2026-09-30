@@ -7,6 +7,7 @@ Each version's section is its GitHub release's notes (release.yml puts it above 
 ### Fixed
 
 - **One Chalkwork per home.** Opening Chalkwork while it already runs on the same boards (a second `open -n`, a login restore beside the running app) no longer starts a second instance that takes over the first one's socket, leaving one of them with no API (`chalkwork` CLI calls failing `unavailable`): the new launch asks the running one to open its folder's board and bring it forward, then exits. Development homes each run their own instance, as before.
+- **Codex asks once for canvas commands, not on every call.** Chalkwork told Codex to pass payloads as `--json @"$TMPDIR/…"`, and Codex can't match a command with `$TMPDIR` in it to "don't ask again for commands that start with `chalkwork`", so every draw stopped on an approval again, even after you allowed `chalkwork`. Codex now gets the temp directory's real path and asks to allow every `chalkwork` command, so a new Codex user answers one approval, once; the HTML explainer guide no longer renders to `--out "$TMPDIR/…"` either.
 
 ## 0.3.1
 

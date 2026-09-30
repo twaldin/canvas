@@ -2,6 +2,7 @@
 // Claude Code's, Codex's and Gemini CLI's SessionStart context, opencode's system prompt). One
 // text; only how the agent loads the shipped skill and reaches the socket differs per agent.
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 
 export type GuidanceAgent = "omp" | "claude" | "codex" | "gemini" | "opencode";
@@ -65,11 +66,14 @@ function connectionLines(agent: GuidanceAgent, socket: string, tile: string, boa
     ];
   }
   if (agent === "codex") {
-    // Codex's workspace-write sandbox denies unix-socket connects (docs/contracts.md). A short
-    // `chalkwork <method> --json @file` command is what a `chalkwork` prefix rule can approve once.
+    // Codex's workspace-write sandbox denies unix-socket connects (docs/contracts.md), so each
+    // chalkwork call asks for approval until the user allows every command starting `chalkwork`.
+    // Codex matches that rule, and offers it, only for commands of plain words: `$TMPDIR`, `$(…)`,
+    // a heredoc or a redirect makes it ask again every time. So payloads go by their literal path.
+    const dir = tmpdir();
     return [
-      `${connection} Shell commands inherit these. The \`chalkwork\` CLI talks to that unix socket, which Codex's sandbox blocks: run chalkwork commands with escalated permissions (outside the sandbox) instead of retrying them sandboxed.`,
-      "Write canvas JSON payloads to a file first (e.g. in $TMPDIR) and pass `--json @<file>`, never inline JSON: the approval the user sees stays one short `chalkwork …` line, which they can allow for every `chalkwork` command.",
+      `${connection} Shell commands inherit these. The \`chalkwork\` CLI talks to that unix socket, which Codex's sandbox blocks: run chalkwork commands with escalated permissions (outside the sandbox) and \`prefix_rule: ["chalkwork"]\` instead of retrying them sandboxed, so the user can allow every \`chalkwork\` command once.`,
+      `Write canvas JSON payloads to a file in ${dir}/ first, then pass it by that literal path, never inline JSON: \`chalkwork object.create --json @${dir}/chalkwork-box.json\`. Keep each chalkwork command plain words: a variable (\`$TMPDIR\`), \`$(…)\`, heredoc or redirect in it makes Codex ask the user again for every call.`,
     ];
   }
   if (agent === "gemini") {

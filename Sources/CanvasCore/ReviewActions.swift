@@ -519,11 +519,13 @@ public final class ReviewGit {
 }
 
 extension Board {
-    /// A changes tile fitted to its diff (`size: "fit"`) grown to show it again once hunks were
-    /// added (`ChangesTile`): the app's own write-back, credited to the system, and not an undo
-    /// step, so ⌘Z keeps undoing what someone did.
-    public func growFitted(_ id: ObjectID, frame: Frame) {
-        guard !history.isOpen else { return }
+    /// A changes tile fitted to its diff (`size: "fit"`) grown toward `size` to show it again once
+    /// hunks were added (`ChangesTile`), into free space only (`grownFrame`: never over a
+    /// neighbour, such as the terminal an agent types in below it; what doesn't fit scrolls). The
+    /// app's own write-back, credited to the system, and not an undo step, so ⌘Z keeps undoing
+    /// what someone did.
+    public func growFitted(_ id: ObjectID, toward size: CGSize) {
+        guard !history.isOpen, let frame = try? grownFrame(id, toward: size), frame != objects[id]?.frame else { return }
         history.replaying = true
         defer { history.replaying = false }
         _ = try? update(id, frame: frame, actor: .system)

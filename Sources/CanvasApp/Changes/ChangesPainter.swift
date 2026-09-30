@@ -111,8 +111,9 @@ struct ChangesPainter {
     var selection: (file: Int, hunk: Int, lines: Set<Int>)?
     /// A refusal or failure, shown in the header in place of the summary.
     var message: String?
-    /// The Discard button asking to be pressed again (a file's when `hunk` is nil): "Discard?".
-    var discardAsked: (file: Int, hunk: Int?)?
+    /// The Discard button asking to be pressed again (a file's when `hunk` is nil): it reads
+    /// "Discard?" and the header shows `hint` (how to go on), the two always together.
+    var discardAsked: (file: Int, hunk: Int?, hint: String)?
     /// The tile holds the keyboard: the header says which keys work.
     var focused = false
     /// The filter's text; `drawsFilter` draws its box (cards and renders, where no field is).
@@ -306,8 +307,8 @@ struct ChangesPainter {
         var lead: String?
         let rest: String
         let color: NSColor
-        if let message {
-            rest = message
+        if let hint = discardAsked?.hint ?? message {
+            rest = hint
             color = .systemOrange
         } else if let selection, set.files.indices.contains(selection.file) {
             rest = "\(selection.lines.count) line\(selection.lines.count == 1 ? "" : "s") selected · " + (set.comparesCommits ? "m mention" : "s stage · u unstage · r r discard · m mention")

@@ -445,3 +445,52 @@ struct ChangesReviewTests {
         #expect(narrow.height - wide.height >= CGFloat(rows - 1) * ChangesMetrics.lineHeight - 1, "the long line's continuation rows count")
     }
 }
+
+@MainActor
+struct ChangesTileGrowthTests {
+    /// Persona study B9: an agent's fitted changes tile grew down over the terminal below it.
+    @Test func aFittedTileGrowsIntoFreeSpaceNeverOverItsNeighbours() throws {
+        let board = Board(id: "brd_t", root: URL(fileURLWithPath: NSTemporaryDirectory()))
+        let tile = board.create(type: .changes, props: .object([:]), frame: Frame(x: 0, y: 0, w: 600, h: 300))
+        let terminal = board.create(type: .note, props: .object(["markdown": .string("agent")]), frame: Frame(x: 0, y: 340, w: 600, h: 400))
+        board.create(type: .note, props: .object(["markdown": .string("above")]), frame: Frame(x: 0, y: -500, w: 600, h: 460))
+        board.create(type: .note, props: .object(["markdown": .string("left")]), frame: Frame(x: -700, y: -500, w: 660, h: 1300))
+
+        board.growFitted(tile.id, toward: CGSize(width: 600, height: 900))
+        let hemmed = try board.object(tile.id).frame
+        #expect(!hemmed.intersects(try board.object(terminal.id).frame))
+        #expect(hemmed.h >= 300)
+
+        try board.delete(terminal.id)
+        board.growFitted(tile.id, toward: CGSize(width: 600, height: 900))
+        #expect(try board.object(tile.id).frame == Frame(x: 0, y: 0, w: 600, h: 900), "with room it shows the whole diff")
+    }
+}
+
+struct DiscardQuestionTests {
+    let lines = DiscardQuestion.Target(path: "inventory/forecast.py", hunk: "h1", lines: [4, 5])
+    let hunk = DiscardQuestion.Target(path: "inventory/forecast.py", hunk: "h1", lines: nil)
+
+    /// Persona study B11: "Discard?" went back to "Discard" after ~3 s under its hint, and the
+    /// confirming click only asked again.
+    @Test func aQuestionLastsUntilAnsweredWithItsHint() {
+        var question = DiscardQuestion()
+        #expect(question.press(lines, byClick: true) == .asked)
+        #expect(question.hint == "click Discard again to discard 2 selected lines from your files")
+        #expect(question.press(lines, byClick: true) == .confirmed)
+        #expect(question.target == nil && question.hint == nil)
+    }
+
+    @Test func anotherTargetOrMovingOnAsksAgain() {
+        var question = DiscardQuestion()
+        _ = question.press(lines, byClick: true)
+        #expect(question.press(hunk, byClick: true) == .asked, "the whole hunk isn't the lines asked about")
+        #expect(question.hint == "click Discard again to discard this hunk from your files")
+        question.drop()
+        #expect(question.target == nil && question.hint == nil)
+        #expect(question.press(hunk, byClick: false) == .asked)
+        #expect(question.hint == "press r again to discard this hunk from your files")
+        #expect(question.press(DiscardQuestion.Target(path: "inventory/forecast.py", hunk: nil, lines: nil), byClick: true) == .asked)
+        #expect(question.hint == "click Discard again to discard all of inventory/forecast.py from your files")
+    }
+}

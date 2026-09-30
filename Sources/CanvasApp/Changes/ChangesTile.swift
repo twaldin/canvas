@@ -127,6 +127,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     }
 
     override func resignFirstResponder() -> Bool {
+        dropDiscardQuestion()
         needsDisplay = true
         return true
     }
@@ -305,9 +306,9 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         painter.current = current
         painter.selection = selection
         painter.message = message
-        if let asked = discardAsked, let file = set.files.firstIndex(where: { $0.boardPath == asked.path }) {
+        if let asked = discard.target, let hint = discard.hint, let file = set.files.firstIndex(where: { $0.boardPath == asked.path }) {
             let hunk = asked.hunk.flatMap { id in set.files[file].hunks.firstIndex { $0.id == id } }
-            if asked.hunk == nil || hunk != nil { painter.discardAsked = (file, hunk) }
+            if asked.hunk == nil || hunk != nil { painter.discardAsked = (file, hunk, hint) }
         }
         return painter
     }
@@ -315,14 +316,15 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     /// A tile fitted to its diff (its height is what `size: "fit"` gave the last listing, or
     /// Review Changes' compact "No changes" tile) grows with it when hunks are added
     /// (`ChangesMetrics.grown`): the user's up to the default size, an agent's up to the fit
-    /// maximum; one the user or an agent sized otherwise keeps its size.
+    /// maximum; one the user or an agent sized otherwise keeps its size. It grows into free space
+    /// only (`Board.growFitted`), never over its neighbours.
     private func growIfFitted(from old: ChangeSet?, to new: ChangeSet) {
         let natural = object.naturalFrame
         let cap = object.createdBy == .user ? Board.defaultSize(.changes) : nil
         guard let size = ChangesMetrics.grown(CGSize(width: natural.w, height: natural.h), from: old, to: new, viewed: object.props["viewed"],
                                               cap: cap.map { CGSize(width: $0.w, height: $0.h) }) else { return }
         let grown = ObjectZoom.zoomed(size, zoom: object.zoom)
-        board.growFitted(object.id, frame: Frame(x: object.frame.x, y: object.frame.y, w: grown.width.rounded(.up), h: grown.height.rounded(.up)))
+        board.growFitted(object.id, toward: CGSize(width: grown.width.rounded(.up), height: grown.height.rounded(.up)))
     }
 
     /// Working-tree writes, and the index, HEAD, and refs in the git directory, reload the
@@ -421,15 +423,16 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
         needsDisplay = true
     }
 
-    /// A refusal, failure, or question in the header for a few seconds.
+    /// A refusal or failure in the header for a few seconds. Anything said drops a Discard
+    /// question (`askToDiscard`): the user did something else.
     private func show(message text: String, for duration: TimeInterval = 6) {
         message = text
+        discard.drop()
         refreshPainter()
         messageWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 self?.message = nil
-                self?.discardAsked = nil
                 self?.refreshPainter()
             }
         }
@@ -585,7 +588,10 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             baseMenu(below: lead.rect).popUp(positioning: nil, at: NSPoint(x: lead.rect.minX, y: lead.rect.maxY), in: self)
             return
         }
-        guard let hit = painter.hit(at: point, width: bounds.width, scroll: scroll) else { return }
+        let hit = painter.hit(at: point, width: bounds.width, scroll: scroll)
+        // A press anywhere but on a Discard button is the user moving on from its question.
+        if case .button(.revert, _, _)? = hit {} else { dropDiscardQuestion() }
+        guard let hit else { return }
         switch hit {
         case .button(let action, let file, let hunk):
             let lines = hunk.flatMap { hunk in selection.flatMap { $0.file == file && $0.hunk == hunk ? $0.lines : nil } }
@@ -739,6 +745,8 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
 
     /// Keys only with the keyboard in the tile, so typing elsewhere can never stage or discard.
     override func keyDown(with event: NSEvent) {
+        let key = Self.key(event)
+        if key != .discard { dropDiscardQuestion() }
         if event.keyCode == 53, Self.modifiers(event).isEmpty {
             if selection != nil {
                 selection = nil
@@ -748,7 +756,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
             }
             return
         }
-        guard let key = Self.key(event) else { return super.keyDown(with: event) }
+        guard let key else { return super.keyDown(with: event) }
         switch key {
         case .next: step(1)
         case .previous: step(-1)
@@ -787,37 +795,33 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
 
     private static let pickFirst = "pick a hunk first (j/k or click)"
 
-    /// A Discard asked about (a first `r`, or a first click on a Discard button) while its
-    /// question shows: the file, its hunk (nil: the whole file) and picked lines.
-    private struct DiscardQuestion: Equatable {
-        var path: String
-        var hunk: String?
-        var lines: Set<Int>?
+    /// A Discard asked about (a first `r`, or a first click on a Discard button) and its hint:
+    /// one state, painted as the button's "Discard?" and the header's hint together.
+    private var discard = DiscardQuestion()
+
+    /// The user moved on (another press or key in the tile, the keyboard left it): the question
+    /// and its hint go together.
+    private func dropDiscardQuestion() {
+        guard discard.target != nil else { return }
+        discard.drop()
+        refreshPainter()
     }
 
-    private var discardAsked: DiscardQuestion?
-
-    /// Discard asks first, by key or by click alike: the first `r` or click turns the button
-    /// into "Discard?" and the header says how to go on; the same again while it shows (2 s
-    /// for `r`, 3 s for a click) discards, so one stray key (vim's replace) or click never
-    /// throws work away. A committed hunk has nothing to discard and says so at once.
+    /// Discard asks first (`DiscardQuestion`): the question stays until answered or until the
+    /// user does something else (`dropDiscardQuestion`). A committed hunk has nothing to discard
+    /// and says so at once.
     private func askToDiscard(file: Int, hunk: Int?, lines: Set<Int>?, byClick: Bool) {
         guard let set, set.files.indices.contains(file), hunk.map(set.files[file].hunks.indices.contains) ?? true else {
             return show(message: Self.pickFirst)
         }
         let changed = set.files[file]
         guard ChangesAction.revert.applies(to: changed, hunk: hunk) else { return show(message: ChangesAction.revert.refusal) }
-        let question = DiscardQuestion(path: changed.boardPath, hunk: hunk.map { changed.hunks[$0].id }, lines: lines)
-        if discardAsked == question {
-            discardAsked = nil
-            messageWork?.cancel()
-            message = nil
-            refreshPainter()
-            return perform(.revert, file: file, hunk: hunk, lines: lines)
-        }
-        let what = lines.map { "\($0.count) selected line\($0.count == 1 ? "" : "s")" } ?? (hunk == nil ? "all of \(PathLabel.short(changed.boardPath))" : "this hunk")
-        discardAsked = question
-        show(message: "\(byClick ? "click Discard again" : "press r again") to discard \(what) from your files", for: byClick ? 3 : 2)
+        let target = DiscardQuestion.Target(path: changed.boardPath, hunk: hunk.map { changed.hunks[$0].id }, lines: lines)
+        messageWork?.cancel()
+        message = nil
+        let answer = discard.press(target, byClick: byClick)
+        refreshPainter()
+        if answer == .confirmed { perform(.revert, file: file, hunk: hunk, lines: lines) }
     }
 
     /// The next or previous hunk of an unfolded, listed file becomes current and scrolls into view.

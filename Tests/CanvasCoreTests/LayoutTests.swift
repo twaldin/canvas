@@ -205,7 +205,7 @@ final class LayoutApiTests {
 
     /// A prop the schema defines must never be reported as unknown.
     @Test func knownPropsAreExactlyTheSchemas() throws {
-        let schema = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../schema/canvas-api.json")
+        let schema = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../schema/chalkwork-api.json")
         let definitions = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: schema))["definitions"]
         for type in ObjectType.allCases {
             let name = type.rawValue.prefix(1).uppercased() + type.rawValue.dropFirst() + "Props"

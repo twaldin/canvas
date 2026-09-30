@@ -1,0 +1,4 @@
+#!/bin/sh
+# chalkwork CLI launcher (on PATH inside Chalkwork terminal tiles). Requires bun.
+here="$(cd "$(dirname "$0")/.." && pwd)"
+exec bun "$here/cli/chalkwork.ts" "$@"

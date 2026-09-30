@@ -1,6 +1,6 @@
 import Foundation
 
-/// Folds the per-branch boards Canvas kept before boards were per repository (legacy boards,
+/// Folds the per-branch boards Chalkwork kept before boards were per repository (legacy boards,
 /// identified by `<common dir>\n<branch>` or, detached, `<common dir>\n<worktree>`) into one
 /// board per repository: each legacy board's objects become a region of the repository board,
 /// re-rooted onto its canonical root. One-time and idempotent: merged files move to

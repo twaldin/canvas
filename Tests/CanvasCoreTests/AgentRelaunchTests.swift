@@ -2,9 +2,9 @@ import Foundation
 import Testing
 import CanvasCore
 
-/// An agent's lifecycle across a Canvas quit and relaunch: each launch is a new registry, router
+/// An agent's lifecycle across a Chalkwork quit and relaunch: each launch is a new registry, router
 /// and socket on the same board store, as the app sets them up; what an integration said while
-/// Canvas was away waits in the spool (`AgentReportSpool`, written by extensions/agent-hooks/report.ts).
+/// Chalkwork was away waits in the spool (`AgentReportSpool`, written by extensions/agent-hooks/report.ts).
 @MainActor
 final class AgentRelaunchTests {
     let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("cv-\(UUID().uuidString.prefix(8))")
@@ -85,8 +85,8 @@ final class AgentRelaunchTests {
         try before.board.reportLifecycle(tile: codex, kind: "codex", state: .working, message: nil, seq: 100, source: "canvas-codex")
         before.quit()
 
-        // Codex worked on and finished while Canvas was closed; its hooks spooled every report.
-        // One from before the last applied report (it timed out as Canvas quit) is stale.
+        // Codex worked on and finished while Chalkwork was closed; its hooks spooled every report.
+        // One from before the last applied report (it timed out as Chalkwork quit) is stale.
         try spooled(codex, seq: 50, ["kind": "codex", "state": "idle", "source": "canvas-codex", "final": "an older answer"])
         try spooled(codex, seq: 150, ["kind": "codex", "state": "working", "source": "canvas-codex", "call": "f0c82fec96cbd7c6"])
         try spooled(codex, seq: 200, ["kind": "codex", "state": "idle", "source": "canvas-codex", "final": "No blocking findings in d93c070."])
@@ -149,7 +149,7 @@ final class AgentRelaunchTests {
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
         before.quit()
 
-        // omp's `ask` came up while Canvas was closed; the extension spooled its blocked report.
+        // omp's `ask` came up while Chalkwork was closed; the extension spooled its blocked report.
         try spooled(omp, seq: 101, ["kind": "omp", "state": "blocked", "source": "canvas-omp", "message": "Commit?"])
         let after = try launch()
         func lifecycle() -> JSONValue? { after.board.objects[omp]?.props["lifecycle"] }
@@ -168,7 +168,7 @@ final class AgentRelaunchTests {
         try before.board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 100, source: "canvas-omp")
         before.quit()
 
-        // An extension from before the spool dropped what it said while Canvas was closed.
+        // An extension from before the spool dropped what it said while Chalkwork was closed.
         let after = try launch()
         let listed = try await call(after, "agent.list", [:])["result"]?["agents"]?.array?.first
         #expect(listed?["lifecycle"]?["state"] == .string("working") && listed?["lifecycle"]?["restored"] == .bool(true), "\(String(describing: listed))")

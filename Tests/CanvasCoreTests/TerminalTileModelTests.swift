@@ -12,7 +12,7 @@ struct TerminalReferencesTests {
         #expect(refs("supervisor.ts:486, lib/x.py:10-20") == ["supervisor.ts 486-486", "lib/x.py 10-20"])
         #expect(refs("foo.rs#L10-20 and bar.rs#L3-L5 and baz.go#L7") == ["foo.rs 10-20", "bar.rs 3-5", "baz.go 7-7"])
         #expect(refs("/Users/me/app/main.swift:3 ~/x.py:9 ../up/a.c:1") == ["/Users/me/app/main.swift 3-3", "~/x.py 9-9", "../up/a.c 1-1"])
-        #expect(refs("bin/canvas:12") == ["bin/canvas 12-12"], "a path with a slash needs no extension")
+        #expect(refs("bin/chalkwork:12") == ["bin/chalkwork 12-12"], "a path with a slash needs no extension")
     }
 
     @Test func leavesUrlsTimesAndVersionsAlone() {
@@ -311,7 +311,7 @@ struct TerminalBoardTests {
         try board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
         board.terminalProgram(omp, is: "omp")
         #expect(lifecycle(omp) == "working", "the agent holds the terminal: its turn goes on")
-        // Killed mid-turn (or it exited while Canvas was away, its release lost): the shell has the terminal.
+        // Killed mid-turn (or it exited while Chalkwork was away, its release lost): the shell has the terminal.
         board.terminalProgram(omp, is: nil)
         #expect(board.objects[omp]?.props["lifecycle"] == nil && board.objects[omp]?.props["agent"] == nil, "no turn runs at a shell prompt")
 
@@ -478,20 +478,20 @@ struct LoginSessionTests {
         let inherited = [
             "HOME": "/Users/u", "USER": "u", "SHELL": "/bin/zsh", "TMPDIR": "/var/folders/x/T/", "LANG": "en_US.UTF-8",
             "SSH_AUTH_SOCK": "/private/tmp/agent", "XDG_CONFIG_HOME": "/tmp/xdg", "TERM": "dumb",
-            "PATH": "/opt/homebrew/bin:/usr/bin", "CANVAS_SOCKET": "/old.sock",
+            "PATH": "/opt/homebrew/bin:/usr/bin", "CHALKWORK_SOCKET": "/old.sock",
             "CI": "true", "NO_COLOR": "1", "EDITOR": "true", "GIT_EDITOR": "true", "PAGER": "cat",
             "CLAUDECODE": "1", "HERDR_PANE_ID": "p2", "npm_config_yes": "true", "GEMINI_API_KEY": "k",
         ]
-        let stripped = LoginSession.strippedForTile(inherited, keep: ["PATH", "CANVAS_SOCKET", "CANVAS_TILE_ID"])
+        let stripped = LoginSession.strippedForTile(inherited, keep: ["PATH", "CHALKWORK_SOCKET", "CHALKWORK_TILE_ID"])
         #expect(stripped == ["CI", "CLAUDECODE", "EDITOR", "GEMINI_API_KEY", "GIT_EDITOR", "HERDR_PANE_ID", "NO_COLOR", "PAGER", "npm_config_yes"])
     }
 
     @Test func aCanvasLaunchedFromATileTakesTheUsersStartupFilesNotThatTilesIntegration() {
-        let app = "/tmp/cap/Canvas-next.app/Contents/Resources", old = "/tmp/cap/Canvas.app/Contents/Resources"
+        let app = "/tmp/cap/Chalkwork-next.app/Contents/Resources", old = "/tmp/cap/Chalkwork.app/Contents/Resources"
         let fresh = LoginSession.tileShellIntegration(resources: app, inherited: ["PATH": "/opt/homebrew/bin:/usr/bin", "ZDOTDIR": "/Users/u/.config/zsh"])
         #expect(fresh == [
             "PATH": "\(app)/bin:/opt/homebrew/bin:/usr/bin", "PYTHONPATH": "\(app)/clients/python", "ZDOTDIR": "\(app)/extensions/shell/zsh",
-            "CANVAS_ZSH_ZDOTDIR": "/Users/u/.config/zsh", "PROMPT_COMMAND": ". '\(app)/extensions/shell/bash/canvas.bash'",
+            "CHALKWORK_ZSH_ZDOTDIR": "/Users/u/.config/zsh", "PROMPT_COMMAND": ". '\(app)/extensions/shell/bash/chalkwork.bash'",
         ], "launched from the Dock or a terminal")
 
         // Launched by an agent in a tile of another bundle (`dev.sh restart`, a non-interactive
@@ -499,22 +499,22 @@ struct LoginSessionTests {
         // of ~/.zshrc (`_canvas_finish: command not found`).
         let tile = [
             "PATH": "\(old)/bin:/Users/u/.nvm/versions/node/v22/bin:\(old)/bin:/usr/bin", "PYTHONPATH": "\(old)/clients/python:/Users/u/py",
-            "ZDOTDIR": "\(old)/extensions/shell/zsh", "PROMPT_COMMAND": ". '\(old)/extensions/shell/bash/canvas.bash'; history -a",
+            "ZDOTDIR": "\(old)/extensions/shell/zsh", "PROMPT_COMMAND": ". '\(old)/extensions/shell/bash/chalkwork.bash'; history -a",
         ]
         let nested = LoginSession.tileShellIntegration(resources: app, inherited: tile)
-        #expect(nested["CANVAS_ZSH_ZDOTDIR"] == nil, "the user has none: their startup files are in HOME")
+        #expect(nested["CHALKWORK_ZSH_ZDOTDIR"] == nil, "the user has none: their startup files are in HOME")
         #expect(nested["ZDOTDIR"] == "\(app)/extensions/shell/zsh")
         #expect(nested["PATH"] == "\(app)/bin:/Users/u/.nvm/versions/node/v22/bin:/usr/bin")
         #expect(nested["PYTHONPATH"] == "\(app)/clients/python:/Users/u/py")
-        #expect(nested["PROMPT_COMMAND"] == ". '\(app)/extensions/shell/bash/canvas.bash'; history -a")
+        #expect(nested["PROMPT_COMMAND"] == ". '\(app)/extensions/shell/bash/chalkwork.bash'; history -a")
 
         // The user's own ZDOTDIR, kept aside by that tile, is theirs again; an interactive shell
         // had already restored it, and only PROMPT_COMMAND still names the old bundle.
-        let kept = LoginSession.tileShellIntegration(resources: app, inherited: tile.merging(["CANVAS_ZSH_ZDOTDIR": "/Users/u/.config/zsh"]) { $1 })
-        #expect(kept["CANVAS_ZSH_ZDOTDIR"] == "/Users/u/.config/zsh")
+        let kept = LoginSession.tileShellIntegration(resources: app, inherited: tile.merging(["CHALKWORK_ZSH_ZDOTDIR": "/Users/u/.config/zsh"]) { $1 })
+        #expect(kept["CHALKWORK_ZSH_ZDOTDIR"] == "/Users/u/.config/zsh")
         let restored = LoginSession.tileShellIntegration(resources: app, inherited: ["PATH": "\(old)/bin:/usr/bin", "ZDOTDIR": "/Users/u/.config/zsh",
                                                                                     "PROMPT_COMMAND": tile["PROMPT_COMMAND"]!])
-        #expect(restored["CANVAS_ZSH_ZDOTDIR"] == "/Users/u/.config/zsh")
+        #expect(restored["CHALKWORK_ZSH_ZDOTDIR"] == "/Users/u/.config/zsh")
         #expect(restored["PATH"] == "\(app)/bin:/usr/bin")
 
         // Relaunched from a tile of this same bundle: nothing doubles.
@@ -602,7 +602,7 @@ struct GhosttyConfigTests {
         ])
         #expect(config.appKeybinds.filter { $0.action == nil || $0.chord == nil }.map(\.entry.value) == [
             "super+shift+w=close_window", "super+ctrl+f=toggle_fullscreen", "ctrl+a>n=new_tab",
-        ], "dropped: actions Canvas has no equivalent of, and a sequence it can't match")
+        ], "dropped: actions Chalkwork has no equivalent of, and a sequence it can't match")
     }
 
     @Test func aLaterBindingOfTheSameChordOrAClearUndoesARemap() {

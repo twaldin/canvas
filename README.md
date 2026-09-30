@@ -1,10 +1,10 @@
-# Canvas
+# Chalkwork
 
 **Stop describing code to your agent.**
 
 ![A description typed to the agent is deleted. The line is clicked instead, the chip goes with a short question, and the agent's answer starts with that line.](docs/media/stop-describing.gif)
 
-Canvas is a Mac app for coding agents: Claude Code, Codex and any CLI agent run unmodified in real terminals next to the whole file, with your language server and a git gutter against your branch. Hyper-click (⌃⌥⇧⌘-click) a line of code, a DOM element, a note paragraph or a command's output, and it goes with your next prompt, instead of "around line 90". Quit, crash or rebuild the app and your agents keep running in their [zmx](https://github.com/neurosnap/zmx) sessions. Claude Code, Codex, opencode and Gemini CLI (before 0.60) need no setup; [omp](https://github.com/can1357/oh-my-pi) is the first-class agent.
+Chalkwork is a Mac app for coding agents: Claude Code, Codex and any CLI agent run unmodified in real terminals next to the whole file, with your language server and a git gutter against your branch. Hyper-click (⌃⌥⇧⌘-click) a line of code, a DOM element, a note paragraph or a command's output, and it goes with your next prompt, instead of "around line 90". Quit, crash or rebuild the app and your agents keep running in their [zmx](https://github.com/neurosnap/zmx) sessions. Claude Code, Codex, opencode and Gemini CLI (before 0.60) need no setup; [omp](https://github.com/can1357/oh-my-pi) is the first-class agent.
 
 Native Mac app. Free, MIT.
 
@@ -18,20 +18,20 @@ Hyper means all four modifiers, ⌃⌥⇧⌘. Hold them and click, or give yours
 
 ## Quit the app. Your agents keep working.
 
-Terminals live in zmx sessions, so quitting Canvas, a crash, a rebuild or closing a board's tab ends nothing: agents and shells keep running and are back when you open the folder again. An agent that finishes while Canvas is closed comes back done (or blocked) with its answer. After a reboot, omp, Claude Code and Codex tiles relaunch with their recorded session. Closing a terminal tile ends its session; ⌘Z brings the tile back with a new one. To see or end sessions without the app: `zmx list` (Canvas's are named `canvas-obj_…`), `zmx kill <name>`.
+Terminals live in zmx sessions, so quitting Chalkwork, a crash, a rebuild or closing a board's tab ends nothing: agents and shells keep running and are back when you open the folder again. An agent that finishes while Chalkwork is closed comes back done (or blocked) with its answer. After a reboot, omp, Claude Code and Codex tiles relaunch with their recorded session. Closing a terminal tile ends its session; ⌘Z brings the tile back with a new one. To see or end sessions without the app: `zmx list` (Chalkwork's are named `canvas-obj_…`), `zmx kill <name>`.
 
-Terminal tiles are rendered by libghostty and use your Ghostty config (theme, colors, font family, keybinds; Canvas keeps its own font size; zooming the board, or a tile's content with ⌃⌘= / ⌃⌘-, scales text). A program's notification or bell becomes an attention marker, and ⌘-click opens a `path:line` in the output as a code tile.
+Terminal tiles are rendered by libghostty and use your Ghostty config (theme, colors, font family, keybinds; Chalkwork keeps its own font size; zooming the board, or a tile's content with ⌃⌘= / ⌃⌘-, scales text). A program's notification or bell becomes an attention marker, and ⌘-click opens a `path:line` in the output as a code tile.
 
 ## See which agent needs you
 
-Each agent's state is on its tile: blue working, orange needs you (an approval or a question, in a bubble with its message), green done and not yet seen. ⌘J goes to whoever needs you next: blocked agents first, then marked tiles, then finished agents you haven't seen. When Canvas isn't in front, macOS notifications tell you, and a background board's tab shows a dot.
+Each agent's state is on its tile: blue working, orange needs you (an approval or a question, in a bubble with its message), green done and not yet seen. ⌘J goes to whoever needs you next: blocked agents first, then marked tiles, then finished agents you haven't seen. When Chalkwork isn't in front, macOS notifications tell you, and a background board's tab shows a dot.
 
 Which agents report their state and get your mentions:
 
-- **Claude Code and Codex:** no setup, only inside Canvas. Canvas's wrappers come first on a terminal tile's PATH and load the hooks and the canvas skill per session; nothing is written to your global agent config. `CANVAS_AGENT_HOOKS=0` turns this off.
-- **opencode:** no setup, through a plugin Canvas adds per session.
+- **Claude Code and Codex:** no setup, only inside Chalkwork. Chalkwork's wrappers come first on a terminal tile's PATH and load the hooks and the chalkwork skill per session; nothing is written to your global agent config. `CHALKWORK_AGENT_HOOKS=0` turns this off.
+- **opencode:** no setup, through a plugin Chalkwork adds per session.
 - **Gemini CLI:** no setup before 0.60. Gemini 0.60 and later runs as a plain terminal, without a state dot.
-- **omp:** the Canvas extension (one symlink, [Install](#install) step 4). omp's `browser` tool also drives browser tiles.
+- **omp:** the Chalkwork extension (one symlink, [Install](#install) step 4). omp's `browser` tool also drives browser tiles.
 - **aider and any other CLI:** green when they send a terminal notification saying they're waiting; no working or needs-you state. Hyper-V pastes your mentions into them.
 
 ## See what it changed
@@ -48,39 +48,39 @@ The agent points back the same way: it opens the exact code it means beside its 
 
 - **Notes.** Markdown with fences that stay live against the files they quote; a `propose` fence renders as a diff, and a fence whose code moved away says it's stale.
 - **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid, code excerpts); agents chain them into walkthroughs.
-- **Browser tiles.** Agents drive them: omp with its `browser` tool, Claude Code, Codex and any other CLI with `canvas browser` (snapshot, click, type, eval, screenshot). The page's errors show on the tile.
+- **Browser tiles.** Agents drive them: omp with its `browser` tool, Claude Code, Codex and any other CLI with `chalkwork browser` (snapshot, click, type, eval, screenshot). The page's errors show on the tile.
 - **Image tiles.** An image file with a caption, reloaded when the file changes.
 - **Diagram tiles.** Who calls a function, or what it calls, computed live by your language server: symbol-anchored nodes with the lines making each call. Click a node to open its next level, click its `path:line` for the code, Hyper-click to point your agent at it; a deleted function stays with a stale badge instead of vanishing.
 - **Drawing.** Shapes, arrows (straight, orthogonal, or routed around tiles), ink, and titled group regions.
-- **One board per repository.** Every worktree and branch of a repo opens the same board, rooted at the main checkout; opening a worktree names it in the window, starts new terminals there, and goes to its branch's region. Boards Canvas kept per branch before are merged into their repository's board once, each branch's as a region (the old files are kept in `boards/pre-repo-migration/`).
+- **One board per repository.** Every worktree and branch of a repo opens the same board, rooted at the main checkout; opening a worktree names it in the window, starts new terminals there, and goes to its branch's region. Boards Chalkwork kept per branch before are merged into their repository's board once, each branch's as a region (the old files are kept in `boards/pre-repo-migration/`).
 - **Getting around.** Go to… (⌘P) searches every group and tile by title, path, or note heading and takes you to the one you pick. When you've panned into empty space, a "Back to content" pill brings you home, and Zoom to Fit (⌘9) frames the main cluster of work instead of shrinking to fit a few far-off strays.
-- **Agent API.** A local socket with a JSON schema, a Python SDK, a TypeScript client, and the `canvas` CLI, which is on PATH inside Canvas terminal tiles and needs bun. Agents create and lay out objects in atomic batches, measure and fit content, render any region offscreen without moving your view, read the board's activity history, and hand each other board objects instead of re-describing them. Scripts that keep a board current (a region per ticket) name objects with a key and upsert them, so every run updates the same objects.
+- **Agent API.** A local socket with a JSON schema, a Python SDK, a TypeScript client, and the `chalkwork` CLI, which is on PATH inside Chalkwork terminal tiles and needs bun. Agents create and lay out objects in atomic batches, measure and fit content, render any region offscreen without moving your view, read the board's activity history, and hand each other board objects instead of re-describing them. Scripts that keep a board current (a region per ticket) name objects with a key and upsert them, so every run updates the same objects.
 
 ## Install
 
-Requires macOS 14 or later on Apple silicon.
+Requires macOS 14 or later on Apple silicon. Coming from Canvas (this app's name before 0.3.0)? Chalkwork brings your boards along; see [Upgrading from Canvas](CHANGELOG.md#upgrading-from-canvas) for the few things to redo.
 
-1. Download `Canvas-<version>.zip` from [Releases](https://github.com/twaldin/canvas/releases), unzip it, and move `Canvas.app` to `/Applications`.
+1. Download `Chalkwork-<version>.zip` from [Releases](https://github.com/twaldin/canvas/releases), unzip it, and move `Chalkwork.app` to `/Applications`.
 2. The app is ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. Clear the quarantine flag:
    ```sh
-   xattr -dr com.apple.quarantine /Applications/Canvas.app
+   xattr -dr com.apple.quarantine /Applications/Chalkwork.app
    ```
    Or open it once, then choose **Open Anyway** in System Settings › Privacy & Security. On macOS 14, right-clicking the app and choosing **Open** also works; macOS 15 removed that shortcut.
-3. Install the runtime tools. Terminal tiles need zmx. The `canvas` CLI, the Claude Code and Codex hooks, and the omp extension need [bun](https://bun.sh).
+3. Install the runtime tools. Terminal tiles need zmx. The `chalkwork` CLI, the Claude Code and Codex hooks, and the omp extension need [bun](https://bun.sh).
    ```sh
    brew install neurosnap/tap/zmx oven-sh/bun/bun
    ```
    The Python SDK needs Python 3.11 or later; macOS's own `python3` is 3.9 (`brew install python` for a newer one).
-4. Optional, for omp: install the Canvas extension. omp sessions started in a Canvas terminal tile then report their lifecycle, drive follow tiles, and get the canvas skill.
+4. Optional, for omp: install the Chalkwork extension. omp sessions started in a Chalkwork terminal tile then report their lifecycle, drive follow tiles, and get the chalkwork skill.
    ```sh
    mkdir -p ~/.omp/agent/extensions
-   ln -sf /Applications/Canvas.app/Contents/Resources/extensions/omp/canvas.ts ~/.omp/agent/extensions/canvas.ts
+   ln -sf /Applications/Chalkwork.app/Contents/Resources/extensions/omp/chalkwork.ts ~/.omp/agent/extensions/chalkwork.ts
    ```
-5. Optional, for code navigation: install the language servers you want (sourcekit-lsp, pyright, typescript-language-server, gopls, rust-analyzer). Without one, Go to Definition, Find References and Outline answer by text search. Install commands, and how Canvas finds a server (`CANVAS_LSP_<LANGUAGE>` overrides one), are in [docs/install.md](docs/install.md#language-servers).
+5. Optional, for code navigation: install the language servers you want (sourcekit-lsp, pyright, typescript-language-server, gopls, rust-analyzer). Without one, Go to Definition, Find References and Outline answer by text search. Install commands, and how Chalkwork finds a server (`CHALKWORK_LSP_<LANGUAGE>` overrides one), are in [docs/install.md](docs/install.md#language-servers).
 
 ## First steps
 
-1. Open Canvas. It opens a board on your home folder, with **Get Started** beside a practice note. Closed, it stays closed; Help › Get Started brings it back.
+1. Open Chalkwork. It opens a board on your home folder, with **Get Started** beside a practice note. Closed, it stays closed; Help › Get Started brings it back.
 2. Hyper-click the practice note: hold ⌃⌥⇧⌘ (Control, Option, Shift and Command) and click a paragraph. A purple chip, the mention, appears in the tray at the bottom of the window. No Hyper key yet? Select the note and press ⇧⌘M, or give yourself one key: in [Karabiner-Elements](https://karabiner-elements.pqrs.org), Complex Modifications › Add predefined rule › "Change caps_lock to command+control+option+shift".
 3. Press ⌘T for a terminal and run your agent: `claude`, `codex`, `opencode`, or `omp` with its extension (Install step 4). Codex first asks whether to trust the folder.
 4. Ask it something, like "what does this note say?". The chip goes with your prompt, and Get Started checks off both steps.
@@ -88,7 +88,7 @@ Requires macOS 14 or later on Apple silicon.
 
 ## Uninstall
 
-End the terminal sessions first, or they keep running: `zmx list`, then `zmx kill <name>` for each `canvas-obj_…` session. Then delete `/Applications/Canvas.app` and the files Canvas writes, listed step by step in [docs/install.md](docs/install.md#uninstall). Canvas edits no shell, agent or Ghostty config.
+End the terminal sessions first, or they keep running: `zmx list`, then `zmx kill <name>` for each `canvas-obj_…` session. Then delete `/Applications/Chalkwork.app` and the files Chalkwork writes, listed step by step in [docs/install.md](docs/install.md#uninstall). Chalkwork edits no shell, agent or Ghostty config.
 
 ## Build from source
 
@@ -96,9 +96,9 @@ The Command Line Tools are enough; Xcode is not required. Client generation and 
 
 ```sh
 swift build                    # debug build
-scripts/bundle.sh release      # assemble .build/Canvas.app (ad-hoc signed)
+scripts/bundle.sh release      # assemble .build/Chalkwork.app (ad-hoc signed)
 swift run CanvasCoreTests      # test suite (an executable target; see Package.swift)
-bun scripts/gen-clients.ts     # regenerate the Python/TS clients from schema/canvas-api.json
+bun scripts/gen-clients.ts     # regenerate the Python/TS clients from schema/chalkwork-api.json
 ```
 
 `scripts/dev.sh` runs an isolated development instance. See [docs/testing.md](docs/testing.md).
@@ -110,7 +110,7 @@ bun scripts/gen-clients.ts     # regenerate the Python/TS clients from schema/ca
 - [docs/contracts.md](docs/contracts.md): the API, tile, and scene contracts.
 - [docs/testing.md](docs/testing.md): behavior tests and a development instance.
 - [docs/releasing.md](docs/releasing.md): signing, notarizing, and publishing a release.
-- [skills/canvas/SKILL.md](skills/canvas/SKILL.md): how agents work on the canvas.
+- [skills/chalkwork/SKILL.md](skills/chalkwork/SKILL.md): how agents work on the canvas.
 
 ## Support, contributing, security
 
@@ -120,4 +120,4 @@ Bugs and questions go in [GitHub issues](https://github.com/twaldin/canvas/issue
 
 MIT. See [LICENSE](LICENSE).
 
-Terminals are [Ghostty](https://ghostty.org)'s, through [libghostty-spm](https://github.com/Lakr233/libghostty-spm); code tiles highlight with [tree-sitter](https://tree-sitter.github.io) and notes parse Markdown with [swift-markdown](https://github.com/swiftlang/swift-markdown); sessions are [zmx](https://github.com/neurosnap/zmx)'s (installed separately, not part of the app). Every third-party component in the app and its license is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which ships inside `Canvas.app` too. One of them, GNU libintl (inside libghostty), is under the LGPL 2.1: the notices say where its source is and how to relink Canvas with a modified copy.
+Terminals are [Ghostty](https://ghostty.org)'s, through [libghostty-spm](https://github.com/Lakr233/libghostty-spm); code tiles highlight with [tree-sitter](https://tree-sitter.github.io) and notes parse Markdown with [swift-markdown](https://github.com/swiftlang/swift-markdown); sessions are [zmx](https://github.com/neurosnap/zmx)'s (installed separately, not part of the app). Every third-party component in the app and its license is in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which ships inside `Chalkwork.app` too. One of them, GNU libintl (inside libghostty), is under the LGPL 2.1: the notices say where its source is and how to relink Chalkwork with a modified copy.

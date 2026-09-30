@@ -1,5 +1,5 @@
 {
-  "description": "Canvas lifecycle, mentions, follow mode (extensions/agent-hooks/hook.ts).",
+  "description": "Chalkwork lifecycle, mentions, follow mode (extensions/agent-hooks/hook.ts).",
   "hooks": {
     "SessionStart": [
       {

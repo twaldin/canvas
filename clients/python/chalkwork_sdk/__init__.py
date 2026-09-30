@@ -1,23 +1,23 @@
-"""Canvas Python SDK.
+"""Chalkwork Python SDK.
 
 Recommended surface for agents with a persistent REPL:
 
-    from canvas_sdk import canvas
+    from chalkwork_sdk import canvas
     board = canvas.board.get()
     canvas.object.create(type="note", props={"markdown": "# Hypothesis"})
 
-The connection comes from CANVAS_SOCKET / CANVAS_TILE_ID / CANVAS_BOARD_ID, which every
-Canvas terminal tile sets. A process that did not inherit them (e.g. a REPL kernel started
+The connection comes from CHALKWORK_SOCKET / CHALKWORK_TILE_ID / CHALKWORK_BOARD_ID, which every
+Chalkwork terminal tile sets. A process that did not inherit them (e.g. a REPL kernel started
 with a filtered environment) connects explicitly; `canvas` then uses that connection:
 
-    from canvas_sdk import connect
-    canvas = connect(socket="/…/canvas.sock", tile="obj_…", board="brd_…")
+    from chalkwork_sdk import connect
+    canvas = connect(socket="/…/chalkwork.sock", tile="obj_…", board="brd_…")
 
-Every method mirrors schema/canvas-api.json. `caller` and `board` are filled from the
+Every method mirrors schema/chalkwork-api.json. `caller` and `board` are filled from the
 client's tile and board. Params that are Python keywords take a trailing underscore:
 `canvas.object.get(id="obj_…", as_="graph")`. Image methods take `out=` (relative paths
 resolve against this process's cwd; the app writes the file); without it the app writes a new
-file under $TMPDIR/canvas-renders/. Either way the result's `path` names it.
+file under $TMPDIR/chalkwork-renders/. Either way the result's `path` names it.
 
 After an app restart the next call reconnects on its own. Connection failures raise
 `CanvasError` with code `unavailable`; when the request was already sent, the message says
@@ -44,11 +44,11 @@ from typing import Any
 from ._generated import ENV_DEFAULTS, METHODS, RESEND_METHODS, SCHEMA_VERSION, GeneratedApi
 from .compositions import Compositions
 
-DEFAULT_SOCKET = os.path.expanduser("~/Library/Application Support/Canvas/canvas.sock")
+DEFAULT_SOCKET = os.path.expanduser("~/Library/Application Support/Chalkwork/chalkwork.sock")
 # The app takes 5-10 s to restart; a request that never left waits this long for it.
 RECONNECT_TIMEOUT = 15.0
 
-__all__ = ["Canvas", "CanvasError", "Compositions", "canvas", "connect", "METHODS", "SCHEMA_VERSION", "DEFAULT_SOCKET"]
+__all__ = ["Chalkwork", "CanvasError", "Compositions", "canvas", "connect", "METHODS", "SCHEMA_VERSION", "DEFAULT_SOCKET"]
 
 
 class CanvasError(Exception):
@@ -61,16 +61,16 @@ class CanvasError(Exception):
 def _resolve_socket(explicit: str | os.PathLike[str] | None) -> str:
     if explicit:
         return os.fspath(explicit)
-    if os.environ.get("CANVAS_SOCKET"):
-        return os.environ["CANVAS_SOCKET"]
+    if os.environ.get("CHALKWORK_SOCKET"):
+        return os.environ["CHALKWORK_SOCKET"]
     if os.path.exists(DEFAULT_SOCKET):
         return DEFAULT_SOCKET
     raise CanvasError(
         "unavailable",
-        f"CANVAS_SOCKET is unset and the default socket {DEFAULT_SOCKET} does not exist, so this process "
-        "has no Canvas connection (it did not inherit the terminal tile's environment). In the Canvas "
-        "terminal run `echo $CANVAS_SOCKET $CANVAS_TILE_ID $CANVAS_BOARD_ID`, then connect with those "
-        "values: `canvas = canvas_sdk.connect(socket=..., tile=..., board=...)`.",
+        f"CHALKWORK_SOCKET is unset and the default socket {DEFAULT_SOCKET} does not exist, so this process "
+        "has no Chalkwork connection (it did not inherit the terminal tile's environment). In the Chalkwork "
+        "terminal run `echo $CHALKWORK_SOCKET $CHALKWORK_TILE_ID $CHALKWORK_BOARD_ID`, then connect with those "
+        "values: `canvas = chalkwork_sdk.connect(socket=..., tile=..., board=...)`.",
     )
 
 
@@ -90,16 +90,16 @@ def _sandboxed(path: str, error: OSError) -> bool:
 
 def _sandbox_message(path: str, error: OSError) -> str:
     return (
-        f"Canvas socket {path} exists but connecting to it failed ({errno.errorcode.get(error.errno or 0, error)}): "
+        f"Chalkwork socket {path} exists but connecting to it failed ({errno.errorcode.get(error.errno or 0, error)}): "
         "a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it"
     )
 
 
-class Canvas(GeneratedApi):
-    """One persistent, thread-safe connection to the Canvas API socket.
+class Chalkwork(GeneratedApi):
+    """One persistent, thread-safe connection to the Chalkwork API socket.
 
-    `socket_path`, `tile`, `board`: explicit values win, then CANVAS_SOCKET / CANVAS_TILE_ID /
-    CANVAS_BOARD_ID, then (socket only) the default path if it exists; otherwise CanvasError.
+    `socket_path`, `tile`, `board`: explicit values win, then CHALKWORK_SOCKET / CHALKWORK_TILE_ID /
+    CHALKWORK_BOARD_ID, then (socket only) the default path if it exists; otherwise CanvasError.
     `timeout`: per-call seconds (default none; agent.wait may block for minutes).
     `reconnect_timeout`: how long a call whose request was not sent waits for the socket to come back.
     """
@@ -195,7 +195,7 @@ class Canvas(GeneratedApi):
         except OSError as error:
             # A partial line is discarded by the app (requests are newline-framed).
             self.close()
-            raise _NotSent(f"Canvas socket {self.socket_path}: {error}") from error
+            raise _NotSent(f"Chalkwork socket {self.socket_path}: {error}") from error
 
     def _receive(self, request_id: str, method: str) -> dict[str, Any]:
         try:
@@ -212,7 +212,7 @@ class Canvas(GeneratedApi):
         except OSError as error:
             self.close()
             raise _ReplyLost(
-                f"Canvas connection lost after sending {method} ({error}); it may or may not have applied — re-read before retrying",
+                f"Chalkwork connection lost after sending {method} ({error}); it may or may not have applied — re-read before retrying",
             ) from None
 
     def _open(self, wait: float) -> None:
@@ -235,7 +235,7 @@ class Canvas(GeneratedApi):
                 missed_there = False
                 if time.monotonic() >= deadline:
                     waited = f" after waiting {wait:g}s for the app" if wait else ""
-                    raise _NotSent(f"Canvas socket {self.socket_path}: {error.strerror or error}{waited}") from None
+                    raise _NotSent(f"Chalkwork socket {self.socket_path}: {error.strerror or error}{waited}") from None
                 time.sleep(0.2)
                 continue
             self._sock = sock
@@ -255,22 +255,22 @@ class Canvas(GeneratedApi):
 class _LazyCanvas:
     """Module-level `canvas`: the last `connect()` result, else a client that connects on first use."""
 
-    _instance: Canvas | None = None
+    _instance: Chalkwork | None = None
 
     def __getattr__(self, name: str) -> Any:
         if _LazyCanvas._instance is None:
-            _LazyCanvas._instance = Canvas()
+            _LazyCanvas._instance = Chalkwork()
         return getattr(_LazyCanvas._instance, name)
 
 
-def connect(socket: str | os.PathLike[str] | None = None, tile: str | None = None, board: str | None = None) -> Canvas:
-    """Connect with explicit values (each falls back to CANVAS_SOCKET / CANVAS_TILE_ID / CANVAS_BOARD_ID).
+def connect(socket: str | os.PathLike[str] | None = None, tile: str | None = None, board: str | None = None) -> Chalkwork:
+    """Connect with explicit values (each falls back to CHALKWORK_SOCKET / CHALKWORK_TILE_ID / CHALKWORK_BOARD_ID).
     The module-level `canvas` uses this client from now on."""
-    client = Canvas(socket, tile=tile, board=board)
+    client = Chalkwork(socket, tile=tile, board=board)
     previous, _LazyCanvas._instance = _LazyCanvas._instance, client
     if previous is not None:
         previous.close()
     return client
 
 
-canvas: Canvas = _LazyCanvas()  # type: ignore[assignment]
+canvas: Chalkwork = _LazyCanvas()  # type: ignore[assignment]

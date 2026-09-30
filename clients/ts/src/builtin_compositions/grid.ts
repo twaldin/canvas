@@ -17,7 +17,7 @@ export async function arrange(
   const objects = new Map((await canvas.board.get()).objects.map((o) => [o.id, o]));
   const missing = ids.filter((id) => !objects.has(id));
   if (missing.length > 0) throw new Error(`not on this board: ${missing.join(", ")}`);
-  const anchorId = options.beside ?? process.env.CANVAS_TILE_ID;
+  const anchorId = options.beside ?? process.env.CHALKWORK_TILE_ID;
   const anchor = anchorId && !ids.includes(anchorId) ? objects.get(anchorId)?.frame : undefined;
   const obstacles = [...objects.values()].filter((o) => !ids.includes(o.id) && !NON_BLOCKING[o.type]).map((o) => o.frame);
   const frames = plan(ids.map((id) => objects.get(id)!.frame), anchor, obstacles, options);

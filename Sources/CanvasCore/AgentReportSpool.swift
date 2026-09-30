@@ -1,9 +1,9 @@
 import Foundation
 
-/// Lifecycle reports an agent integration couldn't deliver because Canvas wasn't there to take
+/// Lifecycle reports an agent integration couldn't deliver because Chalkwork wasn't there to take
 /// them (quit, restarting, crashed): `extensions/agent-hooks/report.ts` writes each as a file
 /// `<tile>/<seq>-<pid>-<random>.json` in `agent-reports/` beside the socket, holding
-/// `{"seq", "method", "params"}` (`agent.report` with its params, or `agent.release`). Canvas
+/// `{"seq", "method", "params"}` (`agent.report` with its params, or `agent.release`). Chalkwork
 /// replays a board's when it opens the board (`BoardRegistry.open`), oldest `seq` first, and
 /// deletes them; the staleness rule (`Board.lifecycleSeq`, saved with the board) drops any
 /// older than a report already applied. docs/contracts.md, Agent integrations.

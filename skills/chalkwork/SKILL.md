@@ -1,17 +1,17 @@
 ---
-name: canvas
-description: You are running inside Canvas (CANVAS_ENV=1), an infinite canvas where your terminal sits next to tiles and drawings the user also sees. Use before showing code/notes/HTML explainers/diagrams/changes on the canvas, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
+name: chalkwork
+description: You are running inside Chalkwork (CHALKWORK_ENV=1), an infinite canvas where your terminal sits next to tiles and drawings the user also sees. Use before showing code/notes/HTML explainers/diagrams/changes on the canvas, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
 ---
 
-# Working in Canvas
+# Working in Chalkwork
 
 Your terminal is one tile on an infinite canvas the user is looking at.
 Next to it live code tiles, changes (review) tiles, diagram tiles computed from the code, markdown notes, image tiles, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
 You and the user read and change the same objects: the canvas is the shared working state; your transcript stays in your terminal.
 
-You are in Canvas when `CANVAS_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
-(lifecycle, mentions, follow mode, this skill; `CANVAS_AGENT_HOOKS=0` turns it off for Claude and Codex).
-Your tile's environment also has `CANVAS_TILE_ID` (you), `CANVAS_BOARD_ID`, `CANVAS_BOARD_ROOT` (the directory this canvas belongs to: a repo's main checkout, whichever worktree you are in), and `CANVAS_SOCKET`.
+You are in Chalkwork when `CHALKWORK_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
+(lifecycle, mentions, follow mode, this skill; `CHALKWORK_AGENT_HOOKS=0` turns it off for Claude and Codex).
+Your tile's environment also has `CHALKWORK_TILE_ID` (you), `CHALKWORK_BOARD_ID`, `CHALKWORK_BOARD_ROOT` (the directory this canvas belongs to: a repo's main checkout, whichever worktree you are in), and `CHALKWORK_SOCKET`.
 
 ## Known surprises
 
@@ -24,7 +24,7 @@ Read these before you build anything; each one cost earlier agents a round trip.
   `frame: {w, h}` alone places that size the same way. Read the returned frame to place related objects.
   For deliberate layouts use `size: "fit"` and the layout helpers (`layout.place`/`stack`/`grid`/`translate`, then `layout.check`), not hand-computed coordinates:
   those collided with the follow tile and other agents' tiles. When `object.update` returns `overlaps`, move the object or grow it the other way.
-- **Renders go to a temp file.** `canvas render obj_…` without `--out` writes a new PNG under `$TMPDIR/canvas-renders/` and returns its `path`. Never pass an `--out` inside the repo: it shows up in `git status`.
+- **Renders go to a temp file.** `chalkwork render obj_…` without `--out` writes a new PNG under `$TMPDIR/chalkwork-renders/` and returns its `path`. Never pass an `--out` inside the repo: it shows up in `git status`.
 - **Write locations as `path:line`.** The user can ⌘-click `src/a.ts:42`, `:42:7`, `:10-20` or `#L10-20` (and Python `File "x.py", line N` or pdb `x.py(N)` frames) in your terminal output to open that code beside your terminal,
   resolved from your shell's cwd, then the board root. A bare `core.py:42` opens only when that name is unique or clearly nearest the cwd; deploy paths from production stack traces (`file:///srv/app/server/x.ts:39:5` → the repo's `server/x.ts:39`) and file names without a line (`Applied edit to url.go`) open too; `/rustc/…` std frames aren't links.
   So write repo-relative (or deploy) `path:line`, not prose like "in the store module".
@@ -41,28 +41,28 @@ Read these before you build anything; each one cost earlier agents a round trip.
 
 - **You have a persistent Python REPL (e.g. an `eval` tool): use the Python SDK.** One connection, typed methods, compositions.
   ```python
-  from canvas_sdk import canvas
+  from chalkwork_sdk import canvas
   board = canvas.board.get()                      # manifest of every object
   note = canvas.object.create(type="note", props={"markdown": "# Plan"})["object"]
   canvas.agent.wait(target="reviewer", timeout_ms=600000)   # keywords are snake_case (CLI: --timeoutMs)
   ```
-  omp's `eval` kernel does not inherit `CANVAS_*` (omp gives it an allowlisted environment), so connect explicitly there;
-  your system prompt has the exact line, or read the values with `echo $CANVAS_SOCKET $CANVAS_TILE_ID $CANVAS_BOARD_ID` in bash:
+  omp's `eval` kernel does not inherit `CHALKWORK_*` (omp gives it an allowlisted environment), so connect explicitly there;
+  your system prompt has the exact line, or read the values with `echo $CHALKWORK_SOCKET $CHALKWORK_TILE_ID $CHALKWORK_BOARD_ID` in bash:
   ```python
-  from canvas_sdk import connect
-  canvas = connect(socket="…/canvas.sock", tile="obj_…", board="brd_…")   # `from canvas_sdk import canvas` uses it too
+  from chalkwork_sdk import connect
+  canvas = connect(socket="…/chalkwork.sock", tile="obj_…", board="brd_…")   # `from chalkwork_sdk import canvas` uses it too
   ```
-- **Otherwise: the `canvas` CLI** (on PATH in every tile; it reads `CANVAS_SOCKET`, `CANVAS_TILE_ID`, `CANVAS_BOARD_ID`, so pass them through when you run it from a kernel that lacks them).
+- **Otherwise: the `chalkwork` CLI** (on PATH in every tile; it reads `CHALKWORK_SOCKET`, `CHALKWORK_TILE_ID`, `CHALKWORK_BOARD_ID`, so pass them through when you run it from a kernel that lacks them).
   Methods are `namespace.method`; params are `--key value` (values parse as JSON when they can; an array param takes one item, a comma-separated list of strings, or a repeated flag: `--until working,blocked`, `--ids obj_a --ids obj_b`), a bare `--flag` (true), or `--json '{…}'` (`--json @params.json`, or `@-` for stdin, for big HTML).
   ```sh
-  canvas methods                                   # every method with its description
-  canvas methods view.render                       # its params (types, defaults, required) and result
-  canvas methods CodeProps                         # a type's props (any *Props: NoteProps, HtmlProps, …)
-  canvas object.create --type note --json '{"props":{"markdown":"# Plan"}}'
-  canvas get obj_… --as graph                      # object.get shorthand
-  canvas render obj_…                              # view.render shorthand (also obj_a,obj_b or x,y,w,h); prints the PNG path
+  chalkwork methods                                   # every method with its description
+  chalkwork methods view.render                       # its params (types, defaults, required) and result
+  chalkwork methods CodeProps                         # a type's props (any *Props: NoteProps, HtmlProps, …)
+  chalkwork object.create --type note --json '{"props":{"markdown":"# Plan"}}'
+  chalkwork get obj_… --as graph                      # object.get shorthand
+  chalkwork render obj_…                              # view.render shorthand (also obj_a,obj_b or x,y,w,h); prints the PNG path
   ```
-  "The socket exists but connecting to it failed … a sandbox may be blocking" means your sandbox blocks the unix socket, not that the app is down: run canvas commands outside it (Codex: escalated) or ask the user to allow the socket.
+  "The socket exists but connecting to it failed … a sandbox may be blocking" means your sandbox blocks the unix socket, not that the app is down: run chalkwork commands outside it (Codex: escalated) or ask the user to allow the socket.
 
 Results are objects, never bare values: `object.create`/`update`/`get` return `{object}` (the new id is `result["object"]["id"]`), and create/update add `warnings` for a prop key the type doesn't know (a typo like `colour`): fix it.
 `caller` (you) and `board` are filled from the client's tile and board, so objects you create are attributed to you and placed next to your terminal.
@@ -85,14 +85,14 @@ When the user Hyper-clicks things on the canvas and then prompts you, the prompt
 "this", "these", "here", "that box" in the prompt refer to these entries, in order.
 A mention of your own terminal says `(your terminal)`; other terminals are named, so "this terminal" means the one mentioned, not yours.
 Mentions arrive only in prompts submitted in the terminal the tray shows (`view.get` `promptTarget`); to see what is staged use `tray.list`, never `tray.drain`.
-Excerpts are short; read the real file or `canvas get <id>` for more.
-A drawn shape means nothing by itself: read what it encloses and connects (`canvas get <id> --as graph`) or look at it (`canvas render <id>`).
-A shape `over` a tile marks a region in the tile's local units (`partly over`: more than half of it, clipped to the tile); look at that part with `canvas render <tile>`.
+Excerpts are short; read the real file or `chalkwork get <id>` for more.
+A drawn shape means nothing by itself: read what it encloses and connects (`chalkwork get <id> --as graph`) or look at it (`chalkwork render <id>`).
+A shape `over` a tile marks a region in the tile's local units (`partly over`: more than half of it, clipped to the tile); look at that part with `chalkwork render <tile>`.
 On a browser or HTML tile the mention adds `page elements under it (<url>):` lines (`<selector> "<text>"`), read when the prompt was sent: re-check with the selectors or a render if the page may have changed.
 A Hyper-click on a page's `<canvas>`, `<video>` or `<img>` carries `pixel (x, y) of W×H` in the element's own pixels: use it directly instead of mapping a drawn shape's region.
-A Hyper-click on a group's title or empty interior mentions the whole group: `[n] group "Ingress" of 6 objects · group obj_…`, then each member (`- note obj_… "title"` with its first lines, `- code obj_… "path" · lines 40-52` with a few of them, a page's URL, a terminal's name), then `arrows among them:` (`from "title" → to "title" · "label" (relation)`): the arrows are the diagram's meaning, read them as its flow. Member text is cut short and a long group ends `(left out to keep this short: …)`: `canvas get <id>` a member for all of it.
+A Hyper-click on a group's title or empty interior mentions the whole group: `[n] group "Ingress" of 6 objects · group obj_…`, then each member (`- note obj_… "title"` with its first lines, `- code obj_… "path" · lines 40-52` with a few of them, a page's URL, a terminal's name), then `arrows among them:` (`from "title" → to "title" · "label" (relation)`): the arrows are the diagram's meaning, read them as its flow. Member text is cut short and a long group ends `(left out to keep this short: …)`: `chalkwork get <id>` a member for all of it.
 A terminal mention quotes its screen (one over 41 lines keeps 40: the first 3, the last 10 and failure lines).
-A command's output (``[n] command `go test ./...` · exit 1``) ends `· read it: canvas agent.read --target <id> --block -N` while that block can still be read (after `clear` the mention's own lines are all there is): run exactly that to read the block (up to its last 2000 lines).
+A command's output (``[n] command `go test ./...` · exit 1``) ends `· read it: chalkwork agent.read --target <id> --block -N` while that block can still be read (after `clear` the mention's own lines are all there is): run exactly that to read the block (up to its last 2000 lines).
 Whether the user's last command passed: `lastCommand` (`{command, exit, durationMs}`) in `agent.list`/`object.get`, not the screen.
 An `(edited)` marker means what the mention holds changed after the user staged it (a note's text, a page's address, a Stage/Unstage/Discard of that code mention's own lines): re-read it.
 Every mention kind and field: `references/api.md` "Reading the board".
@@ -110,14 +110,14 @@ Every mention kind and field: `references/api.md` "Reading the board".
 It never moves the user's view and doesn't depend on it, so never put probe objects in the user's view to look at them.
 
 ```sh
-canvas render obj_…                                  # one object (the canvas region under it)
-canvas render obj_a,obj_b --scale 2                  # the region covering several
-canvas render 0,1200,2400,1600 --exclude '["terminal"]'   # a canvas rect x,y,w,h
-canvas render obj_… --full                           # a note/HTML tile's whole content (code: its whole range), below its frame too
+chalkwork render obj_…                                  # one object (the canvas region under it)
+chalkwork render obj_a,obj_b --scale 2                  # the region covering several
+chalkwork render 0,1200,2400,1600 --exclude '["terminal"]'   # a canvas rect x,y,w,h
+chalkwork render obj_… --full                           # a note/HTML tile's whole content (code: its whole range), below its frame too
 ```
 
 Per object drawn the result has `state` (`placeholder`: it didn't paint in time, `reason` says why) and `overflow {x, y}` (content beyond the frame: resize by that much, or render `--full`).
-`canvas board.history --since <cursor>` lists who created, moved, and deleted what (`actor` `user`, `system` or `agent:<tile>`) since your last look.
+`chalkwork board.history --since <cursor>` lists who created, moved, and deleted what (`actor` `user`, `system` or `agent:<tile>`) since your last look.
 Every result field, pixel-to-canvas mapping, and history detail: `references/rendering.md`.
 
 ## Show your work on the canvas
@@ -167,7 +167,7 @@ Markdown code fences are live when anchored to real code, so prefer anchors over
 - Proposed change, rendered as a diff against the real range: add `propose` (```` ```ts file=src/store.ts#L41-48 propose ````) and write the new code in the fence. An applied one shows "✓ applied"; no need to delete it.
 - Plain fences are free-written snippets; `file:line` references anywhere in a note become links; `![alt](out/fig.png)` shows an image (board-relative, or absolute inside the board root or the temp dir).
 
-Whether excerpts are still true: `canvas get <note>` → `fences` (per fence `state` live|relocated|stale|applied|missing, `range`, `reason`), not a render searched for badges.
+Whether excerpts are still true: `chalkwork get <note>` → `fences` (per fence `state` live|relocated|stale|applied|missing, `range`, `reason`), not a render searched for badges.
 Table cells wrap to the note's width, so keep evidence timelines as `| time | event | evidence |` tables; `layout.check` `truncated` `{what: "table", x}` means too many columns: widen the note by `x` or split the table.
 
 ### Code tiles
@@ -180,16 +180,16 @@ A header "⚠ git failed: …" means git couldn't answer (cancelled, timed out, 
 - **`size: "fit"`** sizes a tile to exactly its range (up to 960 pt wide; longer lines soft-wrap, so keep them in the range). Pass the `range` even when `symbol` is set.
 - **`pinnedCommit`** (a sha, tag, branch, or `HEAD~N`) shows the file as of that commit, read-only: for old-vs-new comparisons, or a PR head you fetched. `null` goes back to the working tree; for "what changed since X" use `diffBase: "<sha>"` instead.
 - **`ref`** (a branch) anchors the tile to the branch, not one checkout: while a worktree has it checked out the tile reads that worktree live (gutter, edits); otherwise the branch's commit, read-only; after the worktree and branch are deleted it keeps showing the merge commit ("merged in <sha>") or, for a squash merge, the branch's last commit ("branch gone, showing <sha>"). Use it for tiles about a PR lane whose worktree will go away; `path` stays repo-relative. `pinnedCommit` wins if both are set. Notes and HTML take `ref` too: their excerpts and links read at the branch (the body stays inline).
-- **Ranges stay on their code** as lines move (the app rewrites `range`), so don't retarget evidence tiles by hand; `canvas get` → `rangeStatus` `stale` means the code is gone.
+- **Ranges stay on their code** as lines move (the app rewrites `range`), so don't retarget evidence tiles by hand; `chalkwork get` → `rangeStatus` `stale` means the code is gone.
 
 Paths may point outside the board root (another repo, a worktree); a path or commit that doesn't exist is `not_found`. Every code-tile prop: `references/api.md` "Objects".
-Code navigation (Go to Definition, Find References, Outline) needs the language's server; if a panel says it wasn't found, answers are text search: tell the user where Canvas looked (`references/ui.md` "Zoom and keys") rather than suggesting PATH edits.
+Code navigation (Go to Definition, Find References, Outline) needs the language's server; if a panel says it wasn't found, answers are text search: tell the user where Chalkwork looked (`references/ui.md` "Zoom and keys") rather than suggesting PATH edits.
 
 ### Changes tiles
 
-To show the user what you changed, create a changes tile instead of an HTML diff: `canvas object.create --type changes --json '{"props":{},"size":"fit"}'`.
+To show the user what you changed, create a changes tile instead of an HTML diff: `chalkwork object.create --type changes --json '{"props":{},"size":"fit"}'`.
 Props: `base` (default `HEAD`: uncommitted work; `merge-base`: everything the branch changed, a PR's view; or a commit), optional `root` (another worktree of the board's repo, e.g. `"../wt-agent"`), `paths` and `title`. Creating it again with the same props returns your existing tile (`reused: true`).
-A branch's or PR's diff without checking it out: `{"base": "origin/main", "head": "<branch or pull/N/head>"}`, read-only from git objects (head vs its merge-base with base; renames and deletions shown; no Stage/Discard; a line click opens a code tile pinned to that side's commit). A ref the repo lacks shows the exact `git fetch` to run: Canvas never fetches, so fetch first.
+A branch's or PR's diff without checking it out: `{"base": "origin/main", "head": "<branch or pull/N/head>"}`, read-only from git objects (head vs its merge-base with base; renames and deletions shown; no Stage/Discard; a line click opens a code tile pinned to that side's commit). A ref the repo lacks shows the exact `git fetch` to run: Chalkwork never fetches, so fetch first.
 `{"ref": "<branch>"}` instead of `root`: the worktree that has that branch checked out while one does (live, stageable), else its commits as with `head`; once the branch is deleted it keeps showing the last commit it read (`props.refSha`), marked `merged in <sha>` or `branch gone`.
 The user stages, unstages or discards per file, hunk, or selected lines; Stage/Unstage never change files: tell a user unsure of git so when they review your work.
 Read what they kept with `object.get` (`changes.files[].hunks[]` with `status` and `lines`; `props.reviewed[]`), no render needed. Every field: `references/api.md` "Objects".
@@ -197,10 +197,10 @@ Read what they kept with `object.get` (`changes.files[].hunks[]` with `status` a
 ### Diagram tiles
 
 For "show me who calls X" (or what X calls), create a live call graph from the language server instead of drawing one:
-`canvas object.create --type diagram --json '{"props": {"symbol": "AgentReportSpool.read", "direction": "incoming", "depth": 2}}'`.
+`chalkwork object.create --type diagram --json '{"props": {"symbol": "AgentReportSpool.read", "direction": "incoming", "depth": 2}}'`.
 
 - `symbol` is `Type.member` or a bare name (labels optional), found through the language server's workspace symbols when no path is given; when several functions have that name, `graph.error` lists them (`path:line (Container.name)`): recreate with `path` or a `Container.member` symbol. `line` (with `path`) works instead of `symbol`. `direction`: `incoming` (callers), `outgoing` (callees) or `both`; `depth` 1–4 (default 2).
-- The graph is computed by the language server (sourcekit-lsp answers from the index of the user's last `swift build`; its first answer in a project takes ~20 s). `canvas object.reload --id <tile>` computes it again and waits (up to 60 s); then read `props.graph` with `object.get`: `nodes[]` (`id`, `name`, `container`, `path`, `line`, `lines`, `excerpt`, `level`, `stale`, `expandable`), `edges[]` (`from` caller → `to` callee, call `lines`), `error`.
+- The graph is computed by the language server (sourcekit-lsp answers from the index of the user's last `swift build`; its first answer in a project takes ~20 s). `chalkwork object.reload --id <tile>` computes it again and waits (up to 60 s); then read `props.graph` with `object.get`: `nodes[]` (`id`, `name`, `container`, `path`, `line`, `lines`, `excerpt`, `level`, `stale`, `expandable`), `edges[]` (`from` caller → `to` callee, call `lines`), `error`.
 - It stays live: a file it shows changing recomputes it; nodes are re-found by symbol, and one whose symbol was deleted stays with a stale badge (`stale: true`). Only functions in the board's files are nodes.
 - Open a node's next level by adding its id to `props.expanded` (the user clicks the node's +). The tile sizes itself to its first graph and grows into free space when a node opens (never over other objects; what doesn't fit is drawn smaller: resize it or zoom); `size: "fit"` works once it has one.
 - Bind an arrow to a node with `{"object": "<diagram>", "node": "<node id>"}` (e.g. from a note explaining that caller).
@@ -230,7 +230,7 @@ Colors, fills, text sizes, arrow routing and binding rules: `references/shapes.m
 4. Label an arrow only when the relation isn't obvious from its ends, in two or three words; detail goes in the tile.
 5. With more than about 6 arrows, color them by lane or flow, so each label (outlined in its arrow's color) reads with its own line: e.g. `"color": "blue"` on every request-path arrow and `"color": "green"` on the replies.
 6. `layout.check`, then fix what it reports: `arrowOverlaps`, `labelOverlaps` (a label on a tile, title, label, or another arrow's `lines`), and the `arrowIntersections` a tile order or a wider gap removes; its `hints` say when many labelled arrows share one color.
-`canvas get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
+`chalkwork get <id> --as graph` returns what an object encloses, overlaps, and connects to, so diagrams you draw are readable by other agents too.
 
 ### Boards a script keeps current
 
@@ -254,19 +254,19 @@ Taking a key another object holds, or upserting it as another type, is `conflict
 
 ## Browser tiles
 
-omp's `browser` tool opens a browser tile beside your terminal for each `browser.open` (find its id with `canvas board.history --limit 5`); `close` deletes it.
+omp's `browser` tool opens a browser tile beside your terminal for each `browser.open` (find its id with `chalkwork board.history --limit 5`); `close` deletes it.
 To drive a tile it didn't open, `browser.open({name: "<new tab name>", url: "canvas:obj_…"})` attaches to that tile at its current page; `browser.close` then lets go and leaves the tile on the board.
-Without omp's tool (Claude Code, Codex, a script), drive tiles with `canvas browser <verb> <tile> [--key value]`, one call per step; every browser tile works, the user's too.
-`canvas browser open <url>` opens one beside your terminal and prints its `surface_id`; `canvas browser list` lists the board's.
-Loop: `canvas browser snapshot <tile> --interactive` (refs `e1`…), then `click <tile> --selector @e2`, `fill <tile> --selector @e1 --text "…"` (or `type`), `press <tile> --key Enter`, `wait <tile> --load_state complete`, `eval <tile> --script "document.title"`; refs last until the next snapshot or navigation, so snapshot again after the page changes.
-`canvas browser screenshot <tile> --out shot.png` writes the PNG and prints its `path`. `close <tile>` deletes the tile: close only tiles you opened. Verbs and params: `references/browser.md`.
-Codex runs these escalated, like every canvas command. Playwright, browser-use and Chrome DevTools MCP can't reach tiles: they are WebKit, with no CDP endpoint.
+Without omp's tool (Claude Code, Codex, a script), drive tiles with `chalkwork browser <verb> <tile> [--key value]`, one call per step; every browser tile works, the user's too.
+`chalkwork browser open <url>` opens one beside your terminal and prints its `surface_id`; `chalkwork browser list` lists the board's.
+Loop: `chalkwork browser snapshot <tile> --interactive` (refs `e1`…), then `click <tile> --selector @e2`, `fill <tile> --selector @e1 --text "…"` (or `type`), `press <tile> --key Enter`, `wait <tile> --load_state complete`, `eval <tile> --script "document.title"`; refs last until the next snapshot or navigation, so snapshot again after the page changes.
+`chalkwork browser screenshot <tile> --out shot.png` writes the PNG and prints its `path`. `close <tile>` deletes the tile: close only tiles you opened. Verbs and params: `references/browser.md`.
+Codex runs these escalated, like every chalkwork command. Playwright, browser-use and Chrome DevTools MCP can't reach tiles: they are WebKit, with no CDP endpoint.
 The page's viewport is the tile's body; the tool's `viewport` and emulation don't reach it: for a phone width resize the tile (`object.update` frame `{"w": 390, "h": 902}`).
 Pages you drive stay live for 60 s wherever the tile is; 2 min after the tile leaves view the page is released (in-page state gone), so finish multi-step page work without long pauses.
-Before trusting rAF or timer numbers, check `canvas get <tile>` → `page.visibility` (visible/hidden/driven/released).
-After editing a page, reload any browser tile (the user's too) with `canvas object.reload --id <tile>` (it waits for the load), then read `canvas get <tile> --since <cursor>` → `page.errors`/`page.entries` before calling it clean; never change `props.url` to a dummy query to force a reload.
+Before trusting rAF or timer numbers, check `chalkwork get <tile>` → `page.visibility` (visible/hidden/driven/released).
+After editing a page, reload any browser tile (the user's too) with `chalkwork object.reload --id <tile>` (it waits for the load), then read `chalkwork get <tile> --since <cursor>` → `page.errors`/`page.entries` before calling it clean; never change `props.url` to a dummy query to force a reload.
 A released page's last log is in `page.previous`, and `page.cursor` stays valid across the release.
-Also read a dev-server terminal on the board after edits (`agent.list` program `next dev`, `vite`…): `canvas agent.read --target <it> --lines 40`. Compile errors and 500s show there. Report, don't restart it unasked.
+Also read a dev-server terminal on the board after edits (`agent.list` program `next dev`, `vite`…): `chalkwork agent.read --target <it> --lines 40`. Compile errors and 500s show there. Report, don't restart it unasked.
 Leave tiles and servers the user is looking at until they say they're done with them ("looks good" isn't done). Don't promise a page refreshes by itself after you change what it shows: reload or render it and check.
 Never open the Web Inspector yourself. Eval and CSP limits, visibility states, rendering unloaded pages, and history credit: `references/browser.md`.
 
@@ -282,8 +282,8 @@ Create code tiles for code you want the user to keep looking at.
 Never move the user's viewport (no panning or zooming to your objects) unless they ask. To point at something, raise an attention marker:
 
 ```sh
-canvas view.attention --id obj_… --message "The race is here"   # → {"id": "obj_…", "active": true}
-canvas view.attention --id obj_… --clear                         # take it back
+chalkwork view.attention --id obj_… --message "The race is here"   # → {"id": "obj_…", "active": true}
+chalkwork view.attention --id obj_… --clear                         # take it back
 ```
 
 Markers are keyed by the object (raising again replaces the message) and stay until the user looks at the object, even across app restarts.
@@ -303,26 +303,26 @@ Every agent change is undoable with ⌘Z, but that is a safety net, not a licens
 Agents in other terminal tiles (any canvas in the app) are reachable by tile id or tile name:
 
 ```sh
-canvas agent.list                                    # every terminal: tile, kind, name, lifecycle, board, root, `program` (foreground program) and `title` (its OSC title)
-canvas agent.prompt --target reviewer --text "Review the diff in src/store.ts"   # → waitable, submittedAt
-canvas agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `--until working` (or `working,blocked`) narrows it
-canvas agent.read --target reviewer --since prompt   # only what came after your last agent.prompt
+chalkwork agent.list                                    # every terminal: tile, kind, name, lifecycle, board, root, `program` (foreground program) and `title` (its OSC title)
+chalkwork agent.prompt --target reviewer --text "Review the diff in src/store.ts"   # → waitable, submittedAt
+chalkwork agent.wait --target reviewer --timeoutMs 600000   # until idle/done/blocked; `--until working` (or `working,blocked`) narrows it
+chalkwork agent.read --target reviewer --since prompt   # only what came after your last agent.prompt
 ```
 
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
 Then `agent.read --since prompt` returns what followed your prompt (its echo, then the reply), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`; `cutOff` means the turn died on that error: say so, don't treat it as done).
-A prompt sent while the agent is `working` joins that turn: `agent.wait` returns at its end. The last answer survives an app restart, and an agent that finished while Canvas was closed comes back `done` with it.
+A prompt sent while the agent is `working` joins that turn: `agent.wait` returns at its end. The last answer survives an app restart, and an agent that finished while Chalkwork was closed comes back `done` with it.
 Hand over board objects instead of describing them: `agent.prompt` `mentions=[{"object": id}, {"object": code_id, "lines": {"start": 41, "end": 48}}]` reach the receiver as hidden context naming your terminal.
 Kind `omp`, `claude`, `codex`, `gemini` (before 0.60) or `opencode` reports a lifecycle (a Codex tile is `blocked` at launch while Codex asks whether to trust the folder, and `idle` once the user trusts it).
-Agents without an integration (aider via Canvas's `aider` wrapper, any CLI's OSC 9/777 or bell) have their program as `kind` and `lifecycle.via: "notifications"`: `done` when they last said they wait, `unknown` after a prompt, never working/blocked; `agent.wait` returns at their next notification (give it `timeout_ms`), and `mentions` can't go to them.
+Agents without an integration (aider via Chalkwork's `aider` wrapper, any CLI's OSC 9/777 or bell) have their program as `kind` and `lifecycle.via: "notifications"`: `done` when they last said they wait, `unknown` after a prompt, never working/blocked; `agent.wait` returns at their next notification (give it `timeout_ms`), and `mentions` can't go to them.
 Kind `unknown` (a shell, another CLI) has none: `agent.wait` fails once 15 s pass without a first report, so poll `agent.read --since prompt`; `program` and `title` still hint at its state.
-A `conflict` saying the agent was working when Canvas last closed and hasn't reported since (`lifecycle.restored`): omp and opencode report again within seconds of the app coming back, Claude Code, Codex and Gemini CLI at their next tool call; if it stays, read its screen (`agent.read --lines 40`) before deciding; never `force` it if the screen shows a question or approval.
+A `conflict` saying the agent was working when Chalkwork last closed and hasn't reported since (`lifecycle.restored`): omp and opencode report again within seconds of the app coming back, Claude Code, Codex and Gemini CLI at their next tool call; if it stays, read its screen (`agent.read --lines 40`) before deciding; never `force` it if the screen shows a question or approval.
 Don't prompt an agent that is `blocked`; it is waiting for its user. `agent.prompt` to one fails with `conflict` quoting what it waits on, and so does one whose foreground program isn't its agent (nvim, another tmux pane): tell the user.
 Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Force only when you know the dialog is gone.
 
 ## Compositions
 
-Reusable helpers come built into the SDKs, plus your own in `~/.canvas/compositions` (yours shadow built-in ones of the same name). In Python:
+Reusable helpers come built into the SDKs, plus your own in `~/.chalkwork/compositions` (yours shadow built-in ones of the same name). In Python:
 
 ```python
 canvas.compositions.available()                              # name -> summary
@@ -331,25 +331,25 @@ canvas.compositions.locations.open(["src/a.ts:12-40", "src/b.ts#L7"])
 ```
 
 A composition is a plain module; functions whose first parameter is named `canvas` receive the client.
-When you catch yourself repeating a multi-call canvas pattern, write it as a composition in `~/.canvas/compositions/<name>.py`
+When you catch yourself repeating a multi-call canvas pattern, write it as a composition in `~/.chalkwork/compositions/<name>.py`
 (and `.ts` for the TS client, `client.compositions.<name>`), then `canvas.compositions.reload()`. Improve existing ones rather than forking them.
 
 ## Boards
 
 One canvas per git repository, whichever worktree or branch opens it (rooted at the main checkout); one per directory outside git. Boards open as tabs of one window.
-`canvas board.open --root <absolute dir>` opens a directory's board as a tab (creating it if new) behind the user's current tab; pass `--select true` only when the user asked to see it.
+`chalkwork board.open --root <absolute dir>` opens a directory's board as a tab (creating it if new) behind the user's current tab; pass `--select true` only when the user asked to see it.
 A worktree opens its repository's board: the result's `worktree` names it (path, branch, and `region`, the group that holds that branch's objects when there is one), and New Terminal starts there.
 Then address it with `board: <id>` (from the result) on every call, and start agents there by creating terminal tiles on that board; a terminal started in a worktree records `worktree` and `branch` in its props.
-Give each branch's work its own region: a group titled with the branch (`props.key: "branch:<name>"`), and `canvas board.get --branch <name>` returns just that part of the board, with `regions` listing that branch's region ids (`[]` before you make one).
-`canvas board.list` shows every stored board, and a repository board's `worktrees` (path, branch, `live`: still checked out there).
-`canvas board.export` writes a readable snapshot to `<root>/.canvas/board.json` for committing when the user asks to save the board with the repo.
+Give each branch's work its own region: a group titled with the branch (`props.key: "branch:<name>"`), and `chalkwork board.get --branch <name>` returns just that part of the board, with `regions` listing that branch's region ids (`[]` before you make one).
+`chalkwork board.list` shows every stored board, and a repository board's `worktrees` (path, branch, `live`: still checked out there).
+`chalkwork board.export` writes a readable snapshot to `<root>/.chalkwork/board.json` for committing when the user asks to save the board with the repo.
 
-## When the user asks how to use Canvas
+## When the user asks how to use Chalkwork
 
-Help › Canvas Basics ⌥⌘/ is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" and "which key?" from it, not from Canvas's source.
+Help › Chalkwork Basics ⌥⌘/ is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" and "which key?" from it, not from Chalkwork's source.
 ⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows (all four) move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal or a web page Esc stays with the program or page: ⌘Esc leaves any tile).
 ⌘J goes to the next thing that needs the user; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and a notice names what it undid.
 Hyper-click (⌃⌥⇧⌘-click) or Edit › Mention ⇧⌘M stages a mention for the terminal the tray shows ("→ name ▾" picks another); Hyper-V pastes staged mentions into the terminal the user is typing in (else that one), for agents without an integration.
 Mouse users: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; don't tell a user without a trackpad that zooming needs a pinch.
-On a PC keyboard ⌘ is the Windows key and does what Ctrl does elsewhere, ⌥ is Alt (`macos-option-as-alt = true` in their Ghostty config for Meta), and Hyper is Ctrl+Alt+Shift+Win: point them at Canvas Basics' "Coming from Linux or Windows" section.
+On a PC keyboard ⌘ is the Windows key and does what Ctrl does elsewhere, ⌥ is Alt (`macos-option-as-alt = true` in their Ghostty config for Meta), and Hyper is Ctrl+Alt+Shift+Win: point them at Chalkwork Basics' "Coming from Linux or Windows" section.
 Every action is also in the menu bar (Help › search).

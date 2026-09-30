@@ -4,7 +4,7 @@ What `view.render`, `view.snapshot`, `view.get` and `board.history` return, beyo
 
 Python: `canvas.view.render(target="obj_…", full=True)["path"]`
 (`target` is an id, a list of ids, or `{"x","y","w","h"}`; ids render the region under them, taking in the whole route of any arrow between two of them).
-The app writes a new file under `$TMPDIR/canvas-renders/` (or `out` if you pass one: png or jpg by extension; clients resolve relative paths), and `path` in the result is that file.
+The app writes a new file under `$TMPDIR/chalkwork-renders/` (or `out` if you pass one: png or jpg by extension; clients resolve relative paths), and `path` in the result is that file.
 The result maps pixels to the canvas: pixel `(px, py)` is canvas `(canvasRect.x + px / scale, canvasRect.y + py / scale)`,
 and `objects` lists every object drawn with its `pixelRect`
 (a tile's is exactly its frame: a tile's `frame` is its whole drawn box, 26 pt title bar included), `state`, and `overflow`:
@@ -29,7 +29,7 @@ Its result includes `viewport {rect, zoom}`, `scale`, and visible `objects` with
 **`view.get`** returns `viewport {rect, zoom}` (the visible canvas rect in canvas coordinates), `promptTarget`, `focused`, `selection`, and whether the window is `visible`.
 
 **`board.history`** is a plain request/response log, cheap to poll from a REPL:
-`canvas board.history --since 42` (the `cursor` from your last call; or an ISO time) → `entries` oldest first, each `{seq, rev, at, actor, kind, id?, type?, summary}`.
+`chalkwork board.history --since 42` (the `cursor` from your last call; or an ISO time) → `entries` oldest first, each `{seq, rev, at, actor, kind, id?, type?, summary}`.
 
 - `actor` is `user`, `system`, or `agent:<tile>`.
   A side effect of someone's change (a group re-fit to its members, an arrow end freed because what it pointed at was deleted) is credited to them and has a `cause`,

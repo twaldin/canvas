@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in Canvas doesn't work as it should
+description: Something in Chalkwork doesn't work as it should
 labels: [bug]
 body:
   - type: textarea
@@ -19,8 +19,8 @@ body:
   - type: input
     id: canvas
     attributes:
-      label: Canvas version
-      description: "`defaults read /Applications/Canvas.app/Contents/Info.plist CFBundleShortVersionString`, or the release zip's name. For a source build, also the commit (`git rev-parse --short HEAD`)."
+      label: Chalkwork version
+      description: "`defaults read /Applications/Chalkwork.app/Contents/Info.plist CFBundleShortVersionString`, or the release zip's name. For a source build, also the commit (`git rev-parse --short HEAD`)."
     validations:
       required: true
   - type: input
@@ -47,5 +47,5 @@ body:
     attributes:
       label: Log
       description: |
-        Canvas's log around the problem. Quit Canvas, start it from a terminal with `/Applications/Canvas.app/Contents/MacOS/Canvas 2>&1 | tee ~/canvas.log`, reproduce, and paste the relevant part of `~/canvas.log`. A development instance (`scripts/dev.sh`) writes `.canvas-home/app.log`. Check it for paths or text you'd rather not share.
+        Chalkwork's log around the problem. Quit Chalkwork, start it from a terminal with `/Applications/Chalkwork.app/Contents/MacOS/Chalkwork 2>&1 | tee ~/chalkwork.log`, reproduce, and paste the relevant part of `~/chalkwork.log`. A development instance (`scripts/dev.sh`) writes `.chalkwork-home/app.log`. Check it for paths or text you'd rather not share.
       render: text

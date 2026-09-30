@@ -14,7 +14,7 @@ public final class BoardStore {
 
     public static var defaultDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Canvas/boards", isDirectory: true)
+            .appendingPathComponent("Chalkwork/boards", isDirectory: true)
     }
 
     public init(directory: URL = BoardStore.defaultDirectory, debounce: TimeInterval = 0.5) {

@@ -114,7 +114,7 @@ public enum MentionContext {
                 if let exit = command?.exit { parts.append("exit \(exit)") }
                 if let duration = command?.durationMs { parts.append(TerminalCommand.duration(duration)) }
                 // Which block it is now: the terminal's log counts from its newest command.
-                let read = command.flatMap { board.terminalBlockIndex?(object, $0) }.map { " · read it: canvas agent.read --target \(object) --block \($0)" } ?? ""
+                let read = command.flatMap { board.terminalBlockIndex?(object, $0) }.map { " · read it: chalkwork agent.read --target \(object) --block \($0)" } ?? ""
                 lines.append("[\(index)] \(parts.joined(separator: " · ")) · output of terminal tile \(object)\(name)\(read)\(edited)")
             }
             lines.append(contentsOf: terminalLines(part == .rows ? text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) : TerminalExcerpt.lines(text)))
@@ -168,10 +168,10 @@ public enum MentionContext {
             }
         }
         if terminal.contains(false) || targets.isEmpty {
-            out.append("Read more with the canvas SDK or CLI: canvas get <id> --as graph; look with canvas render <id>")
+            out.append("Read more with the chalkwork SDK or CLI: chalkwork get <id> --as graph; look with chalkwork render <id>")
         }
         if terminal.contains(true) {
-            out.append("Read more of a terminal: canvas agent.read --target <id> (--block -1: its last command's output, -2 the one before)")
+            out.append("Read more of a terminal: chalkwork agent.read --target <id> (--block -1: its last command's output, -2 the one before)")
         }
         out.append("</canvas-mentions>")
         return out.joined(separator: "\n")
@@ -246,7 +246,7 @@ public enum MentionContext {
         if cutTexts > 0 { cut.append("the text of \(cutTexts) member\(cutTexts == 1 ? "" : "s")") }
         if cutMembers > 0 { cut.append("\(cutMembers) more member\(cutMembers == 1 ? "" : "s")") }
         if !cut.isEmpty {
-            let more = group.map { "canvas get \($0.id) --as graph" } ?? "canvas get <id>"
+            let more = group.map { "chalkwork get \($0.id) --as graph" } ?? "chalkwork get <id>"
             lines.append("    (left out to keep this short: \(cut.joined(separator: " and ")); read them with \(more))")
         }
         return lines
@@ -488,7 +488,7 @@ public enum MentionContext {
             lines.append("\(indent)\(line)")
             count += line.count + 1
         }
-        if source.count > lines.count { lines.append("\(indent)… \(source.count - lines.count) more lines (canvas get \(id))") }
+        if source.count > lines.count { lines.append("\(indent)… \(source.count - lines.count) more lines (chalkwork get \(id))") }
         return lines
     }
 
@@ -507,7 +507,7 @@ public enum MentionContext {
         default: break
         }
         lines.append(contentsOf: NoteSource.lines(of: current.text).map { "    \($0)" })
-        if current.omittedLines > 0 { lines.append("    … \(current.omittedLines) more lines (canvas get \(id))") }
+        if current.omittedLines > 0 { lines.append("    … \(current.omittedLines) more lines (chalkwork get \(id))") }
         return lines
     }
 

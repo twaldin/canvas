@@ -1,5 +1,7 @@
-// Prints the `hooks={…}` override the codex wrapper (bin/codex) passes as `codex -c`, so a Codex
-// session in a Chalkwork tile runs extensions/agent-hooks/hook.ts without touching ~/.codex.
+// The `hooks={…}` override the codex wrapper (bin/codex) passes as `codex -c`, so a Codex session
+// in a Chalkwork tile runs extensions/agent-hooks/hook.ts without touching ~/.codex.
+//   bun config.ts <codex's arguments…>
+// prints where in those arguments the `-c` goes (an index, see `hooksAt`), a newline, and the override.
 //
 // Codex skips a non-managed hook until its exact definition is trusted, recording
 // `hooks.state."<key>".trusted_hash` in config. Session flags (`-c`) are a config layer whose
@@ -47,4 +49,30 @@ for (const [event, label, timeout, runsAsync] of EVENTS) {
   groups.push(`${event}=[{hooks=[{type="command",command=${JSON.stringify(handler.command)},timeout=${timeout},async=${runsAsync}}]}]`);
   state.push(`${JSON.stringify(`/<session-flags>/config.toml:${label}:0:0`)}={trusted_hash=${JSON.stringify(hash)}}`);
 }
-process.stdout.write(`hooks={${groups.join(",")},state={${state.join(",")}}}`);
+export const hooksOverride = `hooks={${groups.join(",")},state={${state.join(",")}}}`;
+
+/**
+ * The index in Codex's arguments to insert `-c <hooks>` before, so Codex keeps it.
+ *
+ * `-c` is a clap global option, and clap keeps only the deepest command level's occurrences: in
+ * `codex -c A resume <id> -c B` Codex sees `-c B` alone (A is dropped; clap 4.5 `propagate_globals`,
+ * codex-rs/utils/cli/src/config_override.rs). So the override goes beside the user's last `-c`
+ * (the deepest level that has one), or first when there is none. Arguments after `--` are the
+ * prompt's.
+ */
+export function hooksAt(args: string[]): number {
+  let at = 0;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--") break;
+    if (arg === "-c" || arg === "--config") {
+      at = i;
+      i++; // its value
+    } else if (arg.startsWith("--config=") || (arg.startsWith("-c") && !arg.startsWith("--"))) {
+      at = i;
+    }
+  }
+  return at;
+}
+
+if (import.meta.main) process.stdout.write(`${hooksAt(process.argv.slice(2))}\n${hooksOverride}`);

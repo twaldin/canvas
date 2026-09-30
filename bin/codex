@@ -6,10 +6,27 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 . "$here/extensions/agent-hooks/wrap.sh"
 real=$(canvas_agent_real codex) || exit 127
 canvas_integrate || exec "$real" "$@"
-hooks=$(bun "$here/extensions/codex/config.ts" 2>/dev/null) || exec "$real" "$@"
+# Where the `-c` goes in Codex's arguments (Codex keeps only the deepest command level's `-c`s:
+# `codex resume <id> -c …` drops one given before `resume`), then the override.
+config=$(bun "$here/extensions/codex/config.ts" "$@" 2>/dev/null) || exec "$real" "$@"
+at=${config%%"
+"*}
+hooks=${config#*"
+"}
 export CHALKWORK_AGENT=codex
 # Codex fires SessionStart only with the first prompt; say now that this tile runs Codex, and
 # whether it first asks about this folder (its arguments tell the folder and the subcommand).
 # `$$` is this shell's pid, which Codex keeps once it's exec'd: the launch hook watches it.
 { printf '{}' | CHALKWORK_CODEX_PID=$$ "$here/extensions/agent-hooks/run" codex Launch "$@"; } >/dev/null 2>&1 &
+if [ "$at" -gt 0 ] 2>/dev/null; then
+  n=$#
+  i=0
+  for arg do
+    [ "$i" = "$at" ] && set -- "$@" -c "$hooks"
+    set -- "$@" "$arg"
+    i=$((i + 1))
+  done
+  shift "$n"
+  exec "$real" "$@"
+fi
 exec "$real" -c "$hooks" "$@"

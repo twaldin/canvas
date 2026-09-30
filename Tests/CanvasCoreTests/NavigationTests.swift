@@ -425,6 +425,21 @@ struct PresentTests {
         let small = CGRect(x: 9000, y: 0, width: 300, height: 200)
         #expect(Layout.present(small, from: out, clear: clear, padding: 20, zoom: 0.1...1).zoom == 0.25, "the zoom the presenter chose stays")
     }
+
+    /// Persona study B8 (codexapp): stepping a walkthrough from the ⌘9 overview (41%) only moved
+    /// the selection; each stop is now framed readably, and a readable zoom is kept.
+    @Test func aWalkthroughStopIsFramedReadablyFromAnOverview() {
+        let overview = Layout.Jump(zoom: 0.41, origin: .zero)
+        let stop = CGRect(x: 400, y: 300, width: 500, height: 300)
+        #expect(Layout.present(stop, from: overview, clear: clear, padding: 20, zoom: 0.1...1) == overview, "in view: a plain step doesn't move")
+        let framed = Layout.presentStop(stop, from: overview, clear: clear, padding: 20, fitPadding: 60, zoom: 0.1...1, readable: 0.5)
+        #expect(framed.zoom == 1 && shown(framed).contains(stop))
+
+        let readable = Layout.Jump(zoom: 0.67, origin: .zero)
+        let next = CGRect(x: 2400, y: 300, width: 500, height: 300)
+        let stepped = Layout.presentStop(next, from: readable, clear: clear, padding: 20, fitPadding: 60, zoom: 0.1...1, readable: 0.5)
+        #expect(stepped.zoom == 0.67 && shown(stepped).contains(next), "the presenter's readable zoom stays")
+    }
 }
 
 @MainActor
@@ -460,5 +475,36 @@ struct StepOrderTests {
         #expect(StepOrder.step(from: start, forward: true, in: board.objects) == .to(upper))
         try board.delete(upper)
         #expect(StepOrder.step(from: start, forward: true, in: board.objects) == .to(lower), "a deleted stop drops out")
+    }
+
+    func group(_ members: [ObjectID]) -> ObjectID {
+        board.create(type: .group, props: .object(["members": .array(members.map(JSONValue.string))])).id
+    }
+
+    /// Persona study B8 (staff, codexapp): ⌥⌘→ after clicking an agent's "Start here" marker on
+    /// the walkthrough's group, or with nothing selected, went to an unrelated tile.
+    @Test func aWalkthroughStartsAtItsFirstStopFromItsGroupOrFromNothing() {
+        let unrelated = tile(0, 0)
+        // Stop 1 sits right of stop 2: the first stop is the one no arrow steps to, not the leftmost.
+        let one = tile(1400, 1000), two = tile(1000, 1000), three = tile(1800, 1000)
+        arrow(one, two)
+        arrow(two, three)
+        let walkthrough = group([one, two, three])
+        let far = tile(9000, 9000), farNext = tile(9400, 9000)
+        arrow(far, farNext)
+
+        #expect(StepOrder.start(from: walkthrough, center: .zero, in: board.objects) == one)
+        #expect(StepOrder.start(from: group([group([three, two, one])]), center: .zero, in: board.objects) == one, "nested groups count")
+        #expect(StepOrder.start(from: nil, center: CGPoint(x: 1500, y: 1100), in: board.objects) == one, "the walkthrough in view")
+        #expect(StepOrder.start(from: nil, center: CGPoint(x: 8000, y: 8000), in: board.objects) == far, "the one nearer the view")
+        #expect(StepOrder.start(from: unrelated, center: .zero, in: board.objects) == nil, "a selected tile steps from itself")
+        #expect(StepOrder.start(from: group([unrelated]), center: .zero, in: board.objects) == nil, "a group without stops is geometry's")
+    }
+
+    @Test func aLoopStartsAtItsStopFirstInReadingOrder() {
+        let a = tile(800, 0), b = tile(0, 400)
+        arrow(a, b)
+        arrow(b, a)
+        #expect(StepOrder.start(from: nil, center: .zero, in: board.objects) == a)
     }
 }

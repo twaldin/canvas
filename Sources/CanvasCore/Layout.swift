@@ -317,6 +317,15 @@ public enum Layout {
         return center(rect, in: clear, zoom: zoom, padding: padding)
     }
 
+    /// A walkthrough's stop (`StepOrder`) stepped to: `present`, except that a view zoomed out
+    /// below `readable` (the overview a walkthrough is often started from) fits the stop instead,
+    /// with `fitPadding` and up to `limits`' top (`fit`, `readable` for a tall one), so each step
+    /// reads like a slide. From a readable zoom the presenter's zoom stays.
+    public static func presentStop(_ rect: CGRect, from jump: Jump, clear: CGRect, padding: CGFloat, fitPadding: CGFloat, zoom limits: ClosedRange<CGFloat>, readable: CGFloat) -> Jump {
+        guard jump.zoom < readable else { return present(rect, from: jump, clear: clear, padding: padding, zoom: limits, readable: readable) }
+        return fit(rect, in: clear, padding: fitPadding, zoom: limits, readable: readable)
+    }
+
     /// Keyboard zoom levels (⌘= / ⌘-), browser-like: fine steps near 100%, coarse far out.
     public static let zoomLevels: [CGFloat] = [0.1, 0.15, 0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 3, 4]
 

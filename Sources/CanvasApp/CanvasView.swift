@@ -1062,22 +1062,32 @@ final class CanvasView: NSScrollView {
 
     /// ⌥⌘-arrow, stepping through the board like slides: from the focused tile, else the selected
     /// object, ⌥⌘→ follows its outgoing `next_step` arrow and ⌥⌘← its incoming one
-    /// (`StepOrder`; at the end of a sequence a notice says "Last step" or "First step"); else
-    /// the nearest tile that way from the focused tile, else the selection, else the viewport
-    /// center (`Layout.neighbor`), or the tile the previous move came from when this is its
-    /// opposite arrow (`TileWalk`). The stop shows whole: centered when it isn't in view with a
-    /// margin, fitted when it's larger than the view (`Layout.present`); selected, given the
-    /// keyboard, and one step of Navigate Back (which selects the stop it came from again).
+    /// (`StepOrder`; at the end of a sequence a notice says "Last step" or "First step"). ⌥⌘→
+    /// from a group holding a walkthrough, or with nothing selected, starts the walkthrough
+    /// (nearest the view) at its first stop (`StepOrder.start`). Else the nearest tile that way
+    /// from the focused tile, else the selection, else the viewport center (`Layout.neighbor`),
+    /// or the tile the previous move came from when this is its opposite arrow (`TileWalk`).
+    /// The stop shows whole: centered when it isn't in view with a margin, fitted when it's
+    /// larger than the view (`Layout.present`); a walkthrough's stop is fitted from a view zoomed
+    /// out below readable (`Layout.presentStop`). Selected, given the keyboard, and one step of
+    /// Navigate Back (which selects the stop it came from again).
     func moveToNeighbor(_ heading: Layout.Heading) {
         let sources = focusedTile.map { [$0] } ?? selection.sorted()
         var target: ObjectID?
-        if sources.count == 1, heading == .right || heading == .left {
-            switch StepOrder.step(from: sources[0], forward: heading == .right, in: board.objects) {
-            case .to(let next): target = next
-            case .end: return showNotice(heading == .right ? "Last step" : "First step")
-            case .none: break
+        if sources.count <= 1, heading == .right || heading == .left {
+            if let source = sources.first {
+                switch StepOrder.step(from: source, forward: heading == .right, in: board.objects) {
+                case .to(let next): target = next
+                case .end: return showNotice(heading == .right ? "Last step" : "First step")
+                case .none: break
+                }
+            }
+            if target == nil, heading == .right {
+                let center = CGPoint(x: clearViewport.rect.midX, y: clearViewport.rect.midY)
+                target = StepOrder.start(from: sources.first, center: center, in: board.objects)
             }
         }
+        let stop = target != nil
         if target == nil {
             let tileSources = sources.filter { tiles[$0] != nil }
             let frames = tileSources.compactMap { tiles[$0]?.frame }
@@ -1089,7 +1099,7 @@ final class CanvasView: NSScrollView {
         }
         guard let id = target, docFrame(id) != nil else { return }
         let before = viewport, selectedBefore = sources.count == 1 ? sources[0] : nil
-        present(id)
+        present(id, stop: stop)
         setSelection([id])
         if tiles[id] != nil { takeKeyboard(id) }
         guard navigationDepth == 0 else { return }
@@ -1671,7 +1681,9 @@ final class CanvasView: NSScrollView {
     }
 
     /// An attention edge pill: framed like Go to (one step of Navigate Back), and the marker is
-    /// acknowledged (the user went there). Selection and keyboard focus stay.
+    /// acknowledged (the user went there). Selection and keyboard focus stay, except on a
+    /// walkthrough (a stop, or a group holding stops: an agent's "Start here"), which is selected
+    /// with the canvas holding the keyboard so ⌥⌘→ steps from it (`StepOrder`).
     func jumpToAttention(_ id: ObjectID) {
         guard let rect = docFrame(id) else { return }
         navigating {
@@ -1679,6 +1691,10 @@ final class CanvasView: NSScrollView {
             return nil
         }
         board.clearAttention(id)
+        if StepOrder.step(from: id, forward: true, in: board.objects) != .none || StepOrder.start(from: id, center: .zero, in: board.objects) != nil {
+            setSelection([id])
+            takeKeyboard(id)
+        }
     }
 
     /// The least pan that shows an object the user just opened (a code tile from an HTML link),
@@ -1745,11 +1761,13 @@ final class CanvasView: NSScrollView {
 
     /// An object shown whole like a slide (an agent's terminal with its follow tile, `landing`):
     /// nothing moves while it is in view with a margin; else centered at this zoom, or fitted
-    /// when larger than the view (`Layout.present`).
-    func present(_ id: ObjectID) {
-        guard let rect = landing(id, padding: Self.jumpPadding / magnification) else { return }
-        apply(Layout.present(rect, from: currentJump, clear: clearArea, padding: Self.jumpPadding / magnification,
-                             zoom: minMagnification...maxMagnification, readable: Self.readableZoom))
+    /// when larger than the view (`Layout.present`). A walkthrough's `stop` is fitted like Go to
+    /// when the view is zoomed out below readable (`Layout.presentStop`).
+    func present(_ id: ObjectID, stop: Bool = false) {
+        let padding = Self.jumpPadding / magnification, limits = minMagnification...maxMagnification
+        guard let rect = landing(id, padding: padding) else { return }
+        apply(stop ? Layout.presentStop(rect, from: currentJump, clear: clearArea, padding: padding, fitPadding: Self.fitPadding, zoom: limits, readable: Self.readableZoom)
+                   : Layout.present(rect, from: currentJump, clear: clearArea, padding: padding, zoom: limits, readable: Self.readableZoom))
     }
 
     // MARK: Attention

@@ -182,7 +182,7 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
     private static let fieldHeight: CGFloat = 40
 
     private let field = NSTextField()
-    private let table = NSTableView()
+    private let table = NavigatorTable()
     private let list = NSScrollView()
     private let separator = NSBox()
     /// Under the list: why symbols are missing (a language server not installed, with its
@@ -252,8 +252,7 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         table.refusesFirstResponder = true
         table.dataSource = self
         table.delegate = self
-        table.target = self
-        table.action = #selector(rowClicked)
+        table.onClick = { [weak self] row in self?.go(row) }
         list.documentView = table
         list.drawsBackground = false
         list.hasVerticalScroller = true
@@ -351,10 +350,6 @@ final class NavigatorPanel: NSVisualEffectView, NSTextFieldDelegate, NSTableView
         let target = rows[row].target
         close()
         onGo?(target)
-    }
-
-    @objc private func rowClicked() {
-        go(table.clickedRow)
     }
 
     // MARK: Filtering and keys
@@ -633,5 +628,33 @@ final class NothingHerePill: NSVisualEffectView {
 
     @objc private func back() {
         onBack?()
+    }
+}
+
+/// Go to's list: a click on a row (press and release on it) goes there, also while the window
+/// isn't key (the first click back from another app, replayed input). The table takes the click
+/// itself, never a row's label, and tracks it without AppKit's table tracking, which selected
+/// nothing and sent no action for such a click (persona study B18: "Clicking a row in ⌘P Go to…
+/// did nothing; arrows + Return worked").
+private final class NavigatorTable: NSTableView {
+    var onClick: ((Int) -> Void)?
+    private var pressed: Int?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        super.hitTest(point) == nil ? nil : self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let row = row(at: convert(event.locationInWindow, from: nil))
+        pressed = row >= 0 ? row : nil
+        if let pressed { selectRowIndexes([pressed], byExtendingSelection: false) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer { pressed = nil }
+        guard let pressed, row(at: convert(event.locationInWindow, from: nil)) == pressed else { return }
+        onClick?(pressed)
     }
 }

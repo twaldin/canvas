@@ -15,10 +15,13 @@
 #
 # More instances of one checkout (parallel agents, user studies): CANVAS_DEV_HOME picks another
 # home (with its own browser profile, CANVAS_BROWSER_PROFILE=own), and CANVAS_DEV_APP launches a
-# prebuilt bundle (a frozen copy) instead of rebuilding.
+# prebuilt bundle (a frozen copy) instead of rebuilding. Either way the instance runs from a copy
+# in its home that carries its environment (scripts/dev-bundle.sh), so a relaunch by macOS
+# (logging back in) can't start it on the user's default home.
 set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="${CANVAS_DEV_HOME:-$repo/.canvas-home}"
+case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
 app="${CANVAS_DEV_APP:-$repo/.build/Canvas.app}"
 # Window placement is optional and needs yabai (docs/testing.md, "Optional: a machine shared with
 # other agents"): YABAI, else ~/Applications/Yabai.app, else yabai on PATH.
@@ -91,6 +94,17 @@ launch() {
   [ -n "${CANVAS_DEV_APP:-}" ] || "$repo/scripts/bundle.sh" >/dev/null
   mkdir -p "$home"
   rm -f "$CANVAS_SOCKET"
+  # The instance's environment, in its bundle for any launch (dev-bundle.sh adds CANVAS_HOME)
+  # and on this one. XDG_CONFIG_HOME passes through so a scratch Ghostty config can be tried
+  # (docs/testing.md).
+  set -- CANVAS_NO_ACTIVATE=1 CANVAS_DEV_INPUT=1 CANVAS_DEV_PERF=1 CANVAS_ROOT="$root"
+  [ -z "${CANVAS_DEV_HOME:-}" ] || set -- "$@" CANVAS_BROWSER_PROFILE=own
+  [ -z "${XDG_CONFIG_HOME:-}" ] || set -- "$@" XDG_CONFIG_HOME="$XDG_CONFIG_HOME"
+  # The checkout's own home keeps the release bundle id, so a developer's everyday instance keeps
+  # its browser logins and window frames; other homes get their own (dev-bundle.sh).
+  bundle="$("$repo/scripts/dev-bundle.sh" $([ -n "${CANVAS_DEV_HOME:-}" ] || echo --release-id) "$app" "$home" "$@")"
+  n=$#
+  while [ "$n" -gt 0 ]; do set -- "$@" --env "$1"; shift; n=$((n - 1)); done
   # yabai can't place a new window on another display's Space (it lands on the Space being
   # viewed), so a one-shot rule parks this launch's first window on an unviewed Space of the
   # built-in display, and it moves to the testing Space once it exists. One-shot and removed
@@ -101,9 +115,7 @@ launch() {
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
     "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
-  # XDG_CONFIG_HOME passes through so a scratch Ghostty config can be tried (docs/testing.md).
-  open -g -n --stdout "$home/app.log" --stderr "$home/app.log" ${XDG_CONFIG_HOME:+--env "XDG_CONFIG_HOME=$XDG_CONFIG_HOME"} \
-    --env CANVAS_HOME="$home" ${CANVAS_DEV_HOME:+--env CANVAS_BROWSER_PROFILE=own} --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_DEV_PERF=1 --env CANVAS_ROOT="$root" "$app"
+  open -g -n --stdout "$home/app.log" --stderr "$home/app.log" --env CANVAS_HOME="$home" "$@" "$bundle"
   i=0
   while [ ! -S "$CANVAS_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
   [ -S "$CANVAS_SOCKET" ] || { echo "Canvas did not open its socket; see $home/app.log" >&2; exit 1; }

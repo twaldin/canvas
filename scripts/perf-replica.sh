@@ -46,9 +46,14 @@ EOF
     rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
     "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
-    # PERF_MALLOC_STACKS=1 records allocation stacks for `malloc_history <pid> <address>`.
-    open -g -n --stdout "$home/app.log" --stderr "$home/app.log" \
-      ${PERF_MALLOC_STACKS:+--env MallocStackLogging=1} --env CANVAS_HOME="$home" --env CANVAS_NO_ACTIVATE=1 --env CANVAS_DEV_INPUT=1 --env CANVAS_DEV_PERF=1 --env CANVAS_ROOT="$root" "$app"
+    # PERF_MALLOC_STACKS=1 records allocation stacks for `malloc_history <pid> <address>`. The
+    # replica runs from a copy that carries this environment (scripts/dev-bundle.sh).
+    set -- CANVAS_NO_ACTIVATE=1 CANVAS_DEV_INPUT=1 CANVAS_DEV_PERF=1 CANVAS_ROOT="$root"
+    [ -z "${PERF_MALLOC_STACKS:-}" ] || set -- "$@" MallocStackLogging=1
+    bundle="$("$repo/scripts/dev-bundle.sh" "$app" "$home" "$@")"
+    n=$#
+    while [ "$n" -gt 0 ]; do set -- "$@" --env "$1"; shift; n=$((n - 1)); done
+    open -g -n --stdout "$home/app.log" --stderr "$home/app.log" --env CANVAS_HOME="$home" "$@" "$bundle"
     i=0; while [ ! -S "$home/canvas.sock" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
     lsof -t "$home/canvas.sock" | head -n 1 > "$home/pid"
     i=0; while [ -z "$(window)" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done

@@ -1,5 +1,5 @@
 // Prints the `hooks={…}` override the codex wrapper (bin/codex) passes as `codex -c`, so a Codex
-// session in a Canvas tile runs extensions/agent-hooks/hook.ts without touching ~/.codex.
+// session in a Chalkwork tile runs extensions/agent-hooks/hook.ts without touching ~/.codex.
 //
 // Codex skips a non-managed hook until its exact definition is trusted, recording
 // `hooks.state."<key>".trusted_hash` in config. Session flags (`-c`) are a config layer whose

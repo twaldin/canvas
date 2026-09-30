@@ -1,19 +1,19 @@
 #!/bin/sh
-# Notarize a Developer ID-signed Canvas.app (scripts/bundle.sh with CANVAS_SIGN_IDENTITY), staple
-# the ticket to it, and zip it for distribution. Usage: scripts/notarize.sh <Canvas.app> <out.zip>
+# Notarize a Developer ID-signed Chalkwork.app (scripts/bundle.sh with CHALKWORK_SIGN_IDENTITY), staple
+# the ticket to it, and zip it for distribution. Usage: scripts/notarize.sh <Chalkwork.app> <out.zip>
 # Credentials (docs/releasing.md), one of:
-#   CANVAS_NOTARY_PROFILE   a keychain profile from `xcrun notarytool store-credentials`
-#   CANVAS_NOTARY_KEY, CANVAS_NOTARY_KEY_ID, CANVAS_NOTARY_ISSUER
+#   CHALKWORK_NOTARY_PROFILE   a keychain profile from `xcrun notarytool store-credentials`
+#   CHALKWORK_NOTARY_KEY, CHALKWORK_NOTARY_KEY_ID, CHALKWORK_NOTARY_ISSUER
 #                           an App Store Connect API key: the .p8 file's path, its key id, issuer id
 set -eu
-app="${1:?usage: scripts/notarize.sh <Canvas.app> <out.zip>}"
-out="${2:?usage: scripts/notarize.sh <Canvas.app> <out.zip>}"
-if [ -n "${CANVAS_NOTARY_PROFILE:-}" ]; then
-  set -- --keychain-profile "$CANVAS_NOTARY_PROFILE"
-elif [ -n "${CANVAS_NOTARY_KEY:-}" ]; then
-  set -- --key "$CANVAS_NOTARY_KEY" --key-id "${CANVAS_NOTARY_KEY_ID:?CANVAS_NOTARY_KEY_ID}" --issuer "${CANVAS_NOTARY_ISSUER:?CANVAS_NOTARY_ISSUER}"
+app="${1:?usage: scripts/notarize.sh <Chalkwork.app> <out.zip>}"
+out="${2:?usage: scripts/notarize.sh <Chalkwork.app> <out.zip>}"
+if [ -n "${CHALKWORK_NOTARY_PROFILE:-}" ]; then
+  set -- --keychain-profile "$CHALKWORK_NOTARY_PROFILE"
+elif [ -n "${CHALKWORK_NOTARY_KEY:-}" ]; then
+  set -- --key "$CHALKWORK_NOTARY_KEY" --key-id "${CHALKWORK_NOTARY_KEY_ID:?CHALKWORK_NOTARY_KEY_ID}" --issuer "${CHALKWORK_NOTARY_ISSUER:?CHALKWORK_NOTARY_ISSUER}"
 else
-  echo "notarize.sh: set CANVAS_NOTARY_PROFILE, or CANVAS_NOTARY_KEY with _KEY_ID and _ISSUER" >&2
+  echo "notarize.sh: set CHALKWORK_NOTARY_PROFILE, or CHALKWORK_NOTARY_KEY with _KEY_ID and _ISSUER" >&2
   exit 2
 fi
 # The notary service rejects ad-hoc signatures, a missing hardened runtime or timestamp; say so
@@ -21,7 +21,7 @@ fi
 codesign --verify --deep --strict "$app"
 details="$(codesign -dvv "$app" 2>&1)"
 case "$details" in *"Authority=Developer ID Application"*) ;; *)
-  echo "notarize.sh: $app is not signed with a Developer ID Application identity (CANVAS_SIGN_IDENTITY)" >&2
+  echo "notarize.sh: $app is not signed with a Developer ID Application identity (CHALKWORK_SIGN_IDENTITY)" >&2
   exit 1 ;;
 esac
 case "$details" in *"runtime)"*) ;; *)

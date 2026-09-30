@@ -136,7 +136,7 @@ public actor GitRunner {
                 var environment = ProcessInfo.processInfo.environment
                 environment["GIT_OPTIONAL_LOCKS"] = "0"
                 environment["GIT_TERMINAL_PROMPT"] = "0"
-                // Canvas reads what the repository has and never goes to the network: a partial
+                // Chalkwork reads what the repository has and never goes to the network: a partial
                 // clone's missing blob is missing, not fetched behind the user's back.
                 environment["GIT_NO_LAZY_FETCH"] = "1"
                 process.environment = environment

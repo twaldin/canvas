@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// Typed views of `ShapeProps`, `ArrowProps`, and `Binding` (schema/canvas-api.json). Props stay
+/// Typed views of `ShapeProps`, `ArrowProps`, and `Binding` (schema/chalkwork-api.json). Props stay
 /// JSON on the object; these parse them where drawing code needs typed values.
 public struct ShapeSpec: Equatable, Sendable {
     public enum Kind: String, Sendable, CaseIterable {

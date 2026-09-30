@@ -1,5 +1,5 @@
 {
-  "name": "@canvas/client",
+  "name": "@chalkwork/client",
   "version": "0.2.1",
   "private": true,
   "type": "module",

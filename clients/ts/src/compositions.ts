@@ -4,7 +4,7 @@
 // functions whose first parameter is named `canvas` receive the client (every API namespace plus
 // `compositions`); `client.compositions.<name>.<fn>(...)` passes it for you. Other exports (pure
 // helpers, constants) come through unchanged. Search order, first match wins, so a helper you
-// improve shadows the shipped one: `~/.canvas/compositions`, then `builtin_compositions/` next to
+// improve shadows the shipped one: `~/.chalkwork/compositions`, then `builtin_compositions/` next to
 // this file (shipped with the client).
 // Modules load lazily on first access (Bun's synchronous `require`), like the Python SDK.
 // `reload()` picks up edited files. Bun caches directory listings in its resolver, so a file
@@ -29,7 +29,7 @@ export type Compositions = {
 } & Record<string, Record<string, any>>;
 
 export function defaultCompositionDirs(): string[] {
-  return [join(homedir(), ".canvas/compositions"), join(import.meta.dir, "builtin_compositions")];
+  return [join(homedir(), ".chalkwork/compositions"), join(import.meta.dir, "builtin_compositions")];
 }
 
 function files(dirs: string[]): Map<string, string> {

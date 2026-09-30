@@ -1,7 +1,7 @@
 import AppKit
 import CanvasCore
 
-/// Help › Canvas Basics: a floating panel inside the board window (an overlay like Go to, never
+/// Help › Chalkwork Basics: a floating panel inside the board window (an overlay like Go to, never
 /// modal) with the short legend in `CanvasBasics`: lifecycle dots, markers, the follow tile, the
 /// tray and Hyper-click, zoom and cards, the keyboard. It stays open while the canvas is used
 /// beside it, so the user can try what it says; ×, Esc while it has the keyboard, or the menu
@@ -28,11 +28,11 @@ final class BasicsPanel: NSVisualEffectView {
         layer?.borderColor = NSColor.separatorColor.cgColor
         isHidden = true
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Canvas Basics")
+        setAccessibilityLabel("Chalkwork Basics")
 
-        let title = NSTextField(labelWithString: "Canvas Basics")
+        let title = NSTextField(labelWithString: "Chalkwork Basics")
         title.font = .systemFont(ofSize: 15, weight: .semibold)
-        let close = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close Canvas Basics") ?? NSImage(), target: self, action: #selector(closeClicked))
+        let close = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close Chalkwork Basics") ?? NSImage(), target: self, action: #selector(closeClicked))
         close.isBordered = false
         close.contentTintColor = .secondaryLabelColor
         close.toolTip = "Close (Esc)"

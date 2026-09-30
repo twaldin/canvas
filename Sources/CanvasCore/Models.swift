@@ -1,6 +1,6 @@
 import Foundation
 
-/// Mirrors `definitions` in schema/canvas-api.json. Change the schema first.
+/// Mirrors `definitions` in schema/chalkwork-api.json. Change the schema first.
 public typealias ObjectID = String
 public typealias BoardID = String
 public typealias MentionID = String

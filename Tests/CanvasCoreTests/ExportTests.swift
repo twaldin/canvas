@@ -15,8 +15,8 @@ struct ExportTests {
     @Test func aNameNeverStartsHiddenOrEndsInASeparator() {
         #expect(ExportFile.name(".env: values", ext: "png") == "env - values.png")
         #expect(ExportFile.name("Report:", ext: "png") == "Report.png")
-        #expect(ExportFile.name(" / : ", ext: "png") == "Canvas selection.png", "nothing left: the fallback")
-        #expect(ExportFile.name(nil, ext: "png") == "Canvas selection.png")
+        #expect(ExportFile.name(" / : ", ext: "png") == "Chalkwork selection.png", "nothing left: the fallback")
+        #expect(ExportFile.name(nil, ext: "png") == "Chalkwork selection.png")
         let long = ExportFile.name(String(repeating: "word ", count: 40), ext: "png")
         #expect(long.count <= ExportFile.maxNameLength + 4 && !long.contains(" .png"))
     }
@@ -36,7 +36,7 @@ struct ExportTests {
     }
 
     /// Presenter P4: a marquee around the walkthrough group saved a 16749×1911 strip named
-    /// "Canvas selection.png".
+    /// "Chalkwork selection.png".
     @Test func aPictureOfOneGroupIsNamedForItAndCappedInSize() {
         let walkthrough = SelectionScope.Group(id: "grp_walk", members: ["a", "b", "inner"])
         let inner = SelectionScope.Group(id: "inner", members: ["c"])

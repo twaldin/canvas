@@ -1,14 +1,14 @@
 #!/bin/sh
-# The bundle a development instance runs from: a copy of <app> at <home>/Canvas.app that brings
+# The bundle a development instance runs from: a copy of <app> at <home>/Chalkwork.app that brings
 # its instance's environment with it, so however macOS relaunches it (logging back in, the Dock,
 # Finder, `open` with no environment) it runs on its own home, never on the user's default one
 # beside their live app (docs/testing.md "Development bundles"). Used by scripts/dev.sh and
-# scripts/perf-replica.sh; <app> itself (a release bundle, .build/Canvas.app, a frozen copy) is
+# scripts/perf-replica.sh; <app> itself (a release bundle, .build/Chalkwork.app, a frozen copy) is
 # never changed.
 #
 #   scripts/dev-bundle.sh [--release-id] <app> <home> [KEY=VALUE…]   prints the copy's path
 #
-# The copy's Info.plist gets LSEnvironment (CANVAS_HOME=<home> and the given variables), which
+# The copy's Info.plist gets LSEnvironment (CHALKWORK_HOME=<home> and the given variables), which
 # LaunchServices applies to every launch; CFBundleIdentifier <app's>.dev.<hash of the home>, so
 # it shares no user defaults, saved window state, WebKit default store or TCC identity with the
 # release app or another home (`--release-id` keeps <app>'s: the checkout's own home, a
@@ -22,7 +22,7 @@ release_id=
 source="$1"; home="$2"; shift 2
 case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
 [ -f "$source/Contents/Info.plist" ] || { echo "scripts/dev-bundle.sh: $source is not an app bundle" >&2; exit 1; }
-copy="$home/Canvas.app"
+copy="$home/Chalkwork.app"
 [ "$(cd "$source" && pwd -P)" != "$(mkdir -p "$copy" && cd "$copy" && pwd -P)" ] || { echo "scripts/dev-bundle.sh: $source is this home's own copy; pass the bundle it was made from" >&2; exit 1; }
 rm -rf "$copy"
 # A clone on APFS: no bytes copied.
@@ -32,7 +32,7 @@ import hashlib, plistlib, sys
 path, home, release_id, pairs = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
 with open(path, "rb") as f:
     info = plistlib.load(f)
-env = {"CANVAS_HOME": home}
+env = {"CHALKWORK_HOME": home}
 for pair in pairs:
     key, sep, value = pair.partition("=")
     if not sep or not key:

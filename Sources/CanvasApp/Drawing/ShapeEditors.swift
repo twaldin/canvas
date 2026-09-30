@@ -140,7 +140,7 @@ final class ShapeTextEditor: NSTextView, ShapeEditing, NSTextViewDelegate {
     required init?(coder: NSCoder) { fatalError("unused") }
 
     /// AppKit draws (and blinks) the caret only in the key window. Typing still reaches a
-    /// Canvas window that isn't key (the app never takes focus by itself, `CanvasApplication`
+    /// Chalkwork window that isn't key (the app never takes focus by itself, `CanvasApplication`
     /// dispatches keys to it), so there the editor shows a steady caret: an empty editor is
     /// never just a box.
     override func draw(_ dirtyRect: NSRect) {

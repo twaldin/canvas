@@ -1,6 +1,6 @@
 # Third-party notices
 
-Swift packages linked into Canvas, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with one patch (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`).
+Swift packages linked into Chalkwork, pinned in `Package.swift` / `Package.resolved`; libghostty-spm is vendored under `Vendor/libghostty-spm` with one patch (`Vendor/libghostty-spm/CANVAS-PATCH.md`). Assets vendored under `resources/` carry their own license files (`resources/fonts/OFL.txt`, `resources/kit/vendor/THIRD_PARTY_LICENSES.txt`).
 
 | Package | Version | License | Copyright |
 | --- | --- | --- | --- |
@@ -22,7 +22,7 @@ Swift packages linked into Canvas, pinned in `Package.swift` / `Package.resolved
 
 ### Inside the libghostty binary
 
-`libghostty.a`, the xcframework libghostty-spm downloads and Canvas links statically, is Ghostty built by Zig 0.16 together with these libraries, Zig packages and fonts. Versions are the ones Ghostty pins at commit 3c47ca159368 (its `build.zig.zon` and those under `pkg/` and `src/stb/`); the archive's object files, symbols and embedded font names match them.
+`libghostty.a`, the xcframework libghostty-spm downloads and Chalkwork links statically, is Ghostty built by Zig 0.16 together with these libraries, Zig packages and fonts. Versions are the ones Ghostty pins at commit 3c47ca159368 (its `build.zig.zon` and those under `pkg/` and `src/stb/`); the archive's object files, symbols and embedded font names match them.
 
 | Library | Version | License | Copyright |
 | --- | --- | --- | --- |
@@ -50,15 +50,15 @@ Portions of this software are copyright © 2023 The FreeType Project (https://fr
 
 ## GNU libintl (LGPL-2.1-or-later)
 
-Canvas contains GNU libintl, the runtime library of GNU gettext 0.24, statically linked: it is part of `libghostty.a`, where Ghostty uses it to register its translation directory and to turn macOS language names (`en-US`) into POSIX locale names (`en_US`). libintl is covered by the GNU Lesser General Public License 2.1 or later, whose text is below. That license, not Canvas's, governs libintl, and it gives you these rights:
+Chalkwork contains GNU libintl, the runtime library of GNU gettext 0.24, statically linked: it is part of `libghostty.a`, where Ghostty uses it to register its translation directory and to turn macOS language names (`en-US`) into POSIX locale names (`en_US`). libintl is covered by the GNU Lesser General Public License 2.1 or later, whose text is below. That license, not Chalkwork's, governs libintl, and it gives you these rights:
 
-- **Source.** libintl is unmodified gettext 0.24, directory `gettext-runtime/intl` of `gettext-0.24.tar.gz`. Every Canvas release on GitHub (https://github.com/twaldin/canvas/releases) has that file attached, next to the app's zip. It is also at https://ftp.gnu.org/gnu/gettext/gettext-0.24.tar.gz, and is the identical file Ghostty builds from (https://deps.files.ghostty.org/gettext-0.24.tar.gz), SHA-256 `c918503d593d70daf4844d175a13d816afacb667c06fba1ec9dcd5002c1518b7`. Ghostty's build script, `config.h` and headers for it are `pkg/libintl` at https://github.com/ghostty-org/ghostty/tree/3c47ca159368eb4a860ffe5333abdf4a85b2767b/pkg/libintl.
-- **Relinking.** Everything else in the Canvas executable is available to relink with a modified libintl: Canvas's complete source is https://github.com/twaldin/canvas (the release's tag), and the rest of `libghostty.a` is the object code in libghostty-spm's xcframework, `Vendor/libghostty-spm/Package.swift` names its URL and checksum. To replace libintl:
+- **Source.** libintl is unmodified gettext 0.24, directory `gettext-runtime/intl` of `gettext-0.24.tar.gz`. Every Chalkwork release on GitHub (https://github.com/twaldin/canvas/releases) has that file attached, next to the app's zip. It is also at https://ftp.gnu.org/gnu/gettext/gettext-0.24.tar.gz, and is the identical file Ghostty builds from (https://deps.files.ghostty.org/gettext-0.24.tar.gz), SHA-256 `c918503d593d70daf4844d175a13d816afacb667c06fba1ec9dcd5002c1518b7`. Ghostty's build script, `config.h` and headers for it are `pkg/libintl` at https://github.com/ghostty-org/ghostty/tree/3c47ca159368eb4a860ffe5333abdf4a85b2767b/pkg/libintl.
+- **Relinking.** Everything else in the Chalkwork executable is available to relink with a modified libintl: Chalkwork's complete source is https://github.com/twaldin/canvas (the release's tag), and the rest of `libghostty.a` is the object code in libghostty-spm's xcframework, `Vendor/libghostty-spm/Package.swift` names its URL and checksum. To replace libintl:
   1. Build the 30 C files Ghostty's `pkg/libintl/build.zig` lists from `gettext-runtime/intl` with your changes, using its `config.h` (`clang -c -DHAVE_CONFIG_H '-DLOCALEDIR=""' -I<ghostty>/pkg/libintl -Igettext-runtime/intl -Igettext-runtime/intl/gnulib-lib`, once per architecture).
   2. Replace those members of the xcframework's `macos-arm64_x86_64/libghostty.a`: `lipo -thin` each architecture, `ar -r` your objects into it, `ranlib`, then `lipo -replace` the slice back.
-  3. Put your xcframework in `Vendor/libghostty-spm/`, replace the `libghostty` binary target's `url:` and `checksum:` in its `Package.swift` with `path: "GhosttyKit.xcframework"`, and run `scripts/bundle.sh release`, which builds, assembles and (ad hoc) signs `Canvas.app` (docs/releasing.md).
-- **Written offer.** For at least three years after each Canvas release, Timothy Waldin (timothy@waldin.net) will give anyone who asks a copy of libintl's complete corresponding source above, for no more than the cost of sending it.
-- Canvas's own license (MIT) permits modifying Canvas for your own use and reverse engineering to debug such modifications.
+  3. Put your xcframework in `Vendor/libghostty-spm/`, replace the `libghostty` binary target's `url:` and `checksum:` in its `Package.swift` with `path: "GhosttyKit.xcframework"`, and run `scripts/bundle.sh release`, which builds, assembles and (ad hoc) signs `Chalkwork.app` (docs/releasing.md).
+- **Written offer.** For at least three years after each Chalkwork release, Timothy Waldin (timothy@waldin.net) will give anyone who asks a copy of libintl's complete corresponding source above, for no more than the cost of sending it.
+- Chalkwork's own license (MIT) permits modifying Chalkwork for your own use and reverse engineering to debug such modifications.
 
 ## z2d (MPL-2.0)
 

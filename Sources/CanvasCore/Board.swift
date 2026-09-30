@@ -383,6 +383,9 @@ public final class Board {
         changedAt.removeValue(forKey: id)
         reindexKey(id, from: removed.props, to: nil)
         bumpRevision()
+        // Before the delete, so undo brings the object back first and then its chips.
+        let unstaged = tray.enumerated().filter { $0.element.target.objectIDs.contains(id) }.map { PlacedMention(index: $0.offset, mention: $0.element) }
+        if !unstaged.isEmpty { history.record(.unstaged(unstaged, pastedInto: nil), by: Actor(caller: caller)) }
         history.record(.deleted(removed), by: Actor(caller: caller))
         if removed.type == .terminal { removedTerminals.append(id) }
         log(.deleted, removed, actor: actor, "deleted \(ActivityLog.describe(removed))")
@@ -785,14 +788,38 @@ public final class Board {
     }
 
     /// Remove exactly these mentions (the ones whose context was delivered), from the tray and
-    /// from what agents handed to terminals. Unknown ids are ignored.
-    public func commit(_ ids: [MentionID]) {
+    /// from what agents handed to terminals. Unknown ids are ignored. `pastedInto`: the user
+    /// pasted them into that terminal (Hyper-V), an undo step that puts the chips back; a
+    /// prompt's drain is the agent's delivery, never undone.
+    public func commit(_ ids: [MentionID], pastedInto terminal: ObjectID? = nil) {
         commitHandoffs(ids)
+        let removed = tray.enumerated().filter { ids.contains($0.element.id) }.map { PlacedMention(index: $0.offset, mention: $0.element) }
+        guard !removed.isEmpty else { return }
+        tray.removeAll { ids.contains($0.id) }
+        delivered += removed.count
+        if let terminal { history.record(.unstaged(removed, pastedInto: terminal)) }
+        trayChanged()
+    }
+
+    /// Undo of a step that took these mentions out of the tray: each goes back to its place
+    /// (in index order, so the chips before it are where they were), unless it is in the tray
+    /// already or something it points at is gone.
+    func restageMentions(_ placed: [PlacedMention]) {
+        var changed = false
+        for entry in placed.sorted(by: { $0.index < $1.index }) where !tray.contains(where: { $0.id == entry.mention.id || $0.target == entry.mention.target })
+            && entry.mention.target.objectIDs.allSatisfy({ objects[$0] != nil }) {
+            tray.insert(entry.mention, at: min(entry.index, tray.count))
+            changed = true
+        }
+        if changed { trayChanged() }
+    }
+
+    /// Redo of such a step: the mentions come out again.
+    func unstageMentions(_ placed: [PlacedMention]) {
+        let ids = Set(placed.map(\.mention.id))
         let before = tray.count
         tray.removeAll { ids.contains($0.id) }
-        guard tray.count != before else { return }
-        delivered += before - tray.count
-        trayChanged()
+        if tray.count != before { trayChanged() }
     }
 
     /// Staged mentions of the object turn "edited" when the update changed what they hold

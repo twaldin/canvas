@@ -619,7 +619,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         if let manager = textUndoManager, redo ? manager.canRedo : manager.canUndo {
             return redo ? manager.redo() : manager.undo()
         }
-        guard canvasUndoApplies else { return }
+        guard canvasUndoApplies(redo: redo) else { return }
         let step = redo ? board.nextRedo : board.nextUndo
         guard redo ? board.redo() : board.undo(), let step, let notice = step.notice(redo: redo, author: board.authorName(step.author)) else { return }
         canvas.showNotice(notice)
@@ -627,7 +627,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// Canvas undo and redo act unless a terminal holds the keyboard: there ⌘Z belongs to the
     /// terminal (Ghostty's binding, else the program), so undo in nvim never rewinds a Stage.
-    private var canvasUndoApplies: Bool { canvas.focusedTerminal == nil }
+    /// The one exception is a Hyper-V paste into that terminal as the latest step: its ⌘Z puts
+    /// the chips back (`UndoHistory.Step.pastedInto`), and the next ⌘Z is the terminal's again.
+    private var canvasUndoApplies: Bool { canvasUndoApplies(redo: false) }
+
+    private func canvasUndoApplies(redo: Bool) -> Bool {
+        guard let terminal = canvas.focusedTerminal else { return true }
+        return (redo ? board.nextRedo : board.nextUndo)?.pastedInto == terminal
+    }
 
     /// Edit ▸ Undo/Redo named for the step they'd take (`Undo Create 9 Code Tiles, 6 Arrows
     /// (omp)`), or the text editor's own.
@@ -636,7 +643,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return redo ? manager.redoMenuItemTitle : manager.undoMenuItemTitle
         }
         let verb = redo ? "Redo" : "Undo"
-        guard canvasUndoApplies, let step = redo ? board.nextRedo : board.nextUndo else { return verb }
+        guard canvasUndoApplies(redo: redo), let step = redo ? board.nextRedo : board.nextUndo else { return verb }
         let title = step.title
         let author = board.authorName(step.author).map { " (\($0))" } ?? ""
         return title.isEmpty ? verb : "\(verb) \(title)\(author)"
@@ -700,7 +707,8 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Hyper-V (Edit ▸ Paste Mentions into Terminal): the tray's context block pasted as one
     /// bracketed paste without Enter into the terminal holding the keyboard, else the prompt
     /// target (`PromptTarget.pasteTarget`), for agents with no prompt hook to drain it (aider, a
-    /// bare shell); the pasted mentions leave the tray.
+    /// bare shell); the pasted mentions leave the tray, and ⌘Z puts them back (in that terminal
+    /// too, while this is the latest step: `canvasUndoApplies`).
     @objc func pasteMentions(_ sender: Any?) {
         guard !board.tray.isEmpty, let target = pasteTarget, let terminal = canvas.tiles[target]?.content as? TerminalTile else { return }
         let board = board
@@ -708,7 +716,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             let drained = await board.drain(peek: true, caller: target)
             // Ends on its own line, so what the user types next starts below the block.
             guard !drained.context.isEmpty, let terminal, terminal.paste(drained.context + "\n") else { return }
-            board.commit(drained.mentions.map(\.id))
+            board.commit(drained.mentions.map(\.id), pastedInto: target)
         }
     }
 
@@ -842,7 +850,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             return textUndoManager?.canUndo == true || canvasUndoApplies && board.history.canUndo
         case #selector(redoCanvas(_:)):
             item.title = undoTitle(redo: true)
-            return textUndoManager?.canRedo == true || canvasUndoApplies && board.history.canRedo
+            return textUndoManager?.canRedo == true || canvasUndoApplies(redo: true) && board.history.canRedo
         case #selector(navigateBack(_:)): return focusedPage?.webView?.canGoBack ?? canvas.canNavigateBack
         case #selector(navigateForward(_:)): return focusedPage?.webView?.canGoForward ?? canvas.canNavigateForward
         case #selector(deleteSelection(_:)), #selector(bringToFront(_:)), #selector(sendToBack(_:)): return !selection.isEmpty
@@ -1031,6 +1039,11 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         guard let terminal = canvas.focusedTerminal else { return false }
+        // ⌘Z / ⇧⌘Z right after a Hyper-V paste into this terminal: the chips come back.
+        if modifiers.subtracting(.shift) == .command, event.charactersIgnoringModifiers?.lowercased() == "z", canvasUndoApplies(redo: modifiers.contains(.shift)) {
+            undo(redo: modifiers.contains(.shift))
+            return true
+        }
         if let chord = Self.keyChord(for: event), let action = TerminalConfig.shared.remaps[chord] {
             switch action {
             case .newTerminal: canvas.createTerminal(beside: terminal)

@@ -14,6 +14,10 @@ public final class UndoHistory {
         /// Something outside the board the step did (a changes tile's git action), undone and
         /// redone with it.
         case effect(UndoEffect)
+        /// Mentions the step took out of the tray, each with its place there: a deleted
+        /// object's, or the ones Hyper-V pasted into the terminal `pastedInto`. Undo puts them
+        /// back where they were; redo takes them out again.
+        case unstaged([PlacedMention], pastedInto: ObjectID?)
     }
 
     /// Props a terminal's integrations keep current on their own.
@@ -77,7 +81,7 @@ public final class UndoHistory {
             openUpdates[after.id] = open.count
         case .created(let object), .deleted(let object):
             openUpdates.removeValue(forKey: object.id)
-        case .effect:
+        case .effect, .unstaged:
             break
         }
         open.append(change)
@@ -179,6 +183,18 @@ public struct UndoEffect: Sendable {
     }
 }
 
+/// A mention taken out of the tray and where it sat there (its index), so undo puts it back in
+/// its place and the chips keep their numbers.
+public struct PlacedMention: Sendable, Equatable {
+    public var index: Int
+    public var mention: Mention
+
+    public init(index: Int, mention: Mention) {
+        self.index = index
+        self.mention = mention
+    }
+}
+
 extension Board {
     /// Groups every change made inside `body` into one undo step (a multi-object gesture).
     public func transaction<T>(_ body: () throws -> T) rethrows -> T {
@@ -223,6 +239,9 @@ extension Board {
                 case .effect(let effect):
                     effect.undo()
                     replayed.append(change)
+                case .unstaged(let placed, _):
+                    restageMentions(placed)
+                    replayed.append(change)
                 }
             }
         }
@@ -249,6 +268,9 @@ extension Board {
                     replayed.append(.deleted(removeLive(object)))
                 case .effect(let effect):
                     effect.redo()
+                    replayed.append(change)
+                case .unstaged(let placed, _):
+                    unstageMentions(placed)
                     replayed.append(change)
                 }
             }

@@ -9,12 +9,23 @@ extension UndoHistory.Step {
         var imperative: String { ["Create", "Delete", "Move", "Resize", "Restack", "Change"][rawValue] }
     }
 
-    /// What the step did outside the board, by name (`Stage of src/a.rs`), in order.
+    /// What the step did outside the board, by name (`Stage of src/a.rs`, `Paste of 2
+    /// Mentions`), in order. Mentions a delete took out of the tray go unnamed: the delete names it.
     public var effectNames: [String] {
         changes.compactMap { change in
-            if case .effect(let effect) = change { return effect.name }
-            return nil
+            switch change {
+            case .effect(let effect): return effect.name
+            case .unstaged(let placed, _?): return placed.count == 1 ? "Paste of 1 Mention" : "Paste of \(placed.count) Mentions"
+            default: return nil
+            }
         }
+    }
+
+    /// The terminal the step's only change pasted the tray into (Hyper-V), whose ⌘Z undoes it
+    /// while that terminal still holds the keyboard; nil for any other step.
+    public var pastedInto: ObjectID? {
+        guard changes.count == 1, case .unstaged(_, let terminal?) = changes[0] else { return nil }
+        return terminal
     }
 
     /// What the step did to the board, verb by verb in the order it did them, each with the
@@ -29,7 +40,7 @@ extension UndoHistory.Step {
             switch change {
             case .created(let object), .deleted(let object): born.insert(object.id)
             case .effect: effects = true
-            case .updated: break
+            case .updated, .unstaged: break
             }
         }
         var entries: [(verb: Verb, type: ObjectType)] = []
@@ -37,7 +48,7 @@ extension UndoHistory.Step {
             switch change {
             case .created(let object): entries.append((.create, object.type))
             case .deleted(let object): entries.append((.delete, object.type))
-            case .effect: continue
+            case .effect, .unstaged: continue
             case .updated(let before, let after):
                 guard !born.contains(after.id), !(effects && after.type == .changes) else { continue }
                 let old = UndoHistory.content(before), new = UndoHistory.content(after)

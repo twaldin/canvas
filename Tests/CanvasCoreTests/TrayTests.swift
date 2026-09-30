@@ -4,7 +4,8 @@ import Testing
 import CanvasCore
 
 /// The mention tray: chips numbered as the context numbers them, a chip's click revealing
-/// what it points at, and a tray that fits the window instead of widening it.
+/// what it points at, a tray that fits the window instead of widening it, and chips that
+/// come back with ⌘Z.
 @MainActor
 struct TrayTests {
     let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("canvas-tray-\(UUID().uuidString)")
@@ -194,5 +195,49 @@ struct TrayTests {
         let narrow = TrayLayout.fit(chips: eightChips.map { .init(natural: $0) }, target: target, available: 500)
         #expect(narrow.target == target, "a narrow window still shows the whole label beside one shrunk chip")
         #expect(narrow.width <= 500)
+    }
+
+    // MARK: Undo
+
+    @Test func undoingADeleteBringsItsChipsBackInPlace() throws {
+        let board = makeBoard()
+        let a = code("a.py", on: board), b = code("b.py", on: board, x: 700), c = code("c.py", on: board, x: 1400)
+        try board.stage(line(a, "a.py", 1))
+        try board.stage(line(b, "b.py", 2))
+        try board.stage(.object(b.id))
+        try board.stage(line(c, "c.py", 3))
+        let before = board.tray
+
+        try board.delete(b.id)
+        #expect(board.tray.map(\.id) == [before[0].id, before[3].id])
+        #expect(board.undo())
+        #expect(board.tray == before, "⌘Z puts the tile back and its chips where they were, numbers and all")
+        #expect(board.redo())
+        #expect(board.tray.map(\.id) == [before[0].id, before[3].id], "⇧⌘Z takes them out again")
+    }
+
+    @Test func undoingAHyperVPasteBringsTheChipsBack() async throws {
+        let board = makeBoard()
+        let shell = board.create(type: .terminal, props: .object(["cwd": .string(root.path), "command": .array([])]), frame: Frame(x: 0, y: 600, w: 800, h: 500))
+        let a = code("a.py", on: board), b = code("b.py", on: board, x: 700)
+        try board.stage(line(a, "a.py", 1))
+        try board.stage(line(b, "b.py", 2))
+        let before = board.tray
+
+        let drained = await board.drain(peek: true, caller: shell.id)
+        board.commit(drained.mentions.map(\.id), pastedInto: shell.id)
+        #expect(board.tray.isEmpty)
+        #expect(board.nextUndo?.pastedInto == shell.id, "the paste is the step a ⌘Z in that terminal undoes")
+        #expect(board.nextUndo?.title == "Paste of 2 Mentions")
+        #expect(board.undo())
+        #expect(board.tray == before)
+        #expect(board.redo())
+        #expect(board.tray.isEmpty)
+
+        try board.stage(line(a, "a.py", 1))
+        let steps = board.history.undoSteps.count
+        let prompt = await board.drain(caller: shell.id)
+        #expect(!prompt.context.isEmpty && board.tray.isEmpty)
+        #expect(board.history.undoSteps.count == steps, "an agent's prompt taking the tray is its delivery, not an undo step")
     }
 }

@@ -166,9 +166,9 @@ public final class ApiRouter {
     /// cover the screen the reply is compared against (`agent.read` `since: "prompt"`).
     static let promptMarkLines = 400
 
-    /// Terminals prompted through the API that have not yet reported work; `agent.wait` must not
-    /// answer from the pre-prompt state.
-    private var pendingPrompts: Set<ObjectID> = []
+    /// Terminals prompted through the API that have not yet reported work, with when each was
+    /// prompted: `agent.wait` must not answer from the pre-prompt state (`promptStartGrace`).
+    private var pendingPrompts: [ObjectID: Date] = [:]
     /// Each prompted terminal's text just before its last `agent.prompt` submitted.
     private var promptMarks: [ObjectID: TerminalTail.Tail] = [:]
     private var waiters: [Waiter] = []
@@ -186,6 +186,10 @@ public final class ApiRouter {
     /// How long `agent.wait` gives a terminal with no lifecycle to start reporting one: an agent
     /// launched a moment ago (a tile just created with `omp`) reports within seconds, a shell never.
     public var firstReportGrace: TimeInterval = 15
+    /// How long `agent.wait` gives a prompt sent by `agent.prompt` to start the agent's turn
+    /// (`working` or `blocked`): the integrations report within a second, but a `/` command or `!`
+    /// escape is no turn, and text the agent didn't take as a prompt starts none.
+    public var promptStartGrace: TimeInterval = 60
 
     public init(registry: BoardRegistry) {
         self.registry = registry
@@ -313,6 +317,8 @@ public final class ApiRouter {
         DispatchQueue.main.asyncAfter(deadline: .now() + firstReportGrace) { [weak self] in
             MainActor.assumeIsolated { self?.recheck(token) }
         }
+        // A prompt that hasn't started its turn when its grace ends never will.
+        if let prompted = pendingPrompts[terminal.id] { recheck(token, at: prompted.addingTimeInterval(promptStartGrace)) }
         return nil
     }
 
@@ -344,7 +350,13 @@ public final class ApiRouter {
             guard exited || Date() >= waiter.firstReportDeadline else { return nil }
             return Self.error(waiter.id, Self.lifecycleUnknown(terminal))
         }
-        guard !pendingPrompts.contains(waiter.tile), waiter.until.contains(state) else { return nil }
+        if let prompted = pendingPrompts[waiter.tile] {
+            guard Date().timeIntervalSince(prompted) >= promptStartGrace else { return nil }
+            return Self.error(waiter.id, Failure("unavailable", "\(terminal.id)'s last agent.prompt started no turn within \(promptStartGrace.formatted()) s "
+                + "(its agent reported neither working nor blocked: a / command or ! escape is no turn, or the agent didn't take the text as a prompt), "
+                + "so agent.wait can't tell when it is done; read what followed with agent.read since: \"prompt\""))
+        }
+        guard waiter.until.contains(state) else { return nil }
         return Self.ok(waiter.id, .object(["agent": agentEntry(terminal, on: board)]))
     }
 
@@ -362,11 +374,11 @@ public final class ApiRouter {
             exited = lifecycle == .null
             let state = lifecycle["state"]?.string
             if exited || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
-                pendingPrompts.remove(id)
+                pendingPrompts.removeValue(forKey: id)
             }
         case .objectDeleted(let id):
             tile = id
-            pendingPrompts.remove(id)
+            pendingPrompts.removeValue(forKey: id)
             promptMarks.removeValue(forKey: id)
         default:
             return
@@ -379,12 +391,24 @@ public final class ApiRouter {
         }
     }
 
+    /// Answers the waiter if it is satisfied now. One left waiting on a prompt's turn looks again
+    /// when that prompt's grace ends: a later prompt to the same terminal moves the grace on.
     private func recheck(_ token: UUID) {
         guard let index = waiters.firstIndex(where: { $0.token == token }) else { return }
         let waiter = waiters[index]
-        guard let (board, _) = try? agentTile(waiter.tile), let reply = reply(to: waiter, on: board) else { return }
+        guard let (board, _) = try? agentTile(waiter.tile) else { return }
+        guard let reply = reply(to: waiter, on: board) else {
+            if let prompted = pendingPrompts[waiter.tile] { recheck(token, at: prompted.addingTimeInterval(promptStartGrace)) }
+            return
+        }
         waiters.remove(at: index)
         waiter.connection.send(reply)
+    }
+
+    private func recheck(_ token: UUID, at date: Date) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, date.timeIntervalSinceNow)) { [weak self] in
+            MainActor.assumeIsolated { self?.recheck(token) }
+        }
     }
 
     private func expire(_ token: UUID) {
@@ -549,7 +573,7 @@ public final class ApiRouter {
         let notifying = NotifyingAgent.reports(current)
         let waitable = notifying || Self.state(of: current) != LifecycleState.unknown.rawValue
         let midTurn = board.objects[terminal.id].map(Self.state) == LifecycleState.working.rawValue
-        if notifying { board.notifyingAgentSubmitted(terminal.id) } else if waitable, !midTurn { pendingPrompts.insert(terminal.id) }
+        if notifying { board.notifyingAgentSubmitted(terminal.id) } else if waitable, !midTurn { pendingPrompts[terminal.id] = Date() }
         promptMarks[terminal.id] = before ?? TerminalTail.Tail(rows: [], positions: [])
         var result: [String: JSONValue] = [
             "agent": agentEntry(current, on: board),
@@ -565,8 +589,8 @@ public final class ApiRouter {
     private func finalAnswer(of terminal: CanvasObject, on board: Board, _ p: JSONValue) throws -> JSONValue {
         guard p["lines"] == nil, p["since"] == nil else { throw Failure("invalid_params", "final takes no lines or since: it returns the whole last answer") }
         let state = Self.state(of: terminal)
-        if pendingPrompts.contains(terminal.id) || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
-            throw Failure("unavailable", "\(terminal.id) is still in its turn (\(pendingPrompts.contains(terminal.id) ? "prompted" : state)): agent.wait for it, then read final")
+        if pendingPrompts[terminal.id] != nil || state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
+            throw Failure("unavailable", "\(terminal.id) is still in its turn (\(pendingPrompts[terminal.id] != nil ? "prompted" : state)): agent.wait for it, then read final")
         }
         let cutOff = board.turnErrors[terminal.id]
         guard let answer = board.finalAnswers[terminal.id] else {

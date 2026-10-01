@@ -1324,7 +1324,7 @@
       }
     },
     "agent.wait": {
-      "description": "Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt). A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`; an agent reporting by notification (lifecycle `via: \"notifications\"`) waits for its next notification instead. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited.",
+      "description": "Wait until the target agent reaches one of the given states. After `agent.prompt` it waits for that prompt's turn (see agent.prompt); one that starts no turn within 60 s (its agent reports neither `working` nor `blocked`: a `/` command or `!` escape is no turn) fails it with `unavailable`, so read what followed with `agent.read` `since: \"prompt\"`. A terminal whose lifecycle is `unknown` gets 15 s for a first report (an agent just launched in it) and then fails with `unavailable`, as does one whose agent exits, unless `until` includes `unknown`; an agent reporting by notification (lifecycle `via: \"notifications\"`) waits for its next notification instead. A read: when the connection drops mid-wait (the app restarts), clients re-send it once the app is back, with `timeoutMs` reduced by the time already waited.",
       "resend": true,
       "params": {
         "type": "object",

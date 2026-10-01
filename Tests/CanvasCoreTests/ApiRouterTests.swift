@@ -65,6 +65,38 @@ final class ApiRouterTests {
         #expect(reply["result"]?["agent"]?["lifecycle"]?["state"] == .string("done"), "idle after work, unseen, is done")
     }
 
+    @Test func aPromptThatStartsNoTurnEndsTheWaitOnceItsGraceIsOver() async throws {
+        let tile = terminal()
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .idle, message: nil, seq: 1, source: "canvas-codex")
+        router.promptStartGrace = 0.4
+        let client = try connect()
+        // A slash command is no turn: Codex's hook reports nothing for it, and the tile stays idle.
+        #expect(try await call(client, "agent.prompt", ["target": .string(tile), "text": "/status"])["result"]?["waitable"] == .bool(true))
+        // Not the pre-prompt idle: the prompt's grace ran out (rather than hanging until the timeout).
+        let waited = try await call(client, "agent.wait", ["target": .string(tile), "timeoutMs": 5000])
+        #expect(waited["error"]?["code"] == .string("unavailable"), "\(waited)")
+        #expect(waited["error"]?["message"]?.string?.contains("started no turn") == true)
+
+        // Another prompt arriving mid-wait moves the grace on; the wait still ends when it runs out.
+        _ = try await call(client, "agent.prompt", ["target": .string(tile), "text": "/status"])
+        client.send(#"{"id":"w0","method":"agent.wait","params":{"target":"\#(tile)","timeoutMs":5000}}"#)
+        try await Task.sleep(for: .milliseconds(200))
+        _ = try await call(try connect(), "agent.prompt", ["target": .string(tile), "text": "/model"])
+        let moved = try await client.next()
+        #expect(moved["id"] == .string("w0") && moved["error"]?["code"] == .string("unavailable"), "\(moved)")
+
+        // A prompt that does start its turn within the grace is waited on to its end, however long.
+        _ = try await call(client, "agent.prompt", ["target": .string(tile), "text": "explain the repo"])
+        client.send(#"{"id":"w","method":"agent.wait","params":{"target":"\#(tile)"}}"#)
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .working, message: nil, seq: 2, source: "canvas-codex")
+        try await Task.sleep(for: .milliseconds(600))
+        client.send(#"{"id":"ping","method":"system.ping","params":{}}"#)
+        #expect(try await client.next()["id"] == .string("ping"), "still in its turn past the grace")
+        try board.reportLifecycle(tile: tile, kind: "codex", state: .idle, message: nil, seq: 3, source: "canvas-codex")
+        let reply = try await client.next()
+        #expect(reply["id"] == .string("w") && reply["result"]?["agent"]?["lifecycle"]?["state"] == .string("done"))
+    }
+
     @Test func waitWithoutPromptAnswersFromCurrentState() async throws {
         let tile = terminal()
         try board.reportLifecycle(tile: tile, kind: "omp", state: .blocked, message: "approve bash", seq: 1, source: "canvas-omp")

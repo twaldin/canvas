@@ -14,10 +14,11 @@
 // take are spooled for it to replay (./report.ts).
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpathSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { CanvasClient } from "../../clients/ts/src/index";
 import { canvasGuidance } from "../guidance";
+import { askedQuestion, QUEUED_ASK_TOOL, toolCall, unansweredQuestion } from "./calls";
 import { codexStartupQuestion } from "./codex-trust";
 import { absolute, editLocation, type Location, patchLocation, readLocation, structuredPatchChanges } from "./follow";
 import { release, report as spooled } from "./report";
@@ -60,7 +61,7 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
   const from = thread(kind, input);
   if (from === "internal") return undefined;
   const subagent = from === "subagent";
-  if (subagent && event !== "PermissionRequest" && event !== "PostToolUse" && event !== "PostToolUseFailure" && event !== "Notification") return undefined;
+  if (subagent && event !== "PreToolUse" && event !== "PermissionRequest" && event !== "PostToolUse" && event !== "PostToolUseFailure" && event !== "Notification") return undefined;
   switch (event) {
     case "Launch": {
       // bin/codex, as Codex starts (its arguments after the event): it fires SessionStart only
@@ -111,11 +112,22 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       await quietly(client.api.tray.commit({ ids: drained.mentions.map((m) => m.id) }));
       return undefined;
     }
+    case "PreToolUse": {
+      // Registered only for the ask tools (./calls.ts): the agent waits on the user's answer, in
+      // auto modes too, where no approval announces it. The answer (its PostToolUse, or for
+      // Codex's queued question a prompt) takes the tile back to working.
+      const question = askedQuestion(input);
+      if (question) await report("blocked", question, toolCall(input), undefined, kind === "codex");
+      return undefined;
+    }
     case "PermissionRequest": {
       // Chalkwork keeps the tile blocked until this call finishes (its PostToolUse), whatever other
       // calls (parallel siblings, subagents) finish meanwhile. Codex asks one approval at a time,
       // so its new request is the one on screen: it replaces any earlier wait (`serial`), and the
-      // bubble never names a request already answered.
+      // bubble never names a request already answered. Claude Code also asks permission for its
+      // ask tool, in every mode: PreToolUse reported that question already, and a second wait for
+      // the same call would outlast the answer.
+      if (askedQuestion(input)) return undefined;
       const tool = str(input.tool_name) ?? "tool";
       const description = str(obj(input.tool_input)?.description);
       await report("blocked", description ?? `approve ${tool}?`, toolCall(input), undefined, kind === "codex");
@@ -144,6 +156,9 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
         await report("idle");
         return undefined;
       }
+      // Codex's queued question finishes at once, unanswered: its wait lasts until the answer
+      // comes as a prompt (or the turn ends; Stop raises it again).
+      if (input.tool_name === QUEUED_ASK_TOOL) return undefined;
       // Subagents' reads would drag the follow tile around.
       const location = subagent || event === "PostToolUseFailure" ? undefined : kind === "claude" ? claudeLocation(input) : kind === "codex" ? codexLocation(input) : geminiLocation(input);
       await Promise.all([
@@ -153,11 +168,22 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       return undefined;
     }
     case "Stop":
-    case "AfterAgent":
+    case "AfterAgent": {
       // The turn's answer (agent.read final): Codex's and Claude Code's `last_assistant_message`,
       // Gemini CLI's `prompt_response`.
       await report("idle", undefined, undefined, str(input.last_assistant_message) ?? str(input.prompt_response));
+      // A question Codex queued this turn and the user hasn't answered still waits for them: the
+      // turn is over, but the tile isn't done. Reported after the idle (one seq later), so the
+      // turn's answer is kept.
+      const rollout = kind === "codex" ? str(input.transcript_path) : undefined;
+      const turn = str(input.turn_id);
+      let asked: Json | undefined;
+      try {
+        asked = rollout && turn ? unansweredQuestion(readFileSync(rollout, "utf8"), turn) : undefined;
+      } catch {}
+      if (asked) await spooled(client, { tile, kind, state: "blocked", message: askedQuestion(asked), seq: seq + 1, source, call: toolCall(asked), serial: true });
       return undefined;
+    }
     case "Interrupt":
       await report("idle");
       return undefined;
@@ -166,23 +192,6 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       return undefined;
   }
   return undefined;
-}
-
-/**
- * Names a tool call the same in its PermissionRequest (which carries no call id) and its
- * PostToolUse: the tool and its input. Codex adds the approval's `description` only to the
- * request, so that is left out.
- */
-function toolCall(input: Json): string {
-  const { description: _, ...args } = obj(input.tool_input) ?? {};
-  const identity = JSON.stringify([str(input.tool_name) ?? "", canonical(args)]);
-  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
-}
-
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  const record = obj(value);
-  return record ? Object.fromEntries(Object.keys(record).sort().map((key) => [key, canonical(record[key])])) : value;
 }
 
 // MARK: Follow

@@ -17,10 +17,15 @@ import { resolve } from "node:path";
 
 const RUN = resolve(import.meta.dir, "../agent-hooks/run");
 
-/** Event → Codex's key label, timeout (s; SessionEnd and Interrupt allow at most 3), async. */
-const EVENTS: Array<[event: string, label: string, timeout: number, async: boolean]> = [
+/**
+ * Event → Codex's key label, timeout (s; SessionEnd and Interrupt allow at most 3), async, and
+ * matcher (tool names). PreToolUse only for Codex's questions to the user, `request_user_input`
+ * (Plan mode) and `request_user_input_async` (Default mode), which no other hook announces.
+ */
+const EVENTS: Array<[event: string, label: string, timeout: number, async: boolean, matcher?: string]> = [
   ["SessionStart", "session_start", 5, false],
   ["UserPromptSubmit", "user_prompt_submit", 5, false],
+  ["PreToolUse", "pre_tool_use", 5, false, "request_user_input|request_user_input_async"],
   ["PermissionRequest", "permission_request", 5, false],
   ["PostToolUse", "post_tool_use", 5, true],
   ["Stop", "stop", 5, false],
@@ -41,12 +46,13 @@ function canonical(value: unknown): unknown {
 
 const groups: string[] = [];
 const state: string[] = [];
-for (const [event, label, timeout, runsAsync] of EVENTS) {
+for (const [event, label, timeout, runsAsync, matcher] of EVENTS) {
   const handler = { type: "command", command: `${quote(RUN)} codex ${event}`, timeout, async: runsAsync };
-  const identity = { event_name: label, hooks: [handler] };
+  const identity = { event_name: label, ...(matcher ? { matcher } : {}), hooks: [handler] };
   const hash = `sha256:${createHash("sha256").update(JSON.stringify(canonical(identity))).digest("hex")}`;
   // TOML basic strings accept JSON string escapes.
-  groups.push(`${event}=[{hooks=[{type="command",command=${JSON.stringify(handler.command)},timeout=${timeout},async=${runsAsync}}]}]`);
+  const group = `${matcher ? `matcher=${JSON.stringify(matcher)},` : ""}hooks=[{type="command",command=${JSON.stringify(handler.command)},timeout=${timeout},async=${runsAsync}}]`;
+  groups.push(`${event}=[{${group}}]`);
   state.push(`${JSON.stringify(`/<session-flags>/config.toml:${label}:0:0`)}={trusted_hash=${JSON.stringify(hash)}}`);
 }
 export const hooksOverride = `hooks={${groups.join(",")},state={${state.join(",")}}}`;

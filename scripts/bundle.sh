@@ -4,9 +4,7 @@
 # CHALKWORK_VERSION (default: the VERSION file) and CHALKWORK_BUILD (default 1) set the bundle version.
 # CHALKWORK_BUNDLE_APP assembles it elsewhere (a frozen copy for studies), leaving the bundle a
 # running dev instance launched from .build/Chalkwork.app untouched.
-# CHALKWORK_SIGN_IDENTITY signs for distribution (docs/releasing.md): a Developer ID Application
-# identity, with the hardened runtime, scripts/Chalkwork.entitlements and a secure timestamp. "-"
-# signs the same way ad hoc (no timestamp), to try the hardened runtime without a certificate.
+# Distribution signing (Developer ID, hardened runtime, notarization) is scripts/notarize.sh's.
 set -eu
 config="${1:-debug}"
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -66,21 +64,7 @@ PLIST
 # SwiftPM copies some resource files (tree-sitter queries) read-only; the README's
 # `xattr -dr com.apple.quarantine` can't clear a read-only file, so make everything user-writable.
 chmod -R u+w "$app"
-if [ -n "${CHALKWORK_SIGN_IDENTITY:-}" ]; then
-  set -- --force --options runtime --sign "$CHALKWORK_SIGN_IDENTITY"
-  [ "$CHALKWORK_SIGN_IDENTITY" = - ] || set -- "$@" --timestamp
-  # Inside out: nested code before the bundle that seals it. The executable is the only Mach-O
-  # today; a nested framework, XPC service or helper app would need signing as a bundle.
-  nested="$(find "$app/Contents" \( -name '*.framework' -o -name '*.xpc' -o -name '*.app' -o -name '*.appex' \) -print)"
-  [ -z "$nested" ] || { echo "bundle.sh: sign these nested bundles before the app: $nested" >&2; exit 1; }
-  find "$app/Contents" -depth -type f ! -path "$app/Contents/MacOS/Chalkwork" -print | while IFS= read -r file; do
-    case "$(file -b "$file")" in Mach-O*) codesign "$@" "$file" ;; esac
-  done
-  codesign "$@" --entitlements "$repo/scripts/Chalkwork.entitlements" "$app"
-  codesign --verify --deep --strict "$app"
-else
-  codesign --force --sign - "$app"
-fi
+codesign --force --sign - "$app"
 # Development input replay helper (docs/testing.md); rebuilt only when its source changes.
 if [ ! -x "$repo/.build/dev-input" ] || [ "$repo/scripts/dev-input.swift" -nt "$repo/.build/dev-input" ]; then
   swiftc -O "$repo/scripts/dev-input.swift" -o "$repo/.build/dev-input"

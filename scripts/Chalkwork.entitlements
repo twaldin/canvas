@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-Chalkwork under the hardened runtime (scripts/bundle.sh with CHALKWORK_SIGN_IDENTITY; docs/releasing.md).
+Chalkwork under the hardened runtime (scripts/notarize.sh signs with it; docs/releasing.md).
 
 Chalkwork itself needs no runtime exception: libghostty and the tree-sitter grammars are linked in;
 Metal, WebKit (its JIT runs in the WebContent process), the JavaScriptCore parser behind

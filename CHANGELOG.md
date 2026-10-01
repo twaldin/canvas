@@ -2,12 +2,24 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
-## Unreleased
+## 0.3.3
+
+An agent's question shows as needing you even with approvals off, and opened from a worktree, Chalkwork reads that worktree's code.
+
+**Still on Canvas 0.2?** Read the 0.3.0 notes' "Upgrading from Canvas" first: the first launch of Chalkwork moves your boards over, and agents started under Canvas need a restart.
 
 ### Fixed
 
 - **An agent's question asks for you, in auto mode too.** When Claude Code or Codex asks you something mid-turn, the tile goes orange with the question in its bubble, and ⌘J and the edge pill find it, even with approvals off (`--dangerously-skip-permissions`, `--yolo`). Codex's questions (Plan mode, and the queued "? 1 question" in Default mode) left the tile working, then done, with the question unanswered. Claude Code's showed "approve AskUserQuestion?" and stayed orange after you answered, until the turn ended. Answering takes the tile back to working.
 - **Opened from a worktree, Chalkwork reads that worktree's code.** The board stays the repository's, rooted at the main checkout, but ⌘P Go to now lists and opens the worktree's files and symbols, hover, ⌘-click and call graphs on a worktree's files ask a language server of that worktree's project (they said "No definition found"), and code, image, diagram and changes tiles an agent working in a worktree creates with relative paths read its worktree, not the main checkout.
+
+### Install
+
+Download `Chalkwork-0.3.3.zip`, unzip, move `Chalkwork.app` to `/Applications` (replacing the older one; quit Chalkwork first and choose Keep Running, and your terminals reattach). It's ad-hoc signed, not notarized: run `xattr -dr com.apple.quarantine /Applications/Chalkwork.app`, or open it once and choose Open Anyway in System Settings › Privacy & Security. Then `brew install neurosnap/tap/zmx oven-sh/bun/bun`. Requires macOS 14 or later on Apple silicon. Full steps in the README.
+
+### Licensing
+
+Chalkwork statically links GNU libintl (GNU gettext 0.24, LGPL-2.1-or-later) through libghostty. Its source, `gettext-0.24.tar.gz`, is attached to this release, and so is `THIRD_PARTY_NOTICES.md`, the list of third-party components and their licenses (the same file is inside `Chalkwork.app`). `THIRD_PARTY_NOTICES.md` also says how to relink Chalkwork with a modified libintl.
 
 ## 0.3.2
 

@@ -7,6 +7,7 @@ Each version's section is its GitHub release's notes (release.yml puts it above 
 ### Fixed
 
 - **A restarted agent keeps the tile's flags.** After a reboot (its terminal session gone), an agent tile resumes its recorded session with the options of the tile's own command: Codex keeps its `-c` overrides, including the folder's trust, so it doesn't ask about the folder again; Claude Code keeps `--model` and `--dangerously-skip-permissions`; omp keeps `-e`; opencode keeps its project. Before, it ran a plain `codex resume <id>` (`claude --resume <id>`, `omp --resume=<id>`). The command's own `--resume`/`--continue` and its prompt aren't repeated.
+- **A Codex tile trusted by `-c` doesn't show a false folder question.** Codex started with the folder's trust as an override (`codex -c 'projects={"<folder>"={trust_level="trusted"}}'`), and every restarted tile that resumes such a session with its own `-c`, went orange with "Codex asks whether to trust this folder" although Codex asked nothing, and stayed so until the first prompt; `agent.prompt` refused it as blocked. Chalkwork judged the folder from `~/.codex/config.toml` alone. It now reads the `-c` overrides Codex keeps, as Codex reads them.
 
 ## 0.3.3
 

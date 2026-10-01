@@ -136,18 +136,25 @@ final class LoginShellTests {
         return url.path
     }
 
+    // The bounds leave room for a loaded CI runner (spawning a login shell there takes up to ~5 s)
+    // and still fail a real stall: the stand-in shells' children sleep 60 s.
+
     @Test func aChildHoldingTheOutputOpenDoesNotStallTheLookup() async throws {
-        let login = LoginShell(shell: try shell("sleep 30 &\neval \"$2\""), timeout: .seconds(10))
+        // Reading until the child's EOF would wait for the deadline: 30 s, three times the bound.
+        let deadline: Duration = .seconds(30)
+        let login = LoginShell(shell: try shell("sleep 60 &\neval \"$2\""), timeout: deadline)
         let start = ContinuousClock.now
         #expect(await offPool { login.resolve("ls") } == URL(fileURLWithPath: "/bin/ls"))
-        #expect(start.duration(to: .now) < .seconds(3))
+        #expect(start.duration(to: .now) < deadline / 3)
     }
 
     @Test func aHangingShellIsKilledAtTheDeadline() async throws {
-        let login = LoginShell(shell: try shell("sleep 30"), timeout: .seconds(1))
+        // Not killed at the deadline, it would hang for the shell's 60 s.
+        let deadline: Duration = .seconds(1)
+        let login = LoginShell(shell: try shell("sleep 60"), timeout: deadline)
         let start = ContinuousClock.now
         #expect(await offPool { login.resolve("ls") } == nil)
-        #expect(start.duration(to: .now) < .seconds(3))
+        #expect(start.duration(to: .now) < deadline + .seconds(9))
     }
 
     /// The rust study: rust-analyzer installed by nvim's mason, not on the login PATH, was

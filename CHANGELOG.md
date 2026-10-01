@@ -2,6 +2,12 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
+## Unreleased
+
+### Fixed
+
+- **A restarted agent keeps the tile's flags.** After a reboot (its terminal session gone), an agent tile resumes its recorded session with the options of the tile's own command: Codex keeps its `-c` overrides, including the folder's trust, so it doesn't ask about the folder again; Claude Code keeps `--model` and `--dangerously-skip-permissions`; omp keeps `-e`; opencode keeps its project. Before, it ran a plain `codex resume <id>` (`claude --resume <id>`, `omp --resume=<id>`). The command's own `--resume`/`--continue` and its prompt aren't repeated.
+
 ## 0.3.3
 
 An agent's question shows as needing you even with approvals off, and opened from a worktree, Chalkwork reads that worktree's code.

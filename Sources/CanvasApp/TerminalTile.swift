@@ -137,13 +137,14 @@ final class TerminalTile: NSView, TileContent {
     }
 
     /// What a new session runs before dropping to a login shell: after a reboot, resume the
-    /// recorded agent session (`AgentResume`: omp, claude, codex, gemini, opencode); otherwise the tile's initial `command`.
+    /// recorded agent session with the options of the tile's own `command` (`AgentResume`: omp,
+    /// claude, codex, gemini, opencode); otherwise the tile's initial `command`.
     static func initialCommand(_ object: CanvasObject) -> String? {
+        let argv = object.props["command"]?.array?.compactMap(\.string) ?? []
         if let kind = object.props["agent"]?["kind"]?.string, let sessionId = object.props["agent"]?["sessionId"]?.string,
-           let resume = AgentResume.argv(kind: kind, sessionId: sessionId) {
+           let resume = AgentResume.argv(kind: kind, sessionId: sessionId, command: argv) {
             return quote(resume)
         }
-        let argv = object.props["command"]?.array?.compactMap(\.string) ?? []
         return argv.isEmpty ? nil : quote(argv)
     }
 

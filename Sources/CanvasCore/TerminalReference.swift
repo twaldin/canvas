@@ -423,16 +423,117 @@ extension Board {
 }
 
 /// How a terminal whose session is gone (after a reboot) resumes the agent it recorded
-/// (`props.agent`: `kind` and `sessionId`, from `agent.report_session`).
+/// (`props.agent`: `kind` and `sessionId`, from `agent.report_session`): with the options of the
+/// tile's own `command` when that runs the same agent, so a restart keeps the user's flags
+/// (Codex's `-c` trust override, Claude's `--model` or `--dangerously-skip-permissions`, omp's
+/// `-e`). What would pick or start another conversation is left out: the command's own session
+/// selectors (`--resume`, `--continue`, Codex's `resume <id>`) and its prompt (positional words,
+/// `--prompt`), which the session already holds.
 public enum AgentResume {
-    public static func argv(kind: String, sessionId: String) -> [String]? {
+    /// How one agent's command line reads. Options not listed take no value; `--name=value`
+    /// always carries its own.
+    struct Grammar {
+        /// The executable's name (`argv[0]`'s last path component).
+        var program: String
+        /// Options taking one value.
+        var values: Set<String> = []
+        /// Options taking every following word up to the next option (`<tools...>`).
+        var lists: Set<String> = []
+        /// Options whose value is optional: the next word unless it is an option.
+        var optional: Set<String> = []
+        /// Options left out of the resumed command, with their values.
+        var dropped: Set<String> = []
+        /// Positional words are kept (opencode's `[project]`); otherwise they are a prompt or a
+        /// subcommand (Codex's `resume <id>`) and left out.
+        var keepsPositionals = false
+        /// The resumed command from the kept arguments.
+        var resume: (_ program: String, _ kept: [String], _ sessionId: String) -> [String]
+    }
+
+    static func grammar(_ kind: String) -> Grammar? {
         switch kind {
-        case "omp": ["omp", "--resume=\(sessionId)"]
-        case "claude": ["claude", "--resume", sessionId]
-        case "codex": ["codex", "resume", sessionId]
-        case "gemini": ["gemini", "--resume", sessionId]
-        case "opencode": ["opencode", "--session", sessionId]
+        case "omp":
+            Grammar(program: "omp",
+                    values: ["--model", "--smol", "--slow", "--plan", "--prewalk-into", "--plan-yolo-into", "--provider", "--api-key", "--system-prompt",
+                             "--system-prompt-template", "--append-system-prompt", "--profile", "--alias", "--cwd", "--mode", "--config", "--add-dir",
+                             "--session-dir", "--models", "--tools", "--thinking", "--service-tier", "--hook", "-e", "--extension", "--skills",
+                             "--export", "--max-time"],
+                    optional: ["-r", "--resume"],
+                    dropped: ["-r", "--resume", "-c", "--continue", "--from-claude", "--from-codex"],
+                    resume: { [$0] + $1 + ["--resume=\($2)"] })
+        case "claude":
+            Grammar(program: "claude",
+                    values: ["--agent", "--agents", "--append-system-prompt", "--append-system-prompt-file", "--autocompact", "--client-data-url",
+                             "--debug-file", "--effort", "--environment", "--fallback-model", "--input-format", "--json-schema", "--max-budget-usd",
+                             "--model", "-n", "--name", "--output-format", "--permission-mode", "--permission-prompts", "--permission-prompt-tool",
+                             "--plugin-dir", "--plugin-url", "--remote-control-session-name-prefix", "--session-id", "--setting-sources", "--settings",
+                             "--system-prompt", "--system-prompt-file", "--system-prompt-snapshot"],
+                    lists: ["--add-dir", "--allowedTools", "--allowed-tools", "--betas", "--disallowedTools", "--disallowed-tools", "--file",
+                            "--mcp-config", "--tools"],
+                    optional: ["-d", "--debug", "--cloud", "--prompt-suggestions", "--remote-control", "-w", "--worktree", "-r", "--resume",
+                               "--from-pr", "--teleport"],
+                    dropped: ["-r", "--resume", "-c", "--continue", "--session-id", "--fork-session", "--from-pr", "--teleport"],
+                    resume: { [$0] + $1 + ["--resume", $2] })
+        case "codex":
+            // `codex resume` takes the same options as `codex`; given after `resume` they are the
+            // ones Codex keeps (its `-c` is a global clap option: the deepest level that has any wins).
+            Grammar(program: "codex",
+                    values: ["-c", "--config", "--enable", "--disable", "--remote", "--remote-auth-token-env", "-m", "--model", "--local-provider",
+                             "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir", "-a", "--ask-for-approval"],
+                    lists: ["-i", "--image"],
+                    dropped: ["--last", "--all", "--include-non-interactive"],
+                    resume: { [$0, "resume"] + $1 + [$2] })
+        case "gemini":
+            Grammar(program: "gemini",
+                    values: ["-m", "--model", "--approval-mode", "-o", "--output-format", "-p", "--prompt", "-i", "--prompt-interactive", "-r", "--resume"],
+                    lists: ["-e", "--extensions", "--include-directories", "--allowed-mcp-server-names", "--allowed-tools"],
+                    dropped: ["-p", "--prompt", "-i", "--prompt-interactive", "-r", "--resume"],
+                    resume: { [$0] + $1 + ["--resume", $2] })
+        case "opencode":
+            Grammar(program: "opencode",
+                    values: ["--log-level", "--port", "--hostname", "--mdns-domain", "-m", "--model", "-s", "--session", "--prompt", "--agent"],
+                    lists: ["--cors"],
+                    dropped: ["-s", "--session", "-c", "--continue", "--fork", "--prompt"],
+                    keepsPositionals: true,
+                    resume: { [$0] + $1 + ["--session", $2] })
         default: nil
         }
+    }
+
+    /// The command resuming session `sessionId` of an agent of `kind`; nil for an agent that can't
+    /// be resumed. `command` is the tile's own (`props.command`): its options are kept when its
+    /// program is that agent (by name, any directory).
+    public static func argv(kind: String, sessionId: String, command: [String] = []) -> [String]? {
+        guard let grammar = grammar(kind) else { return nil }
+        guard let first = command.first, (first as NSString).lastPathComponent == grammar.program else {
+            return grammar.resume(grammar.program, [], sessionId)
+        }
+        var kept: [String] = []
+        var words = command.dropFirst()[...]
+        var positionalOnly = false
+        while let word = words.popFirst() {
+            if word == "--", !positionalOnly {
+                positionalOnly = true
+                continue
+            }
+            if positionalOnly || !word.hasPrefix("-") || word == "-" {
+                if grammar.keepsPositionals { kept.append(word) }
+                continue
+            }
+            let name = word.hasPrefix("--") ? String(word.prefix { $0 != "=" }) : word
+            var option = [word]
+            if !word.contains("=") || !word.hasPrefix("--") {
+                if grammar.values.contains(name), let value = words.popFirst() {
+                    option.append(value)
+                } else if grammar.lists.contains(name) {
+                    while let value = words.first, !value.hasPrefix("-") { option.append(value); words.removeFirst() }
+                } else if grammar.optional.contains(name), let value = words.first, !value.hasPrefix("-") {
+                    option.append(value)
+                    words.removeFirst()
+                }
+            }
+            if !grammar.dropped.contains(name) { kept += option }
+        }
+        return grammar.resume(first, kept, sessionId)
     }
 }

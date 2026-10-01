@@ -514,6 +514,35 @@ final class DiagramTests {
         #expect(board.undo())
         #expect(board.objects[placed["result"]?["object"]?["id"]?.string ?? ""] == nil)
         await slow.stopAll()
+
+        // Moved by the user while its graph is computed (the server cold again): fitted where it is now.
+        client.send(#"{"id":"2","method":"object.create","params":{"type":"diagram","size":"fit","frame":{"x":4000,"y":-300},\#(Self.callersProps)}}"#)
+        var moving: CanvasObject?
+        for _ in 0..<100 where moving == nil {
+            try await Task.sleep(for: .milliseconds(20))
+            moving = board.objects.values.first { $0.type == .diagram && $0.id != id }
+        }
+        let tile = try #require(moving)
+        try board.update(tile.id, frame: Frame(x: -900, y: 1200, w: tile.frame.w, h: tile.frame.h))
+        let moved = try await client.next()
+        #expect(moved["result"]?["diagram"]?["loaded"] == .bool(true))
+        let now = try board.object(tile.id).frame
+        #expect(now.x == -900 && now.y == 1200 && now.w == diagram.frame.w && now.h == diagram.frame.h)
+        await slow.stopAll()
+
+        // Deleted by the user while its graph is computed: the create still succeeded, and says so.
+        let before = Set(board.objects.keys)
+        client.send(#"{"id":"3","method":"object.create","params":{"type":"diagram","size":"fit",\#(Self.callersProps)}}"#)
+        var created: ObjectID?
+        for _ in 0..<100 where created == nil {
+            try await Task.sleep(for: .milliseconds(20))
+            created = board.objects.keys.first { !before.contains($0) }
+        }
+        try board.delete(try #require(created))
+        let gone = try await client.next()
+        #expect(gone["ok"] == .bool(true), "\(gone)")
+        #expect(gone["result"]?["warnings"]?.array?.contains(.string("\(created ?? "") was deleted while its graph was computed")) == true)
+        await slow.stopAll()
     }
 
     /// A language server that doesn't answer in time (here it starts 120 s late, past the

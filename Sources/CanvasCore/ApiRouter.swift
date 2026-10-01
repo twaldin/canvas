@@ -1373,18 +1373,25 @@ public final class ApiRouter {
         guard let id = result["object"]?["id"]?.string else { return .object(result) }
         let board = try board(forObject: id)
         let summary = try await computeDiagram(board, id, timeoutMs: diagramTimeoutMs)
-        let object = try board.object(id)
-        if summary["loaded"] == .bool(true), DiagramGraph(object.props["graph"]) != nil {
-            let size = try await ObjectMeasure.size(type: .diagram, props: object.props, width: nil, root: board.root)
-            let frame = try origin.map { Frame(x: $0.x, y: $0.y, w: size.width, h: size.height) } ?? board.refitFrame(id, to: size)
-            try board.update(id, frame: frame, actor: .system)
-        } else {
-            let warning = JSONValue.string("the graph is still being computed (the language server hasn't answered within \((Double(diagramTimeoutMs) / 1000).formatted()) s): "
-                + "object.reload \(id) waits for it again, then object.update size \"fit\"")
-            result["warnings"] = .array((result["warnings"]?.array ?? []) + [warning])
-        }
-        result["object"] = try JSONValue.encode(board.reported(try board.object(id)))
         result["diagram"] = summary
+        var warning: String?
+        if let object = board.objects[id], summary["loaded"] == .bool(true), DiagramGraph(object.props["graph"]) != nil {
+            let size = try await ObjectMeasure.size(type: .diagram, props: object.props, width: nil, root: board.root)
+            // Where it is now: the user may have moved it while it computed.
+            if let current = board.objects[id]?.frame {
+                let frame = try origin == nil ? board.refitFrame(id, to: size) : Frame(x: current.x, y: current.y, w: size.width, h: size.height)
+                try board.update(id, frame: frame, actor: .system)
+            }
+        } else {
+            warning = "the graph is still being computed (the language server hasn't answered within \((Double(diagramTimeoutMs) / 1000).formatted()) s): "
+                + "object.reload \(id) waits for it again, then object.update size \"fit\""
+        }
+        // Deleted meanwhile (the user's ⌘⌫): created all the same, and the reply says so.
+        let now = board.objects[id]
+        if now == nil { warning = "\(id) was deleted while its graph was computed" }
+        if let warning { result["warnings"] = .array((result["warnings"]?.array ?? []) + [.string(warning)]) }
+        guard let now else { return .object(result) }
+        result["object"] = try JSONValue.encode(board.reported(now))
         return withOverlaps(.object(result))
     }
 

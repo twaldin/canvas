@@ -1,6 +1,8 @@
 # Chalkwork
 
-**Stop describing code to your agent.**
+**A Mac app where Claude Code and Codex work next to your code, and you click things into their next prompt.**
+
+Claude Code and Codex run in real terminals here, and open your code, call graphs, browser pages and HTML explainers right next to them. Hold ⌃⌥⇧⌘ and click any of it, and it goes with your next prompt.
 
 ![A description typed to the agent is deleted. The line is clicked instead, the chip goes with a short question, and the agent's answer starts with that line.](docs/media/stop-describing.gif)
 

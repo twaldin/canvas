@@ -8,7 +8,7 @@ Chalkwork is a Mac app for coding agents: Claude Code, Codex and any CLI agent r
 
 Native Mac app. Free, MIT.
 
-Requires macOS 14 or later on Apple silicon. [Download the latest release](https://github.com/twaldin/canvas/releases), then follow [Install](#install) and [First steps](#first-steps).
+Requires macOS 14 or later on Apple silicon. [Download the latest release](https://github.com/twaldin/chalkwork/releases), then follow [Install](#install) and [First steps](#first-steps).
 
 ## Show your agent the code
 
@@ -60,7 +60,7 @@ The agent points back the same way: it opens the exact code it means beside its 
 
 Requires macOS 14 or later on Apple silicon. Coming from Canvas (this app's name before 0.3.0)? Chalkwork brings your boards along; see [Upgrading from Canvas](CHANGELOG.md#upgrading-from-canvas) for the few things to redo.
 
-1. Download `Chalkwork-<version>.zip` from [Releases](https://github.com/twaldin/canvas/releases), unzip it, and move `Chalkwork.app` to `/Applications`.
+1. Download `Chalkwork-<version>.zip` from [Releases](https://github.com/twaldin/chalkwork/releases), unzip it, and move `Chalkwork.app` to `/Applications`.
 2. The app is ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. Clear the quarantine flag:
    ```sh
    xattr -dr com.apple.quarantine /Applications/Chalkwork.app
@@ -114,7 +114,7 @@ bun scripts/gen-clients.ts     # regenerate the Python/TS clients from schema/ch
 
 ## Support, contributing, security
 
-Bugs and questions go in [GitHub issues](https://github.com/twaldin/canvas/issues). To contribute, build and run the tests above ([docs/testing.md](docs/testing.md)) and open a pull request. Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
+Bugs and questions go in [GitHub issues](https://github.com/twaldin/chalkwork/issues). To contribute, build and run the tests above ([docs/testing.md](docs/testing.md)) and open a pull request. Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 

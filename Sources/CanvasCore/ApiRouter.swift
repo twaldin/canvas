@@ -154,9 +154,9 @@ public final class ApiRouter {
     /// crediting what follows to the terminal given, and waits up to `timeoutMs` for it to load:
     /// its `url`, whether it `loaded` in time, and a load failure's reason (`failed`).
     public var reloadBrowser: ((Board, ObjectID, _ caller: ObjectID?, _ timeoutMs: Int) async throws -> JSONValue)?
-    /// Computes a diagram tile's graph afresh from the code (`DiagramRefresh`) and waits up to
-    /// `timeoutMs` for it: `DiagramRefresh.summary`.
-    public var refreshDiagram: ((Board, ObjectID, _ timeoutMs: Int) async throws -> JSONValue)?
+    /// Computes a diagram tile's graph afresh from the code (`DiagramRefresh`): its
+    /// `DiagramRefresh.summary` once done. The router bounds the wait (`computeDiagram`).
+    public var refreshDiagram: ((Board, ObjectID) async throws -> JSONValue)?
     /// Opens a directory's board in the UI (a tab of the frontmost board window), selecting its tab when asked.
     public var openBoard: ((URL, _ select: Bool) -> Board)?
     public static let schemaVersion = 1
@@ -1031,20 +1031,39 @@ public final class ApiRouter {
         guard object.type == .browser || object.type == .diagram else {
             throw Failure("invalid_params", "\(id) is a \(object.type.rawValue) tile: only browser and diagram tiles reload (code, note and changes tiles follow their files by themselves; an HTML tile re-renders when its props change)")
         }
-        let timeout = p["timeoutMs"]?.int ?? (object.type == .diagram ? Self.diagramTimeoutMs : Self.reloadTimeoutMs)
+        let timeout = p["timeoutMs"]?.int ?? (object.type == .diagram ? diagramTimeoutMs : Self.reloadTimeoutMs)
         guard timeout >= 0 else { throw Failure("invalid_params", "timeoutMs must be 0 or more") }
-        if object.type == .diagram {
-            guard let refreshDiagram else { throw Failure("unsupported", "computing diagrams needs the app") }
-            return try await refreshDiagram(board, id, timeout)
-        }
+        if object.type == .diagram { return try await computeDiagram(board, id, timeoutMs: timeout) }
         guard let reloadBrowser else { throw Failure("unsupported", "reloading pages needs the app UI") }
         return try await reloadBrowser(board, id, p["caller"]?.string, timeout)
     }
 
     static let reloadTimeoutMs = 15_000
-    /// A language server's first answers in a project can take a while (sourcekit-lsp loading
-    /// the package and its index).
-    static let diagramTimeoutMs = 60_000
+    /// How long `object.reload` (by default) and a fitted create wait for a diagram's graph: a
+    /// language server's first answers in a project can take a while (sourcekit-lsp loading the
+    /// package and its index).
+    public var diagramTimeoutMs = 60_000
+
+    /// `refreshDiagram` for `id`: its summary once computed, or the graph the tile has now, not
+    /// loaded, once `timeoutMs` passes first; the computation goes on, and the tile shows its graph
+    /// when it comes. A task's value can only be awaited whole (a task group waits for every child,
+    /// cancelled or not), so whichever of the two ends first resumes the wait.
+    private func computeDiagram(_ board: Board, _ id: ObjectID, timeoutMs: Int) async throws -> JSONValue {
+        guard let refreshDiagram else { throw Failure("unsupported", "computing diagrams needs the app") }
+        let computing = Task { try await refreshDiagram(board, id) }
+        var timer: Task<Void, Never>?
+        let computed: Result<JSONValue, any Error>? = await withCheckedContinuation { continuation in
+            let first = FirstResume(continuation)
+            Task { first.resume(await computing.result) }
+            timer = Task {
+                try? await Task.sleep(for: .milliseconds(timeoutMs))
+                first.resume(nil)
+            }
+        }
+        timer?.cancel()
+        if let computed { return try computed.get() }
+        return DiagramRefresh.summary(id, graph: DiagramGraph(board.objects[id]?.props["graph"]), computed: false)
+    }
 
     /// `object.measure`: the intrinsic frame size for a type and props (notes and text wrap at
     /// `width`). Paths resolve against the caller's (or the given) board.
@@ -1341,7 +1360,7 @@ public final class ApiRouter {
     /// ends leaves the tile at the default size, with a warning. Nil for any other create.
     private func createFittedDiagram(_ p: JSONValue) async throws -> JSONValue? {
         guard p["type"]?.string == ObjectType.diagram.rawValue, p["size"]?.string == "fit", DiagramGraph(p["props"]?["graph"]) == nil,
-              let refreshDiagram, var params = p.object else { return nil }
+              refreshDiagram != nil, var params = p.object else { return nil }
         params.removeValue(forKey: "size")
         let origin = p["frame"]?["x"]?.number.flatMap { x in p["frame"]?["y"]?.number.map { (x: x, y: $0) } }
         if let origin {
@@ -1353,14 +1372,14 @@ public final class ApiRouter {
         var result = try dispatch("object.create", .object(params)).object ?? [:]
         guard let id = result["object"]?["id"]?.string else { return .object(result) }
         let board = try board(forObject: id)
-        let summary = try await refreshDiagram(board, id, Self.diagramTimeoutMs)
+        let summary = try await computeDiagram(board, id, timeoutMs: diagramTimeoutMs)
         let object = try board.object(id)
         if summary["loaded"] == .bool(true), DiagramGraph(object.props["graph"]) != nil {
             let size = try await ObjectMeasure.size(type: .diagram, props: object.props, width: nil, root: board.root)
             let frame = try origin.map { Frame(x: $0.x, y: $0.y, w: size.width, h: size.height) } ?? board.refitFrame(id, to: size)
             try board.update(id, frame: frame, actor: .system)
         } else {
-            let warning = JSONValue.string("the graph is still being computed (the language server hasn't answered within \(Self.diagramTimeoutMs / 1000) s): "
+            let warning = JSONValue.string("the graph is still being computed (the language server hasn't answered within \((Double(diagramTimeoutMs) / 1000).formatted()) s): "
                 + "object.reload \(id) waits for it again, then object.update size \"fit\"")
             result["warnings"] = .array((result["warnings"]?.array ?? []) + [warning])
         }
@@ -1868,5 +1887,20 @@ public final class ApiRouter {
             graph["to"] = spec.to.json
         }
         return .object(graph)
+    }
+}
+
+/// A continuation resumed by the first of several racers; later ones are ignored.
+@MainActor
+private final class FirstResume<T: Sendable> {
+    private var continuation: CheckedContinuation<T, Never>?
+
+    init(_ continuation: CheckedContinuation<T, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: T) {
+        continuation?.resume(returning: value)
+        continuation = nil
     }
 }

@@ -103,13 +103,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 throw ApiRouter.Failure(error.code, error.message)
             }
         }
-        router.refreshDiagram = { [weak self] board, tile, timeoutMs in
+        router.refreshDiagram = { [weak self] board, tile in
             // A board without a window still gets its graph, just without the tile's progress.
             guard let diagram = self?.content(of: tile, on: board) as? DiagramTile else {
                 let graph = try await DiagramRefresh.run(tile, on: board, languages: CodeNavigation.languages)
                 return DiagramRefresh.summary(tile, graph: graph, computed: graph != nil)
             }
-            return await diagram.reload(timeoutMs: timeoutMs)
+            return await diagram.reload()
         }
         router.snapshotBoard = { [weak self] board, format in await self?.controllers[board.id]?.snapshot(format: format) }
         router.renderView = { [weak self] board, request, format in

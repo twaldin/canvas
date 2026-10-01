@@ -88,21 +88,11 @@ final class DiagramTile: NSView, TileContent {
         return task
     }
 
-    /// `object.reload`: refresh and wait up to `timeoutMs` for the graph.
-    func reload(timeoutMs: Int) async -> JSONValue {
-        let task = refresh()
-        let finished = await withTaskGroup(of: Bool.self) { group in
-            group.addTask { await task.value; return true }
-            group.addTask {
-                try? await Task.sleep(for: .milliseconds(timeoutMs))
-                return false
-            }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
-        }
-        let done = finished && !computing
-        return DiagramRefresh.summary(object.id, graph: DiagramGraph(board.objects[object.id]?.props["graph"]), computed: done)
+    /// `object.reload`: refresh and wait for the graph (`ApiRouter.computeDiagram` stops waiting at
+    /// its timeout). Not loaded when a newer refresh superseded this one.
+    func reload() async -> JSONValue {
+        await refresh().value
+        return DiagramRefresh.summary(object.id, graph: DiagramGraph(board.objects[object.id]?.props["graph"]), computed: !computing)
     }
 
     /// One FSEvents stream over the directories of the files the graph shows, while live.

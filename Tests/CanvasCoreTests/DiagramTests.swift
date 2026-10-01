@@ -456,38 +456,46 @@ final class DiagramTests {
 
     // MARK: Through the API
 
-    /// An agent's first "who calls X?" right after launch: `object.create` with `size: "fit"`
-    /// before the language server has answered anything (this stand-in takes 2 s to start, as
-    /// sourcekit-lsp takes its while). The create waits for the graph and fits the tile to it.
-    @Test func aDiagramCreatedWithSizeFitWaitsForItsFirstGraphAndFitsIt() async throws {
+    /// A router computing diagrams with `languages` as the app does on a board without a window,
+    /// and a client on its socket.
+    func api(_ languages: LanguageService) throws -> (board: Board, router: ApiRouter, server: SocketServer, client: LineClient) {
         let home = dir.appendingPathComponent(".home")
         let registry = BoardRegistry(store: BoardStore(directory: home.appendingPathComponent("boards"), debounce: 60))
         let board = registry.open(root: dir)
         let router = ApiRouter(registry: registry)
-        let script = dir.appendingPathComponent(".replay.py")
-        let slow = LanguageService(configs: [LanguageServerConfig(language: "swift", command: "/bin/sh",
-                                                                  arguments: ["-c", #"sleep 2; exec /usr/bin/python3 "$0" "$1""#, script.path, Self.fixture.path],
-                                                                  languageIDs: ["swift": "swift"], rootMarkers: ["Package.swift"])])
-        // As the app computes a diagram on a board without a window.
-        var computing = true
-        router.refreshDiagram = { board, tile, _ in
-            guard computing else { return DiagramRefresh.summary(tile, graph: nil, computed: false) }
-            let graph = try await DiagramRefresh.run(tile, on: board, languages: slow)
+        router.refreshDiagram = { board, tile in
+            let graph = try await DiagramRefresh.run(tile, on: board, languages: languages)
             return DiagramRefresh.summary(tile, graph: graph, computed: graph != nil)
         }
         let server = SocketServer(path: home.appendingPathComponent("s").path) { request, connection in
             await router.handle(request, connection: connection)
         }
         try server.start()
+        return (board, router, server, try LineClient(path: home.appendingPathComponent("s").path))
+    }
+
+    /// The replay server, started `delay` seconds late (sourcekit-lsp takes its while).
+    func lateServer(_ delay: Int) -> LanguageService {
+        LanguageService(configs: [LanguageServerConfig(language: "swift", command: "/bin/sh",
+                                                       arguments: ["-c", "sleep \(delay); exec /usr/bin/python3 \"$0\" \"$1\"", dir.appendingPathComponent(".replay.py").path, Self.fixture.path],
+                                                       languageIDs: ["swift": "swift"], rootMarkers: ["Package.swift"])])
+    }
+
+    static let callersProps = #""props":{"path":"Sources/Lib/Spool.swift","symbol":"Spool.read","direction":"incoming","depth":1}"#
+
+    /// An agent's first "who calls X?" right after launch: `object.create` with `size: "fit"`
+    /// before the language server has answered anything. The create waits for the graph and fits
+    /// the tile to it.
+    @Test func aDiagramCreatedWithSizeFitWaitsForItsFirstGraphAndFitsIt() async throws {
+        let slow = lateServer(2)
+        let (board, _, server, client) = try api(slow)
         defer { server.stop() }
-        let client = try LineClient(path: home.appendingPathComponent("s").path)
         func create(_ params: String) async throws -> JSONValue {
             client.send(#"{"id":"1","method":"object.create","params":{"type":"diagram","size":"fit",\#(params)}}"#)
             return try await client.next()
         }
-        let props = #""props":{"path":"Sources/Lib/Spool.swift","symbol":"Spool.read","direction":"incoming","depth":1}"#
 
-        let reply = try await create(props)
+        let reply = try await create(Self.callersProps)
         #expect(reply["ok"] == .bool(true), "\(reply["error"] ?? .null)")
         let id = try #require(reply["result"]?["object"]?["id"]?.string)
         let diagram = try board.object(id)
@@ -500,20 +508,35 @@ final class DiagramTests {
         #expect(reply["result"]?["object"]?["frame"]?["h"] == .number(diagram.frame.h))
 
         // At the origin given; the fit is the create's, not an undo step of its own.
-        let placed = try await create(#""frame":{"x":4000,"y":-300},\#(props)"#)
+        let placed = try await create(#""frame":{"x":4000,"y":-300},\#(Self.callersProps)"#)
         let at = try board.object(try #require(placed["result"]?["object"]?["id"]?.string)).frame
         #expect(at.x == 4000 && at.y == -300 && at.w == diagram.frame.w && at.h == diagram.frame.h)
         #expect(board.undo())
         #expect(board.objects[placed["result"]?["object"]?["id"]?.string ?? ""] == nil)
-
-        // Still computing when the wait ends: the tile is there, at its default size, and says so.
-        computing = false
-        let pending = try await create(props)
-        #expect(pending["ok"] == .bool(true))
-        #expect(pending["result"]?["diagram"]?["loaded"] == .bool(false))
-        #expect(pending["result"]?["object"]?["frame"]?["w"] == .number(Board.defaultSize(.diagram).w))
-        #expect(pending["result"]?["warnings"]?.array?.first?.string?.contains("object.reload") == true)
         await slow.stopAll()
+    }
+
+    /// A language server that doesn't answer in time (here it starts 120 s late, past the
+    /// client's 30 s read) holds neither `object.reload` past its `timeoutMs` nor a fitted create
+    /// past the router's wait: each answers with the graph not loaded, and the computation goes on.
+    @Test func aDiagramWaitEndsAtItsTimeoutWhileTheServerHasntAnswered() async throws {
+        let late = lateServer(120)
+        let (board, router, server, client) = try api(late)
+        defer { server.stop() }
+        router.diagramTimeoutMs = 500
+        client.send(#"{"id":"1","method":"object.create","params":{"type":"diagram","size":"fit",\#(Self.callersProps)}}"#)
+        let created = try await client.next()
+        #expect(created["ok"] == .bool(true), "\(created["error"] ?? .null)")
+        #expect(created["result"]?["diagram"]?["loaded"] == .bool(false))
+        #expect(created["result"]?["object"]?["frame"]?["w"] == .number(Board.defaultSize(.diagram).w), "the tile is there, at its default size")
+        #expect(created["result"]?["warnings"]?.array?.first?.string?.contains("object.reload") == true)
+        let id = try #require(created["result"]?["object"]?["id"]?.string)
+        #expect(board.objects[id] != nil)
+
+        client.send(#"{"id":"2","method":"object.reload","params":{"id":"\#(id)","timeoutMs":300}}"#)
+        let reloaded = try await client.next()
+        #expect(reloaded["result"]?["loaded"] == .bool(false), "\(reloaded)")
+        await late.stopAll()
     }
 }
 

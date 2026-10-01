@@ -51,6 +51,14 @@ public struct GitWorktree: Equatable, Sendable {
         return first.commonDir == second.commonDir
     }
 
+    /// `root`, a directory in one checkout, at its place in the other worktree of its repository
+    /// that `path` lies in: `/repo/pkg` toward `/wt/pkg/a.swift` is `/wt/pkg`. Nil when `path`
+    /// lies in `root`'s own checkout, in another repository, or outside git.
+    public static func counterpart(of root: String, toward path: String) -> String? {
+        guard let own = containing(root), let other = containing(path), own.commonDir == other.commonDir, own.gitDir != other.gitDir else { return nil }
+        return own.relativePath(of: root).map { other.toplevel + "/" + $0 } ?? other.toplevel
+    }
+
     /// The branch checked out (`HEAD`'s `refs/heads/…`), nil when detached.
     public var branch: String? {
         guard let text = try? String(contentsOfFile: gitDir + "/HEAD", encoding: .utf8) else { return nil }

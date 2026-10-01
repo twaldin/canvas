@@ -149,7 +149,10 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
                 self?.selectGoToLines(nil, in: id)
             case .heading(let id, let line): self?.canvas.go(to: id, heading: line)
             case .file(let path, let lines):
-                if let id = self?.open(path: path, lines: lines) { self?.selectGoToLines(lines, in: id) }
+                // Relative to the listed checkout (`Board.workingRoot`), as the board stores it.
+                guard let board = self?.board else { return }
+                let stored = board.relativePath(path.hasPrefix("/") ? path : board.workingRoot.appendingPathComponent(path).path)
+                if let id = self?.open(path: stored, lines: lines) { self?.selectGoToLines(lines, in: id) }
             case .status: break
             }
         }
@@ -476,14 +479,15 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// Go to… (⌘P) shows the navigator over this board with its field holding the keyboard: never
     /// a toggle, so a ⌘P can't close a panel the user can't see and send what they type next to
     /// a terminal (a11y study round 7); Esc, a row, or a click elsewhere closes it. Already open,
-    /// the field takes the keyboard back with its text selected. The board root's files are
+    /// the field takes the keyboard back with its text selected. The files of the checkout the
+    /// board was opened from (`Board.workingRoot`: a worktree's, not the main checkout's) are
     /// re-listed on every open; the list shown meanwhile is the previous one. Not while a sheet
     /// is up: the panel would open behind it, and the sheet's Esc would hand the keyboard back
     /// to the terminal under an open panel.
     @objc func showNavigator(_ sender: Any?) {
         guard window?.attachedSheet == nil else { return }
         if navigator.isOpen { return navigator.focusField() }
-        let files = BoardFiles.of(board.root)
+        let files = BoardFiles.of(board.workingRoot)
         navigator.open(rows: canvas.navigatorRows(), files: files.index)
         files.refresh { [weak self] index in self?.navigator.update(files: index) }
     }
@@ -589,12 +593,13 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     private var symbolsAnswered: Date?
 
     /// Go to's symbol rows for `name`: the workspace symbols of the projects this board's code
-    /// tiles show (else of the language most of the board root's files are in), from the app's
-    /// language servers, started if needed. Files outside the board root are left out. When no
+    /// tiles show (else of the language most of the listed checkout's files are in,
+    /// `Board.workingRoot`), from the app's language servers, started if needed. Files outside
+    /// that checkout are left out; rows name files relative to it, as file rows do. When no
     /// server for those files' languages could answer (not installed, crashed), the answer's
     /// note says why, with its install hint, for the panel's footer (never a row).
     private func workspaceSymbols(named name: String) async -> NavigatorPanel.SymbolAnswer {
-        let root = board.root
+        let root = board.workingRoot
         var files = board.objects.values.filter { $0.type == .code }.compactMap { $0.props["path"]?.string }.map(board.absoluteURL)
         if files.isEmpty {
             let configs = LanguageServerConfig.defaults
@@ -639,7 +644,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         symbols = symbols.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
         var rows: [NavigatorRow] = []
         for symbol in symbols {
-            let path = board.relativePath(symbol.location.url.path)
+            let path = Board.relativePath(symbol.location.url.path, root: root)
             guard !path.hasPrefix("/") else { continue }
             let line = symbol.location.range.start.line + 1
             rows.append(NavigatorRow(target: .file(path, lines: LineRange(start: line, end: line)), title: symbol.name, kind: symbol.kindName.capitalized, dot: nil,

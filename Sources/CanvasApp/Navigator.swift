@@ -7,8 +7,9 @@ struct NavigatorRow {
         /// Zoom to Fit.
         case allContent
         case object(ObjectID)
-        /// A file under the board root (repo-relative), at `lines` when the query named a line
-        /// or the row is a symbol: opens a code tile for it.
+        /// A file, relative to the checkout Go to lists (`Board.workingRoot`: the board root, or
+        /// its place in the worktree the board was opened from) or absolute, at `lines` when the
+        /// query named a line or the row is a symbol: opens a code tile for it.
         case file(String, lines: LineRange?)
         /// A note's heading, by its markdown line: the note shown from there.
         case heading(ObjectID, line: Int)

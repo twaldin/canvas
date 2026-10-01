@@ -963,7 +963,7 @@ final class CanvasView: NSScrollView {
     /// A new terminal with keyboard focus: at a document point (`createHere`), else placed and
     /// revealed like any new object the user asks for (`openForUser`).
     func createTerminal(at point: NSPoint? = nil) {
-        let props: JSONValue = .object(["cwd": .string(board.defaultTerminalDirectory), "command": .array([])])
+        let props: JSONValue = .object(["cwd": .string(board.workingRoot.path), "command": .array([])])
         guard let point else { return openForUser(.terminal, props: props) }
         takeKeyboard(createHere(.terminal, props: props, at: point).id)
     }
@@ -971,7 +971,7 @@ final class CanvasView: NSScrollView {
     /// A new terminal in `terminal`'s directory beside it (a Ghostty new window, tab or split
     /// binding pressed in it), placed, revealed, and focused like any object the user asks for.
     func createTerminal(beside terminal: ObjectID) {
-        let cwd = board.objects[terminal]?.props["cwd"]?.string ?? board.defaultTerminalDirectory
+        let cwd = board.objects[terminal]?.props["cwd"]?.string ?? board.workingRoot.path
         openForUser(.terminal, props: .object(["cwd": .string(cwd), "command": .array([])]), near: terminal)
     }
 

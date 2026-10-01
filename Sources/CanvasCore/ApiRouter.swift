@@ -224,7 +224,7 @@ public final class ApiRouter {
                 // An upsert is the create or update it is on the board now; `created` says which.
                 let upsert = method == "object.upsert"
                 let (method, resolved) = upsert ? try upserted(params) : (method, params)
-                let params = try await anchored(method, try await referenced(method, resolved))
+                let params = try await anchored(method, try await referenced(method, try inCallersCheckout(method, resolved)))
                 // A keyed tile is its own: a create that gives a key never takes over another.
                 if method == "object.create", Board.key(params["props"] ?? .null) == nil, let reused = try reusableChanges(params) {
                     let size = try await fitSize("object.update", reused)
@@ -818,7 +818,7 @@ public final class ApiRouter {
         case "object.create":
             let board = try board(p)
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
-            guard var props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
+            guard let props = p["props"], props.object != nil else { throw Failure("invalid_params", "props must be an object") }
             try Self.checkProps(p)
             // Just w and h: that size, placed as a create without a frame is (near the caller).
             let frame = try p["frame"].map { value in
@@ -827,13 +827,7 @@ public final class ApiRouter {
                 }
                 return try Self.frame(value, onto: nil)
             }
-            if type == .note || type == .html {
-                if let root = props["root"]?.string, !root.isEmpty {
-                    try board.checkLinkRoot(root)
-                } else if let root = board.defaultLinkRoot(for: caller(p)) {
-                    props = props.merging(.object(["root": .string(root)]))
-                }
-            }
+            if type == .note || type == .html, let root = props["root"]?.string, !root.isEmpty { try board.checkLinkRoot(root) }
             try board.checkKey(props, for: nil)
             if type == .diagram, let problem = DiagramSpec.problem(props) { throw Failure("invalid_params", problem) }
             let object = board.create(type: type, props: props, frame: frame, parent: p["parent"]?.string, caller: caller(p))
@@ -1030,8 +1024,9 @@ public final class ApiRouter {
     private func measure(_ p: JSONValue) async throws -> JSONValue {
         guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
         try Self.checkProps(p)
-        let props = p["props"] ?? .object([:])
-        let size = try await ObjectMeasure.size(type: type, props: props, width: p["width"]?.number, root: pathRoot(try board(p), type: type, props: props, caller: caller(p), creating: true))
+        let board = try board(p)
+        let props = board.inCallersCheckout(p["props"] ?? .object([:]), type: type, caller: caller(p))
+        let size = try await ObjectMeasure.size(type: type, props: props, width: p["width"]?.number, root: pathRoot(board, type: type, props: props))
         return .object(["w": .number(size.width), "h": .number(size.height)])
     }
 
@@ -1176,6 +1171,28 @@ public final class ApiRouter {
     /// (`RefSource`): `refSha` records the SHA it resolved to, a ref that resolves to nothing is
     /// `not_found` (a changes tile's names the `git fetch` that brings it), and clearing the ref
     /// clears `refSha`. A code tile's `pinnedCommit` wins: its ref isn't resolved.
+    /// `object.create`/`object.update` params with the caller's relative paths meaning its own
+    /// checkout when it works in another worktree of the board's repository
+    /// (`Board.inCallersCheckout`). `pending` are the creates earlier in the same batch, for `$n`.
+    func inCallersCheckout(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) throws -> JSONValue {
+        guard var params = p.object, let props = p["props"], props.object != nil, let caller = caller(p) else { return p }
+        if method == "object.create" {
+            guard let type = p["type"]?.string.flatMap(ObjectType.init(rawValue:)) else { return p }
+            params["props"] = try board(p).inCallersCheckout(props, type: type, caller: caller)
+        } else if method == "object.update", let id = p["id"]?.string {
+            if let index = Self.reference(id) {
+                guard let created = pending[index], let type = created["type"]?.string.flatMap(ObjectType.init(rawValue:)) else { return p }
+                params["props"] = try board(created).inCallersCheckout(props, type: type, caller: caller, existing: created["props"] ?? .object([:]))
+            } else {
+                guard let board = try? board(forObject: id), let object = board.objects[id] else { return p }
+                params["props"] = board.inCallersCheckout(props, type: object.type, caller: caller, existing: object.props)
+            }
+        } else {
+            return p
+        }
+        return .object(params)
+    }
+
     func referenced(_ method: String, _ p: JSONValue, pending: [Int: JSONValue] = [:]) async throws -> JSONValue {
         guard var params = p.object, var props = p["props"]?.object, let value = props["ref"] else { return p }
         let board: Board, type: ObjectType?, existing: JSONValue
@@ -1231,19 +1248,19 @@ public final class ApiRouter {
             guard p["type"]?.string == ObjectType.note.rawValue else { return p }
             board = try self.board(p)
             merged = .object(props)
-            root = pathRoot(board, type: .note, props: merged, caller: caller(p), creating: true)
+            root = pathRoot(board, type: .note, props: merged)
         } else {
             let id = try string(p, "id")
             if let index = Self.reference(id) {
                 guard let created = pending[index], created["type"]?.string == ObjectType.note.rawValue else { return p }
                 board = try self.board(created)
                 merged = (created["props"] ?? .object([:])).merging(.object(props))
-                root = pathRoot(board, type: .note, props: merged, caller: caller(created), creating: true)
+                root = pathRoot(board, type: .note, props: merged)
             } else {
                 guard let found = try? self.board(forObject: id), let note = found.objects[id], note.type == .note else { return p }
                 board = found
                 merged = note.props.merging(.object(props))
-                root = pathRoot(board, type: .note, props: merged, caller: nil, creating: false)
+                root = pathRoot(board, type: .note, props: merged)
             }
         }
         // A note anchored to a branch anchors its ranges on the text at the ref.
@@ -1269,7 +1286,7 @@ public final class ApiRouter {
         if method == "object.create" {
             guard let type = ObjectType(rawValue: try string(p, "type")) else { throw Failure("invalid_params", "unknown object type") }
             return try await ObjectMeasure.size(type: type, props: p["props"] ?? .object([:]), width: width,
-                                                root: pathRoot(try board(p), type: type, props: p["props"] ?? .object([:]), caller: caller(p), creating: true))
+                                                root: pathRoot(try board(p), type: type, props: p["props"] ?? .object([:])))
         }
         let id = try string(p, "id")
         let base: (type: ObjectType, props: JSONValue, width: Double?, root: URL)
@@ -1278,22 +1295,21 @@ public final class ApiRouter {
                 throw Failure("invalid_params", "\(id) must name an earlier create op")
             }
             let props = p["props"].map { (created["props"] ?? .object([:])).merging($0) } ?? created["props"] ?? .object([:])
-            base = (type, props, created["frame"]?["w"]?.number, pathRoot(try board(created), type: type, props: props, caller: caller(created), creating: true))
+            base = (type, props, created["frame"]?["w"]?.number, pathRoot(try board(created), type: type, props: props))
         } else {
             let board = try board(forObject: id)
             let object = try board.object(id)
             let props = p["props"].map { object.props.merging($0) } ?? object.props
-            base = (object.type, props, object.frame.w, pathRoot(board, type: object.type, props: props, caller: nil, creating: false))
+            base = (object.type, props, object.frame.w, pathRoot(board, type: object.type, props: props))
         }
         return try await ObjectMeasure.size(type: base.type, props: base.props, width: width ?? ([.code, .image].contains(base.type) ? nil : base.width), root: base.root)
     }
 
-    /// The directory a create's or update's paths resolve against: a note's or HTML tile's link
-    /// root (`Board.linkRoot`, on a create the caller's checkout by default), else the board root.
-    func pathRoot(_ board: Board, type: ObjectType, props: JSONValue, caller: ObjectID?, creating: Bool) -> URL {
-        guard type == .note || type == .html else { return board.root }
-        if creating, props["root"]?.string?.isEmpty != false, let root = board.defaultLinkRoot(for: caller) { return URL(fileURLWithPath: root) }
-        return board.linkRoot(props: props)
+    /// The directory a create's or update's paths resolve against, once `inCallersCheckout` has
+    /// made a worktree caller's paths its own: a note's or HTML tile's link root (`Board.linkRoot`),
+    /// else the board root.
+    func pathRoot(_ board: Board, type: ObjectType, props: JSONValue) -> URL {
+        type == .note || type == .html ? board.linkRoot(props: props) : board.root
     }
 
     /// Params with `size: "fit"` resolved into a whole frame: the measured size at the given (or
@@ -1399,7 +1415,7 @@ public final class ApiRouter {
                     upserts[index] = (key, holder)
                     if method == "object.update" { updating[index] = holder }
                 }
-                params = try await anchored(method, try await referenced(method, raw, pending: pending), pending: pending)
+                params = try await anchored(method, try await referenced(method, try inCallersCheckout(method, raw, pending: pending), pending: pending), pending: pending)
                 ops[index] = .object(["method": .string(method), "params": params])
                 sizes.append(try await fitSize(method, params, pending: pending))
             } catch {

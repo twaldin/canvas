@@ -92,7 +92,7 @@ export type BrowserProps = {
 };
 
 export type CodeProps = {
-  /** path relative to the board root */
+  /** path relative to the board root (relative to your own checkout when you work in another worktree of the board's repository: stored absolute there), or absolute */
   path: string;
   /** lines to scroll to and tint; the tile always shows the whole file. Kept on the code it showed: when lines are inserted or removed above or inside it, the tile re-finds it by content and writes the moved range back (no rev, no undo step); code that is gone leaves it untinted with a stale warning in the header (not follow tiles or pinned tiles) */
   range?: LineRange;
@@ -159,7 +159,7 @@ export type HtmlProps = {
 };
 
 export type ChangesProps = {
-  /** another worktree of the board's repository to review (absolute or board-relative, e.g. ../wt-agent; default: the board root). Anything that isn't a worktree of the board's repository lists nothing and says so. Its files have absolute paths */
+  /** another worktree of the board's repository to review (absolute or board-relative, e.g. ../wt-agent; default: the board root, or your own checkout when you work in another worktree of the board's repository). Anything that isn't a worktree of the board's repository lists nothing and says so. Its files have absolute paths */
   root?: string;
   /** what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch: everything the branch changed, a PR's view) | a commit or ref. The user picks it in the tile's header too. Against anything but HEAD, committed hunks can't be discarded. With `head` or `ref` it defaults to merge-base, and the diff is against the merge-base of `head` with it (`git diff base...head`, a PR's view) */
   base?: string;
@@ -213,13 +213,13 @@ export type ImageProps = {
   key?: ObjectKey;
 };
 
-/** A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the board's files are nodes. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
+/** A diagram computed from the code by the language server and kept live. kind calls: a function (the root) and its callers (direction incoming), callees (outgoing) or both, `depth` levels out, as a layered graph of symbol-anchored nodes (name, container, path:line, 1-3 excerpt lines: a caller's calls, else the signature). Only functions in the files of the checkout it is of are nodes: the one its root's file lies in (a worktree's file: that worktree), else yours when you work in another worktree, else the board root's. The graph is computed when the tile is created or re-aimed, again when a file it shows changes on disk, and on `object.reload` (which waits for it); nodes re-resolve by symbol, so code moving keeps them, and a node whose symbol is gone from its file stays with a stale badge (`graph.nodes[].stale`) until it is back or the diagram is aimed elsewhere. Clicking a node with + opens its next level (`expanded`, undoable); its path:line opens the code; a Hyper-click mentions its symbol and lines (a code mention) or the excerpt line under the pointer. An arrow end binds to a node with `{object, node}`. */
 export type DiagramProps = {
   /** what the diagram is of; more kinds (types, pipelines) will come */
   kind?: "calls";
   /** the root function: `Type.member` or a bare name, parameter labels optional (`SocketServer.start`, `AgentReportSpool.read`, `read(from:tiles:)`). Without `path`, the board's files are searched for its declaration */
   symbol?: string;
-  /** the file declaring the root, board-relative or absolute */
+  /** the file declaring the root, board-relative (relative to your own checkout when you work in another worktree) or absolute */
   path?: string;
   /** without `symbol`: the root's declaration line (or a line inside its body) in `path`. Only the first computation reads it: after that the root is re-found by the symbol found there */
   line?: number;

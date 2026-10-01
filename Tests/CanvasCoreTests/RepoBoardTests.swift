@@ -259,14 +259,14 @@ struct RepoBoardTests {
         let (repo, worktree) = try await fixture()
         let registry = BoardRegistry(store: BoardStore(directory: boards, debounce: 60))
         let board = registry.open(root: worktree)
-        #expect(board.defaultTerminalDirectory == worktree.path, "opened from the worktree, New Terminal starts there")
+        #expect(board.workingRoot.path == worktree.path, "opened from the worktree, New Terminal starts there")
         let there = board.create(type: .terminal, props: .object(["cwd": .string(worktree.appendingPathComponent("src").path)]))
         #expect(there.props["worktree"] == .string(worktree.path))
         #expect(there.props["branch"] == .string("feature"))
         let home = board.create(type: .terminal, props: .object(["cwd": .string(repo.root.path)]))
         #expect(home.props["branch"] == .string("main"))
         #expect(registry.open(root: repo.root) === board)
-        #expect(board.defaultTerminalDirectory == board.root.path)
+        #expect(board.workingRoot.path == board.root.path)
     }
 
     /// A terminal made at the board root in which `cd <directory> && <kind>` runs an agent: the

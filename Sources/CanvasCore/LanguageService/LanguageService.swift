@@ -161,9 +161,14 @@ public actor LanguageService {
         return configs.first { $0.languageID(for: file) != nil }.map { ($0, file) }
     }
 
+    /// The server a file is read by: its project (`projectRoot`) within the board root, or within
+    /// the board root's counterpart in the other worktree of its repository the file lies in, so
+    /// a worktree's files are read as that checkout's project, with its own build index.
     private func key(for file: URL, boardRoot: URL) -> Key? {
         guard let (config, file) = config(for: file) else { return nil }
-        return Key(language: config.language, root: config.projectRoot(for: file, within: GitDiffEngine.realPath(boardRoot)))
+        let root = GitDiffEngine.realPath(boardRoot)
+        let boundary = file.path.hasPrefix(root.path + "/") ? root : GitWorktree.counterpart(of: root.path, toward: file.path).map { GitDiffEngine.realPath(URL(fileURLWithPath: $0)) } ?? root
+        return Key(language: config.language, root: config.projectRoot(for: file, within: boundary))
     }
 
     private func server(for file: URL, boardRoot: URL) async throws -> (LanguageServer, URL) {

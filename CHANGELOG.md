@@ -7,6 +7,7 @@ Each version's section is its GitHub release's notes (release.yml puts it above 
 ### Fixed
 
 - **An agent's question asks for you, in auto mode too.** When Claude Code or Codex asks you something mid-turn, the tile goes orange with the question in its bubble, and ⌘J and the edge pill find it, even with approvals off (`--dangerously-skip-permissions`, `--yolo`). Codex's questions (Plan mode, and the queued "? 1 question" in Default mode) left the tile working, then done, with the question unanswered. Claude Code's showed "approve AskUserQuestion?" and stayed orange after you answered, until the turn ended. Answering takes the tile back to working.
+- **Opened from a worktree, Chalkwork reads that worktree's code.** The board stays the repository's, rooted at the main checkout, but ⌘P Go to now lists and opens the worktree's files and symbols, hover, ⌘-click and call graphs on a worktree's files ask a language server of that worktree's project (they said "No definition found"), and code, image, diagram and changes tiles an agent working in a worktree creates with relative paths read its worktree, not the main checkout.
 
 ## 0.3.2
 

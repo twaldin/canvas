@@ -21,10 +21,14 @@ public enum CallGraphBuilder {
 
     /// Never throws but for cancellation: what went wrong is the graph's `error` (with the
     /// previous graph kept when there was one).
-    public static func build(_ spec: DiagramSpec, boardRoot: URL, previous: DiagramGraph?, languages: LanguageService) async throws -> DiagramGraph {
+    /// `scope` is the checkout the graph is of (default the board root): the board root's
+    /// counterpart in another worktree for a diagram there (`Board.checkoutRoot`). Its files are
+    /// the nodes and where a bare symbol is looked for; paths are written as the board stores
+    /// them, relative to `boardRoot` or absolute.
+    public static func build(_ spec: DiagramSpec, boardRoot: URL, scope: URL? = nil, previous: DiagramGraph?, languages: LanguageService) async throws -> DiagramGraph {
         let aim = spec.aim
         let previous = previous?.aim == aim ? previous : nil
-        var session = Session(boardRoot: boardRoot, languages: languages)
+        var session = Session(boardRoot: boardRoot, scope: scope, languages: languages)
         do {
             let root = try await session.resolveRoot(spec, previous: previous)
             let fresh = try await session.walk(from: root, spec: spec)
@@ -114,6 +118,8 @@ public enum CallGraphBuilder {
 
     struct Session {
         let boardRoot: URL
+        /// The checkout searched and drawn (`build`'s `scope`).
+        let scope: URL
         let languages: LanguageService
         private var symbols: [URL: [(symbol: LSPSymbol, containers: [String])]] = [:]
         private var texts: [URL: [String]] = [:]
@@ -122,8 +128,9 @@ public enum CallGraphBuilder {
         /// node's calls shift by too.
         private var shifts: [String: Int] = [:]
 
-        init(boardRoot: URL, languages: LanguageService) {
+        init(boardRoot: URL, scope: URL? = nil, languages: LanguageService) {
             self.boardRoot = boardRoot
+            self.scope = scope ?? boardRoot
             self.languages = languages
         }
 
@@ -133,13 +140,16 @@ public enum CallGraphBuilder {
 
         func boardPath(_ url: URL) -> String { Board.relativePath(url.path, root: boardRoot) }
 
+        /// Whether `url` is one of the files the graph is of (in `scope`).
+        func inScope(_ url: URL) -> Bool { !Board.relativePath(url.path, root: scope).hasPrefix("/") }
+
         /// Every symbol of `file` with the names of the symbols it is inside, outermost first.
         mutating func documentSymbols(_ file: URL) async throws -> [(symbol: LSPSymbol, containers: [String])] {
             if let known = symbols[file] { return known }
             func walk(_ list: [LSPSymbol], _ containers: [String]) -> [(symbol: LSPSymbol, containers: [String])] {
                 list.flatMap { [($0, containers)] + walk($0.children, containers + [$0.name]) }
             }
-            let found = walk(try await languages.documentSymbols(file: file, boardRoot: boardRoot), [])
+            let found = walk(try await languages.documentSymbols(file: file, boardRoot: scope), [])
             symbols[file] = found
             return found
         }
@@ -193,7 +203,8 @@ public enum CallGraphBuilder {
         /// a declaration keyword names it in (`NoteSource.locate`), when that file's document
         /// symbols have it. Else the language servers' workspace symbols (`locateInWorkspace`).
         mutating func locate(_ symbol: String) async throws -> String {
-            if let found = await NoteSource.locate(symbol: symbol, root: boardRoot), try await declaration(symbol, in: url(found)) != nil {
+            if let found = await NoteSource.locate(symbol: symbol, root: scope).map({ boardPath(scope.appendingPathComponent($0)) }),
+               try await declaration(symbol, in: url(found)) != nil {
                 return found
             }
             return try await locateInWorkspace(symbol)
@@ -211,15 +222,15 @@ public enum CallGraphBuilder {
             guard !base.isEmpty, base.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "$" }) else {
                 throw Failure.unresolved("\(symbol) is not a symbol name; give props.path")
             }
-            let projects = await languages.projects(await mentioningFiles(base), boardRoot: boardRoot).prefix(CallGraphBuilder.maxSymbolProjects)
+            let projects = await languages.projects(await mentioningFiles(base), boardRoot: scope).prefix(CallGraphBuilder.maxSymbolProjects)
             guard !projects.isEmpty else { throw Failure.unresolved("no file of the board that a language server reads mentions \(base); give props.path") }
             let wanted = container.map(Self.containerNames) ?? []
             /// The answers that are declarations of `symbol` in the board's files, once each.
             func declarations() async throws -> [(path: String, symbol: LSPSymbol, containers: [String])] {
                 var found: [(path: String, symbol: LSPSymbol, containers: [String])] = []
-                for answer in try await languages.workspaceSymbols(base, files: Array(projects), boardRoot: boardRoot) where names(name, answer.name) {
+                for answer in try await languages.workspaceSymbols(base, files: Array(projects), boardRoot: scope) where names(name, answer.name) {
+                    guard inScope(answer.location.url) else { continue }
                     let path = boardPath(answer.location.url)
-                    guard !path.hasPrefix("/") else { continue }
                     let line = answer.location.range.start.line
                     let declared = (try? await documentSymbols(answer.location.url)) ?? []
                     guard let entry = declared.first(where: { entry in
@@ -258,7 +269,7 @@ public enum CallGraphBuilder {
         /// Tracked files mentioning `name` as a word, those where it looks declared (not after a
         /// `.`, followed by `(`, `<`, `=` or `:`) first, at most `maxMentioningFiles`.
         func mentioningFiles(_ name: String) async -> [URL] {
-            guard let data = try? await GitRunner.shared.run(["grep", "-n", "-I", "-w", "-F", "-e", name], in: boardRoot, allowedStatus: [0, 1],
+            guard let data = try? await GitRunner.shared.run(["grep", "-n", "-I", "-w", "-F", "-e", name], in: scope, allowedStatus: [0, 1],
                                                               maxOutput: NoteSource.maxOutput, timeout: NoteSource.timeout),
                   let output = String(data: data, encoding: .utf8) else { return [] }
             let declared = try? NSRegularExpression(pattern: #"(^|[^\w.$])"# + NSRegularExpression.escapedPattern(for: name) + #"\s*[(<=:]"#)
@@ -272,7 +283,7 @@ public enum CallGraphBuilder {
                 if declared?.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) != nil { looksDeclared.insert(path) }
             }
             let ranked = order.filter(looksDeclared.contains) + order.filter { !looksDeclared.contains($0) }
-            return ranked.prefix(CallGraphBuilder.maxMentioningFiles).map { boardRoot.appendingPathComponent($0) }
+            return ranked.prefix(CallGraphBuilder.maxMentioningFiles).map { scope.appendingPathComponent($0) }
         }
 
         // MARK: Root
@@ -319,17 +330,17 @@ public enum CallGraphBuilder {
                 }
             }
             let position = declared.selectionRange.start
-            var items = try await languages.prepareCallHierarchy(file: rootFile, boardRoot: boardRoot, at: position)
+            var items = try await languages.prepareCallHierarchy(file: rootFile, boardRoot: scope, at: position)
             // A function the server names nothing at: it is still loading the project (sourcekit-lsp
             // answers from fallback settings until its package is loaded), so ask again a while.
             var waited = Duration.zero
             while items.isEmpty, callableKinds.contains(declared.kind), waited < CallGraphBuilder.loadingWait {
                 try await Task.sleep(for: CallGraphBuilder.loadingRetry)
                 waited += CallGraphBuilder.loadingRetry
-                items = try await languages.prepareCallHierarchy(file: rootFile, boardRoot: boardRoot, at: position)
+                items = try await languages.prepareCallHierarchy(file: rootFile, boardRoot: scope, at: position)
             }
             guard let item = items.first else {
-                let hint = await languages.existingServer(for: rootFile, boardRoot: boardRoot)?.config.emptyResultHint.map { " \($0)" } ?? ""
+                let hint = await languages.existingServer(for: rootFile, boardRoot: scope)?.config.emptyResultHint.map { " \($0)" } ?? ""
                 throw Failure.unresolved("the language server names no callable at \(boardPath(rootFile)):\(position.line + 1).\(hint)")
             }
             return item
@@ -374,12 +385,12 @@ public enum CallGraphBuilder {
                 try Task.checkCancellation()
                 let current = queue.removeFirst()
                 let incoming = current.direction == .incoming
-                let calls = incoming ? try await languages.incomingCalls(current.item, boardRoot: boardRoot)
-                                     : try await languages.outgoingCalls(current.item, boardRoot: boardRoot)
+                let calls = incoming ? try await languages.incomingCalls(current.item, boardRoot: scope)
+                                     : try await languages.outgoingCalls(current.item, boardRoot: scope)
                 var found: [(item: LSPCallHierarchyItem, path: String, lines: [Int])] = []
                 for call in calls {
+                    guard inScope(call.item.url), !isGenerated(CallGraphBuilder.split(call.item).name) else { continue }
                     let path = boardPath(call.item.url)
-                    guard !path.hasPrefix("/"), !isGenerated(CallGraphBuilder.split(call.item).name) else { continue }
                     let lines = Array(Set(call.fromRanges.map { $0.start.line + 1 })).sorted()
                     if let index = found.firstIndex(where: { $0.item.url == call.item.url && $0.item.selectionRange.start == call.item.selectionRange.start && $0.item.name == call.item.name }) {
                         found[index].lines = Array(Set(found[index].lines + lines)).sorted()

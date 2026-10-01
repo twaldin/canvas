@@ -55,10 +55,11 @@ extension CanvasView {
     }
 
     /// Go to's Recent rows (with nothing typed, before "All content"): where navigation landed
-    /// lately, newest first.
+    /// lately, newest first. Their targets are absolute: Go to's relative paths are the listed
+    /// checkout's (`Board.workingRoot`), not necessarily the board root.
     func recentNavigatorRows() -> [NavigatorRow] {
         recentLocations.locations.prefix(Self.recentRows).map { location in
-            NavigatorRow(target: .file(location.path, lines: location.range), title: location.label, kind: "Recent", dot: nil, toolTip: location.path)
+            NavigatorRow(target: .file(board.absoluteURL(location.path).path, lines: location.range), title: location.label, kind: "Recent", dot: nil, toolTip: location.path)
         }
     }
 

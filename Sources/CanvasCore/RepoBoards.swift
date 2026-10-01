@@ -98,14 +98,10 @@ extension Board {
         if !worktree.isMain { record(worktree) }
     }
 
-    /// The directory New Terminal starts in: the working worktree (at the board root's place in
-    /// it), else the board root.
-    public var defaultTerminalDirectory: String {
-        guard let worktree = workingWorktree else { return root.path }
-        if let place = GitWorktree.containing(root.path)?.relativePath(of: root.path) {
-            return URL(fileURLWithPath: worktree.toplevel).appendingPathComponent(place).path
-        }
-        return worktree.toplevel
+    /// The checkout the user opened the board from: the board root's place in the working
+    /// worktree, else the board root. New Terminal starts there and Go to lists its files.
+    public var workingRoot: URL {
+        workingWorktree.flatMap { GitWorktree.counterpart(of: root.path, toward: $0.toplevel) }.map(URL.init(fileURLWithPath:)) ?? root
     }
 
     /// The region to show for the worktree the board was opened from (`opened(from:)`).

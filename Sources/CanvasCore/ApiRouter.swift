@@ -231,6 +231,9 @@ public final class ApiRouter {
                     let result = try dispatch("object.update", try fitted("object.update", reused, size: size)).merging(.object(["reused": .bool(true)]))
                     return Self.ok(id, size == nil ? result : withOverlaps(result))
                 }
+                if method == "object.create", let result = try await createFittedDiagram(params) {
+                    return Self.ok(id, upsert ? result.merging(.object(["created": .bool(true)])) : result)
+                }
                 let size = try await fitSize(method, params)
                 // A frame given outright (a browser tile resized to a desktop viewport) that now
                 // covers objects it didn't says so, as a refit does.
@@ -1303,6 +1306,43 @@ public final class ApiRouter {
             base = (object.type, props, object.frame.w, pathRoot(board, type: object.type, props: props))
         }
         return try await ObjectMeasure.size(type: base.type, props: base.props, width: width ?? ([.code, .image].contains(base.type) ? nil : base.width), root: base.root)
+    }
+
+    /// `object.create` of a diagram with `size: "fit"` and no `props.graph`: its size is its graph's,
+    /// which only the language server gives. Created at the default size (at the given origin),
+    /// computed (`refreshDiagram`, waiting up to `diagramTimeoutMs` as `object.reload` does: a
+    /// language server's first answer in a project takes a while), then fitted to the graph as
+    /// the tile sizes itself to its first graph: the app's write, not an undo step of its own.
+    /// The result adds `diagram`, `object.reload`'s summary; a graph still computing when the wait
+    /// ends leaves the tile at the default size, with a warning. Nil for any other create.
+    private func createFittedDiagram(_ p: JSONValue) async throws -> JSONValue? {
+        guard p["type"]?.string == ObjectType.diagram.rawValue, p["size"]?.string == "fit", DiagramGraph(p["props"]?["graph"]) == nil,
+              let refreshDiagram, var params = p.object else { return nil }
+        params.removeValue(forKey: "size")
+        let origin = p["frame"]?["x"]?.number.flatMap { x in p["frame"]?["y"]?.number.map { (x: x, y: $0) } }
+        if let origin {
+            let size = Board.defaultSize(.diagram)
+            params["frame"] = try JSONValue.encode(Frame(x: origin.x, y: origin.y, w: size.w, h: size.h))
+        } else {
+            params.removeValue(forKey: "frame")
+        }
+        var result = try dispatch("object.create", .object(params)).object ?? [:]
+        guard let id = result["object"]?["id"]?.string else { return .object(result) }
+        let board = try board(forObject: id)
+        let summary = try await refreshDiagram(board, id, Self.diagramTimeoutMs)
+        let object = try board.object(id)
+        if summary["loaded"] == .bool(true), DiagramGraph(object.props["graph"]) != nil {
+            let size = try await ObjectMeasure.size(type: .diagram, props: object.props, width: nil, root: board.root)
+            let frame = try origin.map { Frame(x: $0.x, y: $0.y, w: size.width, h: size.height) } ?? board.refitFrame(id, to: size)
+            try board.update(id, frame: frame, actor: .system)
+        } else {
+            let warning = JSONValue.string("the graph is still being computed (the language server hasn't answered within \(Self.diagramTimeoutMs / 1000) s): "
+                + "object.reload \(id) waits for it again, then object.update size \"fit\"")
+            result["warnings"] = .array((result["warnings"]?.array ?? []) + [warning])
+        }
+        result["object"] = try JSONValue.encode(board.reported(try board.object(id)))
+        result["diagram"] = summary
+        return withOverlaps(.object(result))
     }
 
     /// The directory a create's or update's paths resolve against, once `inCallersCheckout` has

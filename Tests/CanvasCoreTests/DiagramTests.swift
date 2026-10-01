@@ -453,6 +453,68 @@ final class DiagramTests {
         try board.update(diagram.id, frame: hemmed)
         #expect(board.overlaps(of: diagram.id).isEmpty)
     }
+
+    // MARK: Through the API
+
+    /// An agent's first "who calls X?" right after launch: `object.create` with `size: "fit"`
+    /// before the language server has answered anything (this stand-in takes 2 s to start, as
+    /// sourcekit-lsp takes its while). The create waits for the graph and fits the tile to it.
+    @Test func aDiagramCreatedWithSizeFitWaitsForItsFirstGraphAndFitsIt() async throws {
+        let home = dir.appendingPathComponent(".home")
+        let registry = BoardRegistry(store: BoardStore(directory: home.appendingPathComponent("boards"), debounce: 60))
+        let board = registry.open(root: dir)
+        let router = ApiRouter(registry: registry)
+        let script = dir.appendingPathComponent(".replay.py")
+        let slow = LanguageService(configs: [LanguageServerConfig(language: "swift", command: "/bin/sh",
+                                                                  arguments: ["-c", #"sleep 2; exec /usr/bin/python3 "$0" "$1""#, script.path, Self.fixture.path],
+                                                                  languageIDs: ["swift": "swift"], rootMarkers: ["Package.swift"])])
+        // As the app computes a diagram on a board without a window.
+        var computing = true
+        router.refreshDiagram = { board, tile, _ in
+            guard computing else { return DiagramRefresh.summary(tile, graph: nil, computed: false) }
+            let graph = try await DiagramRefresh.run(tile, on: board, languages: slow)
+            return DiagramRefresh.summary(tile, graph: graph, computed: graph != nil)
+        }
+        let server = SocketServer(path: home.appendingPathComponent("s").path) { request, connection in
+            await router.handle(request, connection: connection)
+        }
+        try server.start()
+        defer { server.stop() }
+        let client = try LineClient(path: home.appendingPathComponent("s").path)
+        func create(_ params: String) async throws -> JSONValue {
+            client.send(#"{"id":"1","method":"object.create","params":{"type":"diagram","size":"fit",\#(params)}}"#)
+            return try await client.next()
+        }
+        let props = #""props":{"path":"Sources/Lib/Spool.swift","symbol":"Spool.read","direction":"incoming","depth":1}"#
+
+        let reply = try await create(props)
+        #expect(reply["ok"] == .bool(true), "\(reply["error"] ?? .null)")
+        let id = try #require(reply["result"]?["object"]?["id"]?.string)
+        let diagram = try board.object(id)
+        let graph = try #require(DiagramGraph(diagram.props["graph"]))
+        #expect(graph.nodes.count == 4)
+        #expect(reply["result"]?["diagram"]?["loaded"] == .bool(true))
+        #expect(reply["result"]?["diagram"]?["nodes"] == .number(4))
+        let fit = DiagramLayout(graph).bodySize
+        #expect(diagram.frame.w == Double(fit.width) && diagram.frame.h == Double(RenderMath.tileTitleHeight + fit.height))
+        #expect(reply["result"]?["object"]?["frame"]?["h"] == .number(diagram.frame.h))
+
+        // At the origin given; the fit is the create's, not an undo step of its own.
+        let placed = try await create(#""frame":{"x":4000,"y":-300},\#(props)"#)
+        let at = try board.object(try #require(placed["result"]?["object"]?["id"]?.string)).frame
+        #expect(at.x == 4000 && at.y == -300 && at.w == diagram.frame.w && at.h == diagram.frame.h)
+        #expect(board.undo())
+        #expect(board.objects[placed["result"]?["object"]?["id"]?.string ?? ""] == nil)
+
+        // Still computing when the wait ends: the tile is there, at its default size, and says so.
+        computing = false
+        let pending = try await create(props)
+        #expect(pending["ok"] == .bool(true))
+        #expect(pending["result"]?["diagram"]?["loaded"] == .bool(false))
+        #expect(pending["result"]?["object"]?["frame"]?["w"] == .number(Board.defaultSize(.diagram).w))
+        #expect(pending["result"]?["warnings"]?.array?.first?.string?.contains("object.reload") == true)
+        await slow.stopAll()
+    }
 }
 
 /// The pan after a user opens a diagram node (`Layout.revealGrown`): a viewport 1000 × 800 at

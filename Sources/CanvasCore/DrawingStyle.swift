@@ -14,7 +14,7 @@ public enum DrawingStyle {
         guard family == nil else { return }
         var error: Unmanaged<CFError>?
         if !CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
-            NSLog("Chalkwork: cannot register \(url.path): \(String(describing: error?.takeRetainedValue()))")
+            NSLog("Canvas: cannot register \(url.path): \(String(describing: error?.takeRetainedValue()))")
         }
         let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor]
         family = descriptors?.first.map { $0 as NSFontDescriptor }

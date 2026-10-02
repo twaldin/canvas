@@ -1,7 +1,7 @@
 import AppKit
 import QuartzCore
 
-/// Development performance probes (`CHALKWORK_DEV_PERF=1`; see docs/testing.md "Performance
+/// Development performance probes (`CANVAS_DEV_PERF=1`; see docs/testing.md "Performance
 /// probes"). Off, every call returns after one flag check.
 ///
 /// A span covers an input-replay burst (plus a settle after it) or an idle window
@@ -12,7 +12,7 @@ import QuartzCore
 /// ends, `app.log` gets one `DevPerf:` line per phase.
 @MainActor
 enum DevPerf {
-    static let enabled = ProcessInfo.processInfo.environment["CHALKWORK_DEV_PERF"] == "1"
+    static let enabled = ProcessInfo.processInfo.environment["CANVAS_DEV_PERF"] == "1"
     /// Pause after a burst's last step that still belongs to it: the liveness pass, card and
     /// live flips, and the redraws they cause.
     static let settle: TimeInterval = 1.5

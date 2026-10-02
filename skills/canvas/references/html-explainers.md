@@ -18,7 +18,7 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
     `bg-background text-foreground`, `bg-card`, `bg-muted text-muted-foreground`, `border-border`, `bg-accent text-accent-foreground`, `bg-code`, `text-warn`, `text-ok`, `font-sans`, `font-mono`.
     Avoid hard-coded hex colors.
   - **Mermaid**: `<pre class="mermaid">flowchart LR …</pre>` renders as a diagram.
-  - **Chalkwork components** (below).
+  - **Canvas components** (below).
 - Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`.
 
 ## Components
@@ -103,7 +103,7 @@ Put a one-line summary count at the top ("2 bugs, 1 risk, 3 nits").
 
 ## Check your tile
 
-After creating or updating an explainer, look at it: `chalkwork view.snapshot`
-(or `chalkwork render <id> --full`, which renders the whole page offscreen and reports `overflow`) and read the image at the `path` it returns.
-Without `--out` the image goes to a new file under `$TMPDIR/chalkwork-renders/`, never in the repo (see SKILL.md, Known surprises).
+After creating or updating an explainer, look at it: `canvas view.snapshot`
+(or `canvas render <id> --full`, which renders the whole page offscreen and reports `overflow`) and read the image at the `path` it returns.
+Without `--out` the image goes to a new file under `$TMPDIR/canvas-renders/`, never in the repo (see SKILL.md, Known surprises).
 Fix overflow, unreadable contrast, or broken diagrams before telling the user it's there. Then point at it with `view.attention` rather than moving their viewport.

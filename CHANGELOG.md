@@ -4,13 +4,32 @@ Each version's section is its GitHub release's notes (release.yml puts it above 
 
 ## Unreleased
 
+Chalkwork is Canvas again: the same app under the name it had through 0.2.1. Its first launch brings a Chalkwork 0.3 install along; a Canvas 0.2 one that never moved to Chalkwork is already where Canvas looks.
+
+### Upgrading from Chalkwork or Canvas
+
+1. Quit Chalkwork and any old Canvas still around (their terminal sessions keep running), unzip `Canvas-<version>.zip`, move `Canvas.app` to `/Applications` (replacing an old `Canvas.app` there), clear its quarantine flag (Install, below) and open it.
+   The first launch moves `~/Library/Application Support/Chalkwork` to `~/Library/Application Support/Canvas` (every board, archived boards, the `pre-repo-migration/` backups, snapshots, open tabs) and `~/.chalkwork` (your compositions) to `~/.canvas`, moves the browser tiles' logins and site data, and brings over Chalkwork's settings and window frames.
+   If Canvas 0.2 ran again after Chalkwork took its data, what it left there and its settings are moved aside first, whole, to `~/Library/Application Support/Canvas-stale-<time>/` (nothing is deleted), and Chalkwork's take their place. Its browser profile stays in use then: Chalkwork's logins stay at `~/Library/WebKit/net.waldin.chalkwork`.
+   While Chalkwork or an old Canvas is still running it moves nothing; quit it and open Canvas again. It happens once: data an old app writes after that stays with it.
+2. Your terminals come back attached: their sessions keep their `canvas-obj_…` names. Restart the agents in them (or end the sessions): an agent started under Chalkwork still has `CHALKWORK_SOCKET` pointing at `chalkwork.sock` and the `chalkwork` CLI on its PATH, so it can't reach Canvas until it restarts.
+3. omp: point the extension at Canvas.
+   ```sh
+   rm -f ~/.omp/agent/extensions/chalkwork.ts ~/.omp/agent/extensions/canvas.ts
+   ln -sf /Applications/Canvas.app/Contents/Resources/extensions/omp/canvas.ts ~/.omp/agent/extensions/canvas.ts
+   ```
+4. Every `CHALKWORK_*` variable is now `CANVAS_*`: rename `CHALKWORK_LSP_<LANGUAGE>` in your shell profile to `CANVAS_LSP_<LANGUAGE>`.
+5. The CLI is `canvas` (there is no `chalkwork` alias; approve its commands again where an agent asks), the Python package `canvas_sdk` (`from canvas_sdk import canvas` still gives you the client; its class is `Canvas`), the TypeScript client `@canvas/client`, the agent skill `canvas`, and `board.export` writes `.canvas/board.json` (import an older `.chalkwork/board.json` by its path).
+6. Once your agents run under Canvas, delete `/Applications/Chalkwork.app`. Opened again, it would start with no boards.
+7. macOS asks again before a terminal program or page uses the microphone, the camera or another app: those permissions belonged to Chalkwork.
+
 ### Fixed
 
 - **A restarted agent keeps the tile's flags.** After a reboot (its terminal session gone), an agent tile resumes its recorded session with the options of the tile's own command: Codex keeps its `-c` overrides, including the folder's trust, so it doesn't ask about the folder again; Claude Code keeps `--model` and `--dangerously-skip-permissions`; omp keeps `-e`; opencode keeps its project. Before, it ran a plain `codex resume <id>` (`claude --resume <id>`, `omp --resume=<id>`). The command's own `--resume`/`--continue` and its prompt aren't repeated.
 - **A call graph created with `size: "fit"` comes up fitted, first time.** `object.create` of a diagram with `size: "fit"` failed ("unavailable: the diagram isn't computed yet") every time, since a new diagram has no graph to measure; an agent asking "who calls X?" retried without it, then reloaded and fitted it, losing seconds on camera. The create now computes the graph, waiting for the language server as `object.reload` does (up to 60 s, e.g. right after launch), and returns the tile fitted to it, with the graph's summary.
 - **`object.reload` of a call graph returns at its `timeoutMs`.** While the language server hadn't answered (sourcekit-lsp still starting, or a package it can't build settings for), the reload waited for it whatever `timeoutMs` said, e.g. 48 s for 20 s. It now answers `loaded: false` at the timeout, and the tile shows the graph when it comes.
-- **`agent.wait` after a prompt that starts no turn doesn't hang.** After `chalkwork agent prompt`, `agent wait` waits for that prompt's turn, which a `/` command or `!` escape to Claude Code or Codex never starts: the wait held forever. It now fails with `unavailable` once 60 s pass without the turn starting, saying to read what followed instead.
-- **A Codex tile trusted by `-c` doesn't show a false folder question.** Codex started with the folder's trust as an override (`codex -c 'projects={"<folder>"={trust_level="trusted"}}'`), and every restarted tile that resumes such a session with its own `-c`, went orange with "Codex asks whether to trust this folder" although Codex asked nothing, and stayed so until the first prompt; `agent.prompt` refused it as blocked. Chalkwork judged the folder from `~/.codex/config.toml` alone. It now reads the `-c` overrides Codex keeps, as Codex reads them.
+- **`agent.wait` after a prompt that starts no turn doesn't hang.** After `canvas agent prompt`, `agent wait` waits for that prompt's turn, which a `/` command or `!` escape to Claude Code or Codex never starts: the wait held forever. It now fails with `unavailable` once 60 s pass without the turn starting, saying to read what followed instead.
+- **A Codex tile trusted by `-c` doesn't show a false folder question.** Codex started with the folder's trust as an override (`codex -c 'projects={"<folder>"={trust_level="trusted"}}'`), and every restarted tile that resumes such a session with its own `-c`, went orange with "Codex asks whether to trust this folder" although Codex asked nothing, and stayed so until the first prompt; `agent.prompt` refused it as blocked. Canvas judged the folder from `~/.codex/config.toml` alone. It now reads the `-c` overrides Codex keeps, as Codex reads them.
 
 ## 0.3.3
 

@@ -4,7 +4,7 @@ import GhosttyKit
 import GhosttyTerminal
 
 /// The Ghostty configuration every terminal tile runs with: the user's own (`GhosttyConfig`:
-/// config files, includes, theme), validated line by line, over Chalkwork's defaults, one text per
+/// config files, includes, theme), validated line by line, over Canvas's defaults, one text per
 /// color scheme. Renders and cards (`TerminalRender`) draw with the same colors, font and padding.
 @MainActor
 final class TerminalConfig {
@@ -26,7 +26,7 @@ final class TerminalConfig {
     let dark: Style
     /// The user's `font-family` values, in order.
     let fontFamilies: [String]
-    /// Chords the user bound to Ghostty window, tab and split actions, which Chalkwork performs
+    /// Chords the user bound to Ghostty window, tab and split actions, which Canvas performs
     /// instead (`GhosttyConfig.remaps`; the keybinds themselves never reach the library).
     let remaps: [GhosttyConfig.KeyChord: GhosttyConfig.AppAction]
     /// Ghostty's shell integration for tiles to load (`TerminalShellIntegration`): nil when the
@@ -34,7 +34,7 @@ final class TerminalConfig {
     let shellIntegration: String?
 
     private init() {
-        // Chalkwork's base: the library's defaults (14 pt, block cursor); without a user theme, its
+        // Canvas's base: the library's defaults (14 pt, block cursor); without a user theme, its
         // Alabaster (light) and Afterglow (dark) colors.
         let base = TerminalConfiguration.default.rendered
         // The controller initializes Ghostty's runtime, which the config API below needs.
@@ -48,7 +48,7 @@ final class TerminalConfig {
             guard let name else { return GhosttyConfig.parse(fallback.rendered) }
             guard let file = GhosttyConfig.themeFile(name, directories: themes, isFile: TerminalReferences.isFile),
                   let text = try? String(contentsOf: file, encoding: .utf8) else {
-                NSLog("Chalkwork: Ghostty theme %@ not found (looked in %@)", name, themes.map(\.path).joined(separator: ", "))
+                NSLog("Canvas: Ghostty theme %@ not found (looked in %@)", name, themes.map(\.path).joined(separator: ", "))
                 return GhosttyConfig.parse(fallback.rendered)
             }
             return GhosttyConfig.parse(text)
@@ -59,13 +59,13 @@ final class TerminalConfig {
             TerminalConfiguration { builder in settings.forEach { builder.withCustom($0.key, $0.value) } }
         }
         if !controller.setTheme(TerminalTheme(light: configuration(lightSettings), dark: configuration(darkSettings))) || controller.lastConfigurationIssue != nil {
-            NSLog("Chalkwork: Ghostty config rejected, tiles use the defaults: %@", controller.lastConfigurationIssue ?? "unknown")
+            NSLog("Canvas: Ghostty config rejected, tiles use the defaults: %@", controller.lastConfigurationIssue ?? "unknown")
         }
         light = Self.style(base: base, settings: lightSettings)
         dark = Self.style(base: base, settings: darkSettings)
         fontFamilies = GhosttyConfig.values("font-family", in: darkSettings)
         let loaded = GhosttyConfig.defaultFiles(home: home, environment: environment).filter { TerminalReferences.isFile($0.path) }.map(\.path)
-        NSLog("Chalkwork: Ghostty config from %@: %d settings, theme %@ / %@, font %@ %.0f pt",
+        NSLog("Canvas: Ghostty config from %@: %d settings, theme %@ / %@, font %@ %.0f pt",
               loaded.isEmpty ? "(none)" : loaded.joined(separator: ", "), user.entries.count,
               user.lightTheme ?? "(default)", user.darkTheme ?? "(default)", fontFamilies.first ?? "(default)", Double(dark.fontSize))
         remaps = user.remaps
@@ -74,12 +74,12 @@ final class TerminalConfig {
             var directory: ObjCBool = false
             return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
         }
-        NSLog("Chalkwork: shell integration %@", shellIntegration ?? (integrationSetting == "none" ? "off (shell-integration = none)" : "missing from the bundle"))
+        NSLog("Canvas: shell integration %@", shellIntegration ?? (integrationSetting == "none" ? "off (shell-integration = none)" : "missing from the bundle"))
         for keybind in user.appKeybinds {
             if let action = keybind.action, keybind.chord != nil {
-                NSLog("Chalkwork: Ghostty keybind `%@` runs Chalkwork's %@", keybind.entry.value, action == .newTerminal ? "New Terminal" : "Close Terminal")
+                NSLog("Canvas: Ghostty keybind `%@` runs Canvas's %@", keybind.entry.value, action == .newTerminal ? "New Terminal" : "Close Terminal")
             } else {
-                NSLog("Chalkwork: dropped Ghostty keybind `%@`: %@", keybind.entry.value, keybind.action == nil ? "an app action Chalkwork doesn't have" : "a key sequence Chalkwork can't match")
+                NSLog("Canvas: dropped Ghostty keybind `%@`: %@", keybind.entry.value, keybind.action == nil ? "an app action Canvas doesn't have" : "a key sequence Canvas can't match")
             }
         }
     }
@@ -96,7 +96,7 @@ final class TerminalConfig {
         if diagnostics(base + "\n" + settings.map(\.line).joined(separator: "\n")).isEmpty { return settings }
         return settings.filter { entry in
             let problems = diagnostics(entry.line)
-            if !problems.isEmpty { NSLog("Chalkwork: ignoring Ghostty setting `%@`: %@", entry.line, problems.joined(separator: "; ")) }
+            if !problems.isEmpty { NSLog("Canvas: ignoring Ghostty setting `%@`: %@", entry.line, problems.joined(separator: "; ")) }
             return problems.isEmpty
         }
     }

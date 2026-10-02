@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-Chalkwork under the hardened runtime (scripts/notarize.sh signs with it; docs/releasing.md).
+Canvas under the hardened runtime (scripts/notarize.sh signs with it; docs/releasing.md).
 
-Chalkwork itself needs no runtime exception: libghostty and the tree-sitter grammars are linked in;
+Canvas itself needs no runtime exception: libghostty and the tree-sitter grammars are linked in;
 Metal, WebKit (its JIT runs in the WebContent process), the JavaScriptCore parser behind
 browser.eval (parses, never runs), UserNotifications, the sockets and every subprocess it spawns
 (zmx, shells, git, language servers, python3, bun) work without one. Subprocesses don't inherit
 these entitlements.
 
 What they do inherit is TCC responsibility: macOS attributes a privacy request from anything
-running in a terminal tile, and from a browser tile's page, to Chalkwork, and under the hardened
-runtime tccd refuses to even ask the user unless Chalkwork carries the matching entitlement ("Prompting
+running in a terminal tile, and from a browser tile's page, to Canvas, and under the hardened
+runtime tccd refuses to even ask the user unless Canvas carries the matching entitlement ("Prompting
 policy for hardened runtime; service: kTCCServiceMicrophone requires entitlement
-com.apple.security.device.audio-input but it is missing for responsible=net.waldin.chalkwork").
+com.apple.security.device.audio-input but it is missing for responsible=net.waldin.canvas").
 Each key below only lets macOS ask; the user still decides, and Info.plist says why (bundle.sh).
 -->
 <plist version="1.0">

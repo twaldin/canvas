@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.resume()
         terminationSignal = termination
         DevInput.install()
-        // Chalkwork's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
+        // Canvas's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
         Housekeeping.pruneAtLaunch()
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }
         registry.onEvent = { [weak self] board, event in
@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try server.start()
             self.server = server
         } catch {
-            NSLog("Chalkwork: cannot listen on \(AppPaths.apiSocket): \(error)")
+            NSLog("Canvas: cannot listen on \(AppPaths.apiSocket): \(error)")
         }
         cmux.perform = { [weak self] board, object, command, driver in
             guard let tile = self?.controllers[board.id]?.canvas.tiles[object.id]?.content as? BrowserTile else {
@@ -152,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try cmuxServer.start()
             self.cmuxServer = cmuxServer
         } catch {
-            NSLog("Chalkwork: cannot listen on \(AppPaths.cmuxSocket): \(error)")
+            NSLog("Canvas: cannot listen on \(AppPaths.cmuxSocket): \(error)")
         }
         hyper.install()
         let saved = Self.savedOpenBoards()
@@ -164,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let migration = registry.store.migrateToRepoBoards(knownRoots: saved + [Self.initialRoot()])
         if let report = migration, !report.repos.isEmpty || !report.unresolved.isEmpty {
             let temporary = report.repos.flatMap(\.legacy).filter { $0.temporary && $0.region != nil }.map { "\($0.label) (\($0.worktree ?? ""))" }
-            NSLog("Chalkwork: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were)\(temporary.isEmpty ? "" : "; regions from temporary worktrees: " + temporary.joined(separator: ", ")); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
+            NSLog("Canvas: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were)\(temporary.isEmpty ? "" : "; regions from temporary worktrees: " + temporary.joined(separator: ", ")); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
         }
         let initial = open(root: Self.initialRoot())
         // The other boards that were open as tabs come back behind the initial one (one tab per
@@ -180,8 +180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let migration {
             for (id, controller) in controllers { migration.notice(for: id).map(controller.canvas.showNotice) }
         }
-        // Testing on a shared machine: CHALKWORK_NO_ACTIVATE=1 keeps the app from taking focus.
-        if ProcessInfo.processInfo.environment["CHALKWORK_NO_ACTIVATE"] != "1" {
+        // Testing on a shared machine: CANVAS_NO_ACTIVATE=1 keeps the app from taking focus.
+        if ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] != "1" {
             NSApp.activate(ignoringOtherApps: true)
         }
     }
@@ -228,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onClose = { [weak self, weak controller] in self?.saveOpenBoards(closing: controller?.window) }
         guard let window = controller.window else { return board }
         defer { saveOpenBoards() }
-        let noActivate = ProcessInfo.processInfo.environment["CHALKWORK_NO_ACTIVATE"] == "1"
+        let noActivate = ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] == "1"
         if !isShown(window), let host = tabHost(excluding: window) {
             let front = host.tabGroup?.selectedWindow ?? host
             // `addTabbedWindow` onto a minimized window shows the new one by itself on the
@@ -267,7 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Records the shown boards' roots in tab order (AppPaths.openBoards) for the next launch.
-    /// Closing the last board window quits Chalkwork (`applicationShouldTerminateAfterLastWindowClosed`),
+    /// Closing the last board window quits Canvas (`applicationShouldTerminateAfterLastWindowClosed`),
     /// so that board stays recorded, as Quit keeps every tab.
     private func saveOpenBoards(closing: NSWindow? = nil) {
         guard !terminating else { return }
@@ -292,11 +292,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         requestedRoot() ?? URL(fileURLWithPath: NSHomeDirectory())
     }
 
-    /// CHALKWORK_ROOT, else the first non-flag argument, else the working directory unless it's
+    /// CANVAS_ROOT, else the first non-flag argument, else the working directory unless it's
     /// `/` (Finder and `open` launch there, so it names no directory).
     static func requestedRoot() -> URL? {
         let env = ProcessInfo.processInfo.environment
-        if let root = env["CHALKWORK_ROOT"] { return URL(fileURLWithPath: root) }
+        if let root = env["CANVAS_ROOT"] { return URL(fileURLWithPath: root) }
         if let argument = CommandLine.arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) { return URL(fileURLWithPath: argument) }
         let cwd = FileManager.default.currentDirectoryPath
         return cwd == "/" ? nil : URL(fileURLWithPath: cwd)
@@ -420,11 +420,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.keyEquivalentModifierMask = modifiers
             return item
         }
-        submenu("Chalkwork", [
+        submenu("Canvas", [
             // Every browser tile's cookies, storage and caches (`BrowserProfile`), after a sheet.
             item("Clear Browsing Data…", #selector(clearBrowsingData(_:)), ""),
             .separator(),
-            item("Quit Chalkwork", #selector(NSApplication.terminate(_:)), "q"),
+            item("Quit Canvas", #selector(NSApplication.terminate(_:)), "q"),
         ])
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
@@ -564,7 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (`BasicsPanel`), ⌥⌘/ beside that search's ⌘?.
         NSApp.helpMenu = submenu("Help", [
             item("Get Started", #selector(toggleGetStarted(_:)), ""),
-            item("Chalkwork Basics", #selector(toggleBasics(_:)), "/", [.option, .command]),
+            item("Canvas Basics", #selector(toggleBasics(_:)), "/", [.option, .command]),
         ])
         return main
     }

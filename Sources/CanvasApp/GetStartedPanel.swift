@@ -76,7 +76,7 @@ final class GetStartedPanel: NSVisualEffectView {
         karabiner.action = #selector(karabinerClicked)
         karabiner.isBordered = false
         karabiner.attributedTitle = NSAttributedString(string: karabiner.title, attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: NSColor.linkColor])
-        karabiner.toolTip = "Opens karabiner-elements.pqrs.org in your browser. Chalkwork installs nothing."
+        karabiner.toolTip = "Opens karabiner-elements.pqrs.org in your browser. Canvas installs nothing."
         karabiner.setAccessibilityLabel("Get Karabiner-Elements, opens its website")
         let keyboard = Self.item("⇧⌘M", "from the keyboard (Edit › Mention): mentions the selected tile, or the text you selected in it.")
 
@@ -176,7 +176,7 @@ final class GetStartedPanel: NSVisualEffectView {
         }
     }
 
-    /// Hides the panel and hands the keyboard back, as Chalkwork Basics does.
+    /// Hides the panel and hands the keyboard back, as Canvas Basics does.
     func close() {
         guard isOpen else { return }
         let hadKeyboard = hasKeyboard
@@ -206,7 +206,7 @@ final class GetStartedPanel: NSVisualEffectView {
         }
         newTerminal.isHidden = step != .send || target != .none
         footer.stringValue = step == .done
-            ? "That's the whole loop: Hyper-click what you mean, then prompt. Help › Chalkwork Basics explains the rest; Help › Get Started opens this again."
+            ? "That's the whole loop: Hyper-click what you mean, then prompt. Help › Canvas Basics explains the rest; Help › Get Started opens this again."
             : "Close this any time; Help › Get Started opens it again."
         finish.title = step == .done ? "Done" : "Close"
         showPractice.isHidden = step == .done
@@ -252,7 +252,7 @@ final class GetStartedPanel: NSVisualEffectView {
         return label
     }
 
-    /// Chalkwork Basics' section heading: uppercase 11 pt bold in the label color.
+    /// Canvas Basics' section heading: uppercase 11 pt bold in the label color.
     private static func heading(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithAttributedString: NSAttributedString(string: text.uppercased(), attributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .bold), .foregroundColor: NSColor.labelColor, .kern: 0.6,
@@ -262,7 +262,7 @@ final class GetStartedPanel: NSVisualEffectView {
         return label
     }
 
-    /// Chalkwork Basics' item: the term in semibold, then " — text".
+    /// Canvas Basics' item: the term in semibold, then " — text".
     private static func item(_ term: String, _ text: String) -> NSTextField {
         let string = NSMutableAttributedString(string: term, attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: NSColor.labelColor])
         string.append(NSAttributedString(string: " — \(text)", attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]))

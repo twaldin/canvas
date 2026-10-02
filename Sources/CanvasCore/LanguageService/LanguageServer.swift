@@ -317,7 +317,7 @@ public actor LanguageServer {
         let rootURI = JSONValue.string(root.absoluteString)
         var params: [String: JSONValue] = [
             "processId": .number(Double(getpid())),
-            "clientInfo": .object(["name": .string("Chalkwork")]),
+            "clientInfo": .object(["name": .string("Canvas")]),
             "rootUri": rootURI,
             "rootPath": .string(root.path),
             "workspaceFolders": .array([.object(["uri": rootURI, "name": .string(root.lastPathComponent)])]),

@@ -1,12 +1,12 @@
-// Chalkwork integration for opencode, an opencode plugin that the opencode wrapper (bin/opencode)
+// Canvas integration for opencode, an opencode plugin that the opencode wrapper (bin/opencode)
 // adds for one session through OPENCODE_CONFIG_CONTENT (extensions/opencode/config.ts), only
-// inside a Chalkwork terminal tile. Mirrors extensions/omp/chalkwork.ts:
+// inside a Canvas terminal tile. Mirrors extensions/omp/canvas.ts:
 //  - lifecycle (working / blocked on permission and question prompts / idle) and the session
 //    id for resume (`opencode --session <id>`)
 //  - the canvas-awareness block (extensions/guidance.ts) in the system prompt
 //  - the selection tray drained into the prompt you submit, as a hidden (synthetic) part
 //  - follow mode: files the agent reads, edits, and writes re-aim its follow tile
-// Every Chalkwork call has a short timeout and its errors are swallowed: Chalkwork being gone never
+// Every Canvas call has a short timeout and its errors are swallowed: Canvas being gone never
 // stalls opencode. Lifecycle reports it isn't there to take are spooled for it to replay
 // (agent-hooks/report.ts).
 import { resolve } from "node:path";
@@ -25,9 +25,9 @@ type Event = { type: string; properties: Json };
 type Input = { directory: string };
 
 export const CanvasPlugin = async ({ directory }: Input) => {
-  const tile = process.env.CHALKWORK_TILE_ID;
-  // CHALKWORK_AGENT: bin/opencode integrated this opencode (the wrapper's other checks passed).
-  if (process.env.CHALKWORK_ENV !== "1" || !tile || !process.env.CHALKWORK_SOCKET || process.env.CHALKWORK_AGENT !== "opencode" || process.env.CHALKWORK_AGENT_HOOKS === "0") return {};
+  const tile = process.env.CANVAS_TILE_ID;
+  // CANVAS_AGENT: bin/opencode integrated this opencode (the wrapper's other checks passed).
+  if (process.env.CANVAS_ENV !== "1" || !tile || !process.env.CANVAS_SOCKET || process.env.CANVAS_AGENT !== "opencode" || process.env.CANVAS_AGENT_HOOKS === "0") return {};
 
   const client = new CanvasClient({ timeoutMs: 1000, reconnectTimeoutMs: 0 });
   const quietly = (work: Promise<unknown>) => work.catch(() => undefined);
@@ -41,7 +41,7 @@ export const CanvasPlugin = async ({ directory }: Input) => {
    * answers, and events are delivered one at a time.
    */
   const children = new Set<string>();
-  /** The last report, said again when Chalkwork comes back (it holds a restored one until then). */
+  /** The last report, said again when Canvas comes back (it holds a restored one until then). */
   let last: [state: "working" | "blocked" | "idle", message?: string, call?: string] = ["idle"];
 
   function report(state: "working" | "blocked" | "idle", message?: string, call?: string): void {

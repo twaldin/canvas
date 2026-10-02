@@ -1,16 +1,16 @@
-// Chalkwork integration for Claude Code, Codex and Gemini CLI, run as their lifecycle hooks:
+// Canvas integration for Claude Code, Codex and Gemini CLI, run as their lifecycle hooks:
 //   bun hook.ts <claude|codex|gemini> <HookEvent>   (the agent's hook JSON on stdin)
 // and for opencode's plugin (extensions/opencode), `opencode SessionEnd` as opencode exits.
 // The claude/codex/gemini wrappers in bin/ install these hooks for one session (Claude: the
 // plugin in extensions/claude; Codex: `-c hooks=…` from extensions/codex/config.ts; Gemini: a
-// system settings layer from extensions/gemini/settings.ts) and only inside a Chalkwork terminal
-// tile. Mirrors extensions/omp/chalkwork.ts:
+// system settings layer from extensions/gemini/settings.ts) and only inside a Canvas terminal
+// tile. Mirrors extensions/omp/canvas.ts:
 //  - lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
 //  - the canvas-awareness block (extensions/guidance.ts) as session context
 //  - the selection tray drained into the prompt you submit, as hidden context
 //  - follow mode: files the agent reads, edits, and writes re-aim its follow tile
-// A hook never fails or stalls the agent: every Chalkwork call has a short timeout, errors are
-// swallowed, and the process exits by a hard deadline. Lifecycle reports Chalkwork isn't there to
+// A hook never fails or stalls the agent: every Canvas call has a short timeout, errors are
+// swallowed, and the process exits by a hard deadline. Lifecycle reports Canvas isn't there to
 // take are spooled for it to replay (./report.ts).
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -31,8 +31,8 @@ const HARD_DEADLINE_MS = 2500;
 
 const kind = process.argv[2];
 const event = process.argv[3] ?? "";
-const tile = process.env.CHALKWORK_TILE_ID;
-if ((kind === "claude" || kind === "codex" || kind === "gemini" || kind === "opencode") && process.env.CHALKWORK_ENV === "1" && tile && process.env.CHALKWORK_SOCKET && process.env.CHALKWORK_AGENT_HOOKS !== "0") {
+const tile = process.env.CANVAS_TILE_ID;
+if ((kind === "claude" || kind === "codex" || kind === "gemini" || kind === "opencode") && process.env.CANVAS_ENV === "1" && tile && process.env.CANVAS_SOCKET && process.env.CANVAS_AGENT_HOOKS !== "0") {
   setTimeout(() => process.exit(0), HARD_DEADLINE_MS).unref();
   try {
     const text = await Bun.stdin.text();
@@ -40,7 +40,7 @@ if ((kind === "claude" || kind === "codex" || kind === "gemini" || kind === "ope
     const output = await handle(kind, tile, event, input);
     if (output) await Bun.write(Bun.stdout, output);
   } catch {
-    // Chalkwork unreachable or unexpected input: the agent carries on as if there were no hook.
+    // Canvas unreachable or unexpected input: the agent carries on as if there were no hook.
   }
 }
 process.exit(0);
@@ -69,7 +69,7 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       const question = codexStartupQuestion(process.argv.slice(4), process.cwd());
       await (question ? report("blocked", question) : report("idle"));
       // Answering it fires no hook: codex-trust.ts watches Codex's config for the answer.
-      const codex = process.env.CHALKWORK_CODEX_PID;
+      const codex = process.env.CANVAS_CODEX_PID;
       if (question && codex) {
         spawn(process.execPath, [resolve(import.meta.dir, "codex-trust.ts"), tile, String(seq + 1), codex, ...process.argv.slice(4)], { detached: true, stdio: "ignore" }).unref();
       }
@@ -121,7 +121,7 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       return undefined;
     }
     case "PermissionRequest": {
-      // Chalkwork keeps the tile blocked until this call finishes (its PostToolUse), whatever other
+      // Canvas keeps the tile blocked until this call finishes (its PostToolUse), whatever other
       // calls (parallel siblings, subagents) finish meanwhile. Codex asks one approval at a time,
       // so its new request is the one on screen: it replaces any earlier wait (`serial`), and the
       // bubble never names a request already answered. Claude Code also asks permission for its

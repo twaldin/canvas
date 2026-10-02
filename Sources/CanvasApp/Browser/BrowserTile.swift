@@ -84,7 +84,7 @@ final class BrowserTile: NSView, TileContent {
     fileprivate var documentFailure: PageLogEntry? { documentStatus.current }
     /// The badge's list of the page's errors, while open.
     fileprivate var problemsList: PageProblemsView?
-    /// The log of the page Chalkwork last released (`PageReport.previous`), read from it as it went
+    /// The log of the page Canvas last released (`PageReport.previous`), read from it as it went
     /// (`previousRead` while that read runs), and the documents committed since the release: the
     /// page loaded again is the first; the one after it drops the old log.
     fileprivate var previousLoad: PageReport.Released?
@@ -561,7 +561,7 @@ final class BrowserTile: NSView, TileContent {
         failureView.isHidden = false
         if !chrome.isEditing { chrome.setAddress(url.absoluteString) }
         if object.props["pageTitle"] != nil { try? board.writeBookkeeping(objectID, props: .object(["pageTitle": .null])) }
-        NSLog("Chalkwork: browser %@ %@", objectID, failure.summary)
+        NSLog("Canvas: browser %@ %@", objectID, failure.summary)
         retryTask?.cancel()
         retryTask = nil
         if let delay = failure.retryDelay {
@@ -1100,7 +1100,7 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
     private let address = NSTextField()
     /// "2 errors", only while the page has any; clicking it lists them (`onProblems`).
     private let problems = NSButton(title: "", target: nil, action: nil)
-    /// "Reloaded", quietly, while the tile keeps the log of the page Chalkwork released (the page
+    /// "Reloaded", quietly, while the tile keeps the log of the page Canvas released (the page
     /// loaded again, or "Released" while it hasn't); clicking it lists that page's errors too.
     private let releaseNote = NSButton(title: "", target: nil, action: nil)
     var onProblems: (() -> Void)?
@@ -1117,7 +1117,7 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
         }
     }
 
-    /// The page Chalkwork released, while the tile keeps its log: whether the page loaded again
+    /// The page Canvas released, while the tile keeps its log: whether the page loaded again
     /// since, the errors it had logged, and when it went.
     struct Released: Equatable {
         var reloaded: Bool
@@ -1135,7 +1135,7 @@ private final class BrowserChrome: NSView, NSTextFieldDelegate {
                 releaseNote.attributedTitle = NSAttributedString(string: word + before, attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
                 let time = DateFormatter.localizedString(from: released.at, dateStyle: .none, timeStyle: .short)
                 let again = released.reloaded ? ", and loaded it again when it came back" : "; it loads again when the tile comes back into view"
-                releaseNote.toolTip = "Chalkwork released this page at \(time), \(Int(BrowserTile.releaseDelay / 60)) minutes after it left the view, to save energy\(again). Click for what it logged before."
+                releaseNote.toolTip = "Canvas released this page at \(time), \(Int(BrowserTile.releaseDelay / 60)) minutes after it left the view, to save energy\(again). Click for what it logged before."
                 releaseNote.setAccessibilityLabel("Page \(word.lowercased()) after being released\(before)")
             }
             resizeSubviews(withOldSize: bounds.size)
@@ -1348,7 +1348,7 @@ extension BrowserTile {
     /// A `file:line` in the error list: the code at that line, as a note's code link opens it.
     fileprivate func openSource(_ file: String, line: Int) {
         let opened = board.openForNavigation(CodeAim(path: board.boardPath(file, linkRoot: board.root), range: LineRange(start: line, end: line)), from: objectID)
-        NSLog("Chalkwork: browser %@ opened %@:%d as %@", objectID, file, line, opened.id)
+        NSLog("Canvas: browser %@ opened %@:%d as %@", objectID, file, line, opened.id)
         onOpenedCode?(opened.id, opened.existing)
     }
 

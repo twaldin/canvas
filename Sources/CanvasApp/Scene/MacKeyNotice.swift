@@ -10,7 +10,7 @@ extension CanvasView {
     @MainActor private static var namedMacKeys: Set<String> = []
 
     /// True when `event` (a key the canvas itself got, nothing else having taken it) is a
-    /// ⌃-chord whose ⌘ twin is a Chalkwork shortcut and the notice named it, now or earlier this
+    /// ⌃-chord whose ⌘ twin is a Canvas shortcut and the notice named it, now or earlier this
     /// session.
     func noticeMacKey(for event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
@@ -26,7 +26,7 @@ extension CanvasView {
     }
 
     /// The shortcut `event` (a ⌘-chord) is, as the menu shows it, and the command's name when a
-    /// menu item has it; nil when it is no Chalkwork shortcut.
+    /// menu item has it; nil when it is no Canvas shortcut.
     private static func macShortcut(_ event: NSEvent) -> (keys: String, name: String?)? {
         if let item = CanvasWindowController.menuItem(for: event, in: NSApp.mainMenu) {
             let key = item.keyEquivalent

@@ -1,10 +1,10 @@
-// Chalkwork integration for omp. Active only inside a Chalkwork terminal tile (CHALKWORK_ENV=1).
+// Canvas integration for omp. Active only inside a Canvas terminal tile (CANVAS_ENV=1).
 //  - drains the selection tray into the prompt you submit (hidden context, two-phase so a
 //    cancelled prompt loses nothing)
 //  - reports lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
-//  - provides the shipped `chalkwork` skill (skills/chalkwork) to the agent, only inside Chalkwork
-// Load explicitly with `omp -e /path/to/chalkwork.ts`, or install into ~/.omp/agent/extensions.
+//  - provides the shipped `canvas` skill (skills/canvas) to the agent, only inside Canvas
+// Load explicitly with `omp -e /path/to/canvas.ts`, or install into ~/.omp/agent/extensions.
 import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { CanvasClient } from "../../clients/ts/src/index";
@@ -23,8 +23,8 @@ type Details = Record<string, any>;
 type Select = (this: unknown, title: unknown, ...rest: unknown[]) => Promise<unknown>;
 
 export default function canvas(pi: ExtensionAPI): void {
-  const tile = process.env.CHALKWORK_TILE_ID;
-  if (process.env.CHALKWORK_ENV !== "1" || !tile || !process.env.CHALKWORK_SOCKET) return;
+  const tile = process.env.CANVAS_TILE_ID;
+  if (process.env.CANVAS_ENV !== "1" || !tile || !process.env.CANVAS_SOCKET) return;
 
   const guidance = canvasGuidance("omp", tile);
 
@@ -62,7 +62,7 @@ export default function canvas(pi: ExtensionAPI): void {
     else void send();
   }
 
-  // A restarted Chalkwork holds our last report as `restored` (and refuses prompts to a restored
+  // A restarted Canvas holds our last report as `restored` (and refuses prompts to a restored
   // `working`) until we report again: say where we are as soon as it is back.
   watchCanvasReturn(client.socketPath, publish);
 
@@ -128,7 +128,7 @@ export default function canvas(pi: ExtensionAPI): void {
     // A debounced idle still pending would land after the release (and replay after it).
     clearTimeout(idleTimer);
     if (reporting) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
-    // Nothing reports for the released tile again (a Chalkwork coming back) until a session starts.
+    // Nothing reports for the released tile again (a Canvas coming back) until a session starts.
     reporting = false;
   });
 

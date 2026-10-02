@@ -1,5 +1,5 @@
 // The `hooks={…}` override the codex wrapper (bin/codex) passes as `codex -c`, so a Codex session
-// in a Chalkwork tile runs extensions/agent-hooks/hook.ts without touching ~/.codex.
+// in a Canvas tile runs extensions/agent-hooks/hook.ts without touching ~/.codex.
 //   bun config.ts <codex's arguments…>
 // prints where in those arguments the `-c` goes (an index, see `hooksAt`), a newline, and the override.
 //

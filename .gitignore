@@ -7,13 +7,14 @@ __pycache__/
 .venv/
 node_modules/
 
-.chalkwork-home/
-# A development home from before the rename (scripts/dev.sh used .canvas-home).
 .canvas-home/
+# Development homes from before the renames (scripts/dev.sh used .canvas-home, then .chalkwork-home).
+.canvas-home/
+.chalkwork-home/
 .DS_Store
 
 # Release artifacts and signing material (docs/releasing.md)
-/Chalkwork-*.zip
+/Canvas-*.zip
 /gettext-*.tar.gz
 *.p12
 AuthKey_*.p8

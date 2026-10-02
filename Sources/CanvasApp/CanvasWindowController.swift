@@ -20,7 +20,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
 
     /// The board in front: the frontmost visible board window, with tabs its selected tab (the
     /// others are ordered out). What menu commands and ⌘Z act on, also while a panel such as
-    /// Chalkwork Basics is key or the app isn't active (replayed input).
+    /// Canvas Basics is key or the app isn't active (replayed input).
     static var frontmost: CanvasWindowController? {
         NSApp.orderedWindows.lazy.compactMap { window -> CanvasWindowController? in
             guard window.isVisible, window.tabGroup.map({ $0.selectedWindow === window }) ?? true else { return nil }
@@ -55,7 +55,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         window.setFrameAutosaveName("Canvas-\(board.id)")
         // Boards open as tabs of one window (AppDelegate.open adds them to the frontmost group).
         window.tabbingMode = .preferred
-        window.tabbingIdentifier = "net.waldin.chalkwork.board"
+        window.tabbingIdentifier = "net.waldin.canvas.board"
         super.init(window: window)
         window.delegate = self
         // Terminal references by file name (`core.py:10`) resolve through the listing.
@@ -386,7 +386,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// on working, headless) and come back when the folder is opened again. With any terminal on
     /// the board a sheet says so first, naming what keeps running: Keep Running (Return), End
     /// Sessions (⌘⌫: its terminals close as in the close-terminal sheet, then the tab), Cancel (Esc).
-    /// Closing the last board window quits Chalkwork, which the sheet says; the next launch reopens
+    /// Closing the last board window quits Canvas, which the sheet says; the next launch reopens
     /// the board (`AppDelegate.saveOpenBoards`).
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         let terminals = canvas.tiles.values.compactMap { $0.content as? TerminalTile }.sorted { $0.objectID < $1.objectID }
@@ -397,7 +397,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         let alert = NSAlert()
         alert.messageText = "Close “\(board.root.lastPathComponent)” and keep \(terminals.count == 1 ? "its terminal" : "its terminals") running?"
         alert.informativeText = last
-            ? "This is Chalkwork's last window: closing it quits Chalkwork. \(keep) in the background; the next time Chalkwork opens it shows this board as you left it. End Sessions closes the board's terminals first."
+            ? "This is Canvas's last window: closing it quits Canvas. \(keep) in the background; the next time Canvas opens it shows this board as you left it. End Sessions closes the board's terminals first."
             : "\(keep) in the background after the \(tabs > 1 ? "tab" : "window") closes; opening this folder again (File › Open Board…) shows the board as you left it. End Sessions closes the board's terminals first."
         alert.addButton(withTitle: "Keep Running")
         let end = alert.addButton(withTitle: "End Sessions")
@@ -492,14 +492,14 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         files.refresh { [weak self] index in self?.navigator.update(files: index) }
     }
 
-    /// View › Hide Canvas Chrome (also in Chalkwork Basics): toggles presenting (`CanvasView.chromeHidden`);
+    /// View › Hide Canvas Chrome (also in Canvas Basics): toggles presenting (`CanvasView.chromeHidden`);
     /// Esc on the canvas shows the chrome again.
     @objc func toggleCanvasChrome(_ sender: Any?) {
         canvas.chromeHidden.toggle()
         if canvas.chromeHidden { basics.close() }
     }
 
-    /// Help › Chalkwork Basics opens (or closes) the legend over this board.
+    /// Help › Canvas Basics opens (or closes) the legend over this board.
     @objc func toggleBasics(_ sender: Any?) {
         if basics.isOpen { basics.close() } else { basics.open() }
     }
@@ -1072,7 +1072,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     /// tray's mentions; a focused terminal would otherwise send the chord to its program as an
     /// encoded key (zsh prints it at the prompt). In a focused terminal, the user's Ghostty
     /// bindings of new window, tab or split open a terminal beside it and close surface closes it
-    /// (`TerminalConfig.remaps`), and Chalkwork's menu shortcuts other than `terminalMenuActions`
+    /// (`TerminalConfig.remaps`), and Canvas's menu shortcuts other than `terminalMenuActions`
     /// beat Ghostty's own bindings (its defaults bind ⌘T, ⌘N, ⌘Q, ⌘⇧[ and ⌘⇧] to tab, window and
     /// app actions the embedded library can't perform, so the key would do nothing).
     func handleKeyEquivalent(_ event: NSEvent) -> Bool {
@@ -1118,7 +1118,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-/// A board window. Chalkwork shortcuts reach the canvas before the focused view: the window gets
+/// A board window. Canvas shortcuts reach the canvas before the focused view: the window gets
 /// key equivalents ahead of its views and the main menu (AppKit's order for a real key press),
 /// and a focused terminal would otherwise claim ⌘0/⌘=/⌘-/⌘9 as Ghostty bindings (font size,
 /// tabs), ⌘W as close surface, and a web view ⌘=/⌘- as page zoom. Everything else (⌘C, ⌘V, ⌘A,

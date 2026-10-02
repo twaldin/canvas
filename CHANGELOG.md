@@ -2,7 +2,7 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
-## Unreleased
+## 0.4.0
 
 Chalkwork is Canvas again: the same app under the name it had through 0.2.1. Its first launch brings a Chalkwork 0.3 install along; a Canvas 0.2 one that never moved to Chalkwork is already where Canvas looks.
 

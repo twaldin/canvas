@@ -1,7 +1,7 @@
 # HTML explainers
 
-An HTML tile is the richest thing you can put next to your terminal: a plan, a walkthrough, a comparison the user can decide on.
-Build one when prose in the terminal would make the user scroll, cross-reference files by hand, or hold a structure in their head.
+An HTML tile is the richest single tile you can put next to your terminal: a plan, a comparison the user can decide on, a decision record.
+To explain code or a system, start on the board instead (SKILL.md, "When the user asks you to explain something"): code tiles, arrows and a note the user can move and step through. Build a page when a comparison or decision needs these components, or the user asks for one tile.
 
 ## The tile
 
@@ -25,13 +25,13 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
 
 | Component | Use |
 | --- | --- |
-| `<canvas-code path="src/x.ts" lines="10-40"></canvas-code>` | Live excerpt from the real file. `symbol="Board.update"` anchors to a symbol instead (survives edits; wins over `lines`). Shows a stale badge when the anchor is lost. Long lines soft-wrap with a hanging indent, so don't widen the tile for them. Click opens a code tile. `path` is board-relative. |
+| `<canvas-code path="src/x.ts" lines="10-40"></canvas-code>` | Excerpt read from the real file. `lines` are line numbers in the file as it is now: they don't follow code that moves (a code tile's range and a note's fence do). `symbol="Board.update"` anchors to a symbol instead (re-found after edits; wins over `lines`): use it for code that may move. A stale badge means the symbol wasn't found or the lines are past the file's end. Long lines soft-wrap with a hanging indent, so don't widen the tile for them. Click opens a code tile. `path` is board-relative. |
 | `<canvas-link path="src/x.ts" line="42">the retry loop</canvas-link>` | Inline file:line link (also `lines="10-20"`, `symbol=`). Empty text renders `path:line`. A click goes to the code tile already showing those lines (exactly, or a captioned tile whose range holds them), else opens one beside the page: an overview can link to its own stops. |
 | `<canvas-decisions key="storage" question="Where should boards live?">` + `<canvas-option value="sqlite" label="SQLite">why / cost</canvas-option>`… | A choice the user makes in place. The pick is stored in the tile's `props.state.storage`; read it with `object.get`. Clicking again clears it. |
 | `<canvas-compare>` + `<canvas-pane label="Before">…</canvas-pane>`… | Equal-width labeled columns, any count. |
 
 Grounding rule: every claim about code points at code. Use `<canvas-code>` for the lines that prove it and `<canvas-link>` for passing references.
-Never paste code you could anchor; pasted code goes stale silently, anchored code shows it.
+Never paste code you could anchor: pasted code is a copy that falls behind silently, an anchored excerpt shows the file as it is now.
 
 ## Style
 
@@ -69,7 +69,7 @@ For work the user should approve before you start.
 
 ### Code walkthrough
 
-For "how does X work".
+For "how does X work", when the user wants it as one page (to share, say); otherwise build it on the board (SKILL.md, "When the user asks you to explain something").
 
 1. One sentence: the path in plain words.
 2. A Mermaid `sequenceDiagram` or `flowchart` of the path, 5–9 nodes, node labels are function names.
@@ -92,9 +92,8 @@ After the user decides, update the tile to state the decision at the top and kee
 
 ### Architecture map
 
-For "how do these parts fit". A Mermaid `flowchart` of components (subgraphs for processes or packages), edges labeled with the protocol or call. 
-Under it, one row per component: name, one-line responsibility, `<canvas-link>` to its entry point.
-When the user should manipulate the structure themselves, draw it with canvas shapes and arrows instead, so they can move boxes and mention them.
+For "how do these parts fit". Draw it on the board with groups, shapes and arrows by default, so the user can move boxes and mention them (SKILL.md, "When the user asks you to explain something").
+As a page: a Mermaid `flowchart` of components (subgraphs for processes or packages), edges labeled with the protocol or call; under it, one row per component: name, one-line responsibility, `<canvas-link>` to its entry point.
 
 ### Review / findings
 

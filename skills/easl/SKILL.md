@@ -1,6 +1,6 @@
 ---
 name: easl
-description: You are running inside easl (EASL_ENV=1), an infinite canvas where your terminal sits next to tiles and drawings the user also sees. Use before showing code/notes/HTML explainers/diagrams/changes on the canvas, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
+description: You are running inside easl (EASL_ENV=1), an infinite canvas where your terminal sits next to tiles and drawings the user also sees. Use before explaining code, a change or a system (easl itself too), showing code/notes/HTML explainers/diagrams/changes on the canvas, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
 ---
 
 # Working in easl
@@ -120,9 +120,30 @@ Per object drawn the result has `state` (`placeholder`: it didn't paint in time,
 `easl board.history --since <cursor>` lists who created, moved, and deleted what (`actor` `user`, `system` or `agent:<tile>`) since your last look.
 Every result field, pixel-to-canvas mapping, and history detail: `references/rendering.md`.
 
+## When the user asks you to explain something
+
+"How does X work", "walk me through this change", "explain this system", "explain easl to me": answer on the board, as a small map around your terminal, not as a wall of terminal text and not as one big HTML page.
+Tiles and arrows are things the user can move, mention and step through; a page is one tile they can only scroll.
+
+1. **The code that matters, as code tiles at exact ranges**, each with a `caption` saying what to notice: `{"path": "src/store.ts", "range": {"start": 41, "end": 60}, "caption": "restore replays the log"}` and `"size": "fit"`.
+   Three to six stops, not every file you read (your follow tile already shows those); several at once with `canvas.compositions.locations.open([…])`.
+2. **The structure as shapes and arrows** between those tiles: a `group` per part (`title`, `members`), `arrow`s with a `relation` (`"calls"`) and a two-word `label` only where the ends don't say it.
+   For who calls what, a `diagram` tile (`symbol`, `direction`) instead of drawing the call graph by hand (it needs the language's server: Diagram tiles).
+3. **A browser tile when a page makes the point**: the running app, or the docs or README the code follows (`browser` `{"url": "…"}`).
+4. **A note for what should last**: the summary in a few lines, with `path:line` links and anchored fences (```` ```ts file=src/store.ts#L41-60 ````), not pasted code.
+5. **A short terminal answer**: the answer in a sentence or two and where to look, with a `view.attention` marker on the first stop; don't retell the tiles in prose.
+6. **An HTML explainer only when a comparison or a decision needs its components** (`<canvas-compare>`, `<canvas-decisions>`; `references/html-explainers.md`).
+
+When it has an order (a request's path, a change step by step), join the stops with `"relation": "next_step"` arrows labelled "1 · parse", "2 · …" and group them titled "Start here": ⌥⌘→ on the group, or with nothing selected, starts at the first stop (`references/shapes.md`).
+Build it in one `object.batch` (`"$0"` references), place it with `layout.place`/`layout.stack`/`layout.grid` (Readable diagrams, below), then run `layout.check` and fix what it reports, and look at it (`easl render <group>`) before you point the user at it.
+
+Say only what the code, the README or the docs show, and show where: every claim gets its tile, fence or `path:line`; read before you describe a feature, never describe one from its name.
+For easl itself, ground it in this skill and `references/ui.md` (the same text as Help › easl Basics), or in the README and `docs/` when the board is easl's own checkout.
+Excerpts show code as it is now: a code tile's range and a note's fence follow their code as lines move, and say stale only when the code they quoted is gone. Never tell the user an excerpt flags code that changed (a code tile's gutter marks lines changed against its `diffBase`; that is the diff, not the excerpt).
+
 ## Show your work on the canvas
 
-Create objects when a visual helps the user more than terminal text: a plan they will come back to, code they should look at, a comparison, a diagram.
+Create objects when a visual helps the user more than terminal text: a plan they will come back to, code they should look at, a comparison, a diagram, an explanation (above).
 Don't mirror your whole transcript onto the canvas.
 Within 10 minutes of your last object, the next one without a `frame` stacks below it (else right of it).
 When you lay things out deliberately:
@@ -142,7 +163,7 @@ Details and an example: `references/api.md` "Layout".
 | Durable notes, plans, findings | `note`: `{"markdown": "…"}` |
 | Who calls a function, what it calls | `diagram`: `{"symbol": "SocketServer.start", "direction": "incoming"}`, see Diagram tiles |
 | A chart or figure | `image`: `{"path": "out/fig.png", "caption": "…"}`: save the figure to a file and show it; re-save to the same path and the tile reloads. No base64 PNGs in HTML |
-| A rich explainer, comparison, decision | `html` tile, see below |
+| A plan to approve, a comparison, a decision | `html` tile, see below |
 | Structure: boxes, labels, relations | `shape` / `arrow`, see below |
 | A web page | `browser`: `{"url": "http://localhost:3000"}` (your browser tool opens its own; see Browser tiles) |
 
@@ -161,13 +182,13 @@ Delete with `object.delete`; deleting a terminal tile ends its session and whate
 ### Notes
 
 A note created without a frame height fits its markdown (at `frame.w`, default 280), so `frame` can be just `{x, y, w}`.
-Markdown code fences are live when anchored to real code, so prefer anchors over pasted code:
+An anchored fence shows its code as it is on disk now and follows it as lines move, so prefer anchors over pasted code:
 
 - Excerpt, rendered from disk: ```` ```ts file=src/store.ts#L41-60 ```` or ```` ```ts file=src/store.ts symbol=restore ```` (`symbol=Class.method` finds methods deep in long classes: prefer it for whole functions).
 - Proposed change, rendered as a diff against the real range: add `propose` (```` ```ts file=src/store.ts#L41-48 propose ````) and write the new code in the fence. An applied one shows "✓ applied"; no need to delete it.
 - Plain fences are free-written snippets; `file:line` references anywhere in a note become links; `![alt](out/fig.png)` shows an image (board-relative, or absolute inside the board root or the temp dir).
 
-Whether excerpts are still true: `easl get <note>` → `fences` (per fence `state` live|relocated|stale|applied|missing, `range`, `reason`), not a render searched for badges.
+Whether an excerpt still finds its code: `easl get <note>` → `fences` (per fence `state` live|relocated|stale|applied|missing, `range`, `reason`; `relocated`: the code moved and the fence followed it; `stale`: the code it quoted is gone), not a render searched for badges.
 Table cells wrap to the note's width, so keep evidence timelines as `| time | event | evidence |` tables; `layout.check` `truncated` `{what: "table", x}` means too many columns: widen the note by `x` or split the table.
 
 ### Code tiles

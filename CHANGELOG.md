@@ -2,6 +2,11 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
+## Unreleased
+
+- The agent skill: asked to explain code, a change or a system (easl too), an agent answers on the board: code tiles at exact ranges with captions, groups and arrows (a walkthrough to step through with ⌥⌘→ when it has an order), a browser tile when a page makes the point, a note to keep, and a short answer in the terminal. HTML explainers are for comparisons and decisions.
+- The skill, its references and the README say what excerpts do: a code tile's range and a note's fence follow their code as it moves and show it as it is now, stale only when it's gone; an HTML excerpt's `lines` don't follow it, `symbol=` does.
+
 ## 0.5.1
 
 The app's name is now written in lowercase: easl. The menu bar and menus (Quit easl, Help › easl Basics), windows, sheets, notifications, the CLI, the agent skill and the docs say easl; the app is `easl.app` and the release `easl-<version>.zip`. Nothing else changes: the bundle id (`net.waldin.easl`), `~/Library/Application Support/Easl`, `~/.easl`, the `EASL_*` variables, the `easl` CLI, `easl_sdk` and `@easl/client` stay as they were.

@@ -48,7 +48,7 @@ The agent points back the same way: it opens the exact code it means beside its 
 
 ## Also on the canvas
 
-- **Notes.** Markdown with fences that stay live against the files they quote; a `propose` fence renders as a diff, and a fence whose code moved away says it's stale.
+- **Notes.** Markdown with fences that quote real files: an excerpt shows its code as it is now and follows it as lines move, and says it's stale only when that code is gone; a `propose` fence renders as a diff.
 - **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid, code excerpts); agents chain them into walkthroughs.
 - **Browser tiles.** Agents drive them: omp with its `browser` tool, Claude Code, Codex and any other CLI with `easl browser` (snapshot, click, type, eval, screenshot). The page's errors show on the tile.
 - **Image tiles.** An image file with a caption, reloaded when the file changes.

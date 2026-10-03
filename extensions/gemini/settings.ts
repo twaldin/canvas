@@ -1,15 +1,15 @@
 // Prints the path of the Gemini CLI system settings file the gemini wrapper (bin/gemini) points
-// GEMINI_CLI_SYSTEM_SETTINGS_PATH at, so a Gemini session in a Canvas tile runs
+// GEMINI_CLI_SYSTEM_SETTINGS_PATH at, so a Gemini session in an Easl tile runs
 // extensions/agent-hooks/hook.ts without touching ~/.gemini.
 //
 // Gemini reads settings from system defaults, ~/.gemini/settings.json, the project's
 // .gemini/settings.json, then the system settings file, which overrides the rest; hook lists
 // are concatenated across all of them, and hooks from the system layer are not listed as the
 // user's own. The file written here is the user's own system settings (the file the variable
-// named before, else Gemini's default path) with Canvas's hooks appended and self-update turned
+// named before, else Gemini's default path) with Easl's hooks appended and self-update turned
 // off (a tile is no place for an `npm install -g` or its prompt). Everything else the user set
 // in any layer keeps working. Gemini lists running hooks in its status line (from every layer):
-// Canvas's are hidden unless the user has hooks of their own or chose to see hooks run.
+// Easl's are hidden unless the user has hooks of their own or chose to see hooks run.
 // Content-addressed, so concurrent sessions never race on it.
 //
 // Gemini 0.60 and later skip a system settings file whose directory isn't owned by root (with a
@@ -43,7 +43,7 @@ const record = (value: unknown): Json => (value && typeof value === "object" && 
 
 /**
  * A settings file (Gemini allows comments); empty when there is none. One that doesn't parse is
- * left to Gemini to report: throwing makes the wrapper run Gemini without Canvas's layer.
+ * left to Gemini to report: throwing makes the wrapper run Gemini without Easl's layer.
  */
 function load(path: string): Json {
   let text: string;

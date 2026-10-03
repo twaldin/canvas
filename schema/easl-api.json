@@ -1,8 +1,8 @@
 {
-  "$comment": "Canvas API method catalog. Single source of truth for the socket protocol; clients (TS, Python, CLI) are generated from this file by scripts/gen-clients.ts. Bump `version` on any breaking change.",
+  "$comment": "Easl API method catalog. Single source of truth for the socket protocol; clients (TS, Python, CLI) are generated from this file by scripts/gen-clients.ts. Bump `version` on any breaking change.",
   "version": 1,
   "transport": {
-    "socket": "$CANVAS_SOCKET (default: ~/Library/Application Support/Canvas/canvas.sock)",
+    "socket": "$EASL_SOCKET (default: ~/Library/Application Support/Easl/easl.sock)",
     "framing": "newline-delimited JSON, one object per line, UTF-8",
     "request": "{ id: string, method: string, params: object }",
     "response": "{ id: string, ok: true, result: any } | { id: string, ok: false, error: { code: string, message: string, data?: any } }",
@@ -99,8 +99,8 @@
         "follow": { "type": "boolean", "default": true, "description": "follow mode: false after the user closes the terminal's follow tile (or turns Follow Files off); follow.report is then ignored until it is true again" },
         "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" },
-        "worktree": { "type": "string", "description": "written by Canvas: the top level of the worktree of the board's repository the terminal was created in (its `cwd`'s); what it started in, not updated when the shell moves" },
-        "branch": { "type": "string", "description": "written by Canvas with `worktree`: the branch checked out there when the terminal was created; absent on a detached HEAD" }
+        "worktree": { "type": "string", "description": "written by Easl: the top level of the worktree of the board's repository the terminal was created in (its `cwd`'s); what it started in, not updated when the shell moves" },
+        "branch": { "type": "string", "description": "written by Easl with `worktree`: the branch checked out there when the terminal was created; absent on a detached HEAD" }
       },
       "additionalProperties": false
     },
@@ -145,7 +145,7 @@
           }
         },
         "ref": { "type": "string", "description": "a branch (or any ref) the tile is anchored to instead of one checkout; `path` is relative to the board root's place in the repository (an absolute path in any worktree of the repository means the same repo path). While a worktree of the repository has the ref checked out the tile reads that working tree live: gutter against `diffBase` (default its merge-base), edits reload (header: \"live in <worktree>\"). Otherwise it reads git objects at the ref, read-only like `pinnedCommit` (\"<ref> @ <sha>\"). Once the ref no longer resolves (worktree and branch deleted) it reads `refSha`: when the default branch contains it, at the commit that merged it (\"merged in <sha>\"), else at `refSha` itself (\"branch gone, showing <sha>\") while its objects exist. `pinnedCommit`, when also set, wins and the ref is ignored. A ref that resolves to nothing (and no `refSha` whose objects remain) is `not_found` on create or update" },
-        "refSha": { "type": "string", "description": "written by Canvas: the full SHA `ref` last resolved to (the live worktree's HEAD, or the ref's commit), recorded on every resolve without a rev or undo step, so the tile keeps reading once its worktree and branch are deleted. May be given with `ref` (e.g. by a script that knows the tip)" },
+        "refSha": { "type": "string", "description": "written by Easl: the full SHA `ref` last resolved to (the live worktree's HEAD, or the ref's commit), recorded on every resolve without a rev or undo step, so the tile keeps reading once its worktree and branch are deleted. May be given with `ref` (e.g. by a script that knows the tip)" },
         "pinnedCommit": { "type": "string", "description": "a commit (sha, tag, branch, e.g. `HEAD~3` or a fetched `pull/12/head`'s sha): the tile shows the file as of that commit, read-only, with no diff gutter or base picker (header: \"pinned at <sha>\"); measure, fit, layout.check, line anchors, and renders use that text. The working tree plays no part. Unknown commit or file: the tile says so, and a create or update that needs its text (`size: fit`, a symbol) fails with `not_found`. A path in another worktree of the repository (absolute) is read in that worktree" },
         "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
@@ -162,7 +162,7 @@
         },
         "title": { "type": "string", "description": "shown in the tile's title bar (default \"Note\") and Go to" },
         "ref": { "type": "string", "description": "a branch (or any ref) whose tree the note's paths resolve in, instead of `root` (which it overrides): the worktree that has it checked out, live, else git objects at the ref, falling back like CodeProps.ref once it is merged or deleted (via `refSha`). Excerpt fences without their own `@<sha>` read there; path:line links open code tiles with the same `ref`. The markdown stays inline, and images still load from the board's checkout when no worktree has the ref" },
-        "refSha": { "type": "string", "description": "written by Canvas: the SHA `ref` last resolved to (as CodeProps.refSha)" },
+        "refSha": { "type": "string", "description": "written by Easl: the SHA `ref` last resolved to (as CodeProps.refSha)" },
         "root": { "type": "string", "description": "the directory the note's relative paths resolve against (path:line and markdown links, excerpt fences, images): the board's checkout or another worktree of its repository, absolute or board-relative (e.g. ../wt-agent). Default: the board root; a note an agent creates from another worktree than the board's gets that worktree (the same place in it as the board root). Anything else is invalid_params" },
         "zoom": { "$ref": "#/definitions/Zoom" },
         "key": { "$ref": "#/definitions/ObjectKey" }
@@ -176,7 +176,7 @@
         "html": { "type": "string", "description": "page body (or a full document); the kit (Tailwind, Mermaid, canvas-code/link/decisions/compare) is preloaded" },
         "title": { "type": "string" },
         "ref": { "type": "string", "description": "a branch (or any ref) whose tree canvas-code excerpts and canvas-link resolve in, instead of `root`: as NoteProps.ref. The page body stays inline; img and other page files load from the live worktree, else the board's checkout" },
-        "refSha": { "type": "string", "description": "written by Canvas: the SHA `ref` last resolved to (as CodeProps.refSha)" },
+        "refSha": { "type": "string", "description": "written by Easl: the SHA `ref` last resolved to (as CodeProps.refSha)" },
         "root": { "type": "string", "description": "the directory the page's relative paths resolve against (canvas-link, canvas-code, img): as NoteProps.root" },
         "allowNetwork": { "type": "array", "items": { "type": "string", "description": "host, host:port, or *.host; http/https/ws to anything else is blocked" }, "default": [] },
         "state": { "type": "object", "description": "tile state written by the page through its channel (e.g. canvas-decisions choices by key); at most 256 KiB" },
@@ -190,7 +190,7 @@
       "properties": {
         "root": { "type": "string", "description": "another worktree of the board's repository to review (absolute or board-relative, e.g. ../wt-agent; default: the board root, or your own checkout when you work in another worktree of the board's repository). Anything that isn't a worktree of the board's repository lists nothing and says so. Its files have absolute paths" },
         "base": { "type": "string", "default": "HEAD", "description": "what the changes are against: HEAD (the uncommitted work, staged or not: what an agent just did) | merge-base (with the default branch: everything the branch changed, a PR's view) | a commit or ref. The user picks it in the tile's header too. Against anything but HEAD, committed hunks can't be discarded. With `head` or `ref` it defaults to merge-base, and the diff is against the merge-base of `head` with it (`git diff base...head`, a PR's view)" },
-        "head": { "type": "string", "description": "compare two commits instead of a worktree: any commit or ref (a branch, origin/x, a fetched pull/N/head) against its merge-base with `base` (e.g. {\"base\": \"origin/main\", \"head\": \"fm/rel-12389\"}). Read from git objects, no checkout; renames and deletions included; read-only: no Stage, Unstage, or Discard. Clicking a line opens a code tile pinned to that side's commit. A ref the repository lacks lists nothing and names the exact `git fetch` that brings it: Canvas never fetches" },
+        "head": { "type": "string", "description": "compare two commits instead of a worktree: any commit or ref (a branch, origin/x, a fetched pull/N/head) against its merge-base with `base` (e.g. {\"base\": \"origin/main\", \"head\": \"fm/rel-12389\"}). Read from git objects, no checkout; renames and deletions included; read-only: no Stage, Unstage, or Discard. Clicking a line opens a code tile pinned to that side's commit. A ref the repository lacks lists nothing and names the exact `git fetch` that brings it: Easl never fetches" },
         "ref": { "type": "string", "description": "a branch, instead of `root`: while a worktree of the board's repository has it checked out, that worktree (live, as `root`); otherwise its commits against `base` from git objects, read-only (as `head`). Once the branch is gone it reads `refSha`, and says `merged in <sha>` or `branch gone`. object.create/update resolve it and record `refSha`; a ref that resolves to nothing is not_found, naming the `git fetch` that brings it" },
         "refSha": { "type": "string", "description": "written by the tile: the commit `ref` named when the tile last read it, what it falls back to once the branch is deleted" },
         "paths": { "type": "array", "items": { "type": "string" }, "description": "files or directories to limit it to, relative to `root` (default the board root) or absolute (default: all of it); a path outside that worktree lists nothing and says so" },
@@ -399,7 +399,7 @@
         "updatedBy": { "$ref": "#/definitions/Actor" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | ShapeProps | ArrowProps | GroupProps, selected by type (`canvas methods CodeProps` lists one)" }
+        "props": { "type": "object", "description": "one of TerminalProps | BrowserProps | CodeProps | NoteProps | HtmlProps | ChangesProps | ImageProps | DiagramProps | ShapeProps | ArrowProps | GroupProps, selected by type (`easl methods CodeProps` lists one)" }
       },
       "additionalProperties": false
     },
@@ -430,7 +430,7 @@
         "visibility": { "enum": ["visible", "hidden", "driven", "released"], "description": "how WebKit runs the page now: visible (on screen, rAF at the display's rate), hidden (nobody sees it: no rAF, timers throttled more the longer it stays hidden), driven (kept running for an agent though nobody sees it: rAF irregular and slower), released (no page)" },
         "previous": {
           "type": "object",
-          "description": "the log of the page Canvas last released (after `since` when it names that page), as it was then; returned until the page loads another document after the reload, and until `since` names the current document",
+          "description": "the log of the page Easl last released (after `since` when it names that page), as it was then; returned until the page loads another document after the reload, and until `since` names the current document",
           "properties": {
             "releasedAt": { "type": "string", "description": "ISO 8601" },
             "url": { "type": "string" },
@@ -791,7 +791,7 @@
         "type": "object",
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
-          "path": { "type": "string", "description": "absolute, or relative to the board root; default .canvas/board.json" }
+          "path": { "type": "string", "description": "absolute, or relative to the board root; default .easl/board.json" }
         },
         "additionalProperties": false
       },
@@ -920,18 +920,18 @@
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (CANVAS_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
+      "description": "Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "frame": { "oneOf": [{ "$ref": "#/definitions/Frame" }, { "$ref": "#/definitions/FitFrame" }, { "$ref": "#/definitions/SizeFrame" }] },
           "size": { "const": "fit", "description": "measure the frame's size from the content; `frame` then only needs x, y (and w to wrap a note, text, or an html page, or to cap a code tile's width)" },
           "parent": { "$ref": "#/definitions/Id" },
-          "caller": { "$ref": "#/definitions/Id", "description": "calling tile id; clients fill from CANVAS_TILE_ID" }
+          "caller": { "$ref": "#/definitions/Id", "description": "calling tile id; clients fill from EASL_TILE_ID" }
         },
         "additionalProperties": false
       },
@@ -947,7 +947,7 @@
           "rev": { "type": "integer" },
           "frame": { "$ref": "#/definitions/FramePatch" },
           "size": { "const": "fit", "description": "measure the frame's size from the content" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
         "additionalProperties": false
@@ -990,7 +990,7 @@
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "type": { "$ref": "#/definitions/ObjectType" },
-          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`canvas methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
+          "props": { "type": "object", "description": "the type's props: TerminalProps, BrowserProps, CodeProps, NoteProps, HtmlProps, ChangesProps, ImageProps, DiagramProps, ShapeProps, ArrowProps, or GroupProps (`easl methods <Name>` lists one). `scale` is invalid_params (a tile's content zoom is `zoom`, a text shape's font `textSize`)" },
           "width": { "type": "number", "description": "wrap width for notes and text; maximum width for code (default 960); the width an html page lays out at (default 640)" },
           "caller": { "$ref": "#/definitions/Id" }
         },
@@ -999,7 +999,7 @@
       "result": { "$ref": "#/definitions/Size" }
     },
     "object.reload": {
-      "description": "Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so a `canvas get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves.",
+      "description": "Load a browser tile's page again, as its reload button does (the same address, Back history untouched; a failed load is retried): any browser tile, including one the user or `object.create` made. Waits until the page has loaded or `timeoutMs` passes, so an `easl get <tile> --since <cursor>` right after reads the new page's log (`reloaded: true`). The page changes that follow are credited to `caller` in `board.history`. A diagram tile is computed again from the code (its nodes re-resolved by symbol; gone ones badged stale), waiting up to `timeoutMs` (default 60000: a language server's first answers in a project take a while); the result counts nodes and names the stale ones, and `object.get` has the graph (`props.graph`). Only browser and diagram tiles reload: code, note and changes tiles follow their files by themselves.",
       "params": {
         "type": "object",
         "required": ["id"],
@@ -1294,12 +1294,12 @@
       "result": { "type": "object", "properties": {} }
     },
     "agent.list": {
-      "description": "Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, a CLI without Canvas hooks) has kind and lifecycle `unknown`. An agent without an integration that sends terminal notifications (aider through Canvas's `aider` wrapper, any CLI's OSC 9/777 or bell) is listed with its program as `kind` and a lifecycle `via: \"notifications\"`: `done` when it last said it waits, `unknown` after a prompt until it says so again, never `working` or `blocked`.",
+      "description": "Every terminal tile across all open boards, with the agent in it: a terminal whose agent never reported (a shell, a CLI without Easl hooks) has kind and lifecycle `unknown`. An agent without an integration that sends terminal notifications (aider through Easl's `aider` wrapper, any CLI's OSC 9/777 or bell) is listed with its program as `kind` and a lifecycle `via: \"notifications\"`: `done` when it last said it waits, `unknown` after a prompt until it says so again, never `working` or `blocked`.",
       "params": { "type": "object", "properties": {}, "additionalProperties": false },
       "result": { "type": "object", "required": ["agents"], "properties": { "agents": { "type": "array", "items": { "$ref": "#/definitions/Agent" } } } }
     },
     "agent.prompt": {
-      "description": "Paste a prompt into another agent's terminal (bracketed paste; a one-line command into a shell at its prompt is typed) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A prompt that lands while the agent is `working` joins that turn (omp and Codex take it before the turn ends and answer it in the same turn): the wait answers when that turn ends, and `final` is that turn's answer. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a `working` target whose state is `restored` (from before the app last closed, unconfirmed since: it may wait on a question now). So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must run an agent with a Canvas integration (its lifecycle not `via: \"notifications\"`), else `unavailable`. An agent reporting by notification goes `unknown` with this prompt, and `agent.wait` answers at its next notification (none comes when the text needed no model reply, e.g. aider's `/add`: give such waits a `timeoutMs`).",
+      "description": "Paste a prompt into another agent's terminal (bracketed paste; a one-line command into a shell at its prompt is typed) and press Enter once the paste has landed (80 ms later: TUIs such as Gemini CLI take an Enter right after input as part of it). The terminal's text just before submitting is remembered, so `agent.read` with `since: \"prompt\"` returns only what followed. `agent.wait` after it ignores the state the agent was in before this prompt: it answers once the agent has reported `working` (or `blocked`) and then reached one of its `until` states, so wait for `done` right away, not for `working` first. A prompt that lands while the agent is `working` joins that turn (omp and Codex take it before the turn ends and answer it in the same turn): the wait answers when that turn ends, and `final` is that turn's answer. A `blocked` target fails with `conflict` naming what it waits on (an approval dialog or question would take the text) unless `force` is true. So does a `working` target whose state is `restored` (from before the app last closed, unconfirmed since: it may wait on a question now). So does a target whose agent reports from behind another foreground program (`program` nvim, less: the text would go to that program), and one in tmux whose active pane runs something else (vim, a shell): the text goes to the active pane, so it is sent when that pane runs the agent. Into a shell at its prompt (no agent), a one-line text is typed rather than pasted. `mentions` attach board objects for the receiving agent the way the user's Hyper-click mentions do: they wait for that terminal only (never in the user's tray), and its integration attaches them, resolved then, as hidden context to the next prompt it submits (this one), in a block naming your terminal (`caller`). The target must run an agent with an Easl integration (its lifecycle not `via: \"notifications\"`), else `unavailable`. An agent reporting by notification goes `unknown` with this prompt, and `agent.wait` answers at its next notification (none comes when the text needed no model reply, e.g. aider's `/add`: give such waits a `timeoutMs`).",
       "params": {
         "type": "object",
         "required": ["target", "text"],
@@ -1307,7 +1307,7 @@
           "target": { "type": "string", "description": "agent name or tile id" },
           "text": { "type": "string" },
           "mentions": { "type": "array", "items": { "$ref": "#/definitions/PromptMention" }, "description": "objects on the target's board to attach, e.g. [{\"object\": \"obj_…\"}, {\"object\": \"obj_…\", \"lines\": {\"start\": 41, \"end\": 48}}]" },
-          "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal, named to the receiver with the mentions; clients fill from CANVAS_TILE_ID" },
+          "caller": { "$ref": "#/definitions/Id", "description": "the prompting terminal, named to the receiver with the mentions; clients fill from EASL_TILE_ID" },
           "force": { "type": "boolean", "default": false, "description": "send even though the target is `blocked` or runs another foreground program than its agent (e.g. Claude Code or Gemini CLI stays blocked after the user pressed Esc on or denied an approval, since they run no hook then). It types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow): never force an answer to an approval" }
         },
         "additionalProperties": false
@@ -1339,7 +1339,7 @@
       "result": { "type": "object", "required": ["agent"], "properties": { "agent": { "$ref": "#/definitions/Agent" } } }
     },
     "agent.read": {
-      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line: on the live screen by the terminal's own wrap flags; above it (where the history carries none) a row that fills the terminal's width and ends in text joins the next, unless it is a separator padded to the width, such as pytest's `==== FAILURES ====`, or the next row starts with the same word (pytest's `FAILED …` rows, cut at the width). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block`: the output of a command the terminal's shell finished (`\"last\"` or -1, -2 the one before; from Ghostty's shell-integration prompt marks and the commands Canvas saw finish since it attached), with `command` saying what ran; a command-block mention names the `block` that reads it whole. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, or the turn was interrupted. Answers are saved with the board, so they outlast a restart.",
+      "description": "Recent text of an agent's terminal: the tail of its zmx session scrollback as plain text (what the screen shows plus history), trailing blank lines removed. Rows the terminal soft-wrapped read as one line: on the live screen by the terminal's own wrap flags; above it (where the history carries none) a row that fills the terminal's width and ends in text joins the next, unless it is a separator padded to the width, such as pytest's `==== FAILURES ====`, or the next row starts with the same word (pytest's `FAILED …` rows, cut at the width). Inline images (kitty graphics placeholders) read as one `[image]` line. With `block`: the output of a command the terminal's shell finished (`\"last\"` or -1, -2 the one before; from Ghostty's shell-integration prompt marks and the commands Easl saw finish since it attached), with `command` saying what ran; a command-block mention names the `block` that reads it whole. With `final: true`, instead the agent's last answer: the final assistant message of its last finished turn, as its integration reported it (omp, Codex, Claude Code, Gemini CLI; not opencode). It fails with `unavailable` while the agent is in a turn (or hasn't started the one `agent.prompt` sent), and when none is known: never reported, or the turn was interrupted. Answers are saved with the board, so they outlast a restart.",
       "params": {
         "type": "object",
         "required": ["target"],
@@ -1347,7 +1347,7 @@
           "target": { "type": "string", "description": "agent name or tile id" },
           "lines": { "type": "integer", "minimum": 1, "maximum": 2000, "default": 100, "description": "tail length; larger values are capped at 2000. With `since`: the last this many lines of the reply (default 2000)" },
           "since": { "const": "prompt", "description": "only what the terminal printed after the last `agent.prompt` to it (from the first line that changed since then: the prompt's echo, then the reply and whatever the screen shows below it); `not_found` when no agent.prompt reached it since the app started" },
-          "block": { "oneOf": [{ "const": "last" }, { "type": "integer", "maximum": -1, "minimum": -200 }], "description": "the output of a command the shell finished instead of the tail (its last `lines` lines, default 2000): `\"last\"` or -1 the last one, -2 the one before, back to the oldest Canvas saw finish since it attached to the session (`not_found` past it); `unavailable` when there is none (no shell integration) or its rows are gone (cleared, trimmed from the scrollback, reflowed by a width change). Doesn't combine with `since` or `final`" },
+          "block": { "oneOf": [{ "const": "last" }, { "type": "integer", "maximum": -1, "minimum": -200 }], "description": "the output of a command the shell finished instead of the tail (its last `lines` lines, default 2000): `\"last\"` or -1 the last one, -2 the one before, back to the oldest Easl saw finish since it attached to the session (`not_found` past it); `unavailable` when there is none (no shell integration) or its rows are gone (cleared, trimmed from the scrollback, reflowed by a width change). Doesn't combine with `since` or `final`" },
           "final": { "type": "boolean", "default": false, "description": "the last answer instead of the screen; takes no `lines`, `since` or `block`" }
         },
         "additionalProperties": false
@@ -1390,7 +1390,7 @@
           "id": { "$ref": "#/definitions/Id" },
           "message": { "type": "string" },
           "clear": { "type": "boolean", "default": false, "description": "remove this object's marker instead of raising it" },
-          "caller": { "$ref": "#/definitions/Id", "description": "the raising agent's terminal; clients fill from CANVAS_TILE_ID" }
+          "caller": { "$ref": "#/definitions/Id", "description": "the raising agent's terminal; clients fill from EASL_TILE_ID" }
         },
         "additionalProperties": false
       },
@@ -1434,7 +1434,7 @@
           "full": { "type": "boolean", "default": false, "description": "id targets: render the whole content, not just the part inside the frame" },
           "exclude": { "type": "array", "items": { "anyOf": [{ "$ref": "#/definitions/ObjectType" }, { "$ref": "#/definitions/Id" }] }, "description": "object types and/or object ids to leave out (e.g. [\"terminal\", \"obj_…\"]); a group id takes its members with it; targets are always drawn" },
           "padding": { "type": "number", "default": 0, "description": "canvas points added around the target" },
-          "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/canvas-renders/ (out of the repo)" },
+          "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/easl-renders/ (out of the repo)" },
           "format": { "enum": ["png", "jpeg"], "default": "png", "description": "format of the temporary file when no `out` is given" },
           "timeoutMs": { "type": "integer", "minimum": 0, "maximum": 60000, "default": 8000, "description": "how long to wait for content (HTML pages, browser pages including loading one that isn't loaded, file reads) before drawing placeholders" }
         },
@@ -1460,7 +1460,7 @@
         "type": "object",
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
-          "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/canvas-renders/ (out of the repo)" },
+          "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/easl-renders/ (out of the repo)" },
           "format": { "enum": ["png", "jpeg"], "default": "png", "description": "format of the temporary file when no `out` is given" }
         },
         "additionalProperties": false

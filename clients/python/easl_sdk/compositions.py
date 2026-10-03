@@ -4,14 +4,14 @@ A composition is a plain Python module in a compositions directory. Functions wh
 parameter is named `canvas` receive the connected client; `canvas.compositions.<module>.<fn>(...)`
 passes it for you. Other attributes (pure helpers, constants) come through unchanged:
 
-    # ~/.canvas/compositions/review.py
+    # ~/.easl/compositions/review.py
     def pin_notes(canvas, texts):
         return [canvas.object.create(type="note", props={"markdown": t}) for t in texts]
 
     canvas.compositions.review.pin_notes(["one", "two"])
 
 Search order (first match wins, so a helper you improve shadows the shipped one):
-`~/.canvas/compositions`, then the compositions shipped inside this package (`builtin_compositions/`).
+`~/.easl/compositions`, then the compositions shipped inside this package (`builtin_compositions/`).
 """
 
 from __future__ import annotations

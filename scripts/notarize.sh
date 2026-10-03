@@ -1,26 +1,26 @@
 #!/bin/sh
-# Build Canvas.app, sign it for distribution, notarize and staple it, and zip it (docs/releasing.md).
+# Build Easl.app, sign it for distribution, notarize and staple it, and zip it (docs/releasing.md).
 #
 #   scripts/notarize.sh [--dry-run] <out.zip>
 #
-# Builds the release bundle (scripts/bundle.sh release) at CANVAS_BUNDLE_APP, default
-# .build/dist/Canvas.app (never .build/Canvas.app, which a dev instance may be running from).
-# Signs it inside out with CANVAS_SIGN_IDENTITY ("Developer ID Application: <Name> (<TEAMID>)",
+# Builds the release bundle (scripts/bundle.sh release) at EASL_BUNDLE_APP, default
+# .build/dist/Easl.app (never .build/Easl.app, which a dev instance may be running from).
+# Signs it inside out with EASL_SIGN_IDENTITY ("Developer ID Application: <Name> (<TEAMID>)",
 # default: the keychain's only Developer ID Application identity), the hardened runtime,
-# scripts/Canvas.entitlements and a secure timestamp, and checks the signature. Submits it to
+# scripts/Easl.entitlements and a secure timestamp, and checks the signature. Submits it to
 # the notary service and waits, staples the ticket, zips the stapled app, and checks the zip's
-# copy as a user unzips it. CANVAS_VERSION and CANVAS_BUILD set the bundle version (bundle.sh).
+# copy as a user unzips it. EASL_VERSION and EASL_BUILD set the bundle version (bundle.sh).
 #
 # Notary credentials, one of:
-#   CANVAS_NOTARY_PROFILE      a keychain profile from `xcrun notarytool store-credentials`
-#                                 (default: canvas-notary)
-#   CANVAS_NOTARY_KEY, CANVAS_NOTARY_KEY_ID, CANVAS_NOTARY_ISSUER
+#   EASL_NOTARY_PROFILE      a keychain profile from `xcrun notarytool store-credentials`
+#                                 (default: easl-notary)
+#   EASL_NOTARY_KEY, EASL_NOTARY_KEY_ID, EASL_NOTARY_ISSUER
 #                                 an App Store Connect API key: the .p8 file's path, key id, issuer id
-#   CANVAS_NOTARY_APPLE_ID, CANVAS_NOTARY_PASSWORD, CANVAS_NOTARY_TEAM_ID
+#   EASL_NOTARY_APPLE_ID, EASL_NOTARY_PASSWORD, EASL_NOTARY_TEAM_ID
 #                                 an Apple ID, an app-specific password and the team id
 #
 # --dry-run does everything that needs neither the certificate nor the notary service. Without
-# CANVAS_SIGN_IDENTITY it signs ad hoc ("-") the same way, minus the timestamp. It checks the
+# EASL_SIGN_IDENTITY it signs ad hoc ("-") the same way, minus the timestamp. It checks the
 # credentials when some are set (`notarytool history` uploads nothing), zips the signed app to
 # <out.zip> unnotarized, and stops there. Run its bundle as a dev instance to try the hardened
 # runtime (docs/releasing.md, "Hardened runtime").
@@ -31,20 +31,20 @@ dry=
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 out="$1"
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
-app="${CANVAS_BUNDLE_APP:-$repo/.build/dist/Canvas.app}"
+app="${EASL_BUNDLE_APP:-$repo/.build/dist/Easl.app}"
 case "$app" in /*) ;; *) app="$PWD/$app" ;; esac
 fail() { echo "notarize.sh: $*" >&2; exit 1; }
 pack() { rm -f "$2"; ditto -c -k --norsrc --noextattr --noacl --keepParent "$1" "$2"; }
 
 # Everything that can be wrong before a build is checked before it.
-identity="${CANVAS_SIGN_IDENTITY:-}"
+identity="${EASL_SIGN_IDENTITY:-}"
 identities="$(security find-identity -v -p codesigning)"
 if [ -z "$identity" ] && [ -n "$dry" ]; then
   identity=-
 elif [ -z "$identity" ]; then
   found="$(printf '%s\n' "$identities" | sed -n 's/.*"\(Developer ID Application: .*\)"$/\1/p' | sort -u)"
   [ -n "$found" ] || fail "no Developer ID Application identity in the keychain (docs/releasing.md, One-time setup); --dry-run signs ad hoc"
-  [ "$(printf '%s\n' "$found" | wc -l)" -eq 1 ] || fail "several Developer ID Application identities; pick one with CANVAS_SIGN_IDENTITY: $found"
+  [ "$(printf '%s\n' "$found" | wc -l)" -eq 1 ] || fail "several Developer ID Application identities; pick one with EASL_SIGN_IDENTITY: $found"
   identity="$found"
 elif [ "$identity" != - ]; then
   case "$identities" in *"\"$identity\""* | *" $identity "*) ;; *)
@@ -54,12 +54,12 @@ fi
 [ "$identity" = - ] || [ -n "$dry" ] || case "$identity" in "Developer ID Application:"*) ;; *[!0-9A-F]*)
   fail "notarization needs a Developer ID Application identity, not \"$identity\"" ;;
 esac
-if [ -n "${CANVAS_NOTARY_KEY:-}" ]; then
-  set -- --key "$CANVAS_NOTARY_KEY" --key-id "${CANVAS_NOTARY_KEY_ID:?set with CANVAS_NOTARY_KEY}" --issuer "${CANVAS_NOTARY_ISSUER:?set with CANVAS_NOTARY_KEY}"
-elif [ -n "${CANVAS_NOTARY_APPLE_ID:-}" ]; then
-  set -- --apple-id "$CANVAS_NOTARY_APPLE_ID" --password "${CANVAS_NOTARY_PASSWORD:?set with CANVAS_NOTARY_APPLE_ID}" --team-id "${CANVAS_NOTARY_TEAM_ID:?set with CANVAS_NOTARY_APPLE_ID}"
-elif [ -n "${CANVAS_NOTARY_PROFILE:-}" ] || [ -z "$dry" ]; then
-  set -- --keychain-profile "${CANVAS_NOTARY_PROFILE:-canvas-notary}"
+if [ -n "${EASL_NOTARY_KEY:-}" ]; then
+  set -- --key "$EASL_NOTARY_KEY" --key-id "${EASL_NOTARY_KEY_ID:?set with EASL_NOTARY_KEY}" --issuer "${EASL_NOTARY_ISSUER:?set with EASL_NOTARY_KEY}"
+elif [ -n "${EASL_NOTARY_APPLE_ID:-}" ]; then
+  set -- --apple-id "$EASL_NOTARY_APPLE_ID" --password "${EASL_NOTARY_PASSWORD:?set with EASL_NOTARY_APPLE_ID}" --team-id "${EASL_NOTARY_TEAM_ID:?set with EASL_NOTARY_APPLE_ID}"
+elif [ -n "${EASL_NOTARY_PROFILE:-}" ] || [ -z "$dry" ]; then
+  set -- --keychain-profile "${EASL_NOTARY_PROFILE:-easl-notary}"
 else
   set --
 fi
@@ -69,7 +69,7 @@ else
   echo "notarize.sh: dry run without notary credentials: not checking them" >&2
 fi
 
-CANVAS_BUNDLE_APP="$app" "$repo/scripts/bundle.sh" release >&2
+EASL_BUNDLE_APP="$app" "$repo/scripts/bundle.sh" release >&2
 
 sign() {
   if [ "$identity" = - ]; then
@@ -84,13 +84,13 @@ sign() {
 # bundle, before the app.
 nested="$(find "$app/Contents" \( -name '*.framework' -o -name '*.xpc' -o -name '*.app' -o -name '*.appex' \) -print)"
 [ -z "$nested" ] || fail "sign these nested bundles before the app: $nested"
-find "$app/Contents" -depth -type f ! -path "$app/Contents/MacOS/Canvas" -print | while IFS= read -r file; do
+find "$app/Contents" -depth -type f ! -path "$app/Contents/MacOS/Easl" -print | while IFS= read -r file; do
   case "$(file -b "$file")" in Mach-O*) sign "$file" ;; esac
 done
-sign --entitlements "$repo/scripts/Canvas.entitlements" "$app"
+sign --entitlements "$repo/scripts/Easl.entitlements" "$app"
 
 # A terminal tile imports the SDK from the bundle; that must leave the signature intact (bundle.sh).
-PYTHONPATH="$app/Contents/Resources/clients/python" python3 -c 'import canvas_sdk'
+PYTHONPATH="$app/Contents/Resources/clients/python" python3 -c 'import easl_sdk'
 codesign --verify --deep --strict --verbose=2 "$app"
 # What the notary service rejects, said before uploading.
 details="$(codesign -dvv "$app" 2>&1)"
@@ -112,7 +112,7 @@ trap 'rm -rf "$work"' EXIT
 check_zip() {
   rm -rf "$work/unzipped"
   ditto -x -k "$out" "$work/unzipped"
-  codesign --verify --deep --strict "$work/unzipped/Canvas.app"
+  codesign --verify --deep --strict "$work/unzipped/Easl.app"
 }
 if [ -n "$dry" ]; then
   pack "$app" "$out"
@@ -136,9 +136,9 @@ xcrun notarytool log "$id" "$@" "$work/log.json" >/dev/null && cat "$work/log.js
 xcrun stapler staple "$app"
 pack "$app" "$out"
 check_zip
-xcrun stapler validate "$work/unzipped/Canvas.app"
+xcrun stapler validate "$work/unzipped/Easl.app"
 # Gatekeeper's verdict on what users get: "accepted", "source=Notarized Developer ID".
-verdict="$(spctl --assess --type execute -vvv "$work/unzipped/Canvas.app" 2>&1)" || { echo "$verdict" >&2; fail "Gatekeeper rejects the notarized app"; }
+verdict="$(spctl --assess --type execute -vvv "$work/unzipped/Easl.app" 2>&1)" || { echo "$verdict" >&2; fail "Gatekeeper rejects the notarized app"; }
 echo "$verdict" >&2
 case "$verdict" in *"source=Notarized Developer ID"*) ;; *) fail "Gatekeeper doesn't see the app as notarized" ;; esac
 echo "$out"

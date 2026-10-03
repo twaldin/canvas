@@ -20,7 +20,7 @@ public enum ExportFile {
     /// A file name for an export titled `title` (an object's title): path and drive separators
     /// (`/`, `:`, `\`) read as " - " ("Findings report: top 5" → "Findings report - top 5"),
     /// control characters as spaces, runs of spaces and dashes collapse, no leading dot (a hidden
-    /// file) or trailing separator; at most `maxNameLength` characters, then `.ext`. "Canvas
+    /// file) or trailing separator; at most `maxNameLength` characters, then `.ext`. "Easl
     /// selection" when the title is missing or leaves nothing.
     public static func name(_ title: String?, ext: String) -> String {
         var base = title ?? ""
@@ -32,7 +32,7 @@ public enum ExportFile {
         base = base.trimmingCharacters(in: trim)
         while base.hasPrefix(".") { base = String(base.dropFirst()).trimmingCharacters(in: trim) }
         base = String(base.prefix(maxNameLength)).trimmingCharacters(in: trim)
-        return "\(base.isEmpty ? "Canvas selection" : base).\(ext)"
+        return "\(base.isEmpty ? "Easl selection" : base).\(ext)"
     }
 
     /// The folder a save sheet opens in: the one the user last saved an export into, unless it

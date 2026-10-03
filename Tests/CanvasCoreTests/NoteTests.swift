@@ -1080,7 +1080,7 @@ struct NoteMentionTests {
         try board.stage(.object(big.id))
         let context = await board.drain().context
         #expect(context.contains("    Nothing yet."), "a note of 32 lines arrives whole")
-        #expect(context.contains("    line 80\n    … 20 more lines (canvas get \(big.id))"))
+        #expect(context.contains("    line 80\n    … 20 more lines (easl get \(big.id))"))
         #expect(!context.contains("line 81"))
     }
 

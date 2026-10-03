@@ -2,17 +2,17 @@ import AppKit
 import CanvasCore
 import UserNotifications
 
-/// macOS notifications when an agent tile becomes `done` or `blocked` while Canvas isn't
+/// macOS notifications when an agent tile becomes `done` or `blocked` while Easl isn't
 /// frontmost. Clicking one brings its window forward and focuses the tile.
 ///
 /// Authorization is requested lazily, the first time there is something to say. With
-/// `CANVAS_NO_ACTIVATE=1` (development instances on a shared machine) nothing is ever requested
+/// `EASL_NO_ACTIVATE=1` (development instances on a shared machine) nothing is ever requested
 /// or posted, so tests can't prompt the user; the decision is logged instead.
 @MainActor
 final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
     var onOpen: ((BoardID, ObjectID) -> Void)?
     /// Posting needs a bundled app: `UNUserNotificationCenter.current()` traps without a bundle id.
-    private let enabled = ProcessInfo.processInfo.environment["CANVAS_NO_ACTIVATE"] != "1" && Bundle.main.bundleIdentifier != nil
+    private let enabled = ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1" && Bundle.main.bundleIdentifier != nil
     private var authorized: Bool?
     private var notices = AgentNotices()
     private var delivered: Set<ObjectID> = []
@@ -51,7 +51,7 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         content.body = notice.message ?? (notice.blocked ? "Waiting for your answer." : "Finished and waiting for your next prompt.")
         content.userInfo = ["board": board.id, "tile": terminal.id]
         guard enabled else {
-            NSLog("Canvas: notification suppressed (CANVAS_NO_ACTIVATE): %@ — %@", content.title, content.body)
+            NSLog("Easl: notification suppressed (EASL_NO_ACTIVATE): %@ — %@", content.title, content.body)
             return
         }
         // One notification per tile: a newer state replaces the older one.

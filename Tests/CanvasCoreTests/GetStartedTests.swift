@@ -6,7 +6,7 @@ import Testing
 /// already had boards, and its walk-through advances only on what really happened to the tray.
 @MainActor
 struct GetStartedTests {
-    /// A Canvas home: `get-started.json` and the boards directory, as the app lays them out.
+    /// An Easl home: `get-started.json` and the boards directory, as the app lays them out.
     struct Home {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("get-started-\(UUID().uuidString)", isDirectory: true)
         var store: GetStarted.Store { .init(url: root.appendingPathComponent("get-started.json")) }

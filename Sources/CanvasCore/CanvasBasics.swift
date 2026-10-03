@@ -1,6 +1,6 @@
-/// The one-screen legend behind Help › Canvas Basics (pointing your agent at things first: it's
+/// The one-screen legend behind Help › Easl Basics (pointing your agent at things first: it's
 /// what a newcomer opens it for) and the tooltips on the things it explains,
-/// in the words docs/design.md uses. `skills/canvas/references/ui.md` carries the same text for
+/// in the words docs/design.md uses. `skills/easl/references/ui.md` carries the same text for
 /// agents asked "what is this?".
 public enum CanvasBasics {
     public struct Item: Sendable {
@@ -85,7 +85,7 @@ public enum CanvasBasics {
             Item(term: "⌘T", text: "new terminal; then run omp, claude, codex, gemini or opencode."),
             Item(term: "Return · Esc · Tab", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas, then clears the selection, then closes Get Started. In a terminal or a web page Esc goes to the program or page (a game's pause, a dialog): ⌘Esc leaves any tile. Tab never types into a tile: with Get Started open it walks its buttons (Space presses one)."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
-            Item(term: "⌥⌘/", text: "open or close this legend (Help › Canvas Basics)."),
+            Item(term: "⌥⌘/", text: "open or close this legend (Help › Easl Basics)."),
         ]),
         Section(title: "Coming from Linux or Windows", items: [
             Item(term: "⌘ is your Ctrl", text: "⌘ (Command, the Windows key on a PC keyboard) does what Ctrl does elsewhere: ⌘T, ⌘W, ⌘Z, ⌘C, ⌘V, ⌘= and ⌘- to zoom. A Ctrl shortcut on the canvas says its ⌘ key."),

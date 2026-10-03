@@ -1,6 +1,6 @@
 import AppKit
 
-/// Development input replay (`CANVAS_DEV_INPUT=1`, driven by `scripts/dev-input.swift`).
+/// Development input replay (`EASL_DEV_INPUT=1`, driven by `scripts/dev-input.swift`).
 /// Agents test the UI while the window sits on a Space nobody is viewing, where real HID input
 /// can't reach it and posting system events needs a TCC grant. Events go into this app's own
 /// queue, so the Hyper monitor, hit testing, and responders run exactly as for real input.
@@ -13,7 +13,7 @@ enum DevInput {
     /// The enter/exit tracking areas the last replayed `move` was inside.
     static var hovered: [NSTrackingArea] = []
 
-    static let enabled = ProcessInfo.processInfo.environment["CANVAS_DEV_INPUT"] == "1"
+    static let enabled = ProcessInfo.processInfo.environment["EASL_DEV_INPUT"] == "1"
 
     static func install() {
         guard enabled else { return }
@@ -175,7 +175,7 @@ enum DevInput {
                     if let owner = area.owner as? NSObject, owner.responds(to: moved) { owner.perform(moved, with: event) }
                 }
             }
-            // Real enter/exit events, to Canvas's own owners only: AppKit's and WebKit's private
+            // Real enter/exit events, to Easl's own owners only: AppKit's and WebKit's private
             // owners read state a replayed event doesn't carry.
             func deliver(_ type: NSEvent.EventType, _ selector: Selector, to areas: [NSTrackingArea]) {
                 for area in areas {

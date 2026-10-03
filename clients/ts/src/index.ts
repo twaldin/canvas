@@ -9,7 +9,7 @@ import { bindMethods, type CanvasApi, RESEND_METHODS } from "./generated";
 export * from "./compositions";
 export * from "./generated";
 
-export const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Canvas/canvas.sock");
+export const DEFAULT_SOCKET = join(homedir(), "Library/Application Support/Easl/easl.sock");
 /** The app takes 5-10 s to restart; a request that never left waits this long for it. */
 export const RECONNECT_TIMEOUT_MS = 15_000;
 
@@ -46,28 +46,28 @@ type WireMessage = {
 };
 
 export type CanvasClientOptions = {
-  /** Default: CANVAS_SOCKET, else the default socket if it exists; otherwise the constructor throws `unavailable`. */
+  /** Default: EASL_SOCKET, else the default socket if it exists; otherwise the constructor throws `unavailable`. */
   socketPath?: string;
-  /** Filled in as `caller` when a method takes it and the call omits it. Default: CANVAS_TILE_ID. */
+  /** Filled in as `caller` when a method takes it and the call omits it. Default: EASL_TILE_ID. */
   tile?: string;
-  /** Filled in as `board` when a method takes it and the call omits it. Default: CANVAS_BOARD_ID. */
+  /** Filled in as `board` when a method takes it and the call omits it. Default: EASL_BOARD_ID. */
   board?: string;
   /** Per-call timeout. Omit for none (agent.wait can legitimately block for minutes). */
   timeoutMs?: number;
   /** How long a call whose request was not sent waits for the socket to come back (app restart). Default 15 s. */
   reconnectTimeoutMs?: number;
-  /** Where `compositions` looks; default `~/.canvas/compositions`, then the shipped `builtin_compositions/`. */
+  /** Where `compositions` looks; default `~/.easl/compositions`, then the shipped `builtin_compositions/`. */
   compositionsDirs?: string[];
 };
 
 function resolveSocket(explicit: string | undefined): string {
-  const path = explicit || process.env.CANVAS_SOCKET || (existsSync(DEFAULT_SOCKET) ? DEFAULT_SOCKET : undefined);
+  const path = explicit || process.env.EASL_SOCKET || (existsSync(DEFAULT_SOCKET) ? DEFAULT_SOCKET : undefined);
   if (path) return path;
   throw new CanvasError(
     "unavailable",
-    `CANVAS_SOCKET is unset and the default socket ${DEFAULT_SOCKET} does not exist, so this process has no Canvas connection (it did not inherit the terminal tile's environment). ` +
-      "In the Canvas terminal run `echo $CANVAS_SOCKET $CANVAS_TILE_ID $CANVAS_BOARD_ID`, then pass those values: " +
-      "`new CanvasClient({ socketPath, tile, board })` (Python: `canvas_sdk.connect(socket=..., tile=..., board=...)`; CLI: export the three variables).",
+    `EASL_SOCKET is unset and the default socket ${DEFAULT_SOCKET} does not exist, so this process has no Easl connection (it did not inherit the terminal tile's environment). ` +
+      "In the Easl terminal run `echo $EASL_SOCKET $EASL_TILE_ID $EASL_BOARD_ID`, then pass those values: " +
+      "`new CanvasClient({ socketPath, tile, board })` (Python: `easl_sdk.connect(socket=..., tile=..., board=...)`; CLI: export the three variables).",
   );
 }
 
@@ -84,7 +84,7 @@ function drainLines(buffer: string, onMessage: (message: WireMessage) => void): 
   return rest;
 }
 
-/** One persistent connection to the Canvas API socket; the next call reconnects after an app restart. */
+/** One persistent connection to the Easl API socket; the next call reconnects after an app restart. */
 export class CanvasClient {
   readonly socketPath: string;
   readonly tileId: string | undefined;
@@ -99,8 +99,8 @@ export class CanvasClient {
 
   constructor(options: CanvasClientOptions = {}) {
     this.socketPath = resolveSocket(options.socketPath);
-    this.tileId = options.tile || process.env.CANVAS_TILE_ID || undefined;
-    this.boardId = options.board || process.env.CANVAS_BOARD_ID || undefined;
+    this.tileId = options.tile || process.env.EASL_TILE_ID || undefined;
+    this.boardId = options.board || process.env.EASL_BOARD_ID || undefined;
     this.#timeoutMs = options.timeoutMs;
     this.#reconnectTimeoutMs = options.reconnectTimeoutMs ?? RECONNECT_TIMEOUT_MS;
     this.#compositionsDirs = options.compositionsDirs;
@@ -183,7 +183,7 @@ export class CanvasClient {
       connection.pending.get(id)!.timer = setTimeout(() => fail(connection, id, new CanvasError("timeout", `${method} timed out after ${this.#timeoutMs}ms`)), this.#timeoutMs);
     }
     connection.socket.write(line, (error) => {
-      if (error) fail(connection, id, new NotSent(`Canvas socket ${this.socketPath}: ${error.message}`));
+      if (error) fail(connection, id, new NotSent(`Easl socket ${this.socketPath}: ${error.message}`));
     });
     return promise;
   }
@@ -212,12 +212,12 @@ export class CanvasClient {
             continue;
           }
           throw new NotSent(
-            `Canvas socket ${this.socketPath} exists but connecting to it failed (${code}): a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it`,
+            `Easl socket ${this.socketPath} exists but connecting to it failed (${code}): a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it`,
           );
         }
         missedThere = false;
         if (Date.now() >= deadline) {
-          throw new NotSent(`Canvas socket ${this.socketPath}: ${(error as Error).message}${waitMs ? ` after waiting ${waitMs / 1000}s for the app` : ""}`);
+          throw new NotSent(`Easl socket ${this.socketPath}: ${(error as Error).message}${waitMs ? ` after waiting ${waitMs / 1000}s for the app` : ""}`);
         }
         await sleep(200);
       }
@@ -244,8 +244,8 @@ export class CanvasClient {
           connection,
           id,
           pending.end > flushed
-            ? new NotSent(`Canvas socket ${this.socketPath}: connection closed`)
-            : new ReplyLost(`Canvas connection lost after sending ${pending.method}; it may or may not have applied — re-read before retrying`),
+            ? new NotSent(`Easl socket ${this.socketPath}: connection closed`)
+            : new ReplyLost(`Easl connection lost after sending ${pending.method}; it may or may not have applied — re-read before retrying`),
         );
       }
     });
@@ -282,7 +282,7 @@ export async function subscribe(
   socket.setEncoding("utf8");
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   socket.once("connect", () => resolve());
-  socket.on("error", (error) => reject(new CanvasError("unavailable", `Canvas socket ${path}: ${error.message}`)));
+  socket.on("error", (error) => reject(new CanvasError("unavailable", `Easl socket ${path}: ${error.message}`)));
   await promise;
   let buffer = "";
   socket.on("data", (chunk: string) => {

@@ -160,7 +160,7 @@ struct TerminalCommandTests {
     }
 
     @Test func aReattachedSessionsTitleIsTheProgramsNotACommandTheHeaderHides() {
-        // Canvas relaunched: the session comes back titled by omp, which waits on a question.
+        // Easl relaunched: the session comes back titled by omp, which waits on a question.
         var tracker = TerminalCommandTracker()
         let title = "π ! Add Per-Command Help"
         let started = tracker.title(title, at: Date(), promptTitle: "~/src/app")
@@ -433,13 +433,13 @@ struct TerminalMentionTests {
         try board.stage(.terminal(object: shell, text: output, part: .command, command: TerminalCommand(command: "go test ./...", exit: 1, durationMs: 42_000)))
         try board.stage(.object(shell))
         let context = await board.drain().context
-        #expect(context.contains("[1] command `go test ./...` · exit 1 · 42 s · output of terminal tile \(shell) \"go · ~/src/app\" · read it: canvas agent.read --target \(shell) --block -3"),
+        #expect(context.contains("[1] command `go test ./...` · exit 1 · 42 s · output of terminal tile \(shell) \"go · ~/src/app\" · read it: easl agent.read --target \(shell) --block -3"),
                 "the call that reads that block, counted from the terminal's newest command")
         #expect(context.contains("    ok 10\n    … 20 lines omitted …\n    ok 31"))
         #expect(context.contains("[2] terminal \(shell) \"go · ~/src/app\""))
         #expect(context.contains("    its screen now:\n    ❯ ls\n    README.md"))
-        #expect(context.contains("canvas agent.read --target <id>"))
-        #expect(!context.contains("canvas get <id> --as graph"), "only terminals mentioned")
+        #expect(context.contains("easl agent.read --target <id>"))
+        #expect(!context.contains("easl get <id> --as graph"), "only terminals mentioned")
         // Scrolled back: the rows the user is looking at, not the live screen, and it says so.
         board.terminalScreen = { _ in ("1. Anonymous actions\n   server/routes/claims.ts:241", 40) }
         try board.stage(.object(shell))

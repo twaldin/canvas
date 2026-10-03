@@ -20,7 +20,7 @@ struct RepoBoardTests {
         return (repo, worktree)
     }
 
-    /// The id Canvas gave a board opened at `root` before boards were per repository: git's
+    /// The id Easl gave a board opened at `root` before boards were per repository: git's
     /// common dir and branch (or, detached, its top level), as the old `BoardStore` asked git.
     func legacyID(_ root: URL) async throws -> BoardID {
         let lines = try await TempRepo.run(["rev-parse", "--path-format=absolute", "--git-common-dir", "--abbrev-ref", "HEAD", "--show-toplevel"], in: root)
@@ -133,7 +133,7 @@ struct RepoBoardTests {
         let got = try router.dispatch("board.get", .object(["board": .string(id), "branch": .string("feature")]))
         let part = try #require(got["objects"]?.array)
         #expect(got["regions"] == .array([.string(region.id)]))
-        // Terminals started before the migration still name their old board (CANVAS_BOARD_ID).
+        // Terminals started before the migration still name their old board (EASL_BOARD_ID).
         #expect(try router.dispatch("board.get", .object(["board": .string(feature.id)]))["board"] == .string(id))
         #expect(Set(part.compactMap { $0["id"]?.string }) == Set(feature.snapshot.objects.map(\.id) + [region.id]))
         // A branch without a region still says so, and the whole board lists none.

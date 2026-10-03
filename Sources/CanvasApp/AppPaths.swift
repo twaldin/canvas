@@ -3,17 +3,17 @@ import Foundation
 
 /// Filesystem locations the app depends on (docs/contracts.md).
 enum AppPaths {
-    /// `CANVAS_HOME` relocates sockets and boards so a development build can run beside the
+    /// `EASL_HOME` relocates sockets and boards so a development build can run beside the
     /// installed app (docs/testing.md).
     static let support: URL = {
-        if let home = ProcessInfo.processInfo.environment["CANVAS_HOME"] { return URL(fileURLWithPath: home, isDirectory: true) }
+        if let home = ProcessInfo.processInfo.environment["EASL_HOME"] { return URL(fileURLWithPath: home, isDirectory: true) }
         return defaultSupport
     }()
-    /// No `CANVAS_HOME`: the user's own instance, on the default support directory.
-    static let isDefaultHome = ProcessInfo.processInfo.environment["CANVAS_HOME"] == nil
+    /// No `EASL_HOME`: the user's own instance, on the default support directory.
+    static let isDefaultHome = ProcessInfo.processInfo.environment["EASL_HOME"] == nil
     private static let defaultSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Canvas", isDirectory: true)
-    static let apiSocket = support.appendingPathComponent("canvas.sock").path
+        .appendingPathComponent("Easl", isDirectory: true)
+    static let apiSocket = support.appendingPathComponent("easl.sock").path
     static let cmuxSocket = support.appendingPathComponent("cmux.sock").path
     /// Held by the one instance running on this support directory (`InstanceLock`).
     static let instanceLock = support.appendingPathComponent("instance.lock").path
@@ -22,7 +22,7 @@ enum AppPaths {
     static let cmuxPassword: String? = ProcessInfo.processInfo.environment["CMUX_SOCKET_PASSWORD"].flatMap { $0.isEmpty ? nil : $0 }
     static let boards = support.appendingPathComponent("boards", isDirectory: true)
     /// Lifecycle reports agent integrations spooled while the app was away, replayed as each
-    /// board opens (`AgentReportSpool`). Beside the socket: integrations find it from `CANVAS_SOCKET`.
+    /// board opens (`AgentReportSpool`). Beside the socket: integrations find it from `EASL_SOCKET`.
     static let agentReports = support.appendingPathComponent("agent-reports", isDirectory: true)
     /// Browser pages frozen by Snapshot to Image, kept with the board (beside its
     /// `<boardId>.json`), so they outlive the temp directory and the page changing.
@@ -40,16 +40,16 @@ enum AppPaths {
         resources?.appendingPathComponent("resources").appendingPathComponent(relativePath)
     }
 
-    /// Directory holding `schema/`, `bin/canvas`, and `clients/python` — the repo when run via
-    /// `swift run`, or the bundle's Resources once packaged. CANVAS_RESOURCES overrides.
+    /// Directory holding `schema/`, `bin/easl`, and `clients/python` — the repo when run via
+    /// `swift run`, or the bundle's Resources once packaged. EASL_RESOURCES overrides.
     static let resources: URL? = {
-        if let override = ProcessInfo.processInfo.environment["CANVAS_RESOURCES"] { return URL(fileURLWithPath: override) }
-        if let bundled = Bundle.main.resourceURL, FileManager.default.fileExists(atPath: bundled.appendingPathComponent("schema/canvas-api.json").path) {
+        if let override = ProcessInfo.processInfo.environment["EASL_RESOURCES"] { return URL(fileURLWithPath: override) }
+        if let bundled = Bundle.main.resourceURL, FileManager.default.fileExists(atPath: bundled.appendingPathComponent("schema/easl-api.json").path) {
             return bundled
         }
         var dir = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
         while dir.path != "/" {
-            if FileManager.default.fileExists(atPath: dir.appendingPathComponent("schema/canvas-api.json").path) { return dir }
+            if FileManager.default.fileExists(atPath: dir.appendingPathComponent("schema/easl-api.json").path) { return dir }
             dir = dir.deletingLastPathComponent()
         }
         return nil
@@ -62,7 +62,7 @@ enum AppPaths {
     }()
 
     /// Where zmx writes each session's log (`<session>.log`): `$XDG_STATE_HOME/zmx/logs`, else
-    /// `~/.local/state/zmx/logs`. Canvas deletes its sessions' logs (`Housekeeping`).
+    /// `~/.local/state/zmx/logs`. Easl deletes its sessions' logs (`Housekeeping`).
     static let zmxLogs: URL = {
         let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state", isDirectory: true)

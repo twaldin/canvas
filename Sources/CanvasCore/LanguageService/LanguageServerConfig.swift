@@ -43,16 +43,16 @@ public struct LanguageServerConfig: Sendable, Equatable {
     public static let toolDirectories = ["~/.local/share/nvim/mason/bin"]
 
     /// The environment variable naming this language's server binary, ahead of any lookup
-    /// (`CANVAS_LSP_RUST=/path/to/rust-analyzer`), read in the login shell, so a line in the
+    /// (`EASL_LSP_RUST=/path/to/rust-analyzer`), read in the login shell, so a line in the
     /// shell profile sets it without putting the binary's directory on PATH.
-    public var overrideVariable: String { "CANVAS_LSP_" + language.uppercased() }
+    public var overrideVariable: String { "EASL_LSP_" + language.uppercased() }
 
-    /// Why the server can't run, for navigation panels: where Canvas looked, how to install it,
-    /// and how to point Canvas at a binary elsewhere.
+    /// Why the server can't run, for navigation panels: where Easl looked, how to install it,
+    /// and how to point Easl at a binary elsewhere.
     public var notFound: String {
         let places = ["on the login shell's PATH", "in " + (Self.toolDirectories + directories).joined(separator: ", ")] + locators.map { "with `\($0)`" }
         let looked = places.dropLast().joined(separator: ", ") + " and " + places.last!
-        return "\(command) not found (Canvas looked \(looked)). " + (installHint.map { "\($0). " } ?? "") + "Or set \(overrideVariable) to its path in your shell profile."
+        return "\(command) not found (Easl looked \(looked)). " + (installHint.map { "\($0). " } ?? "") + "Or set \(overrideVariable) to its path in your shell profile."
     }
 
     public static let defaults: [LanguageServerConfig] = [
@@ -61,7 +61,7 @@ public struct LanguageServerConfig: Sendable, Equatable {
         LanguageServerConfig(language: "swift", command: "sourcekit-lsp", languageIDs: ["swift": "swift"],
                              rootMarkers: ["Package.swift", "compile_commands.json", "buildServer.json"],
                              initializationOptions: .object(["backgroundIndexing": .bool(false)]),
-                             emptyResultHint: "Canvas doesn't index Swift projects itself; sourcekit-lsp answers from the index your own builds write (swift build).",
+                             emptyResultHint: "Easl doesn't index Swift projects itself; sourcekit-lsp answers from the index your own builds write (swift build).",
                              installHint: "It comes with Xcode or the Command Line Tools: xcode-select --install"),
         LanguageServerConfig(language: "python", command: "pyright-langserver", arguments: ["--stdio"], languageIDs: ["py": "python", "pyi": "python"],
                              rootMarkers: ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],
@@ -132,7 +132,7 @@ public final class LoginShell: @unchecked Sendable {
         }
     }
 
-    /// A language server's binary: the one its override variable names (`CANVAS_LSP_RUST`), else
+    /// A language server's binary: the one its override variable names (`EASL_LSP_RUST`), else
     /// `command` on the login PATH, else in the install directories (`toolDirectories`, then the
     /// language's own), else what its locators print (`rustup which rust-analyzer`). One login
     /// shell answers the variable, PATH, and locators together. Nil when none is executable.

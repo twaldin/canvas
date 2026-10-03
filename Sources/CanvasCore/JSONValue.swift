@@ -1,7 +1,7 @@
 import Foundation
 
 /// Schema-faithful JSON value. Object props stay as JSON so the Swift side never drifts
-/// from schema/canvas-api.json; typed accessors live next to the code that needs them.
+/// from schema/easl-api.json; typed accessors live next to the code that needs them.
 public enum JSONValue: Codable, Equatable, Sendable {
     case null
     case bool(Bool)

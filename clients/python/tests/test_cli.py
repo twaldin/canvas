@@ -1,4 +1,4 @@
-"""The `canvas` CLI (cli/canvas.ts, run with bun) against a fake app socket: what params it sends.
+"""The `easl` CLI (cli/easl.ts, run with bun) against a fake app socket: what params it sends.
 Run from clients/python: python3 -m unittest"""
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ import threading
 import unittest
 from pathlib import Path
 
-from tests.test_connection import CANVAS_ENV, FakeApp
+from tests.test_connection import EASL_ENV, FakeApp
 
-CLI = Path(__file__).resolve().parents[3] / "cli" / "canvas.ts"
+CLI = Path(__file__).resolve().parents[3] / "cli" / "easl.ts"
 CMUX_ENV = ("CMUX_SOCKET_PATH", "CMUX_SURFACE_ID", "CMUX_WORKSPACE_ID", "CMUX_SOCKET_PASSWORD")
 
 
@@ -26,12 +26,12 @@ class CliParamsTest(unittest.TestCase):
         temp = tempfile.TemporaryDirectory(dir="/tmp")
         self.addCleanup(temp.cleanup)
         self.dir = Path(temp.name)
-        self.app = FakeApp(str(self.dir / "canvas.sock"))
+        self.app = FakeApp(str(self.dir / "easl.sock"))
         self.addCleanup(self.app.stop)
 
     def run_cli(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-        env = {key: value for key, value in os.environ.items() if key not in CANVAS_ENV}
-        env["CANVAS_SOCKET"] = self.app.path
+        env = {key: value for key, value in os.environ.items() if key not in EASL_ENV}
+        env["EASL_SOCKET"] = self.app.path
         return subprocess.run(["bun", str(CLI), *args], input=stdin, capture_output=True, text=True, cwd=self.dir, env=env, timeout=30)
 
     def sent(self) -> dict:
@@ -144,7 +144,7 @@ class FakeCmux:
 
 @unittest.skipUnless(shutil.which("bun"), "the CLI runs on bun")
 class CliBrowserTest(unittest.TestCase):
-    """`canvas browser <verb>`: requests on the cmux socket (docs/contracts.md, cmux browser subset)."""
+    """`easl browser <verb>`: requests on the cmux socket (docs/contracts.md, cmux browser subset)."""
 
     def setUp(self) -> None:
         temp = tempfile.TemporaryDirectory(dir="/tmp")
@@ -157,7 +157,7 @@ class CliBrowserTest(unittest.TestCase):
         self.addCleanup(self.cmux.stop)
 
     def run_cli(self, *args: str, **env_overrides: str) -> subprocess.CompletedProcess[str]:
-        env = {key: value for key, value in os.environ.items() if key not in CANVAS_ENV + CMUX_ENV}
+        env = {key: value for key, value in os.environ.items() if key not in EASL_ENV + CMUX_ENV}
         env.update({"CMUX_SOCKET_PATH": self.cmux.path, "CMUX_SURFACE_ID": "obj_term", "TMPDIR": str(self.dir)})
         env.update(env_overrides)
         return subprocess.run(["bun", str(CLI), "browser", *args], capture_output=True, text=True, cwd=self.dir, env=env, timeout=30)
@@ -223,11 +223,11 @@ class CliBrowserTest(unittest.TestCase):
         self.assertEqual((self.dir / "shot.png").read_bytes(), png)
         self.assertEqual(self.cmux.requests, [("browser.screenshot", {"surface_id": "obj_page"})])
 
-        # Without --out, a new file under $TMPDIR/canvas-renders/ (the app deletes it after a day).
+        # Without --out, a new file under $TMPDIR/easl-renders/ (the app deletes it after a day).
         result = self.run_cli("screenshot", "obj_page")
         self.assertEqual(result.returncode, 0, result.stderr)
         path = Path(json.loads(result.stdout)["path"])
-        self.assertEqual(path.parent.resolve(), self.dir.resolve() / "canvas-renders")
+        self.assertEqual(path.parent.resolve(), self.dir.resolve() / "easl-renders")
         self.assertRegex(path.name, r"^screenshot-\d+-\d+\.png$")
         self.assertEqual(path.read_bytes(), png)
 

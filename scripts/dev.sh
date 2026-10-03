@@ -1,28 +1,28 @@
 #!/bin/sh
-# A development instance of Canvas for this checkout, isolated from the installed app and from
-# other agents' instances (own CANVAS_HOME: socket, boards, log). See docs/testing.md.
+# A development instance of Easl for this checkout, isolated from the installed app and from
+# other agents' instances (own EASL_HOME: socket, boards, log). See docs/testing.md.
 #
 #   scripts/dev.sh start [root]     build + bundle, launch without activating on the testing Space
 #                                   (no root: the tabs this home had open, else the checkout)
 #   scripts/dev.sh restart [root]   rebuild and relaunch, keeping terminal sessions (zmx) alive
 #   scripts/dev.sh stop             quit and kill this instance's zmx sessions
-#   scripts/dev.sh cli <args…>      run the canvas CLI against this instance
-#   scripts/dev.sh shot [file]      real pixels: WindowServer capture of the window (default .canvas-home/shot.png; yabai)
+#   scripts/dev.sh cli <args…>      run the easl CLI against this instance
+#   scripts/dev.sh shot [file]      real pixels: WindowServer capture of the window (default .easl-home/shot.png; yabai)
 #   scripts/dev.sh snapshot [file]  view.snapshot (in-process render, the agent-facing view) to a PNG
 #   scripts/dev.sh move [space]     move the window to a Space (default: the testing Space) and maximize it (yabai)
 #   scripts/dev.sh input <args…>    replay input (scripts/dev-input.swift) into this instance
 #   scripts/dev.sh sessions         list this instance's zmx sessions
 #
-# More instances of one checkout (parallel agents, user studies): CANVAS_DEV_HOME picks another
-# home (with its own browser profile, CANVAS_BROWSER_PROFILE=own), and CANVAS_DEV_APP launches a
+# More instances of one checkout (parallel agents, user studies): EASL_DEV_HOME picks another
+# home (with its own browser profile, EASL_BROWSER_PROFILE=own), and EASL_DEV_APP launches a
 # prebuilt bundle (a frozen copy) instead of rebuilding. Either way the instance runs from a copy
 # in its home that carries its environment (scripts/dev-bundle.sh), so a relaunch by macOS
 # (logging back in) can't start it on the user's default home.
 set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-home="${CANVAS_DEV_HOME:-$repo/.canvas-home}"
+home="${EASL_DEV_HOME:-$repo/.easl-home}"
 case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
-app="${CANVAS_DEV_APP:-$repo/.build/Canvas.app}"
+app="${EASL_DEV_APP:-$repo/.build/Easl.app}"
 # Window placement is optional and needs yabai (docs/testing.md, "Optional: a machine shared with
 # other agents"): YABAI, else ~/Applications/Yabai.app, else yabai on PATH.
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
@@ -31,13 +31,13 @@ need_yabai() {
   [ -x "$yabai" ] || { echo "scripts/dev.sh $1 needs yabai (https://github.com/koekeishiya/yabai): install it, or set YABAI to its path" >&2; exit 1; }
 }
 # The unviewed Space a launch's first window is parked on until it's placed.
-park="${CANVAS_DEV_PARK_SPACE:-7}"
-# The testing Space: CANVAS_DEV_SPACE, else the first Space of the BetterDisplay virtual screen
-# named CANVAS_DEV_DISPLAY (default "CanvasTest"; a headless monitor, so the window renders while
+park="${EASL_DEV_PARK_SPACE:-7}"
+# The testing Space: EASL_DEV_SPACE, else the first Space of the BetterDisplay virtual screen
+# named EASL_DEV_DISPLAY (default "CanvasTest"; a headless monitor, so the window renders while
 # nobody looks at it), else Space 8. Parallel agents each get their own screen (CanvasTest2, …).
 test_space() {
-  if [ -n "${CANVAS_DEV_SPACE:-}" ]; then echo "$CANVAS_DEV_SPACE"; return; fi
-  id="$(betterdisplaycli get --name="${CANVAS_DEV_DISPLAY:-CanvasTest}" --identifiers 2>/dev/null | sed -n 's/.*"displayID" : "\([0-9]*\)".*/\1/p' | head -n 1)"
+  if [ -n "${EASL_DEV_SPACE:-}" ]; then echo "$EASL_DEV_SPACE"; return; fi
+  id="$(betterdisplaycli get --name="${EASL_DEV_DISPLAY:-CanvasTest}" --identifiers 2>/dev/null | sed -n 's/.*"displayID" : "\([0-9]*\)".*/\1/p' | head -n 1)"
   space="$([ -n "$id" ] && "$yabai" -m query --displays 2>/dev/null | python3 -c "import json,sys; print(next((d['spaces'][0] for d in json.load(sys.stdin) if d['id']==$id), ''))" 2>/dev/null)"
   echo "${space:-8}"
 }
@@ -46,7 +46,7 @@ window_id() {
   pid="$(running_pid)" || { echo "no running dev instance" >&2; exit 1; }
   "$yabai" -m query --windows | python3 -c "import json,sys; print(next((w['id'] for w in json.load(sys.stdin) if w['pid']==$pid), ''))"
 }
-export CANVAS_SOCKET="$home/canvas.sock"
+export EASL_SOCKET="$home/easl.sock"
 # zmx keys its socket directory off TMPDIR; match the GUI app's.
 zmx_env() { TMPDIR="$(getconf DARWIN_USER_TEMP_DIR)" "$@"; }
 
@@ -62,7 +62,7 @@ running_pid() {
   [ -f "$home/pid" ] || return 1
   pid="$(cat "$home/pid")"
   kill -0 "$pid" 2>/dev/null || return 1
-  lsof -t "$CANVAS_SOCKET" 2>/dev/null | grep -qx "$pid" && echo "$pid"
+  lsof -t "$EASL_SOCKET" 2>/dev/null | grep -qx "$pid" && echo "$pid"
 }
 
 quit() {
@@ -73,7 +73,7 @@ quit() {
   # A wedged instance must not outlive its pid file: restart would start a second one on the
   # same sockets and boards.
   if kill -0 "$pid" 2>/dev/null; then
-    echo "Canvas $pid did not quit; killing it" >&2
+    echo "Easl $pid did not quit; killing it" >&2
     kill -9 "$pid"
     while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
   fi
@@ -97,38 +97,38 @@ saved_root() {
 launch() {
   root="${1:-$(saved_root)}"
   root="${root:-$repo}"
-  [ -n "${CANVAS_DEV_APP:-}" ] || "$repo/scripts/bundle.sh" >/dev/null
+  [ -n "${EASL_DEV_APP:-}" ] || "$repo/scripts/bundle.sh" >/dev/null
   mkdir -p "$home"
-  rm -f "$CANVAS_SOCKET"
-  # The instance's environment, in its bundle for any launch (dev-bundle.sh adds CANVAS_HOME)
+  rm -f "$EASL_SOCKET"
+  # The instance's environment, in its bundle for any launch (dev-bundle.sh adds EASL_HOME)
   # and on this one. XDG_CONFIG_HOME passes through so a scratch Ghostty config can be tried
   # (docs/testing.md).
-  set -- CANVAS_NO_ACTIVATE=1 CANVAS_DEV_INPUT=1 CANVAS_DEV_PERF=1 CANVAS_ROOT="$root"
-  [ -z "${CANVAS_DEV_HOME:-}" ] || set -- "$@" CANVAS_BROWSER_PROFILE=own
+  set -- EASL_NO_ACTIVATE=1 EASL_DEV_INPUT=1 EASL_DEV_PERF=1 EASL_ROOT="$root"
+  [ -z "${EASL_DEV_HOME:-}" ] || set -- "$@" EASL_BROWSER_PROFILE=own
   [ -z "${XDG_CONFIG_HOME:-}" ] || set -- "$@" XDG_CONFIG_HOME="$XDG_CONFIG_HOME"
   # The checkout's own home keeps the release bundle id, so a developer's everyday instance keeps
   # its browser logins and window frames; other homes get their own (dev-bundle.sh).
-  bundle="$("$repo/scripts/dev-bundle.sh" $([ -n "${CANVAS_DEV_HOME:-}" ] || echo --release-id) "$app" "$home" "$@")"
+  bundle="$("$repo/scripts/dev-bundle.sh" $([ -n "${EASL_DEV_HOME:-}" ] || echo --release-id) "$app" "$home" "$@")"
   n=$#
   while [ "$n" -gt 0 ]; do set -- "$@" --env "$1"; shift; n=$((n - 1)); done
   # yabai can't place a new window on another display's Space (it lands on the Space being
   # viewed), so a one-shot rule parks this launch's first window on an unviewed Space of the
   # built-in display, and it moves to the testing Space once it exists. One-shot and removed
-  # afterwards: a standing rule on app=Canvas also grabbed every later window (tabs, other
+  # afterwards: a standing rule on app=Easl also grabbed every later window (tabs, other
   # instances, the user's own boards) and hid them on the parking Space.
   rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
   if [ -x "$yabai" ]; then
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-    "$yabai" -m rule --add --one-shot label="$rule" app="^Canvas$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
+    "$yabai" -m rule --add --one-shot label="$rule" app="^Easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
-  open -g -n --stdout "$home/app.log" --stderr "$home/app.log" --env CANVAS_HOME="$home" "$@" "$bundle"
+  open -g -n --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle"
   i=0
-  while [ ! -S "$CANVAS_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-  [ -S "$CANVAS_SOCKET" ] || { echo "Canvas did not open its socket; see $home/app.log" >&2; exit 1; }
+  while [ ! -S "$EASL_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+  [ -S "$EASL_SOCKET" ] || { echo "Easl did not open its socket; see $home/app.log" >&2; exit 1; }
   # The socket's owner, not the newest process of this bundle: parallel launches of one bundle race.
-  lsof -t "$CANVAS_SOCKET" | head -n 1 > "$home/pid"
+  lsof -t "$EASL_SOCKET" | head -n 1 > "$home/pid"
   if [ ! -x "$yabai" ]; then
-    echo "Canvas pid $(cat "$home/pid"), CANVAS_SOCKET=$CANVAS_SOCKET"
+    echo "Easl pid $(cat "$home/pid"), EASL_SOCKET=$EASL_SOCKET"
     return
   fi
   target="$(test_space)"
@@ -139,7 +139,7 @@ launch() {
     [ -n "$wid" ] && "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
   fi
   "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-  echo "Canvas pid $(cat "$home/pid") on Space $target, CANVAS_SOCKET=$CANVAS_SOCKET"
+  echo "Easl pid $(cat "$home/pid") on Space $target, EASL_SOCKET=$EASL_SOCKET"
 }
 
 case "${1:-}" in
@@ -149,12 +149,12 @@ case "${1:-}" in
     quit
     for name in $(sessions); do zmx_env zmx kill "$name" --force >/dev/null 2>&1 || true; done
     ;;
-  cli) shift; exec bun "$repo/cli/canvas.ts" "$@" ;;
+  cli) shift; exec bun "$repo/cli/easl.ts" "$@" ;;
   shot)
     need_yabai shot
     out="${2:-$home/shot.png}"
     wid="$(window_id)"
-    [ -n "$wid" ] || { echo "no Canvas window" >&2; exit 1; }
+    [ -n "$wid" ] || { echo "no Easl window" >&2; exit 1; }
     # Only a displayed Space is composited; anything else would be a stale frame.
     visible="$("$yabai" -m query --windows --window "$wid" | python3 -c "import json,sys; print(json.load(sys.stdin)['is-visible'])")"
     [ "$visible" = "True" ] || { echo "window $wid is not on a displayed Space; its pixels would be stale (scripts/dev.sh move)" >&2; exit 1; }
@@ -163,13 +163,13 @@ case "${1:-}" in
   move)
     need_yabai move
     wid="$(window_id)"
-    [ -n "$wid" ] || { echo "no Canvas window" >&2; exit 1; }
+    [ -n "$wid" ] || { echo "no Easl window" >&2; exit 1; }
     "$yabai" -m window "$wid" --space "${2:-$(test_space)}"
     "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
     ;;
   snapshot)
     out="${2:-$home/snapshot.png}"
-    bun "$repo/cli/canvas.ts" view.snapshot --out "$out" >/dev/null && echo "$out"
+    bun "$repo/cli/easl.ts" view.snapshot --out "$out" >/dev/null && echo "$out"
     ;;
   input)
     shift

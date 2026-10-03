@@ -1,5 +1,5 @@
 {
-  "name": "canvas",
+  "name": "easl",
   "version": "0.4.0",
-  "description": "Canvas integration: lifecycle, session resume, follow mode, selection-tray mentions, and the canvas skill. Loaded by Canvas's claude wrapper inside Canvas terminal tiles only."
+  "description": "Easl integration: lifecycle, session resume, follow mode, selection-tray mentions, and the easl skill. Loaded by Easl's claude wrapper inside Easl terminal tiles only."
 }

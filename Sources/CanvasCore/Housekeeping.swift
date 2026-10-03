@@ -1,8 +1,8 @@
 import Foundation
 
-/// Which of Canvas's own leftover files can go (docs/contracts.md "On-disk locations"). The app
+/// Which of Easl's own leftover files can go (docs/contracts.md "On-disk locations"). The app
 /// deletes what these choose at launch, off the main thread; ending a tile's session deletes its
-/// zmx log at once (`TerminalTile.killSession`). Only names Canvas itself writes are ever chosen:
+/// zmx log at once (`TerminalTile.killSession`). Only names Easl itself writes are ever chosen:
 /// a file of any other name in the same directory is never touched.
 public enum Housekeeping {
     /// A directory entry: its name and when it was last written.
@@ -16,7 +16,7 @@ public enum Housekeeping {
         }
     }
 
-    /// How long a Canvas session's log is left alone after its last write: a session that starts
+    /// How long an Easl session's log is left alone after its last write: a session that starts
     /// now may have created its log before `zmx list` shows it.
     public static let logSettle: TimeInterval = 5 * 60
     /// libghostty writes a config file per configuration and reads it once, while loading it
@@ -25,7 +25,7 @@ public enum Housekeeping {
     /// Renders and snapshots written without `out` (`ApiRouter.scratchImages`) are kept this long.
     public static let renderAge: TimeInterval = 24 * 60 * 60
 
-    /// zmx's log of a Canvas tile's session (`canvas-obj_<id>.log`, `<session>.log`), in
+    /// zmx's log of an Easl tile's session (`canvas-obj_<id>.log`, `<session>.log`), in
     /// `$XDG_STATE_HOME/zmx/logs` (default `~/.local/state/zmx/logs`).
     public static func sessionLog(session: String) -> String { session + ".log" }
 
@@ -38,7 +38,7 @@ public enum Housekeeping {
         })
     }
 
-    /// Logs of Canvas sessions (`canvas-obj_…`) that aren't in `live` (every running session's
+    /// Logs of Easl sessions (`canvas-obj_…`) that aren't in `live` (every running session's
     /// name, any instance's) and haven't been written for `logSettle`.
     public static func deadSessionLogs(_ files: [File], live: Set<String>, now: Date) -> [String] {
         files.filter { file in
@@ -49,7 +49,7 @@ public enum Housekeeping {
     }
 
     /// libghostty's generated configs (`ghostty-config-<UUID>.conf` in its managed directory,
-    /// `$TMPDIR/net.waldin.canvas/`) older than `ghosttyConfigSettle`: every instance's have been
+    /// `$TMPDIR/net.waldin.easl/`) older than `ghosttyConfigSettle`: every instance's have been
     /// read, and only the one libghostty replaces is ever deleted by it.
     public static func staleGhosttyConfigs(_ files: [File], now: Date) -> [String] {
         files.filter { file in
@@ -59,8 +59,8 @@ public enum Housekeeping {
         }.map(\.name)
     }
 
-    /// Renders and snapshots Canvas named itself (`render-<ms>-<n>.png`, `snapshot-…jpg`), and
-    /// `canvas browser screenshot`'s (`screenshot-<ms>-<pid>.png`), older than `renderAge`; a file
+    /// Renders and snapshots Easl named itself (`render-<ms>-<n>.png`, `snapshot-…jpg`), and
+    /// `easl browser screenshot`'s (`screenshot-<ms>-<pid>.png`), older than `renderAge`; a file
     /// an agent wrote there under another name stays.
     public static func staleRenders(_ files: [File], now: Date) -> [String] {
         files.filter { file in
@@ -73,7 +73,7 @@ public enum Housekeeping {
         }.map(\.name)
     }
 
-    /// A Canvas tile's session name: `canvas-` and an object id (`obj_` and letters or digits).
+    /// An Easl tile's session name: `canvas-` and an object id (`obj_` and letters or digits).
     static func isCanvasSession(_ name: String) -> Bool {
         guard name.hasPrefix("canvas-obj_") else { return false }
         let id = name.dropFirst(11)

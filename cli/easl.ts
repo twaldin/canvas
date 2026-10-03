@@ -1,18 +1,18 @@
 #!/usr/bin/env bun
-// canvas CLI: a thin, schema-driven client for agents without a persistent REPL.
-//   canvas methods                         every method with its description
-//   canvas methods <name>                  one method's params, result, and referenced types; or one type (CodeProps)
-//   canvas <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--nested.key value] [--flag]
-//   canvas <namespace> <method> ...
-//   canvas get <id> [--as raw|graph]       object.get
-//   canvas render <id|id,id|x,y,w,h> [--out f.png] [--scale 2] [--full] ...   view.render
-//   canvas browser <verb> [<tile>] [--key value] ...   browser tiles over the cmux subset (below)
+// easl CLI: a thin, schema-driven client for agents without a persistent REPL.
+//   easl methods                         every method with its description
+//   easl methods <name>                  one method's params, result, and referenced types; or one type (CodeProps)
+//   easl <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--nested.key value] [--flag]
+//   easl <namespace> <method> ...
+//   easl get <id> [--as raw|graph]       object.get
+//   easl render <id|id,id|x,y,w,h> [--out f.png] [--scale 2] [--full] ...   view.render
+//   easl browser <verb> [<tile>] [--key value] ...   browser tiles over the cmux subset (below)
 // view.render and view.snapshot write the image to --out (relative to the cwd; format from the
-// extension) or, without it, to a new file under $TMPDIR/canvas-renders/, and print the result
+// extension) or, without it, to a new file under $TMPDIR/easl-renders/, and print the result
 // metadata with its `path`; so does `browser screenshot`. object.create/update print prop values
 // over 1 KB elided (`--full` prints them whole); what the app returns is unchanged.
-// Connection: CANVAS_SOCKET, CANVAS_TILE_ID, CANVAS_BOARD_ID (every Canvas terminal tile sets them);
-// `browser`: CMUX_SOCKET_PATH (else cmux.sock beside the Canvas socket), CMUX_SURFACE_ID,
+// Connection: EASL_SOCKET, EASL_TILE_ID, EASL_BOARD_ID (every Easl terminal tile sets them);
+// `browser`: CMUX_SOCKET_PATH (else cmux.sock beside the Easl socket), CMUX_SURFACE_ID,
 // CMUX_SOCKET_PASSWORD.
 // Errors print `code: message` to stderr and exit 1.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,7 +20,7 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import catalog from "../schema/canvas-api.json";
+import catalog from "../schema/easl-api.json";
 import { CanvasClient, CanvasError, DEFAULT_SOCKET, ENV_DEFAULTS } from "../clients/ts/src/index";
 
 type Schema = {
@@ -42,33 +42,33 @@ type MethodSpec = { description: string; params: Schema; result: Schema };
 const methods = catalog.methods as Record<string, MethodSpec>;
 const definitions = catalog.definitions as Record<string, Schema>;
 
-/** The shipped skill: how to use Canvas well, beside this file in the checkout and the app bundle. */
-const SKILL = resolve(import.meta.dir, "../skills/canvas/SKILL.md");
+/** The shipped skill: how to use Easl well, beside this file in the checkout and the app bundle. */
+const SKILL = resolve(import.meta.dir, "../skills/easl/SKILL.md");
 /** Printed prop values longer than this (JSON bytes) are elided unless `--full`. */
 const ELIDE_BYTES = 1024;
 
 function usage(help = false): never {
   const lines = [
-    "usage: canvas methods [<name>]",
-    "       canvas <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--flag]",
-    "       canvas get <id> [--as graph]",
-    "       canvas render <id|id,id|x,y,w,h> [--out file.png] [--scale 2] [--full]",
-    "       canvas browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
+    "usage: easl methods [<name>]",
+    "       easl <namespace>.<method> [--json '{...}' | --json @file | --json @-] [--key value] [--flag]",
+    "       easl get <id> [--as graph]",
+    "       easl render <id|id,id|x,y,w,h> [--out file.png] [--scale 2] [--full]",
+    "       easl browser <verb> [<tile>] [--key value] [--json '{...}']   (open [url] | list | close | navigate, snapshot, click, …)",
   ];
   if (help) {
     lines.push(
       "",
-      "`canvas methods` lists every method; `canvas methods <name>` shows one method's params and result,",
+      "`easl methods` lists every method; `easl methods <name>` shows one method's params and result,",
       "or one type's fields: object props per type are TerminalProps, CodeProps, NoteProps, HtmlProps,",
-      "ShapeProps, ArrowProps, GroupProps, BrowserProps (e.g. `canvas methods CodeProps`).",
+      "ShapeProps, ArrowProps, GroupProps, BrowserProps (e.g. `easl methods CodeProps`).",
       "--json @file reads the params from a file (@- or - reads stdin); --key value pairs combine with it, later ones win.",
       "An array param takes one item, a JSON array, comma-separated strings, or a repeated flag (--until working,blocked).",
       "object.create/update print prop values over 1 KB elided; --full prints them whole.",
-      "`canvas browser` drives browser tiles over the cmux subset (docs/contracts.md): `open [url]` opens one beside",
+      "`easl browser` drives browser tiles over the cmux subset (docs/contracts.md): `open [url]` opens one beside",
       "this terminal, `list` lists this board's, `close <tile>` closes one, any other verb sends browser.<verb> to <tile>",
-      "(e.g. `canvas browser snapshot obj_… --interactive`, `canvas browser click obj_… --selector @e2`).",
+      "(e.g. `easl browser snapshot obj_… --interactive`, `easl browser click obj_… --selector @e2`).",
       "",
-      `How to use Canvas well (read before building on the board): ${SKILL}`,
+      `How to use Easl well (read before building on the board): ${SKILL}`,
     );
   }
   (help ? console.log : console.error)(lines.join("\n"));
@@ -241,7 +241,7 @@ function describe(name: string): void {
   const spec = methods[name];
   const def = definitions[name];
   if (!spec && !def) {
-    console.error(`unknown method or type: ${name} (run \`canvas methods\`)`);
+    console.error(`unknown method or type: ${name} (run \`easl methods\`)`);
     process.exit(2);
   }
   const refs = new Set<string>();
@@ -266,8 +266,8 @@ if (argv[0] === "methods") {
   if (argv[1]) describe(argv[1]);
   else {
     for (const [name, spec] of Object.entries(methods)) console.log(`${name.padEnd(22)} ${spec.description}`);
-    console.log("\n`canvas methods <name>` shows a method's params and result, or a type's fields (e.g. CodeProps).");
-    console.log(`How to use Canvas well: ${SKILL}`);
+    console.log("\n`easl methods <name>` shows a method's params and result, or a type's fields (e.g. CodeProps).");
+    console.log(`How to use Easl well: ${SKILL}`);
   }
   process.exit(0);
 }
@@ -281,7 +281,7 @@ const BROWSER_STRINGS: Schema = {
 const BROWSER_METHODS: Record<string, string> = { open: "browser.open_split", list: "surface.list", close: "surface.close" };
 
 /**
- * `canvas browser <verb> [<tile>] [--key value]`: one request on the cmux browser subset, for agents
+ * `easl browser <verb> [<tile>] [--key value]`: one request on the cmux browser subset, for agents
  * without omp's browser tool. `open [url]` → browser.open_split beside this terminal (CMUX_SURFACE_ID),
  * `list` → surface.list of this board, `close <tile>` → surface.close, any other verb → browser.<verb>
  * on <tile>. `screenshot` writes the PNG like `render` and prints its `path` instead of the base64.
@@ -294,7 +294,7 @@ async function browser(args: string[]): Promise<void> {
   const out = params.out;
   delete params.out;
   if (out !== undefined && (verb !== "screenshot" || typeof out !== "string")) {
-    throw new CanvasError("invalid_params", "--out <file.png> is for `canvas browser screenshot`");
+    throw new CanvasError("invalid_params", "--out <file.png> is for `easl browser screenshot`");
   }
   const method = Object.hasOwn(BROWSER_METHODS, verb) ? BROWSER_METHODS[verb] : `browser.${verb}`;
   if (verb === "open") {
@@ -307,7 +307,7 @@ async function browser(args: string[]): Promise<void> {
     params.surface_id = process.env.CMUX_SURFACE_ID;
   }
 
-  const path = process.env.CMUX_SOCKET_PATH || join(dirname(process.env.CANVAS_SOCKET || DEFAULT_SOCKET), "cmux.sock");
+  const path = process.env.CMUX_SOCKET_PATH || join(dirname(process.env.EASL_SOCKET || DEFAULT_SOCKET), "cmux.sock");
   const socket = connect(path);
   const connected = Promise.withResolvers<void>();
   socket.once("connect", () => connected.resolve());
@@ -316,11 +316,11 @@ async function browser(args: string[]): Promise<void> {
     await connected.promise;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    // As the Canvas client does: a socket that exists but refuses this process is a sandbox (Codex's).
+    // As the Easl client does: a socket that exists but refuses this process is a sandbox (Codex's).
     if (code === "EPERM" || code === "EACCES" || (code === "ENOENT" && existsSync(path))) {
       throw new CanvasError("unavailable", `cmux socket ${path} exists but connecting to it failed (${code}): a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it`);
     }
-    throw new CanvasError("unavailable", `cmux socket ${path}: ${(error as Error).message} (is Canvas running? its terminal tiles set CMUX_SOCKET_PATH)`);
+    throw new CanvasError("unavailable", `cmux socket ${path}: ${(error as Error).message} (is Easl running? its terminal tiles set CMUX_SOCKET_PATH)`);
   }
   socket.on("error", () => socket.destroy());
   const lines = createInterface({ input: socket, crlfDelay: Infinity });
@@ -341,7 +341,7 @@ async function browser(args: string[]): Promise<void> {
     if (!response.ok) throw new CanvasError(response.error?.code ?? "internal_error", response.error?.message ?? "no error message");
     const result = response.result ?? {};
     if (typeof result.png_base64 === "string") {
-      const file = out !== undefined ? resolve(out as string) : join(tmpdir(), "canvas-renders", `screenshot-${Date.now()}-${process.pid}.png`);
+      const file = out !== undefined ? resolve(out as string) : join(tmpdir(), "easl-renders", `screenshot-${Date.now()}-${process.pid}.png`);
       if (out === undefined) mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, Buffer.from(result.png_base64, "base64"));
       delete result.png_base64;
@@ -388,7 +388,7 @@ if (argv[0] === "get") {
 
 const spec = methods[method];
 if (!spec) {
-  console.error(`unknown method: ${method} (run \`canvas methods\`)`);
+  console.error(`unknown method: ${method} (run \`easl methods\`)`);
   process.exit(2);
 }
 
@@ -397,7 +397,7 @@ try {
   const params = parseArgs(rest, spec.params);
   if (target !== undefined) params.target = target;
   if (method === "object.get" && params.as === "image") {
-    throw new CanvasError("invalid_params", "`get --as image` was removed; use `canvas render <id>` (view.render)");
+    throw new CanvasError("invalid_params", "`get --as image` was removed; use `easl render <id>` (view.render)");
   }
   // `--full` is the CLI's own flag for methods that don't take `full` (view.render does).
   const elide = (method === "object.create" || method === "object.update") && params.full !== true;

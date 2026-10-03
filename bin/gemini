@@ -1,7 +1,7 @@
 #!/bin/sh
-# Canvas's gemini wrapper: in a Canvas terminal tile, runs the real Gemini CLI with Canvas's hooks
+# Easl's gemini wrapper: in an Easl terminal tile, runs the real Gemini CLI with Easl's hooks
 # (extensions/gemini/settings.ts → extensions/agent-hooks/hook.ts) in a system settings layer for
-# this session only. Anywhere else, and with CANVAS_AGENT_HOOKS=0, it is the real gemini, untouched.
+# this session only. Anywhere else, and with EASL_AGENT_HOOKS=0, it is the real gemini, untouched.
 here="$(cd "$(dirname "$0")/.." && pwd)"
 . "$here/extensions/agent-hooks/wrap.sh"
 real=$(canvas_agent_real gemini) || exit 127
@@ -9,7 +9,7 @@ canvas_env_restore GEMINI_CLI_SYSTEM_SETTINGS_PATH
 canvas_env_restore GEMINI_CLI_SYSTEM_DEFAULTS_PATH
 canvas_integrate || exec "$real" "$@"
 settings=$(bun "$here/extensions/gemini/settings.ts" "${GEMINI_CLI_SYSTEM_SETTINGS_PATH-}" "$real" 2>/dev/null) || exec "$real" "$@"
-export CANVAS_AGENT=gemini
+export EASL_AGENT=gemini
 # Gemini looks for system defaults beside the system settings file: keep the user's.
 system="${GEMINI_CLI_SYSTEM_SETTINGS_PATH:-/Library/Application Support/GeminiCli/settings.json}"
 canvas_env_set GEMINI_CLI_SYSTEM_DEFAULTS_PATH "${GEMINI_CLI_SYSTEM_DEFAULTS_PATH:-$(dirname "$system")/system-defaults.json}"

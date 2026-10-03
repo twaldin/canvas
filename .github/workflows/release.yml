@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag like v0.2.0 to build Canvas.app and attach Canvas-0.2.0.zip to a GitHub release, with
+# Push a tag like v0.5.0 to build Easl.app and attach Easl-0.5.0.zip to a GitHub release, with
 # libintl's source (gettext-0.24.tar.gz) and THIRD_PARTY_NOTICES.md (docs/releasing.md).
 # With the signing secrets below the zip holds a Developer ID-signed, notarized and stapled app
 # (scripts/notarize.sh); without them, an ad-hoc signed one, and the signed path runs as a dry run
@@ -9,16 +9,16 @@ name: Release
 # zip from VERSION without publishing anything: it becomes the run's artifact.
 #
 # Secrets (Settings › Secrets and variables › Actions):
-#   CANVAS_CERT_P12            base64 of the Developer ID Application certificate + key (.p12)
-#   CANVAS_CERT_PASSWORD       the .p12's export password
+#   EASL_CERT_P12            base64 of the Developer ID Application certificate + key (.p12)
+#   EASL_CERT_PASSWORD       the .p12's export password
 # and notary credentials, an App Store Connect API key:
-#   CANVAS_NOTARY_KEY          base64 of the key (AuthKey_<id>.p8)
-#   CANVAS_NOTARY_KEY_ID       that key's id
-#   CANVAS_NOTARY_ISSUER       the issuer id shown above the keys in App Store Connect
+#   EASL_NOTARY_KEY          base64 of the key (AuthKey_<id>.p8)
+#   EASL_NOTARY_KEY_ID       that key's id
+#   EASL_NOTARY_ISSUER       the issuer id shown above the keys in App Store Connect
 # or an app-specific password:
-#   CANVAS_NOTARY_APPLE_ID     the Apple ID's email
-#   CANVAS_NOTARY_PASSWORD     an app-specific password for it
-#   CANVAS_NOTARY_TEAM_ID      the team id
+#   EASL_NOTARY_APPLE_ID     the Apple ID's email
+#   EASL_NOTARY_PASSWORD     an app-specific password for it
+#   EASL_NOTARY_TEAM_ID      the team id
 on:
   push:
     tags: ["v*"]
@@ -31,7 +31,7 @@ jobs:
   release:
     runs-on: macos-26
     env:
-      SIGNED: ${{ secrets.CANVAS_CERT_P12 != '' && (secrets.CANVAS_NOTARY_KEY != '' || secrets.CANVAS_NOTARY_PASSWORD != '') }}
+      SIGNED: ${{ secrets.EASL_CERT_P12 != '' && (secrets.EASL_NOTARY_KEY != '' || secrets.EASL_NOTARY_PASSWORD != '') }}
       PUBLISH: ${{ github.event_name == 'push' }}
     steps:
       - uses: actions/checkout@v5
@@ -43,12 +43,12 @@ jobs:
             echo "tag $GITHUB_REF_NAME doesn't match VERSION $version" >&2
             exit 1
           fi
-          echo "CANVAS_VERSION=$version" >> "$GITHUB_ENV"
-          echo "CANVAS_BUILD=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "ZIP=Canvas-$version.zip" >> "$GITHUB_ENV"
+          echo "EASL_VERSION=$version" >> "$GITHUB_ENV"
+          echo "EASL_BUILD=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "ZIP=Easl-$version.zip" >> "$GITHUB_ENV"
       - name: Fetch libintl's source
         if: env.PUBLISH == 'true'
-        # Canvas statically links GNU libintl (LGPL-2.1) inside libghostty, so every release carries
+        # Easl statically links GNU libintl (LGPL-2.1) inside libghostty, so every release carries
         # its source next to the zip (THIRD_PARTY_NOTICES.md, "GNU libintl"). GNU's copy first, then
         # the identical one Ghostty builds from.
         env:
@@ -68,36 +68,36 @@ jobs:
       - name: Import the Developer ID certificate
         if: env.SIGNED == 'true'
         env:
-          CANVAS_CERT_P12: ${{ secrets.CANVAS_CERT_P12 }}
-          CANVAS_CERT_PASSWORD: ${{ secrets.CANVAS_CERT_PASSWORD }}
+          EASL_CERT_P12: ${{ secrets.EASL_CERT_P12 }}
+          EASL_CERT_PASSWORD: ${{ secrets.EASL_CERT_PASSWORD }}
         run: |
           keychain="$RUNNER_TEMP/signing.keychain-db"
           password="$(uuidgen)"
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$password" "$keychain"
-          printf %s "$CANVAS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CANVAS_CERT_PASSWORD" -T /usr/bin/codesign
+          printf %s "$EASL_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$EASL_CERT_PASSWORD" -T /usr/bin/codesign
           rm "$RUNNER_TEMP/cert.p12"
           security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" >/dev/null
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -n 1)"
-          [ -n "$identity" ] || { echo "no Developer ID Application identity in CANVAS_CERT_P12" >&2; exit 1; }
-          echo "CANVAS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          [ -n "$identity" ] || { echo "no Developer ID Application identity in EASL_CERT_P12" >&2; exit 1; }
+          echo "EASL_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
       - name: Build, sign, notarize and zip
         if: env.SIGNED == 'true'
         env:
-          CANVAS_NOTARY_KEY_BASE64: ${{ secrets.CANVAS_NOTARY_KEY }}
-          CANVAS_NOTARY_KEY_ID: ${{ secrets.CANVAS_NOTARY_KEY_ID }}
-          CANVAS_NOTARY_ISSUER: ${{ secrets.CANVAS_NOTARY_ISSUER }}
-          CANVAS_NOTARY_APPLE_ID: ${{ secrets.CANVAS_NOTARY_APPLE_ID }}
-          CANVAS_NOTARY_PASSWORD: ${{ secrets.CANVAS_NOTARY_PASSWORD }}
-          CANVAS_NOTARY_TEAM_ID: ${{ secrets.CANVAS_NOTARY_TEAM_ID }}
+          EASL_NOTARY_KEY_BASE64: ${{ secrets.EASL_NOTARY_KEY }}
+          EASL_NOTARY_KEY_ID: ${{ secrets.EASL_NOTARY_KEY_ID }}
+          EASL_NOTARY_ISSUER: ${{ secrets.EASL_NOTARY_ISSUER }}
+          EASL_NOTARY_APPLE_ID: ${{ secrets.EASL_NOTARY_APPLE_ID }}
+          EASL_NOTARY_PASSWORD: ${{ secrets.EASL_NOTARY_PASSWORD }}
+          EASL_NOTARY_TEAM_ID: ${{ secrets.EASL_NOTARY_TEAM_ID }}
         run: |
-          if [ -n "$CANVAS_NOTARY_KEY_BASE64" ]; then
-            export CANVAS_NOTARY_KEY="$RUNNER_TEMP/notary.p8"
-            trap 'rm -f "$CANVAS_NOTARY_KEY"' EXIT
-            printf %s "$CANVAS_NOTARY_KEY_BASE64" | base64 --decode > "$CANVAS_NOTARY_KEY"
+          if [ -n "$EASL_NOTARY_KEY_BASE64" ]; then
+            export EASL_NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+            trap 'rm -f "$EASL_NOTARY_KEY"' EXIT
+            printf %s "$EASL_NOTARY_KEY_BASE64" | base64 --decode > "$EASL_NOTARY_KEY"
           fi
           scripts/notarize.sh "$ZIP"
       - name: Build and zip (ad hoc)
@@ -105,10 +105,10 @@ jobs:
         run: |
           scripts/bundle.sh release
           # A terminal tile imports the SDK from the bundle; that must leave the signature intact.
-          PYTHONPATH=.build/Canvas.app/Contents/Resources/clients/python python3 -c 'import canvas_sdk'
-          codesign --verify --deep --strict .build/Canvas.app
+          PYTHONPATH=.build/Easl.app/Contents/Resources/clients/python python3 -c 'import easl_sdk'
+          codesign --verify --deep --strict .build/Easl.app
           # As scripts/notarize.sh zips: no AppleDouble `._*` entries.
-          ditto -c -k --norsrc --noextattr --noacl --keepParent .build/Canvas.app "$ZIP"
+          ditto -c -k --norsrc --noextattr --noacl --keepParent .build/Easl.app "$ZIP"
       - name: Dry run of the notarized build
         if: env.SIGNED != 'true'
         run: scripts/notarize.sh --dry-run "$RUNNER_TEMP/dry-run.zip"
@@ -131,8 +131,8 @@ jobs:
             exit 0
           fi
           # The version's CHANGELOG.md section, above GitHub's list of merged changes.
-          scripts/release-notes.sh "$CANVAS_VERSION" > "$RUNNER_TEMP/notes.md"
-          gh release create "$GITHUB_REF_NAME" "$ZIP" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "Canvas $CANVAS_VERSION" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
+          scripts/release-notes.sh "$EASL_VERSION" > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" "$ZIP" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "Easl $EASL_VERSION" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
       - name: Remove the signing keychain
         if: always() && env.SIGNED == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

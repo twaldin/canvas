@@ -93,7 +93,7 @@ extension Board {
     /// An agent reporting by notification ends with its program: at the prompt the tile is a
     /// plain shell again (`releaseAgent`). A program it runs meanwhile (an editor) doesn't end it.
     /// So does an integrated agent still said to be `working` or `blocked` (killed, or exited
-    /// while Canvas was away, without the `agent.release` its integration sends at exit): the
+    /// while Easl was away, without the `agent.release` its integration sends at exit): the
     /// shell holds the terminal, so nothing there is in a turn.
     public func terminalProgram(_ tile: ObjectID, is program: String?) {
         guard program == nil, let terminal = objects[tile] else { return }

@@ -1,28 +1,31 @@
 import Foundation
 
-/// Brings an install of this app under an earlier name here, once: Chalkwork (0.3.0–0.3.3) or
-/// Canvas (through 0.2.1). It moves the support directory (boards, including `pre-repo-migration/`
-/// backups and page snapshots, open tabs, Get Started, spooled agent reports), `~/.<slug>`
-/// (compositions), the browser profile (cookies, logins, site data) and the user defaults (export
-/// folder, lasso setting, window frames). The rules (the upgrade notes in CHANGELOG.md; the
-/// markers and the backup in docs/contracts.md, "On-disk locations"):
+/// Brings an install of this app under an earlier name here, once: Canvas (0.4, and through 0.2.1:
+/// the same locations) or Chalkwork (0.3.0–0.3.3). It moves the support directory (boards,
+/// including `pre-repo-migration/` backups and page snapshots, open tabs, Get Started, spooled
+/// agent reports), `~/.<slug>` (compositions), the browser profile (cookies, logins, site data)
+/// and the user defaults (export folder, lasso setting, window frames). The rules (the upgrade
+/// notes in CHANGELOG.md; the markers and the backup in docs/contracts.md, "On-disk locations"):
 ///
-/// - **One source, the newest.** The first earlier name, newest first, with a support directory,
-///   a `~/.<slug>` or settings: Chalkwork before Canvas. An older install beside it is never merged
-///   in or moved; it stays where it is. A name the app has again is the destination, not a source.
+/// - **One source, the newest install.** Canvas 0.4 or later, when its defaults show it ran (its
+///   own migration's marker, `LegacyMigration.Chalkwork.v1`, with any value): it took over from
+///   Chalkwork, so it is the newest. Otherwise Chalkwork, newer than a Canvas 0.2 it took over from.
+///   Otherwise Canvas 0.2. The first of these with a support directory, a `~/.<slug>` or settings
+///   is migrated; the other is never merged in or moved, it stays where it is.
 /// - **Its data wins.** What already sits at this name's support directory, `~/.<slug>` or in its
-///   defaults when no migration put it there (a Canvas 0.2 install that ran again after Chalkwork
-///   took its data, when Canvas is this name again) is moved first, whole, into the dated backup
+///   defaults when no migration put it there (a development build that ran on the default home) is
+///   moved first, whole, into the dated backup
 ///   `~/Library/Application Support/<Name>-stale-<yyyyMMdd'T'HHmmss'Z'>/`, at its path relative to
 ///   the home (`Library/Application Support/<Name>/`, `.<slug>/`,
 ///   `Library/Preferences/<bundle id>.plist`). Nothing is deleted.
 /// - **The browser profile** (WebKit, HTTPStorages) moves only where this name has none yet.
 /// - **Once per earlier name.** Each gets its own marker in this name's defaults
-///   (`LegacyMigration.<Name>.v1`), set at the first launch whatever it found: `migrated <time>`,
+///   (`LegacyMigration.<Name>.v2`), set at the first launch whatever it found: `migrated <time>`,
 ///   `superseded by <Name>` (an older install left in place) or `none`. A launch with every marker
 ///   set does nothing, so an earlier app opened again later (recreating its folders) never
-///   overwrites what this one owns. Markers of an earlier migration (Chalkwork's
-///   `LegacyMigration.defaultsMerged`) aren't copied and mean nothing here.
+///   overwrites what this one owns. No earlier migration's marker (Canvas 0.4's
+///   `LegacyMigration.<Name>.v1`, Chalkwork's `LegacyMigration.defaultsMerged`) is copied, and none
+///   counts here.
 ///
 /// Image tiles that point into the moved support directory (Snapshot to Image) are re-pointed.
 /// Privacy grants (microphone, camera, automation) belong to the old bundle id and can't move:
@@ -43,15 +46,19 @@ public struct LegacyMigration {
         }
 
         /// The marker in the current name's defaults saying this earlier name was dealt with.
-        public var marker: String { "LegacyMigration.\(name).v1" }
+        public var marker: String { "LegacyMigration.\(name).v2" }
     }
 
-    public static let current = Name(name: "Canvas", slug: "canvas", bundle: "net.waldin.canvas")
-    /// Every name the app shipped under before, newest first.
-    public static let earlier = [
-        Name(name: "Chalkwork", slug: "chalkwork", bundle: "net.waldin.chalkwork"),
-        Name(name: "Canvas", slug: "canvas", bundle: "net.waldin.canvas"),
-    ]
+    public static let current = Name(name: "Easl", slug: "easl", bundle: "net.waldin.easl")
+    public static let canvas = Name(name: "Canvas", slug: "canvas", bundle: "net.waldin.canvas")
+    public static let chalkwork = Name(name: "Chalkwork", slug: "chalkwork", bundle: "net.waldin.chalkwork")
+    /// Every name the app shipped under before.
+    public static let earlier = [canvas, chalkwork]
+    /// Set in Canvas's defaults by Canvas 0.4's own migration, at its first launch: Canvas 0.4 or
+    /// later ran, after any Chalkwork.
+    public static let canvasTookOverMarker = "LegacyMigration.Chalkwork.v1"
+    /// Prefix of every migration's marker, this one's and earlier ones': never copied as a setting.
+    static let markerPrefix = "LegacyMigration."
 
     /// The user's home directory (`~`).
     public let home: URL
@@ -63,7 +70,7 @@ public struct LegacyMigration {
         self.target = target
     }
 
-    /// The earlier names it migrates from, newest first.
+    /// The earlier names it migrates from.
     public var sources: [Name] { Self.earlier.filter { $0.bundle != target.bundle } }
 
     var library: URL { home.appendingPathComponent("Library", isDirectory: true) }
@@ -81,17 +88,24 @@ public struct LegacyMigration {
         ]
     }
 
+    /// The sources, newest install first: Canvas when Canvas 0.4 or later ran (it took over from
+    /// Chalkwork), else Chalkwork before Canvas 0.2.
+    public func newestFirst(defaults: some DefaultsDomains) -> [Name] {
+        let canvasTookOver = defaults.persistentDomain(forName: Self.canvas.bundle)?[Self.canvasTookOverMarker] != nil
+        let order = canvasTookOver ? [Self.canvas, Self.chalkwork] : [Self.chalkwork, Self.canvas]
+        return order.filter(sources.contains)
+    }
+
     /// Earlier names whose marker isn't set yet: the migration has something to decide.
     public func pending(defaults: some DefaultsDomains) -> [Name] {
         let own = defaults.persistentDomain(forName: target.bundle) ?? [:]
         return sources.filter { own[$0.marker] == nil }
     }
 
-    /// Why it mustn't run now: an earlier app (or another instance of this bundle id, which a
-    /// former name shares) among `running`, the bundle ids of the other running apps, would still
-    /// be writing the data it moves. Nil: go ahead.
+    /// Why it mustn't run now: an earlier app among `running`, the bundle ids of the other running
+    /// apps, would still be writing the data it moves. Nil: go ahead.
     public func refusal(running: [String]) -> String? {
-        guard let app = Self.earlier.first(where: { running.contains($0.bundle) }) else { return nil }
+        guard let app = sources.first(where: { running.contains($0.bundle) }) else { return nil }
         return "\(app.name) is running, so its boards stay with it; quit it and open \(target.name) again to bring them here"
     }
 
@@ -107,12 +121,12 @@ public struct LegacyMigration {
         var winner = sources.first { (decided[$0.marker] as? String)?.hasPrefix("migrated") == true }
         var log: [String] = []
         var markers: [String: String] = [:]
-        for source in pending {
+        for source in newestFirst(defaults: defaults) where pending.contains(source) {
+            let present = has(source, defaults: defaults)
             if let winner {
-                let left = has(source, defaults: defaults)
-                if left { log.append("left \(source.name)'s data where it is: \(winner.name)'s came here") }
-                markers[source.marker] = left ? "superseded by \(winner.name)" : "none"
-            } else if has(source, defaults: defaults) {
+                if present { log.append("left \(source.name)'s data where it is: \(winner.name)'s came here") }
+                markers[source.marker] = present ? "superseded by \(winner.name)" : "none"
+            } else if present {
                 let (lines, done) = migrate(from: source, defaults: defaults, stamp: stamp)
                 log += lines
                 // Not done (its support directory couldn't move): no marker, so the next launch tries again.
@@ -145,7 +159,7 @@ public struct LegacyMigration {
         let backup = staleBackup(stamp)
         // Settings a migration didn't write: everything in the domain but the markers.
         var own = defaults.persistentDomain(forName: target.bundle) ?? [:]
-        let stale = own.filter { !$0.key.hasPrefix("LegacyMigration.") }
+        let stale = own.filter { !$0.key.hasPrefix(Self.markerPrefix) }
         let staleFiles = [support(target), dotDirectory(target)].filter { files.fileExists(atPath: $0.path) }
         if !staleFiles.isEmpty || !stale.isEmpty {
             do {
@@ -190,7 +204,7 @@ public struct LegacyMigration {
                 log.append("could not move \(from.path) to \(to.path): \(error.localizedDescription)")
             }
         }
-        let settings = (defaults.persistentDomain(forName: source.bundle) ?? [:]).filter { !$0.key.hasPrefix("LegacyMigration.") }
+        let settings = (defaults.persistentDomain(forName: source.bundle) ?? [:]).filter { !$0.key.hasPrefix(Self.markerPrefix) }
         if !settings.isEmpty {
             own = defaults.persistentDomain(forName: target.bundle) ?? [:]
             own.merge(settings) { _, theirs in theirs }

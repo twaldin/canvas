@@ -351,7 +351,7 @@ final class DiagramTile: NSView, TileContent {
 
     /// Set by the canvas: a code tile opened (or found showing the lines) from a node.
     var onOpenedCode: ((ObjectID, _ existing: Bool) -> Void)?
-    /// Set by the canvas: the user opened a node and the graph that came back grew. Canvas
+    /// Set by the canvas: the user opened a node and the graph that came back grew. Easl
     /// rects of the tile, the nodes the expansion added (their union; null when none), and the
     /// node clicked, for the pan that shows them (`Layout.revealGrown`).
     var onExpanded: ((_ tile: CGRect, _ added: CGRect, _ clicked: CGRect) -> Void)?

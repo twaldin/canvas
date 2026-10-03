@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from canvas_sdk import Canvas  # noqa: E402
-from canvas_sdk.compositions import default_dirs  # noqa: E402
+from easl_sdk import Easl  # noqa: E402
+from easl_sdk.compositions import default_dirs  # noqa: E402
 
 
 def write(directory: Path, name: str, source: str) -> None:
@@ -27,7 +27,7 @@ class CompositionsTest(unittest.TestCase):
         self.user.mkdir()
         self.shipped.mkdir()
         # Never connects: these compositions don't call the socket.
-        self.canvas = Canvas(socket_path=str(Path(temp.name, "none.sock")), compositions_dirs=[self.user, self.shipped])
+        self.canvas = Easl(socket_path=str(Path(temp.name, "none.sock")), compositions_dirs=[self.user, self.shipped])
 
     def test_canvas_first_functions_receive_the_client(self) -> None:
         write(self.shipped, "tools", '''
@@ -77,7 +77,7 @@ class CompositionsTest(unittest.TestCase):
 class ShippedCompositionsTest(unittest.TestCase):
     def setUp(self) -> None:
         shipped = default_dirs()[-1]
-        self.canvas = Canvas(socket_path="/nonexistent.sock", compositions_dirs=[shipped])
+        self.canvas = Easl(socket_path="/nonexistent.sock", compositions_dirs=[shipped])
 
     def test_shipped_directory_has_the_documented_compositions(self) -> None:
         self.assertLessEqual({"grid", "locations"}, set(self.canvas.compositions.available()))

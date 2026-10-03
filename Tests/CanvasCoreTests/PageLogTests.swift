@@ -79,7 +79,7 @@ struct PageLogTests {
     @Test func aWarningOrErrorNamesTheCodeThatLoggedIt() throws {
         context.evaluateScript("function save() { console.error('save failed') }\nsave()", withSourceURL: URL(string: "http://localhost:8000/static/cart.js"))
         let entry = try #require(try log().entries.last)
-        #expect(entry.source?.hasPrefix("http://localhost:8000/static/cart.js:1:") == true, "the caller, not Canvas's hook: \(entry.source ?? "none")")
+        #expect(entry.source?.hasPrefix("http://localhost:8000/static/cart.js:1:") == true, "the caller, not Easl's hook: \(entry.source ?? "none")")
         #expect(entry.shortSource == "cart.js:1")
         context.evaluateScript("console.warn('inline')", withSourceURL: URL(string: "http://localhost:8000/"))
         #expect(try log().entries.last?.shortSource == "localhost:8000/:1", "a page's inline script is named by its page")
@@ -307,6 +307,6 @@ struct PageLogTests {
         let context = await board.drain().context
         #expect(context.contains("[1] page error · browser tile \(page.id) \"Shop\" · page http://localhost:8000/ · at "))
         #expect(context.contains("\n    TypeError: x is undefined\n    source: http://localhost:8000/static/app.js:12:5\n    stack:\n      render@http://localhost:8000/static/app.js:12:5\n      main@"))
-        #expect(!context.contains("canvas-page-log.js") && !context.contains("user-script"), "Canvas's own frames stay out")
+        #expect(!context.contains("canvas-page-log.js") && !context.contains("user-script"), "Easl's own frames stay out")
     }
 }

@@ -1,4 +1,0 @@
-#!/bin/sh
-# canvas CLI launcher (on PATH inside Canvas terminal tiles). Requires bun.
-here="$(cd "$(dirname "$0")/.." && pwd)"
-exec bun "$here/cli/canvas.ts" "$@"

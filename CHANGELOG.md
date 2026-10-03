@@ -2,6 +2,27 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
+## Unreleased
+
+Canvas is now Easl: the same app under a new name. Its first launch brings a Canvas install along (0.4, or 0.2 under its first name), or a Chalkwork 0.3 one.
+
+### Upgrading from Canvas or Chalkwork
+
+1. Quit Canvas and any Chalkwork still around (their terminal sessions keep running), unzip `Easl-<version>.zip`, move `Easl.app` to `/Applications`, clear its quarantine flag (Install, below) and open it.
+   The first launch moves `~/Library/Application Support/Canvas` to `~/Library/Application Support/Easl` (every board, archived boards, the `pre-repo-migration/` backups, snapshots, open tabs) and `~/.canvas` (your compositions) to `~/.easl`, moves the browser tiles' logins and site data, and brings over Canvas's settings and window frames.
+   One install comes, the newest: Canvas 0.4's, which already took Chalkwork's along. From a Canvas 0.2 that never ran 0.4 it takes Chalkwork's instead when there is one (`Application Support/Chalkwork`, `~/.chalkwork`); the other stays where it is.
+   While Canvas or Chalkwork is still running it moves nothing; quit it and open Easl again. It happens once: data an old app writes after that stays with it.
+2. Your terminals come back attached: their sessions keep their `canvas-obj_…` names. Restart the agents in them (or end the sessions): an agent started under Canvas still has `CANVAS_SOCKET` pointing at `canvas.sock` and the `canvas` CLI on its PATH, so it can't reach Easl until it restarts.
+3. omp: point the extension at Easl.
+   ```sh
+   rm -f ~/.omp/agent/extensions/canvas.ts ~/.omp/agent/extensions/chalkwork.ts
+   ln -sf /Applications/Easl.app/Contents/Resources/extensions/omp/easl.ts ~/.omp/agent/extensions/easl.ts
+   ```
+4. Every `CANVAS_*` variable is now `EASL_*`: rename `CANVAS_LSP_<LANGUAGE>` in your shell profile to `EASL_LSP_<LANGUAGE>`.
+5. The CLI is `easl` (there is no `canvas` alias; approve its commands again where an agent asks), the Python package `easl_sdk` (`from easl_sdk import canvas` still gives you the client; its class is `Easl`), the TypeScript client `@easl/client`, the agent skill `easl`, and `board.export` writes `.easl/board.json` (import an older `.canvas/board.json` by its path).
+6. Once your agents run under Easl, delete `/Applications/Canvas.app`, and `/Applications/Chalkwork.app` if it's still there. Opened again, either would start with no boards.
+7. macOS asks again before a terminal program or page uses the microphone, the camera or another app: those permissions belonged to Canvas.
+
 ## 0.4.0
 
 Chalkwork is Canvas again: the same app under the name it had through 0.2.1. Its first launch brings a Chalkwork 0.3 install along; a Canvas 0.2 one that never moved to Chalkwork is already where Canvas looks.

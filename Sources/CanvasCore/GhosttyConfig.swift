@@ -7,7 +7,7 @@ import Foundation
 /// `config-file` includes and finds no themes (the package bundles none). So the app flattens
 /// the files here, resolves the theme to its file, and hands the library one text per color
 /// scheme: the theme's settings, the user's (a setting in the config beats the theme's), then
-/// the few settings Canvas owns for embedding.
+/// the few settings Easl owns for embedding.
 public struct GhosttyConfig: Equatable, Sendable {
     public struct Entry: Equatable, Sendable {
         public var key: String
@@ -34,7 +34,7 @@ public struct GhosttyConfig: Equatable, Sendable {
         self.darkTheme = darkTheme
     }
 
-    /// Settings Canvas owns: the tile's own command and directory, an opaque background (a
+    /// Settings Easl owns: the tile's own command and directory, an opaque background (a
     /// see-through tile would show the canvas grid through the text), the font size (tile sizes
     /// are chosen for Ghostty's default and canvas zoom scales the text; a large size meant for a
     /// full-screen terminal would halve a tile's columns), and no background image (cards and
@@ -126,7 +126,7 @@ public struct GhosttyConfig: Equatable, Sendable {
     }
 
     /// What a tile loads under one scheme: the theme's settings, the user's (without the keys
-    /// Canvas owns and the keybinds of app-level actions, `appKeybind`), then Canvas's overrides.
+    /// Easl owns and the keybinds of app-level actions, `appKeybind`), then Easl's overrides.
     public func settings(theme: [Entry]) -> [Entry] {
         (theme + entries).filter { !Self.ownedKeys.contains($0.key) && $0.key != "config-file" && $0.key != "theme" && Self.appKeybind($0) == nil } + Self.overrides
     }
@@ -156,7 +156,7 @@ public struct GhosttyConfig: Equatable, Sendable {
 /// bound to one is claimed by the terminal whether or not the host does anything with it: with
 /// `keybind = super+t=new_window` imported, ⌘T in a focused terminal made no tile and the next
 /// typing went to the agent. So the user's keybinds of those actions never reach the library:
-/// new window, tab and split become Canvas's New Terminal beside the focused terminal, close
+/// new window, tab and split become Easl's New Terminal beside the focused terminal, close
 /// surface closes it (the close sheet), and the rest are dropped (the app logs them).
 extension GhosttyConfig {
     public enum AppAction: String, Equatable, Sendable {
@@ -215,8 +215,8 @@ extension GhosttyConfig {
         private static let unshiftedSymbols: [String: String] = ["{": "[", "}": "]", "+": "=", "_": "-", "|": "\\", ":": ";", "\"": "'", "<": ",", ">": ".", "?": "/", "~": "`"]
     }
 
-    /// A user keybind of an app-level action. `chord` is nil for a trigger Canvas can't match
-    /// (a key sequence); `action` is nil for an action Canvas has no equivalent of (dropped).
+    /// A user keybind of an app-level action. `chord` is nil for a trigger Easl can't match
+    /// (a key sequence); `action` is nil for an action Easl has no equivalent of (dropped).
     public struct AppKeybind: Equatable, Sendable {
         public var entry: Entry
         public var chord: KeyChord?
@@ -225,7 +225,7 @@ extension GhosttyConfig {
 
     public static let newTerminalActions: Set<String> = ["new_window", "new_tab", "new_split"]
     public static let closeTerminalActions: Set<String> = ["close_surface"]
-    /// App-level actions without a Canvas equivalent: windows, tabs, splits, fullscreen, the
+    /// App-level actions without an Easl equivalent: windows, tabs, splits, fullscreen, the
     /// app's own config, updates and undo. A bound key would do nothing and reach no program.
     public static let unsupportedActions: Set<String> = [
         "close_tab", "close_window", "close_all_windows", "goto_tab", "previous_tab", "next_tab", "last_tab", "move_tab",
@@ -240,7 +240,7 @@ extension GhosttyConfig {
     /// The user's keybinds of app-level actions, in load order.
     public var appKeybinds: [AppKeybind] { entries.compactMap(Self.appKeybind) }
 
-    /// The chords Canvas performs for the user's bindings: a later binding of the same chord
+    /// The chords Easl performs for the user's bindings: a later binding of the same chord
     /// (another action, `unbind`) replaces one, and `keybind = clear` drops them all.
     public var remaps: [KeyChord: AppAction] {
         var remaps: [KeyChord: AppAction] = [:]
@@ -277,7 +277,7 @@ extension GhosttyConfig {
     }
 
     /// A trigger's chord (`super+shift+t`, `ctrl+equal`, `global:cmd+key_t`); nil for a sequence
-    /// (`ctrl+a>n`) or anything else Canvas can't match.
+    /// (`ctrl+a>n`) or anything else Easl can't match.
     public static func chord(_ trigger: String) -> KeyChord? {
         var rest = Substring(trigger)
         while let prefix = ["global:", "all:", "unconsumed:", "performable:"].first(where: { rest.hasPrefix($0) }) { rest = rest.dropFirst(prefix.count) }

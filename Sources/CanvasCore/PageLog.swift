@@ -65,7 +65,7 @@ public struct PageLogEntry: Codable, Hashable, Sendable {
         return "\(name):\(line)"
     }
 
-    /// The stack's frames as the page reported them, without Canvas's own
+    /// The stack's frames as the page reported them, without Easl's own
     /// (`PageCapture.isOwnFrame`): what the error list and a console mention list.
     public var frames: [String] {
         (stack ?? "").split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !PageCapture.isOwnFrame($0) }
@@ -286,7 +286,7 @@ public struct DocumentFailureTracker<Entry: Hashable & Sendable>: Sendable {
 }
 
 /// What `object.get` says about a browser tile's page (`page`): whether anyone sees it now
-/// (`visibility`), what its current document reported (`log`), and the log of the page Canvas
+/// (`visibility`), what its current document reported (`log`), and the log of the page Easl
 /// last released (`previous`), kept so a page released out of view doesn't take its errors
 /// with it.
 public struct PageReport: Equatable, Sendable {
@@ -306,7 +306,7 @@ public struct PageReport: Equatable, Sendable {
         case released
     }
 
-    /// The log of a page Canvas released, as it was then.
+    /// The log of a page Easl released, as it was then.
     public struct Released: Equatable, Sendable {
         public var log: PageLog
         public var at: Date
@@ -434,7 +434,7 @@ public enum PageCapture {
       const define = (name, value, writable) => Object.defineProperty(globalThis, name, { value, configurable: true, writable, enumerable: false });
       const documentId = String(Math.round(hasPerformance && performance.timeOrigin || now()));
 
-      // MARK: Canvas's log: errors and warnings in one ring, everything else in another.
+      // MARK: Easl's log: errors and warnings in one ring, everything else in another.
       const log = { problems: [], other: [], nextSeq: 1, dropped: 0, errors: 0, warnings: 0 };
       let announcing = false;
       const announce = () => {

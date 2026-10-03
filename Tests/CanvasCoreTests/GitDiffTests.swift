@@ -31,7 +31,7 @@ struct TempRepo: Sendable {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
                 // No auto-maintenance: every commit would start another git in the background.
-                process.arguments = ["-c", "user.name=Canvas Tests", "-c", "user.email=tests@canvas.invalid", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"] + args
+                process.arguments = ["-c", "user.name=Easl Tests", "-c", "user.email=tests@canvas.invalid", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"] + args
                 process.currentDirectoryURL = directory
                 let out = Pipe()
                 process.standardOutput = out

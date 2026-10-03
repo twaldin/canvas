@@ -8,10 +8,10 @@ let cltFrameworks = "/Library/Developer/CommandLineTools/Library/Developer/Frame
 let cltLibs = "/Library/Developer/CommandLineTools/Library/Developer/usr/lib"
 
 let package = Package(
-    name: "Canvas",
+    name: "Easl",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "Canvas", targets: ["CanvasApp"]),
+        .executable(name: "Easl", targets: ["CanvasApp"]),
     ],
     dependencies: [
         // Vendored at 1.6.20260922 with one patch (Vendor/libghostty-spm/CANVAS-PATCH.md).

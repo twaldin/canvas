@@ -372,7 +372,7 @@ final class AgentBoardApiTests {
         _ = try board.stage(.object(note.id))
 
         let reply = try await call("board.export")
-        let path = dir.appendingPathComponent("root/.canvas/board.json").standardizedFileURL.path
+        let path = dir.appendingPathComponent("root/.easl/board.json").standardizedFileURL.path
         #expect(reply["result"]?["path"] == .string(path))
         #expect(reply["result"]?["objects"] == .number(2))
 

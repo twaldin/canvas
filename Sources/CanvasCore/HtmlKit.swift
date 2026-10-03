@@ -33,7 +33,7 @@ public enum HtmlKit {
     public static let emptyTemplate = """
     <main class="space-y-3">
       <h1 class="text-xl font-semibold">Untitled</h1>
-      <p class="text-muted-foreground">Edit this tile's <code>html</code> prop. Tailwind, Mermaid, and the canvas components are preloaded.</p>
+      <p class="text-muted-foreground">Edit this tile's <code>html</code> prop. Tailwind, Mermaid, and the kit's components are preloaded.</p>
     </main>
     """
 

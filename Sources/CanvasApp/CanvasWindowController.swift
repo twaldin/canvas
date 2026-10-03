@@ -492,7 +492,7 @@ final class CanvasWindowController: NSWindowController, NSWindowDelegate {
         files.refresh { [weak self] index in self?.navigator.update(files: index) }
     }
 
-    /// View › Hide Canvas Chrome (also in easl Basics): toggles presenting (`CanvasView.chromeHidden`);
+    /// View › Hide Board Chrome (also in easl Basics): toggles presenting (`CanvasView.chromeHidden`);
     /// Esc on the canvas shows the chrome again.
     @objc func toggleCanvasChrome(_ sender: Any?) {
         canvas.chromeHidden.toggle()

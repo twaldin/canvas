@@ -1,17 +1,17 @@
 ---
 name: easl
-description: You are running inside easl (EASL_ENV=1), an infinite canvas where your terminal sits next to tiles and drawings the user also sees. Use before explaining code, a change or a system (easl itself too), showing code/notes/HTML explainers/diagrams/changes on the canvas, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
+description: You are running inside easl (EASL_ENV=1), an infinite board where your terminal sits next to tiles and drawings the user also sees. Use before explaining code, a change or a system (easl itself too), showing code/notes/HTML explainers/diagrams/changes on the board, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
 ---
 
 # Working in easl
 
-Your terminal is one tile on an infinite canvas the user is looking at.
+Your terminal is one tile on an infinite board the user is looking at.
 Next to it live code tiles, changes (review) tiles, diagram tiles computed from the code, markdown notes, image tiles, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
-You and the user read and change the same objects: the canvas is the shared working state; your transcript stays in your terminal.
+You and the user read and change the same objects: the board is the shared working state; your transcript stays in your terminal.
 
 You are in easl when `EASL_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
 (lifecycle, mentions, follow mode, this skill; `EASL_AGENT_HOOKS=0` turns it off for Claude and Codex).
-Your tile's environment also has `EASL_TILE_ID` (you), `EASL_BOARD_ID`, `EASL_BOARD_ROOT` (the directory this canvas belongs to: a repo's main checkout, whichever worktree you are in), and `EASL_SOCKET`.
+Your tile's environment also has `EASL_TILE_ID` (you), `EASL_BOARD_ID`, `EASL_BOARD_ROOT` (the directory this board belongs to: a repo's main checkout, whichever worktree you are in), and `EASL_SOCKET`.
 
 ## Known surprises
 
@@ -19,7 +19,7 @@ Read these before you build anything; each one cost earlier agents a round trip.
 
 - **Start small.** A first draft is about one screen: one tile, or a few in a group.
   Split a long explainer into grouped tiles rather than one tall page, and expand when the user asks. A 20-object first draft overwhelms; a compact one gets read.
-- **Let the canvas do the geometry.** Omit `frame` and a new object lands in the free spot nearest your terminal, clear of every tile and group (other agents' too),
+- **Let the board do the geometry.** Omit `frame` and a new object lands in the free spot nearest your terminal, clear of every tile and group (other agents' too),
   inside the user's view when there's room within ~600 pt, else beside you out of view: raise a marker (`view.attention`) on anything they should look at.
   `frame: {w, h}` alone places that size the same way. Read the returned frame to place related objects.
   For deliberate layouts use `size: "fit"` and the layout helpers (`layout.place`/`stack`/`grid`/`translate`, then `layout.check`), not hand-computed coordinates:
@@ -70,7 +70,7 @@ Every result shape, the TypeScript client, error codes and reconnects: `referenc
 
 ## Read what the user points at
 
-When the user Hyper-clicks things on the canvas and then prompts you, the prompt carries a hidden block:
+When the user Hyper-clicks things on the board and then prompts you, the prompt carries a hidden block:
 
 ```text
 <canvas-mentions board="brd_…" root="/repo">
@@ -110,15 +110,15 @@ Every mention kind and field: `references/api.md` "Reading the board".
 It never moves the user's view and doesn't depend on it, so never put probe objects in the user's view to look at them.
 
 ```sh
-easl render obj_…                                  # one object (the canvas region under it)
+easl render obj_…                                  # one object (the board region under it)
 easl render obj_a,obj_b --scale 2                  # the region covering several
-easl render 0,1200,2400,1600 --exclude '["terminal"]'   # a canvas rect x,y,w,h
+easl render 0,1200,2400,1600 --exclude '["terminal"]'   # a board rect x,y,w,h
 easl render obj_… --full                           # a note/HTML tile's whole content (code: its whole range), below its frame too
 ```
 
 Per object drawn the result has `state` (`placeholder`: it didn't paint in time, `reason` says why) and `overflow {x, y}` (content beyond the frame: resize by that much, or render `--full`).
 `easl board.history --since <cursor>` lists who created, moved, and deleted what (`actor` `user`, `system` or `agent:<tile>`) since your last look.
-Every result field, pixel-to-canvas mapping, and history detail: `references/rendering.md`.
+Every result field, pixel-to-board mapping, and history detail: `references/rendering.md`.
 
 ## When the user asks you to explain something
 
@@ -141,10 +141,10 @@ Say only what the code, the README or the docs show, and show where: every claim
 For easl itself, ground it in this skill and `references/ui.md` (the same text as Help › easl Basics), or in the README and `docs/` when the board is easl's own checkout.
 Excerpts show code as it is now: a code tile's range and a note's fence follow their code as lines move, and say stale only when the code they quoted is gone. Never tell the user an excerpt flags code that changed (a code tile's gutter marks lines changed against its `diffBase`; that is the diff, not the excerpt).
 
-## Show your work on the canvas
+## Show your work on the board
 
 Create objects when a visual helps the user more than terminal text: a plan they will come back to, code they should look at, a comparison, a diagram, an explanation (above).
-Don't mirror your whole transcript onto the canvas.
+Don't mirror your whole transcript onto the board.
 Within 10 minutes of your last object, the next one without a `frame` stacks below it (else right of it).
 When you lay things out deliberately:
 
@@ -293,7 +293,7 @@ Never open the Web Inspector yourself. Eval and CSP limits, visibility states, r
 
 ## Follow mode
 
-Your terminal has one follow tile: the canvas re-aims it at every source file in the project you read, edit, or write, and flashes the lines each edit changed.
+Your terminal has one follow tile: the board re-aims it at every source file in the project you read, edit, or write, and flashes the lines each edit changed.
 It happens automatically and is on by default (never tell the user to turn it on); don't create code tiles just to show what you are reading, and don't resize it or lay out around its size.
 If the user closes it, your terminal stops following until they turn Follow Files back on in your terminal's menu: don't re-create it or turn following back on yourself.
 Create code tiles for code you want the user to keep looking at.
@@ -321,7 +321,7 @@ Every agent change is undoable with ⌘Z, but that is a safety net, not a licens
 
 ## Other agents
 
-Agents in other terminal tiles (any canvas in the app) are reachable by tile id or tile name:
+Agents in other terminal tiles (any board in the app) are reachable by tile id or tile name:
 
 ```sh
 easl agent.list                                    # every terminal: tile, kind, name, lifecycle, board, root, `program` (foreground program) and `title` (its OSC title)
@@ -352,12 +352,12 @@ canvas.compositions.locations.open(["src/a.ts:12-40", "src/b.ts#L7"])
 ```
 
 A composition is a plain module; functions whose first parameter is named `canvas` receive the client.
-When you catch yourself repeating a multi-call canvas pattern, write it as a composition in `~/.easl/compositions/<name>.py`
+When you catch yourself repeating a multi-call board pattern, write it as a composition in `~/.easl/compositions/<name>.py`
 (and `.ts` for the TS client, `client.compositions.<name>`), then `canvas.compositions.reload()`. Improve existing ones rather than forking them.
 
 ## Boards
 
-One canvas per git repository, whichever worktree or branch opens it (rooted at the main checkout); one per directory outside git. Boards open as tabs of one window.
+One board per git repository, whichever worktree or branch opens it (rooted at the main checkout); one per directory outside git. Boards open as tabs of one window.
 `easl board.open --root <absolute dir>` opens a directory's board as a tab (creating it if new) behind the user's current tab; pass `--select true` only when the user asked to see it.
 A worktree opens its repository's board: the result's `worktree` names it (path, branch, and `region`, the group that holds that branch's objects when there is one), and New Terminal starts there.
 Then address it with `board: <id>` (from the result) on every call, and start agents there by creating terminal tiles on that board; a terminal records the `worktree` and `branch` it works in (where it started, and after a `cd` into another worktree, where its program runs) in its props.

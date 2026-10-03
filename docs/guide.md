@@ -38,7 +38,7 @@ Changes tiles review an agent's work like a PR: uncommitted changes, the branch 
 
 The agent points back the same way: it opens the exact code it means beside its terminal, draws arrows between things, and leaves notes and walkthroughs you step through with ⌥⌘→. What it creates lands next to its terminal and says "by <terminal name>" in its title bar; the view never moves by itself.
 
-## Also on the canvas
+## Also on the board
 
 - **Notes.** Markdown with fences that quote real files: an excerpt shows its code as it is now and follows it as lines move, and says it's stale only when that code is gone; a `propose` fence renders as a diff.
 - **HTML tiles.** Sandboxed explainers with a bundled kit (Mermaid, code excerpts); agents chain them into walkthroughs.

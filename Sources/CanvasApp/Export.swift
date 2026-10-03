@@ -3,7 +3,7 @@ import CanvasCore
 import UniformTypeIdentifiers
 
 /// Sharing what's on the board: the selection as a picture (drawn by `view.render` as View ›
-/// Hide Canvas Chrome shows it), an HTML tile as a self-contained page, and a note as its
+/// Hide Board Chrome shows it), an HTML tile as a self-contained page, and a note as its
 /// markdown.
 extension CanvasView {
     /// Pixels per canvas point for exported pictures: sharp on Retina screens and in documents.

@@ -655,7 +655,7 @@
     },
     "Viewport": {
       "type": "object",
-      "description": "What the board's window shows: `rect` is the visible canvas area in canvas coordinates, `zoom` the magnification (1 = 100%, one point per canvas unit).",
+      "description": "What the board's window shows: `rect` is the visible board area in board coordinates, `zoom` the magnification (1 = 100%, one point per board unit).",
       "required": ["rect", "zoom"],
       "properties": { "rect": { "$ref": "#/definitions/Frame" }, "zoom": { "type": "number" } },
       "additionalProperties": false
@@ -670,8 +670,8 @@
         "pixelRect": { "$ref": "#/definitions/Frame", "description": "image pixels, top-left origin; a tile's rect is its frame (its 26 pt title bar is inside it)" },
         "state": { "enum": ["rendered", "placeholder", "failed"], "description": "placeholder: content not loaded in time or not renderable (a stand-in was drawn); failed: rendering errored" },
         "reason": { "type": "string", "description": "why a tile is a placeholder or failed" },
-        "contentSize": { "type": "object", "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "description": "the content's own extent in canvas points at the tile's width, below its title bar (tiles only; a zoomed tile's layout extent times its `zoom`); code: its range's rows and longest line under the header, the whole file without a range (what size \"fit\" shows)" },
-        "overflow": { "type": "object", "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "description": "canvas points of content beyond the frame (right, bottom); absent when it fits" }
+        "contentSize": { "type": "object", "properties": { "w": { "type": "number" }, "h": { "type": "number" } }, "description": "the content's own extent in board points at the tile's width, below its title bar (tiles only; a zoomed tile's layout extent times its `zoom`); code: its range's rows and longest line under the header, the whole file without a range (what size \"fit\" shows)" },
+        "overflow": { "type": "object", "properties": { "x": { "type": "number" }, "y": { "type": "number" } }, "description": "board points of content beyond the frame (right, bottom); absent when it fits" }
       }
     },
     "HistoryEntry": {
@@ -920,7 +920,7 @@
       }
     },
     "object.create": {
-      "description": "Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
+      "description": "Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`.",
       "params": {
         "type": "object",
         "required": ["type", "props"],
@@ -1405,7 +1405,7 @@
       }
     },
     "view.get": {
-      "description": "What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light).",
+      "description": "What the user is looking at right now, without pixels: the visible board rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light).",
       "params": { "type": "object", "properties": { "board": { "$ref": "#/definitions/Id" } }, "additionalProperties": false },
       "result": {
         "type": "object",
@@ -1423,17 +1423,17 @@
       }
     },
     "view.render": {
-      "description": "Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame.",
+      "description": "Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a board rect; ids render the board region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame.",
       "params": {
         "type": "object",
         "required": ["target"],
         "properties": {
           "board": { "$ref": "#/definitions/Id" },
           "target": { "oneOf": [{ "$ref": "#/definitions/Id" }, { "type": "array", "items": { "$ref": "#/definitions/Id" } }, { "$ref": "#/definitions/Frame" }] },
-          "scale": { "type": "number", "minimum": 0.1, "maximum": 4, "default": 1, "description": "pixels per canvas point; lowered to keep the image under 32 megapixels (the result says what was used)" },
+          "scale": { "type": "number", "minimum": 0.1, "maximum": 4, "default": 1, "description": "pixels per board point; lowered to keep the image under 32 megapixels (the result says what was used)" },
           "full": { "type": "boolean", "default": false, "description": "id targets: render the whole content, not just the part inside the frame" },
           "exclude": { "type": "array", "items": { "anyOf": [{ "$ref": "#/definitions/ObjectType" }, { "$ref": "#/definitions/Id" }] }, "description": "object types and/or object ids to leave out (e.g. [\"terminal\", \"obj_…\"]); a group id takes its members with it; targets are always drawn" },
-          "padding": { "type": "number", "default": 0, "description": "canvas points added around the target" },
+          "padding": { "type": "number", "default": 0, "description": "board points added around the target" },
           "out": { "type": "string", "description": "absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/easl-renders/ (out of the repo)" },
           "format": { "enum": ["png", "jpeg"], "default": "png", "description": "format of the temporary file when no `out` is given" },
           "timeoutMs": { "type": "integer", "minimum": 0, "maximum": 60000, "default": 8000, "description": "how long to wait for content (HTML pages, browser pages including loading one that isn't loaded, file reads) before drawing placeholders" }
@@ -1448,8 +1448,8 @@
           "format": { "enum": ["png", "jpeg"] },
           "width": { "type": "integer", "description": "pixels" },
           "height": { "type": "integer", "description": "pixels" },
-          "canvasRect": { "$ref": "#/definitions/Frame", "description": "canvas area the image covers: pixel (px, py) = canvas (x + px / scale, y + py / scale)" },
-          "scale": { "type": "number", "description": "pixels per canvas point actually used" },
+          "canvasRect": { "$ref": "#/definitions/Frame", "description": "board area the image covers: pixel (px, py) = board (x + px / scale, y + py / scale)" },
+          "scale": { "type": "number", "description": "pixels per board point actually used" },
           "objects": { "type": "array", "items": { "$ref": "#/definitions/RenderedObject" }, "description": "every object drawn, bottom to top" }
         }
       }
@@ -1474,7 +1474,7 @@
           "width": { "type": "integer", "description": "pixels" },
           "height": { "type": "integer", "description": "pixels" },
           "viewport": { "$ref": "#/definitions/Viewport" },
-          "scale": { "type": "number", "description": "image pixels per canvas point (backing scale × zoom); the canvas fills the image from its top-left: pixel (px, py) = canvas (viewport.rect.x + px / scale, viewport.rect.y + py / scale)" },
+          "scale": { "type": "number", "description": "image pixels per board point (backing scale × zoom); the board fills the image from its top-left: pixel (px, py) = board (viewport.rect.x + px / scale, viewport.rect.y + py / scale)" },
           "objects": { "type": "array", "items": { "$ref": "#/definitions/RenderedObject" }, "description": "objects at least partly visible, bottom to top (state is always rendered)" }
         }
       }

@@ -17,7 +17,7 @@ body:
         1. Open a folder…
         2. Start `claude` in a terminal tile…
   - type: input
-    id: canvas
+    id: version
     attributes:
       label: easl version
       description: "`defaults read /Applications/easl.app/Contents/Info.plist CFBundleShortVersionString`, or the release zip's name. For a source build, also the commit (`git rev-parse --short HEAD`)."

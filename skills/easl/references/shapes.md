@@ -4,7 +4,7 @@ The full rules behind SKILL.md's summary.
 
 - `shape`: `{"kind": "rect" | "ellipse" | "text" | "ink", "text": "…", "color": "…", "fill": "none" | "semi" | "solid"}` with a `frame`.
   A rect drawn around tiles *encloses* them.
-  - `color`: `black` (the default ink, drawn to contrast with what is under it: dark over a white page, an image or the light canvas, light over the dark canvas or a dark page, on screen and in renders), `grey`, `blue`, `green`, `orange`, `red`, `violet`, or `#rrggbb`. Arrows take `color` too.
+  - `color`: `black` (the default ink, drawn to contrast with what is under it: dark over a white page, an image or the light board, light over the dark board or a dark page, on screen and in renders), `grey`, `blue`, `green`, `orange`, `red`, `violet`, or `#rrggbb`. Arrows take `color` too.
   - `fill` (rect/ellipse): `none` (default; the interior passes clicks through), `semi` (a 14% wash of the color, for regions), `solid` (85%).
   - Text sizing: a `text` shape draws its text in 20 pt handwriting from the frame's top-left, wrapping at the frame width;
     one line needs about 30 pt of height (`h ≈ 30 × lines`).
@@ -19,7 +19,7 @@ The full rules behind SKILL.md's summary.
   - `relation` is the machine-readable edge (`calls`, `depends_on`, `hypothesis_about`, …); `label` is what the user reads.
     `relation: "next_step"` makes an order the user can step through: ⌥⌘→ on the selected tile follows its outgoing next_step arrow (⌥⌘← its incoming one) before geometry, centering each stop (fitted readably when the user steps from a zoomed-out overview), and says "Last step" at the end.
     ⌥⌘→ on a group holding the stops, or with nothing selected, starts at the first stop (the one no next_step arrow points to), so group a walkthrough and mark the group "Start here".
-    Join a walkthrough's stops with next_step arrows and lay them out however reads best; the order no longer depends on the layout.
+    Join a walkthrough's stops with next_step arrows and lay them out however reads best; the order doesn't depend on the layout.
     Without a label the arrow shows its relation in a secondary color; `label: ""` shows no caption.
   - `route`: `straight` (default), `orthogonal`, or `avoid` (goes around tiles in the way).
     `avoid` arrows are routed together: arrows sharing a side get their own ports, arrows sharing a gap run in parallel tracks, and each leaves the side of its source that faces downstream (its group's `flow`).

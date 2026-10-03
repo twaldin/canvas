@@ -7,14 +7,14 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 
 - **Hyper-click** (⌃⌥⇧⌘-click: Control+Option+Shift+Command, on a PC keyboard Ctrl+Alt+Shift+Win; Caps Lock mapped to Hyper with a key remapper): stages a mention of a code line, page element, drawing, image pixel, tile, or group in the **tray**, the bar at the bottom of the window.
   On a group's title or empty interior it mentions the whole group (the innermost there; the chip reads its title), holding Hyper outlines the region, and a second Hyper-click unstages it.
-  Hyper-drag on empty canvas, or inside a group, mentions everything inside the box as one group.
-- **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the canvas's keyboard, the selected tiles, or the selected group as a whole.
+  Hyper-drag on empty board, or inside a group, mentions everything inside the box as one group.
+- **⇧⌘M** (Edit › Mention) stages a mention from the keyboard, of what the user is on in the tile that has the keyboard: the current hunk or selected lines of a changes tile (`m` there too), a code tile's selected text or else its range, the block of a note being edited, a page's text selection, a terminal's selection or else its last command's block; with the board's keyboard, the selected tiles, or the selected group as a whole.
 - **Tray**: chips are the staged mentions; "→ name" on the right is the terminal they go to with the user's next prompt there (hover says so): the terminal the user last typed in that runs an agent, else the board's only agent terminal (a dev-server shell beside it never takes it), else the last terminal typed in.
   Clicking "→ name" opens a menu of the board's terminals (agents first) to pick another; it is kept across restarts. ⌃⌥⇧⌘V pastes them, for an agent without an integration, into the terminal the user is typing in, else into that target; ⌘Z brings the pasted chips back.
   Each chip shows the number its mention has in the context the agent gets ([1], [2]… in staging order), so "[2]" in the user's prompt is the second chip. Clicking a chip selects what it points at and brings it into view; code lines and note blocks are scrolled to and flashed. A chip whose page navigated since says "page changed". A second Hyper-click on something staged takes it out (a notice says so); tile context menus have a Mention item (⇧⌘M).
 - **Help › Get Started** walks a new user through a first mention on a practice note: Hyper-click it (or ⇧⌘M), then send it with a prompt; each step turns green when done. It opens by itself only on a first launch, until closed; a user who never set up Hyper can reopen it there.
 - **Drawing toolbar** at the top: select (V), rectangle (R), ellipse (O), arrow (A), text (T), ink (P), colors, fill.
-  The default ink (Black) is drawn dark over light pages and images and light over the dark canvas; other colors stay as chosen.
+  The default ink (Black) is drawn dark over light pages and images and light over the dark board; other colors stay as chosen.
 
 ## Reading a board
 
@@ -28,8 +28,8 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 - **⌘P** finds a tile by title or caption.
 - **Links**: a `path:line` link in a note or page, Go to, a definition and a terminal ⌘-click go to the code tile already showing those lines (exactly, or a captioned tile whose range holds them) wherever it is, else open them beside the source.
 - **⌘[ / ⌘]**: back and forward through steps, links, Go to, definitions, ⌘J, Review Changes' jump and edge-pill jumps.
-- **View › Hide Canvas Chrome** (⌥⌘T; also a button in easl Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
-  Esc on the canvas or the item again brings them back.
+- **View › Hide Board Chrome** (⌥⌘T; also a button in easl Basics), for presenting: hides the toolbar, tray, selection rings and handles, author marks, code tiles' header rows (their code moves up into the space; captions stay) and agents' attention markers; a blocked agent's ring and pill stay.
+  Esc on the board or the item again brings them back.
 
 ## Agents
 
@@ -60,12 +60,12 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
   While the user scrolls or clicks in it, it holds still for ~10 s and counts what it missed; "N new ▸" catches up. Pin keeps the current view as its own tile; right-click the terminal › Follow Files (or Object › Follow Files) turns it off.
 - **Where your objects land**: next to your terminal, clear of other tiles, inside the user's view when there's room within ~600 pt of it; they show "by <your terminal's name>" in their title bar.
   The view never moves for you: when the view is full, what you made may be off screen; raise a marker, or tell the user ⌘9 (Zoom to Fit).
-- **Undo**: ⌘Z undoes the last change, the user's or an agent's (an agent's batch is one step), and every ⌘Z/⇧⌘Z shows a notice naming what it undid or redid (the agent, or a changes tile's Stage, Unstage, or Discard); ⇧⌘Z redoes. While a terminal has the keyboard, ⌘Z goes to the terminal, never the canvas.
+- **Undo**: ⌘Z undoes the last change, the user's or an agent's (an agent's batch is one step), and every ⌘Z/⇧⌘Z shows a notice naming what it undid or redid (the agent, or a changes tile's Stage, Unstage, or Discard); ⇧⌘Z redoes. While a terminal has the keyboard, ⌘Z goes to the terminal, never the board.
   Navigation and bookkeeping nobody chose (a follow tile re-aiming, a terminal's ⌘-click preview re-aiming, a pick in a follow tile's history strip) aren't undo steps; ⌘[ / ⌘] go back and forward through the user's navigation.
 
 ## Reviewing work
 
-- **Review Changes** (File › Review Changes ⇧⌘R, or right-click the canvas) opens a changes tile, or goes to the one already there for the same root and base; File › Review Branch reviews everything the branch changed. Both review the checkout the focused or selected terminal works in (a worktree its agent runs in), else the board's; Review Branch on the default branch with no terminal to go by offers the repository's worktrees. Each changed file shows its changes (hunks), green added, red removed. Its summary is a picker: Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed); a code tile's base picker uses the same words, the exact base (merge-base, sha) in its tooltip.
+- **Review Changes** (File › Review Changes ⇧⌘R, or right-click the board) opens a changes tile, or goes to the one already there for the same root and base; File › Review Branch reviews everything the branch changed. Both review the checkout the focused or selected terminal works in (a worktree its agent runs in), else the board's; Review Branch on the default branch with no terminal to go by offers the repository's worktrees. Each changed file shows its changes (hunks), green added, red removed. Its summary is a picker: Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed); a code tile's base picker uses the same words, the exact base (merge-base, sha) in its tooltip.
 - **Stage** marks a change ready for the next commit, **Unstage** takes the mark off; neither changes files. **Discard** throws an uncommitted change away from the files: it asks first (the button turns into "Discard?" until you click it again or do something else, or `r` then ⌘⌫), then a notice names what went with "⌘Z undoes". Committed hunks have no Discard.
 - **committed**: already in the branch's history (a branch review); **Viewed** folds a file until it changes. The tile's keys work once Return (or a click) gives it the keyboard; while it is only selected they say so.
 
@@ -76,23 +76,23 @@ Point the user at Help › easl Basics (⌥⌘/) for the same text in the app.
 - **Bigger text**: board zoom stops at 100%, so the user zooms a tile's content instead, in place: ⌃⌘= / ⌃⌘- step the selected tile (else the one with the keyboard) through 25–500% and ⌃⌘0 puts it back at 100% (Object › Content Zoom, also in its right-click menu). The tile keeps its size and its content reflows (a terminal gets fewer, bigger columns).
   The title bar shows `−  150%  +` left of the ✕: the % whenever it isn't 100% (a click resets it), − and + on hover or selection. Corner drag resizes; ⌥-drag resizes keeping proportions. A zoomed-in tile stays live further out.
 - ⌘P Go to (tiles, files, `@symbols`, and while typing a note's headings; `core.py:120` opens at a line; ⌘P again selects the query, Esc closes; an agent's terminal is framed with its follow tile when both fit); ⌘T new terminal; ⌘W close the selection (a terminal asks first; Close is ⌘⌫); ⌘G group; ⌘F find in a code tile; ⌥⌘-arrows step (see Reading a board).
-- Right-click empty canvas for New Terminal Here, New Note Here and New Browser Here; File › New … puts them in the view.
+- Right-click empty board for New Terminal Here, New Note Here and New Browser Here; File › New … puts them in the view.
 - ⌘-click a `path:line` in terminal output opens it in that terminal's preview tile; ⌥⌘-click opens a separate tile the user keeps.
-- Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the canvas.
+- Return enters the selected tile (a terminal, a code tile's rows, a changes tile, a note, a page); Esc gives the keyboard back to the board.
   In a terminal or a web page Esc belongs to the program or page: ⌘Esc (View › Leave Tile) leaves any tile.
 - Code › Go to Definition ⌃⌘J (Open Definition in New Tile ⌃⌥⌘J), Find References ⌃⌘R (Open All lays them out as excerpts), Outline ⌃⌘O (type to filter), and code tiles' hover use the language's server (sourcekit-lsp, pyright-langserver, typescript-language-server, gopls, rust-analyzer), found through the login shell: `EASL_LSP_<LANGUAGE>` (e.g. `EASL_LSP_RUST`) if set, else PATH, else nvim's mason bin, `~/go/bin`, `rustup which rust-analyzer`; without one they answer by text search, labelled so, and the panel says where easl looked.
 - A code tile without changes shows a quiet "no changes" (a file git ignores, such as a dependency under node_modules, a quiet "ignored by git"); its diff-base picker appears when the pointer is over the header.
 - A note's menu has Copy as Markdown and Save as Markdown…: its markdown as written (links, fences), for a doc or a chat.
 - Save as PNG…, Save as HTML…, Save as Markdown… and File › Export Selection as PNG… (⇧⌘E) open in the folder last saved into, else Downloads, never the board's repo.
   Export Selection keeps the titles and borders of groups whose tiles are all selected; a marquee around groups selects them and the arrows between what it selects.
-  Its picture is at most 8000 px on its longest side, named after the one tile or group selected, and drawn without canvas chrome (no author marks, × buttons, dot grid or selection), as View › Hide Canvas Chrome shows it; Copy as Image too.
+  Its picture is at most 8000 px on its longest side, named after the one tile or group selected, and drawn without board chrome (no author marks, × buttons, dot grid or selection), as View › Hide Board Chrome shows it; Copy as Image too.
 - A browser tile's menu has Snapshot to Image: the page as it shows now becomes an image tile beside it ("<page title> · <time>", its address as the caption), kept with the board.
 
 ## Coming from Linux or Windows
 
 - ⌘ (Command, the Windows key on a PC keyboard) does what Ctrl does elsewhere: ⌘T, ⌘W, ⌘Z, ⌘C, ⌘V, ⌘= / ⌘- zoom.
-  A Ctrl shortcut pressed on the canvas shows a notice naming its ⌘ key, once per key per session.
+  A Ctrl shortcut pressed on the board shows a notice naming its ⌘ key, once per key per session.
 - ⌃ stays the terminal's: ⌃C interrupts, ⌃D ends input; ⌘C copies the selection, ⌘V pastes.
 - ⌥ (Option) is Alt; for Alt as Meta in the shell, set `macos-option-as-alt = true` in the user's Ghostty config.
-- Mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; right-click the canvas or a tile for its menu.
+- Mouse: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; right-click the board or a tile for its menu.
 - ⌥⌘-arrows move between tiles like a tiling window manager; ⌘Esc leaves a terminal.

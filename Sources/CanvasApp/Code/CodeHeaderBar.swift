@@ -368,7 +368,7 @@ final class CodeHeaderBar: NSView {
 
     // MARK: Presenting
 
-    /// Hidden canvas chrome (View › Hide Canvas Chrome): the first row (diff base, change
+    /// Hidden board chrome (View › Hide Board Chrome): the first row (diff base, change
     /// arrows, status, Pin, the Outline button) leaves the header, scrolled out above its bounds
     /// where nothing draws or takes clicks, and `height` drops it, so the code tile moves its rows
     /// up (arrows bound to lines follow them); the caption and history strips stay.

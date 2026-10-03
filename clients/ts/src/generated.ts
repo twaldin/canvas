@@ -611,7 +611,7 @@ export type WorktreeInfo = {
   region?: Id;
 };
 
-/** What the board's window shows: `rect` is the visible canvas area in canvas coordinates, `zoom` the magnification (1 = 100%, one point per canvas unit). */
+/** What the board's window shows: `rect` is the visible board area in board coordinates, `zoom` the magnification (1 = 100%, one point per board unit). */
 export type Viewport = {
   rect: Frame;
   zoom: number;
@@ -627,12 +627,12 @@ export type RenderedObject = {
   state: "rendered" | "placeholder" | "failed";
   /** why a tile is a placeholder or failed */
   reason?: string;
-  /** the content's own extent in canvas points at the tile's width, below its title bar (tiles only; a zoomed tile's layout extent times its `zoom`); code: its range's rows and longest line under the header, the whole file without a range (what size "fit" shows) */
+  /** the content's own extent in board points at the tile's width, below its title bar (tiles only; a zoomed tile's layout extent times its `zoom`); code: its range's rows and longest line under the header, the whole file without a range (what size "fit" shows) */
   contentSize?: {
     w?: number;
     h?: number;
   };
-  /** canvas points of content beyond the frame (right, bottom); absent when it fits */
+  /** board points of content beyond the frame (right, bottom); absent when it fits */
   overflow?: {
     x?: number;
     y?: number;
@@ -1304,13 +1304,13 @@ export type ViewGetResult = {
 export type ViewRenderParams = {
   board?: Id;
   target: Id | Id[] | Frame;
-  /** pixels per canvas point; lowered to keep the image under 32 megapixels (the result says what was used) */
+  /** pixels per board point; lowered to keep the image under 32 megapixels (the result says what was used) */
   scale?: number;
   /** id targets: render the whole content, not just the part inside the frame */
   full?: boolean;
   /** object types and/or object ids to leave out (e.g. ["terminal", "obj_…"]); a group id takes its members with it; targets are always drawn */
   exclude?: unknown[];
-  /** canvas points added around the target */
+  /** board points added around the target */
   padding?: number;
   /** absolute path to write; format from the extension (.png, .jpg/.jpeg). Clients resolve relative paths. Omitted: a new file under $TMPDIR/easl-renders/ (out of the repo) */
   out?: string;
@@ -1327,9 +1327,9 @@ export type ViewRenderResult = {
   width: number;
   /** pixels */
   height: number;
-  /** canvas area the image covers: pixel (px, py) = canvas (x + px / scale, y + py / scale) */
+  /** board area the image covers: pixel (px, py) = board (x + px / scale, y + py / scale) */
   canvasRect: Frame;
-  /** pixels per canvas point actually used */
+  /** pixels per board point actually used */
   scale: number;
   /** every object drawn, bottom to top */
   objects: RenderedObject[];
@@ -1351,7 +1351,7 @@ export type ViewSnapshotResult = {
   /** pixels */
   height: number;
   viewport: Viewport;
-  /** image pixels per canvas point (backing scale × zoom); the canvas fills the image from its top-left: pixel (px, py) = canvas (viewport.rect.x + px / scale, viewport.rect.y + py / scale) */
+  /** image pixels per board point (backing scale × zoom); the board fills the image from its top-left: pixel (px, py) = board (viewport.rect.x + px / scale, viewport.rect.y + py / scale) */
   scale: number;
   /** objects at least partly visible, bottom to top (state is always rendered) */
   objects: RenderedObject[];
@@ -1386,7 +1386,7 @@ export interface CanvasApi {
     get(params: ObjectGetParams): Promise<ObjectGetResult>;
     /** Find an object by its `props.key` (ObjectKey) instead of its id: `key` returns it as object.get does (`as: graph` too), or `not_found`; `keyPrefix` lists every object whose key starts with it, in key order ("REL-" for every ticket's region), possibly none. One of the two. Keys are per board: `board` defaults as for object.create. */
     find(params?: ObjectFindParams): Promise<ObjectFindResult>;
-    /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the canvas place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
+    /** Create an object. Omit `frame` (or give only its `w` and `h`) to let the board place it in the free spot nearest the calling agent's terminal (or the viewport center for users): clear of every tile and group, inside the user's view when the terminal is on screen and there's room within 600 pt of it (else beside it, even out of view). `size: fit` sizes the frame to the content (object.measure; notes and text wrap at `frame.w`; code is at most `frame.w` wide, default 960, and wraps longer lines; html is `frame.w` wide, default 640, and as tall as its page at that width, at most 4000; changes shows every hunk, as wide as its longest line up to `frame.w`, default 960, longer lines wrapped, at most 4000 tall, and a fitted changes tile grows with its diff; image is its picture at one point per pixel, scaled down to at most `frame.w`, default 960, plus the title bar and caption; a diagram is its graph: one without `props.graph` is computed first, waiting for the language server up to 60 s as object.reload does, then fitted, and `diagram` says how that went). A note without a frame height is always fitted to its markdown (at `frame.w`, default 280), and an image to its picture, so `frame` may be just x, y, w (or omitted). A note's line-range fences (`file=…#L…`) are stored with the `anchor=` their tile would write back, so the result's `rev` is the one to update with. The caller's tile (EASL_TILE_ID) becomes createdBy. A changes tile the calling agent already made for the same `root`, `base`, and `paths` is reused rather than duplicated: it takes the call's other props, `frame`, and `size`, and the result says `reused: true`. */
     create(params: ObjectCreateParams): Promise<ObjectCreateResult>;
     /** Patch an object's frame and/or props (shallow merge). `frame` may give any of x, y, w, h; the rest stay. Pass `rev` for optimistic concurrency (a note's fences are anchored as on create). `size: fit` re-measures the frame from the (patched) content at its current position and width (code and image: at most `frame.w`, default 960, never its current width), or at `frame` x, y, w. Without `frame` x or y it doesn't grow over objects it didn't already overlap: it grows up and/or left instead (keeping its bottom or right edge), else moves to the nearest free spot no farther than its longer side, else grows in place (the result's `overlaps` names what it covers). After changing an html tile's `html` or a note's `markdown`, pass `size: "fit"` in the same update to refit its height to the new content. */
     update(params: ObjectUpdateParams): Promise<ObjectUpdateResult>;
@@ -1448,9 +1448,9 @@ export interface CanvasApi {
   view: {
     /** Raise an attention marker pointing at an object (one per object; raising again replaces its message), or remove it with `clear: true`. A marker belongs to the caller's turn: raising one clears the markers the same caller raised in earlier turns (a turn starts when its lifecycle goes to working from idle, done, or no state; answering an approval, blocked → working, continues the turn); markers from this turn stay. The user seeing the object also clears it. Unseen markers are stored with the board and survive app restarts; deleting the object removes its marker. Never moves the user's viewport. */
     attention(params: ViewAttentionParams): Promise<ViewAttentionResult>;
-    /** What the user is looking at right now, without pixels: the visible canvas rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light). */
+    /** What the user is looking at right now, without pixels: the visible board rect and zoom, the prompt-target terminal, the tile with keyboard focus, the selection, whether the window is visible on screen, and its appearance (dark or light). */
     get(params?: ViewGetParams): Promise<ViewGetResult>;
-    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a canvas rect; ids render the canvas region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame. */
+    /** Render part of the board offscreen at a fixed scale, independent of the user's viewport (never moves it). `target` is an object id, a list of ids, or a board rect; ids render the board region under their outlines (with whatever overlaps them) and the whole route of every arrow between two of them, `full` draws those tiles' whole content (note/HTML scroll height; code: all of its range, scrolled to it and wrapped at its tile's width) extending below/right of their frames. Waits until content has painted (up to `timeoutMs`) and reports per-object state instead of returning blanks. App chrome (toolbar, tray, hints, selection rings, attention markers) is never drawn. A tile draws as on screen: its title bar at 1× (showing its content zoom's % when not 100%), its content at its `zoom` inside the frame. */
     render(params: ViewRenderParams): Promise<ViewRenderResult>;
     /** The board's window as the user sees it right now (viewport, tiles, toolbar, tray), with the viewport it shows. Terminal tiles are drawn from their session text. To look at something regardless of where the user is, use view.render. */
     snapshot(params?: ViewSnapshotParams): Promise<ViewSnapshotResult>;

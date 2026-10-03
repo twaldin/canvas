@@ -1472,7 +1472,7 @@ final class CanvasView: NSScrollView {
     /// controller measures it. Jumps and new tiles land clear of it.
     var chromeInsets: () -> NSEdgeInsets = { NSEdgeInsets() }
 
-    /// View › Hide Canvas Chrome, for presenting: the window hides the drawing toolbar and the
+    /// View › Hide Board Chrome, for presenting: the window hides the drawing toolbar and the
     /// tray (`onChromeHiddenChange`), the canvas its selection rings and handles, author marks,
     /// code tiles' header rows and agents' attention markers (a blocked agent's ring, bubble and
     /// edge pill stay: it needs the user). Esc on the canvas or the menu item again shows them.

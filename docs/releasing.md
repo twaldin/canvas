@@ -6,7 +6,7 @@ A release is `easl-<version>.zip` holding `easl.app`, plus `gettext-0.24.tar.gz`
 - `scripts/notarize.sh <zip>` makes the distribution zip from it: builds the bundle into `.build/dist/easl.app`, signs it inside out with the Developer ID identity, the hardened runtime (`--options runtime`), `scripts/easl.entitlements` and a secure timestamp, checks it (`codesign --verify --deep --strict`, the runtime flag, no `get-task-allow`, the Developer ID authority and timestamp, a Python SDK import leaving the signature intact, `spctl`'s verdict before notarization), zips it with `ditto`, submits it with `notarytool submit --wait`, prints the notary log, staples the ticket, zips the stapled app, and checks that zip's copy with `codesign`, `stapler validate` and `spctl` (`source=Notarized Developer ID`). Credentials it checks before building (`notarytool history`). `scripts/notarize.sh --dry-run <zip>` does all of it that needs neither the certificate nor Apple: it signs ad hoc with the hardened runtime and stops before submitting.
 - `.github/workflows/release.yml` runs `notarize.sh` on a `v*` tag when the signing secrets exist; without them it makes the ad-hoc zip and runs `notarize.sh --dry-run`, so the signing path stays tested. It fetches `gettext-0.24.tar.gz` from GNU (or Ghostty's identical copy) and fails unless its SHA-256 matches. It fails when the tag isn't `v` + `VERSION`. When the tag's release already exists (one made from a Mac), it publishes nothing but the libintl source and the notices. Run by hand (`gh workflow run release.yml`), it builds the same zip from `VERSION`, signed when the secrets exist, and keeps it as the run's artifact instead of publishing.
 
-The version lives in `VERSION`, and its notes in `CHANGELOG.md`: a release's notes are its version's section (`scripts/release-notes.sh`) above GitHub's list of merged changes, so drop `(unreleased)` from the heading when you tag it. `scripts/bundle.sh` stamps it into Info.plist (`EASL_VERSION` overrides it), and `bun scripts/gen-clients.ts` writes it into the Python and TypeScript clients' manifests and the Claude Code plugin. To bump: edit `VERSION`, run `bun scripts/gen-clients.ts`, commit.
+The version lives in `VERSION`, and its notes in `CHANGELOG.md`: a release's notes are its version's section (`scripts/release-notes.sh`), above GitHub's list of merged changes when an earlier release is published, so drop `(unreleased)` from the heading when you tag it. `scripts/bundle.sh` stamps it into Info.plist (`EASL_VERSION` overrides it), and `bun scripts/gen-clients.ts` writes it into the Python and TypeScript clients' manifests and the Claude Code plugin. To bump: edit `VERSION`, run `bun scripts/gen-clients.ts`, commit.
 
 `bundle.sh` copies `LICENSE` and `THIRD_PARTY_NOTICES.md` into `Contents/Resources`. It also copies the app icon, `scripts/AppIcon.icns` (Info.plist `CFBundleIconFile`). The icon is drawn from the brand mark and rebuilt with the site's `bun scripts/app-icon.ts <out.icns>`, which renders each size of an `.iconset` and packs it with `iconutil`. When a package, `resources/` asset or the libghostty-spm xcframework changes, update the notices: the libghostty table follows the Ghostty commit the xcframework was built from (`ar -t` on its `libghostty.a` lists the C libraries; the fonts are the ones `src/font/embedded.zig` embeds), and the GNU libintl section's source links, checksum and relinking steps follow its gettext version, as do the tarball name and `GETTEXT_SHA256` in `release.yml`. The libintl section includes a written offer of its source, valid three years from each release.
 
@@ -45,25 +45,19 @@ Once, by the Account Holder, after enrolling in the Apple Developer Program:
 Bump `VERSION` first (above). `notarize.sh` builds into `.build/dist`, never `.build/easl.app` (a running dev instance's); `gh release create` makes the tag, and the Release workflow it starts leaves the release alone except for re-uploading the same libintl source and notices:
 
 ```sh
-scripts/notarize.sh easl-0.3.4.zip
+scripts/notarize.sh easl-0.1.0.zip
 curl -fLO https://ftp.gnu.org/gnu/gettext/gettext-0.24.tar.gz
 echo "c918503d593d70daf4844d175a13d816afacb667c06fba1ec9dcd5002c1518b7  gettext-0.24.tar.gz" | shasum -a 256 -c -
-gh release create v0.3.4 easl-0.3.4.zip gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "easl 0.3.4" --notes-file <(scripts/release-notes.sh 0.3.4) --generate-notes
+gh release create v0.1.0 easl-0.1.0.zip gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "easl 0.1.0" --notes-file <(scripts/release-notes.sh 0.1.0) --generate-notes
 ```
+
+Drop `--generate-notes` while no earlier release is published (`gh release list --exclude-drafts --limit 1` lists none), as the Release workflow does.
 
 `notarize.sh` signs with the keychain's only Developer ID Application identity (`EASL_SIGN_IDENTITY` picks one) and notarizes with the `easl-notary` profile (`EASL_NOTARY_PROFILE` names another; `EASL_NOTARY_KEY`, `_KEY_ID`, `_ISSUER` or `EASL_NOTARY_APPLE_ID`, `_PASSWORD`, `_TEAM_ID` pass credentials directly, as CI does). Notarization usually takes a few minutes. An Invalid submission fails with the notary log that says why. It ends with `spctl` saying `accepted` and `source=Notarized Developer ID`.
 
 ## Release from CI
 
 With the secrets set (One-time setup, step 6), bump `VERSION`, then push a `v*` tag.
-
-### Renamed from Canvas
-
-The secrets, the keychain profile and the repository were set up under Canvas's name. Before the first easl release (one-time):
-
-- Add whichever secrets above exist under their `EASL_` names (same values as the `CANVAS_` ones, which the workflow no longer reads), then delete the `CANVAS_` ones. Until they exist, a tag publishes an ad-hoc zip.
-- Store the notary credentials again as `easl-notary` (One-time setup), or keep the old profile with `EASL_NOTARY_PROFILE=canvas-notary`.
-- Rename the repository to match its links (`gh repo rename easl`); GitHub then redirects `twaldin/canvas` (and `twaldin/chalkwork`, which already redirects to it). Never create another repository under either old name: that breaks its redirect.
 
 ## Once releases are notarized
 

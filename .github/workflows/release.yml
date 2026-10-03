@@ -130,9 +130,11 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --clobber
             exit 0
           fi
-          # The version's CHANGELOG.md section, above GitHub's list of merged changes.
+          # The version's CHANGELOG.md section, above GitHub's list of merged changes once an earlier release is published.
           scripts/release-notes.sh "$EASL_VERSION" > "$RUNNER_TEMP/notes.md"
-          gh release create "$GITHUB_REF_NAME" "$ZIP" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "easl $EASL_VERSION" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
+          generate=()
+          if [ "$(gh release list --exclude-drafts --limit 1 --json tagName --jq length)" != 0 ]; then generate=(--generate-notes); fi
+          gh release create "$GITHUB_REF_NAME" "$ZIP" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "easl $EASL_VERSION" --notes-file "$RUNNER_TEMP/notes.md" "${generate[@]}"
       - name: Remove the signing keychain
         if: always() && env.SIGNED == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

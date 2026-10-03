@@ -48,7 +48,7 @@ public enum CanvasBasics {
             Item(term: "⌘P", text: "find a tile by its title or caption."),
             Item(term: "Links", text: "a path:line link, Go to or ⌘-click goes to the tile already showing those lines, else opens them beside you. Return enters a code tile to scroll it."),
             Item(term: "⌘[ · ⌘]", text: "back and forward through where you went: steps, links, Go to, definitions, ⌘J, Review Changes."),
-            Item(term: "Hide Canvas Chrome", text: "⌥⌘T (View menu), for presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers (a blocked agent still shows). Esc brings them back."),
+            Item(term: "Hide Board Chrome", text: "⌥⌘T (View menu), for presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers (a blocked agent still shows). Esc brings them back."),
         ]),
         Section(title: "Agents", items: [
             Item(term: "Blue dot", text: "working: the agent is busy."),
@@ -69,7 +69,7 @@ public enum CanvasBasics {
             Item(term: "Undo", text: "⌘Z undoes the last change, yours or an agent's, and says so when it was an agent's or changed your files or git index (a Stage or Discard); ⇧⌘Z redoes it. In a terminal, ⌘Z is the terminal's."),
         ]),
         Section(title: "Reviewing work", items: [
-            Item(term: "Review Changes", text: "⇧⌘R (or right-click the canvas) lists what changed, file by file, in the worktree of the terminal you're in or have selected: green lines were added, red ones removed. Click the summary at its top to compare Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed)."),
+            Item(term: "Review Changes", text: "⇧⌘R (or right-click the board) lists what changed, file by file, in the worktree of the terminal you're in or have selected: green lines were added, red ones removed. Click the summary at its top to compare Uncommitted changes (not in a commit yet) or Branch vs main (everything the branch changed)."),
             Item(term: "Stage · Unstage", text: "Stage marks a change ready to go into the next commit; Unstage takes the mark off. Neither changes your files."),
             Item(term: "Discard", text: "throws a change away from your files. It asks first (click again, or r then ⌘⌫; any other key keeps it) and only puts back work not committed yet."),
             Item(term: "committed · Viewed", text: "committed: already saved in the branch's history, nothing to discard. Viewed folds a file you've read until it changes."),
@@ -83,15 +83,15 @@ public enum CanvasBasics {
         Section(title: "Keyboard", items: [
             Item(term: "⌘P", text: "go to a tile, file or symbol, or a heading in a note."),
             Item(term: "⌘T", text: "new terminal; then run omp, claude, codex, gemini or opencode."),
-            Item(term: "Return · Esc · Tab", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the canvas, then clears the selection, then closes Get Started. In a terminal or a web page Esc goes to the program or page (a game's pause, a dialog): ⌘Esc leaves any tile. Tab never types into a tile: with Get Started open it walks its buttons (Space presses one)."),
+            Item(term: "Return · Esc · Tab", text: "Return enters the selected tile (typing, scrolling code); Esc gives the keyboard back to the board, then clears the selection, then closes Get Started. In a terminal or a web page Esc goes to the program or page (a game's pause, a dialog): ⌘Esc leaves any tile. Tab never types into a tile: with Get Started open it walks its buttons (Space presses one)."),
             Item(term: "⌘W · ⌘G", text: "close the selection · group it."),
             Item(term: "⌥⌘/", text: "open or close this legend (Help › easl Basics)."),
         ]),
         Section(title: "Coming from Linux or Windows", items: [
-            Item(term: "⌘ is your Ctrl", text: "⌘ (Command, the Windows key on a PC keyboard) does what Ctrl does elsewhere: ⌘T, ⌘W, ⌘Z, ⌘C, ⌘V, ⌘= and ⌘- to zoom. A Ctrl shortcut on the canvas says its ⌘ key."),
+            Item(term: "⌘ is your Ctrl", text: "⌘ (Command, the Windows key on a PC keyboard) does what Ctrl does elsewhere: ⌘T, ⌘W, ⌘Z, ⌘C, ⌘V, ⌘= and ⌘- to zoom. A Ctrl shortcut on the board says its ⌘ key."),
             Item(term: "⌃ stays the terminal's", text: "in a terminal ⌃C interrupts and ⌃D ends input; copy the selection with ⌘C and paste with ⌘V."),
             Item(term: "⌥ is Alt", text: "⌥ (Option) is the Alt key. For Alt as Meta in the shell (Alt-B, Alt-F), set macos-option-as-alt = true in your Ghostty config."),
-            Item(term: "Mouse", text: "the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; right-click the canvas or a tile for its menu."),
+            Item(term: "Mouse", text: "the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; right-click the board or a tile for its menu."),
             Item(term: "⌥⌘-arrows", text: "move between tiles like a tiling window manager; a terminal you land on takes the keyboard, and ⌘Esc leaves it."),
         ]),
     ]

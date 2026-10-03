@@ -8,7 +8,6 @@ __pycache__/
 node_modules/
 
 .easl-home/
-# Development homes from before the renames (scripts/dev.sh used .canvas-home, then .chalkwork-home, then .canvas-home again).
 .canvas-home/
 .chalkwork-home/
 .DS_Store

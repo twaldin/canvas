@@ -14,11 +14,11 @@ export function canvasGuidance(agent: GuidanceAgent, tile: string): string {
   const socket = process.env.EASL_SOCKET ?? "";
   const board = process.env.EASL_BOARD_ID ?? "";
   return [
-    `You are running in an easl terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>, with each item's location and excerpt.`,
+    `You are running in an easl terminal tile (${tile}). Mentions the user staged on the board arrive as <canvas-mentions>, with each item's location and excerpt.`,
     ...skillLines(agent),
     "Write code references as repo-relative `path:line` (`src/app.ts:42`, `src/app.ts:42-60`): the user ⌘-clicks them to open the code beside you.",
-    "When your answer is something the user will come back to (a plan, a walkthrough across several files, a comparison), put it on the canvas or offer to; one-off answers stay in the terminal.",
-    "To show the user code, a page, or a diagram beside this terminal, use the canvas (skill, `easl` CLI, SDK). Never drive the easl app with GUI automation (Computer Use, AppleScript) and never publish it elsewhere (artifacts, gists) instead.",
+    "When your answer is something the user will come back to (a plan, a walkthrough across several files, a comparison), put it on the board or offer to; one-off answers stay in the terminal.",
+    "To show the user code, a page, or a diagram beside this terminal, use the board (skill, `easl` CLI, SDK). Never drive the easl app with GUI automation (Computer Use, AppleScript) and never publish it elsewhere (artifacts, gists) instead.",
     ...browserLines(agent),
     "easl's scratch output (renders under $TMPDIR/easl-renders/, JSON payload files for the `easl` CLI) belongs in $TMPDIR, never in the repo: writing there is not touching the user's files, even under an instruction to stay in this directory.",
     "Never answer another agent's approval with `agent.prompt` `force`: it types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow). Tell the user it waits instead. `board.open` with `select: true` switches the user's tab: only when they asked to see that board.",
@@ -35,7 +35,7 @@ function browserLines(agent: GuidanceAgent): string[] {
 }
 
 function skillLines(agent: GuidanceAgent): string[] {
-  const when = "before you create, change, arrange, or inspect canvas objects. A plain question, or one about a mentioned item, needs no skill: answer it from the code and the <canvas-mentions> block.";
+  const when = "before you create, change, arrange, or inspect board objects. A plain question, or one about a mentioned item, needs no skill: answer it from the code and the <canvas-mentions> block.";
   if (agent === "claude") {
     // The Claude Code plugin (extensions/claude) ships the skill itself.
     return [`You MUST load the \`easl:easl\` skill ${when}`];
@@ -73,15 +73,15 @@ function connectionLines(agent: GuidanceAgent, socket: string, tile: string, boa
     const dir = tmpdir();
     return [
       `${connection} Shell commands inherit these. The \`easl\` CLI talks to that unix socket, which Codex's sandbox blocks: run easl commands with escalated permissions (outside the sandbox) and \`prefix_rule: ["easl"]\` instead of retrying them sandboxed, so the user can allow every \`easl\` command once.`,
-      `Write canvas JSON payloads to a file in ${dir}/ first, then pass it by that literal path, never inline JSON: \`easl object.create --json @${dir}/easl-box.json\`. Keep each easl command plain words: a variable (\`$TMPDIR\`), \`$(…)\`, heredoc or redirect in it makes Codex ask the user again for every call.`,
+      `Write easl JSON payloads to a file in ${dir}/ first, then pass it by that literal path, never inline JSON: \`easl object.create --json @${dir}/easl-box.json\`. Keep each easl command plain words: a variable (\`$TMPDIR\`), \`$(…)\`, heredoc or redirect in it makes Codex ask the user again for every call.`,
     ];
   }
   if (agent === "gemini") {
     // Gemini CLI asks before each shell command whose root command wasn't allowed yet; one
-    // `easl …` approval "for this session" covers every later canvas call.
+    // `easl …` approval "for this session" covers every later easl call.
     return [
-      `${connection} Shell commands inherit these. Use the \`easl\` CLI for canvas calls: the user can allow \`easl\` once for the session.`,
-      "Write canvas JSON payloads to a file in $TMPDIR and pass `--json @<file>`, never inline JSON, so each call stays one short `easl …` command.",
+      `${connection} Shell commands inherit these. Use the \`easl\` CLI for easl calls: the user can allow \`easl\` once for the session.`,
+      "Write easl JSON payloads to a file in $TMPDIR and pass `--json @<file>`, never inline JSON, so each call stays one short `easl …` command.",
     ];
   }
   return [`${connection} Shell commands inherit these.`];

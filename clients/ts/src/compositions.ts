@@ -1,4 +1,4 @@
-// Compositions: reusable canvas helpers that agents write and improve (TypeScript side).
+// Compositions: reusable board helpers that agents write and improve (TypeScript side).
 //
 // A composition is a module (`<name>.ts` / `.js` / `.mjs`) in a compositions directory. Exported
 // functions whose first parameter is named `canvas` receive the client (every API namespace plus

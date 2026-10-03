@@ -19,7 +19,7 @@ A native Mac app. Free, MIT. Details on [easl.sh](https://easl.sh), in the [docs
 
 ## install
 
-Requires macOS 14 or later on Apple silicon. Coming from Canvas, Chalkwork or Easl 0.5.0: read the [upgrade notes](CHANGELOG.md#upgrading-from-canvas-or-chalkwork) ([from 0.5.0](CHANGELOG.md#upgrading-from-easl-050)).
+Requires macOS 14 or later on Apple silicon.
 
 1. Download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, and move `easl.app` to `/Applications`.
 2. easl is ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. Clear the quarantine flag:

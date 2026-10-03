@@ -7,7 +7,7 @@ import os
 from typing import Any
 
 GAP = 24.0
-# Drawings never block placement (same rule as the canvas's own placement).
+# Drawings never block placement (same rule as the board's own placement).
 _NON_BLOCKING = {"arrow", "shape", "group"}
 
 

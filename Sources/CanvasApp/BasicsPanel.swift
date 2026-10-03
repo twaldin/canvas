@@ -14,7 +14,7 @@ final class BasicsPanel: NSVisualEffectView {
     private let scroll = NSScrollView()
     private weak var previousResponder: NSResponder?
     var isOpen: Bool { !isHidden }
-    /// The panel's Hide Canvas Chrome button (the View menu's item, for presenting).
+    /// The panel's Hide Board Chrome button (the View menu's item, for presenting).
     var onHideChrome: (() -> Void)?
 
     init() {
@@ -36,11 +36,11 @@ final class BasicsPanel: NSVisualEffectView {
         close.isBordered = false
         close.contentTintColor = .secondaryLabelColor
         close.toolTip = "Close (Esc)"
-        let hide = NSButton(title: "Hide Canvas Chrome", target: self, action: #selector(hideChromeClicked))
+        let hide = NSButton(title: "Hide Board Chrome", target: self, action: #selector(hideChromeClicked))
         hide.controlSize = .small
         hide.bezelStyle = .push
         hide.font = .systemFont(ofSize: 11)
-        hide.toolTip = "For presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers. Esc brings them back (View › Hide Canvas Chrome)."
+        hide.toolTip = "For presenting: hides the toolbar, tray, selection rings, author marks, code headers and agents' markers. Esc brings them back (View › Hide Board Chrome)."
         text.isEditable = false
         text.isSelectable = true
         text.drawsBackground = false

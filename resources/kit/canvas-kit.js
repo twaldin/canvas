@@ -1,5 +1,5 @@
-// Canvas kit: preloaded into every HTML tile. Themes Tailwind to the app, renders Mermaid
-// diagrams, and defines the canvas web components. The page's only native access is the
+// The HTML kit: preloaded into every HTML tile. Themes Tailwind to the app, renders Mermaid
+// diagrams, and defines the kit's web components. The page's only native access is the
 // `canvas` message channel; the app validates every message (Sources/CanvasCore/HtmlMessage.swift).
 (() => {
   const handler = window.webkit?.messageHandlers?.canvas;

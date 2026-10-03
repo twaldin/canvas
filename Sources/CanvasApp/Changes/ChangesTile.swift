@@ -84,7 +84,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     Click a line to open it in a code tile; drag over lines, ⇧-click or ⌘-click to select lines (an edited line brings its old version), then Stage, Unstage, or Discard just those; \
     Hyper-click (⌃⌥⇧⌘) a line or hunk header to mention it; click a file's header to fold it, its Viewed box to fold it until it changes; click the summary to pick the base.
     Keys once the tile has the keyboard (↩ or a click): j or ↓ next hunk, k or ↑ previous hunk, J or ] next file, K or [ previous file, \
-    / filter files, Return open the hunk in a code tile, s stage, u unstage, r then ⌘⌫ discard, m mention (the selected lines, else the hunk), Esc back to the canvas.
+    / filter files, Return open the hunk in a code tile, s stage, u unstage, r then ⌘⌫ discard, m mention (the selected lines, else the hunk), Esc back to the board.
     Discard asks first: click it again, or press ⌘⌫ after r, to throw the change away; any other key keeps it. Every Stage, Unstage, and Discard is one ⌘Z. \
     Discard only puts back work not committed yet: committed hunks have none.
     """
@@ -95,7 +95,7 @@ final class ChangesTile: NSView, TileContent, NSSearchFieldDelegate, NSViewToolT
     (a removed line at the base, anything else at the head); drag, ⇧-click or ⌘-click to select lines; Hyper-click (⌃⌥⇧⌘) a line or hunk header to mention it; \
     click a file's header to fold it, its Viewed box to fold it until either side of it changes; click the summary to pick the base.
     Keys once the tile has the keyboard (↩ or a click): j or ↓ next hunk, k or ↑ previous hunk, J or ] next file, K or [ previous file, \
-    / filter files, Return open the hunk in a code tile, m mention (the selected lines, else the hunk), Esc back to the canvas.
+    / filter files, Return open the hunk in a code tile, m mention (the selected lines, else the hunk), Esc back to the board.
     """
 
     init(object: CanvasObject, board: Board) {

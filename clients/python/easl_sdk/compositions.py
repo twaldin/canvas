@@ -1,4 +1,4 @@
-"""Compositions: reusable canvas helpers that agents write and improve.
+"""Compositions: reusable board helpers that agents write and improve.
 
 A composition is a plain Python module in a compositions directory. Functions whose first
 parameter is named `canvas` receive the connected client; `canvas.compositions.<module>.<fn>(...)`
@@ -29,7 +29,7 @@ __all__ = ["Compositions", "default_dirs"]
 
 def default_dirs() -> list[Path]:
     # Shipped as package files, so they come along with the checkout, the app bundle, or a wheel.
-    return [Path.home() / ".canvas" / "compositions", Path(__file__).resolve().parent / "builtin_compositions"]
+    return [Path.home() / ".easl" / "compositions", Path(__file__).resolve().parent / "builtin_compositions"]
 
 
 class Compositions:

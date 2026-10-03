@@ -1,5 +1,5 @@
-/* Canvas kit: the app's light/dark palette as CSS variables, page defaults, and the styles of the
-   canvas web components. Layer order matches Tailwind's so utilities always win over these. */
+/* The HTML kit: the app's light/dark palette as CSS variables, page defaults, and the styles of the
+   kit's web components. Layer order matches Tailwind's so utilities always win over these. */
 @layer theme, base, components, utilities;
 
 :root {

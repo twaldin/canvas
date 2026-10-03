@@ -120,7 +120,7 @@ public final class CmuxRouter {
             return try adopt(String(id.hasPrefix("//") ? id.dropFirst(2) : id), anchor: anchor, connection: connection)
         }
         guard let board = caller?.0 ?? workspace.flatMap({ registry.board(id: $0) }) ?? registry.frontmost.flatMap({ registry.boards[$0] }) else {
-            throw CmuxError("not_found", "no open canvas for this surface or workspace")
+            throw CmuxError("not_found", "no open board for this surface or workspace")
         }
         guard let url = BrowserURL.normalize(raw) else { throw CmuxError.invalidParams("not a URL: \(raw)") }
         let browser = board.create(type: .browser, props: .object(["url": .string(url.absoluteString)]), caller: anchor)
@@ -161,7 +161,7 @@ public final class CmuxRouter {
             guard let owner = registry.board(id: workspace) else { throw CmuxError("not_found", "workspace \(workspace) not found") }
             board = owner
         } else {
-            guard let front = registry.frontmost.flatMap({ registry.boards[$0] }) else { throw CmuxError("not_found", "no open canvas") }
+            guard let front = registry.frontmost.flatMap({ registry.boards[$0] }) else { throw CmuxError("not_found", "no open board") }
             board = front
         }
         let surfaces = board.objects.values

@@ -2,7 +2,7 @@
 import type { Composer, Frame } from "../index";
 
 export const GAP = 24;
-// Drawings never block placement (same rule as the canvas's own placement).
+// Drawings never block placement (same rule as the board's own placement).
 const NON_BLOCKING: Record<string, true> = { arrow: true, shape: true, group: true };
 
 /** Move `ids` into a grid to the right of `beside` (default: the calling terminal, then the

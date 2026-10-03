@@ -208,7 +208,7 @@ extension CanvasView {
 
     /// Tile chrome as `TileFrameView` draws it live (rounded card, title bar, lifecycle badge,
     /// content zoom percentage, close glyph, border) around the content image drawn at `zoom`,
-    /// or a labelled stand-in without one. Without `chrome`, as Hide Canvas Chrome shows it: no
+    /// or a labelled stand-in without one. Without `chrome`, as Hide Board Chrome shows it: no
     /// author mark or close glyph.
     private func drawTile(_ object: CanvasObject, render: TileRender, in rect: NSRect, zoom: CGFloat, chrome: Bool) {
         let title = TileFrameView.titleHeight

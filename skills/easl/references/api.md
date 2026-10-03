@@ -58,7 +58,7 @@ If the app restarts, the next call reconnects on its own (waiting up to 15 s). `
 
 ## Objects
 
-- `frame` is `{x, y, w, h}` in canvas points (100% zoom): the whole box the object draws. A tile's 26 pt title bar is inside its frame, at the top.
+- `frame` is `{x, y, w, h}` in board points (100% zoom): the whole box the object draws. A tile's 26 pt title bar is inside its frame, at the top.
   Omit it on create for automatic placement beside your terminal (in the user's view when your terminal is on screen and there's room within 600 pt of it; otherwise beside it even out of view: raise a marker with `view.attention` when the user should look); within 10 minutes of your last tile, the next one stacks below it (else right of it) when that is as much in view. Without a calling terminal (a script outside any tile), or on another board (`board`), it goes to the free spot nearest the view's center, clear of the window's toolbar and tray. Objects you create or change on another board are still credited to your terminal (`createdBy`, `board.history`).
 - `props` on `object.update` merge shallowly: `{"range": …}` replaces `range` and keeps other props. Set a prop to `null` to clear it.
   `frame` on `object.update` may give any of `x, y, w, h` (`{"frame": {"h": 420}}`); the rest stay. On create it needs all four, or `size: "fit"` (below).
@@ -72,7 +72,7 @@ If the app restarts, the next call reconnects on its own (waiting up to 15 s). `
   A code tile's `range` stays on its code: when lines move above or inside it the tile re-finds it and writes the new `range` (and `anchor`, its first line) back without a new `rev`; an update that changes `range` without `anchor` drops the old one.
 - `props.zoom` on any tile but an image (0.25–8, default 1) is how big its content draws inside its frame, in place: the frame never changes with it and the title bar stays at 1×;
   the body lays out at body ÷ zoom (a 1200×826 tile at zoom 2 shows what a 600×400 body does, twice as big: a terminal fewer, bigger columns, a page a narrower viewport). An update that sets it never moves or resizes the tile.
-  Measure and fit lay out at `width` ÷ zoom (the frame is the 26 pt title bar plus the body × zoom); `layout.check`, `view.render` sizes, and line anchors account for it; everything you get back is in canvas points.
+  Measure and fit lay out at `width` ÷ zoom (the frame is the 26 pt title bar plus the body × zoom); `layout.check`, `view.render` sizes, and line anchors account for it; everything you get back is in board points.
   Image tiles don't zoom (the picture is already fitted to the frame): make the tile bigger. A text shape's font is `props.textSize` (0.25–8, default 1, a multiplier of 20 pt), and its box grows with it.
   `props.scale` is gone: create, update, upsert, batch, and measure reject it with `invalid_params`.
 - Terminal tiles: `{"cwd": "/path", "command": ["omp"]}` starts an agent in a new tile (its session survives app restarts). Only start agents the user asked for.
@@ -161,7 +161,7 @@ Sizes, positions, and checks, so you never measure tiles by hand or move 40 obje
 
 ## Attention markers
 
-`view.attention` raises a marker keyed by the object (raising again replaces the message). It clears when the user selects or looks at the object in the active window or clicks the marker, when you `clear` it, or when the user clears every marker (View › Clear Attention Markers, or right-click the canvas); markers aren't undo history.
+`view.attention` raises a marker keyed by the object (raising again replaces the message). It clears when the user selects or looks at the object in the active window or clicks the marker, when you `clear` it, or when the user clears every marker (View › Clear Attention Markers, or right-click the board); markers aren't undo history.
 Your first marker after the user's next prompt clears your markers from earlier turns and lists them in `cleared`.
 A terminal's OSC 9/777 notification or bell at its shell prompt raises a marker there unless the user is looking at it (from a program in the foreground it is that program's lifecycle, see Agents); terminals whose agent reports a lifecycle (omp, Claude Code, Codex, Gemini CLI, opencode) show done and blocked themselves, so their notifications raise nothing.
 

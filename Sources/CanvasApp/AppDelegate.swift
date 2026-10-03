@@ -548,7 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item("Show Web Inspector", #selector(toggleWebInspector(_:)), "i", [.option, .command]),
             // Presenting: toolbar, tray, selection rings, author marks, code headers, markers.
             // ⌥⌘T as AppKit's Show/Hide Toolbar; Ghostty binds nothing to it.
-            item("Hide Canvas Chrome", #selector(toggleCanvasChrome(_:)), "t", [.option, .command]),
+            item("Hide Board Chrome", #selector(toggleCanvasChrome(_:)), "t", [.option, .command]),
             lasso,
             item("Exit Group", #selector(exitGroup(_:)), ""),
         ])

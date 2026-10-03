@@ -132,7 +132,7 @@ Tiles and arrows are things the user can move, mention and step through; a page 
 3. **A browser tile when a page makes the point**: the running app, or the docs or README the code follows (`browser` `{"url": "…"}`).
 4. **A note for what should last**: the summary in a few lines, with `path:line` links and anchored fences (```` ```ts file=src/store.ts#L41-60 ````), not pasted code.
 5. **A short terminal answer**: the answer in a sentence or two and where to look, with a `view.attention` marker on the first stop; don't retell the tiles in prose.
-6. **An HTML explainer only when a comparison or a decision needs its components** (`<canvas-compare>`, `<canvas-decisions>`; `references/html-explainers.md`).
+6. **An HTML explainer only when a comparison or a decision needs its components** (`<canvas-compare>`, `<canvas-decisions>`; `references/html-explainers.md`), or when the user asks for one page.
 
 When it has an order (a request's path, a change step by step), join the stops with `"relation": "next_step"` arrows labelled "1 · parse", "2 · …" and group them titled "Start here": ⌥⌘→ on the group, or with nothing selected, starts at the first stop (`references/shapes.md`).
 Build it in one `object.batch` (`"$0"` references), place it with `layout.place`/`layout.stack`/`layout.grid` (Readable diagrams, below), then run `layout.check` and fix what it reports, and look at it (`easl render <group>`) before you point the user at it.

@@ -2,7 +2,7 @@
 
 # everything your agents work on, in one place.
 
-one infinite board: your agents in real terminals, next to your code, a browser and their notes. click anything into their next prompt.
+one infinite board: agents in real terminals beside your code, call graphs, a browser, html pages and diagrams. click to reference anything in the next prompt.
 
 ![An easl board on a clone of the easl repository: a terminal that ran git and bun test, an arrow to a review of its uncommitted edit, four code tiles joined by numbered step arrows, a call graph, a note, two browser tiles and an HTML explainer. easl rendered it; a script laid out the tiles.](docs/media/board.webp)
 

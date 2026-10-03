@@ -21,8 +21,11 @@ A native Mac app. Free, MIT. Details on [easl.sh](https://easl.sh), in the [docs
 
 Requires macOS 14 or later on Apple silicon.
 
-1. Download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, and move `easl.app` to `/Applications`.
-2. easl is ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. Clear the quarantine flag:
+1. Run the installer. It downloads the latest release from [Releases](https://github.com/twaldin/easl/releases), checks its SHA-256 and moves `easl.app` to `/Applications` ([read the script](https://easl.sh/install.txt)). curl sets no quarantine flag, so easl opens with no Gatekeeper prompt.
+   ```sh
+   curl -fsSL https://easl.sh/install | sh
+   ```
+2. Or download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, and move `easl.app` to `/Applications`. It's ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. Clear the quarantine flag:
    ```sh
    xattr -dr com.apple.quarantine /Applications/easl.app
    ```

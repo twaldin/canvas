@@ -61,13 +61,15 @@ With the secrets set (One-time setup, step 6), bump `VERSION`, then push a `v*` 
 
 ## Once releases are notarized
 
-After the first notarized release, replace steps 1 and 2 of the README's Install section with:
+After the first notarized release, replace step 2 of the README's Install section with:
 
 ```markdown
-1. Download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, move `easl.app` to `/Applications` and open it. It's signed with a Developer ID and notarized by Apple, so it opens like any downloaded app.
+2. Or download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, move `easl.app` to `/Applications` and open it. It's signed with a Developer ID and notarized by Apple, so it opens like any downloaded app.
 ```
 
-renumbering the steps after it, and drop "It's ad-hoc signed, not notarized: run `xattr -dr com.apple.quarantine /Applications/easl.app`, or open it once and choose Open Anyway in System Settings › Privacy & Security." from that version's install line in `CHANGELOG.md`.
+and drop "It's ad-hoc signed, not notarized: run `xattr -dr com.apple.quarantine /Applications/easl.app`, or open it once and choose Open Anyway in System Settings › Privacy & Security." from that version's install line in `CHANGELOG.md`.
+
+Every release, and every replaced zip (a notarized rebuild of the same version), also updates the installer's pins (`curl -fsSL https://easl.sh/install | sh`): `RELEASE` in canvas-site `src/brand/brand.ts`, `sha256` included (`curl -fsSL <zip url> | shasum -a 256`), then republish easl.sh. The installer downloads the pinned version's zip and refuses one whose SHA-256 doesn't match, so until then it installs nothing.
 
 ## Hardened runtime
 

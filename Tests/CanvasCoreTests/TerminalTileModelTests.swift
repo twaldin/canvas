@@ -311,7 +311,7 @@ struct TerminalBoardTests {
         try board.reportLifecycle(tile: omp, kind: "omp", state: .working, message: nil, seq: 1, source: "canvas-omp")
         board.terminalProgram(omp, is: "omp")
         #expect(lifecycle(omp) == "working", "the agent holds the terminal: its turn goes on")
-        // Killed mid-turn (or it exited while Easl was away, its release lost): the shell has the terminal.
+        // Killed mid-turn (or it exited while easl was away, its release lost): the shell has the terminal.
         board.terminalProgram(omp, is: nil)
         #expect(board.objects[omp]?.props["lifecycle"] == nil && board.objects[omp]?.props["agent"] == nil, "no turn runs at a shell prompt")
 
@@ -514,7 +514,7 @@ struct LoginSessionTests {
     }
 
     @Test func aCanvasLaunchedFromATileTakesTheUsersStartupFilesNotThatTilesIntegration() {
-        let app = "/tmp/cap/Easl-next.app/Contents/Resources", old = "/tmp/cap/Easl.app/Contents/Resources"
+        let app = "/tmp/cap/easl-next.app/Contents/Resources", old = "/tmp/cap/easl.app/Contents/Resources"
         let fresh = LoginSession.tileShellIntegration(resources: app, inherited: ["PATH": "/opt/homebrew/bin:/usr/bin", "ZDOTDIR": "/Users/u/.config/zsh"])
         #expect(fresh == [
             "PATH": "\(app)/bin:/opt/homebrew/bin:/usr/bin", "PYTHONPATH": "\(app)/clients/python", "ZDOTDIR": "\(app)/extensions/shell/zsh",
@@ -629,7 +629,7 @@ struct GhosttyConfigTests {
         ])
         #expect(config.appKeybinds.filter { $0.action == nil || $0.chord == nil }.map(\.entry.value) == [
             "super+shift+w=close_window", "super+ctrl+f=toggle_fullscreen", "ctrl+a>n=new_tab",
-        ], "dropped: actions Easl has no equivalent of, and a sequence it can't match")
+        ], "dropped: actions easl has no equivalent of, and a sequence it can't match")
     }
 
     @Test func aLaterBindingOfTheSameChordOrAClearUndoesARemap() {

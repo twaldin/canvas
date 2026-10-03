@@ -48,13 +48,13 @@ public final class BoardRegistry {
         }
         boards[id] = board
         board.activity.record(.restart, actor: .system, rev: board.revision,
-                              summary: "Easl started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
+                              summary: "easl started (pid \(ProcessInfo.processInfo.processIdentifier)); board opened with \(board.objects.count) objects")
         frontmost = frontmost ?? id
         replayAgentReports(on: board)
         return board
     }
 
-    /// What the board's agents said while Easl was away (`AgentReportSpool`): read off the
+    /// What the board's agents said while easl was away (`AgentReportSpool`): read off the
     /// main actor, applied in `seq` order, then deleted.
     private func replayAgentReports(on board: Board) {
         guard let directory = agentReports else { return }
@@ -140,7 +140,7 @@ public final class ApiRouter {
     /// program isn't tmux or tmux doesn't say.
     public var tmuxPane: ((Board, ObjectID) async -> String?)?
     /// A browser tile's page as `object.get` reports it (`PageReport`): its visibility, what it
-    /// reported since it loaded, and the log of the page Easl last released; nil without the tile.
+    /// reported since it loaded, and the log of the page easl last released; nil without the tile.
     public var pageReport: ((Board, ObjectID) async -> PageReport?)?
     /// A note tile's anchored fences resolved against disk now, with the text it captured, by
     /// fence key (the tile shows them too); nil without the tile, and `object.get` resolves them
@@ -361,7 +361,7 @@ public final class ApiRouter {
     }
 
     static func lifecycleUnknown(_ terminal: CanvasObject) -> Failure {
-        Failure("unavailable", "terminal \(terminal.id) reports no agent lifecycle (nothing in it has an Easl integration, or its agent exited), "
+        Failure("unavailable", "terminal \(terminal.id) reports no agent lifecycle (nothing in it has an easl integration, or its agent exited), "
             + "so agent.wait can't tell when it is done; poll agent.read with since: \"prompt\" instead")
     }
 
@@ -478,7 +478,7 @@ public final class ApiRouter {
         var mark: TerminalTail.Tail?
         if since != nil {
             guard let found = promptMarks[terminal.id] else {
-                throw Failure("not_found", "no agent.prompt has reached terminal \(terminal.id) since Easl started; read with lines instead")
+                throw Failure("not_found", "no agent.prompt has reached terminal \(terminal.id) since easl started; read with lines instead")
             }
             mark = found
         }
@@ -531,11 +531,11 @@ public final class ApiRouter {
             let blocker = terminal.props["lifecycle"]?["message"]?.string.map { " (“\($0)”)" } ?? ""
             throw Failure("conflict", "\(terminal.id) is blocked, waiting on its user\(blocker): the prompt would go into that dialog. Leave it to the user. force: true types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow), so never force an answer to an approval")
         }
-        // `working` saved before Easl last closed, with no report since (an agent whose
+        // `working` saved before easl last closed, with no report since (an agent whose
         // integration predates the spool, or that ended meanwhile): it may be sitting in a
         // question or approval now, which the text and Return would answer.
         if Self.state(of: terminal) == LifecycleState.working.rawValue, terminal.props["lifecycle"]?["restored"]?.bool == true, p["force"]?.bool != true {
-            throw Failure("conflict", "\(terminal.id) was working when Easl last closed and its agent hasn't reported since, so it may now wait on a question or approval that the prompt would answer. Read its screen (agent.read) first; force: true sends anyway")
+            throw Failure("conflict", "\(terminal.id) was working when easl last closed and its agent hasn't reported since, so it may now wait on a question or approval that the prompt would answer. Read its screen (agent.read) first; force: true sends anyway")
         }
         // An agent reporting from inside tmux (or an editor it started) isn't what the typing
         // reaches, unless it runs in tmux's active pane.
@@ -553,7 +553,7 @@ public final class ApiRouter {
         guard let submitToTerminal else { throw Failure("unsupported", "prompting needs the app UI") }
         let mentions = try (p["mentions"]?.array ?? []).map { try HandoffMention(json: $0).target(on: board) }
         if !mentions.isEmpty, !PromptTarget.drains(terminal) {
-            throw Failure("unavailable", "\(terminal.id) runs no agent with an Easl integration, so nothing there would take the mentions; name the objects in the text instead")
+            throw Failure("unavailable", "\(terminal.id) runs no agent with an easl integration, so nothing there would take the mentions; name the objects in the text instead")
         }
         let before = await readTerminal?(board, terminal.id, Self.promptMarkLines)
         guard let current = board.objects[terminal.id] else { throw Failure("not_found", "terminal \(terminal.id) was closed") }
@@ -727,7 +727,7 @@ public final class ApiRouter {
     func dispatch(_ method: String, _ p: JSONValue) throws -> JSONValue {
         switch method {
         case "system.ping":
-            return .object(["version": .number(Double(Self.schemaVersion)), "app": .string("Easl")])
+            return .object(["version": .number(Double(Self.schemaVersion)), "app": .string("easl")])
 
         case "board.get":
             let board = try board(p)

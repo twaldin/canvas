@@ -1,15 +1,15 @@
 ---
 name: easl
-description: You are running inside Easl (EASL_ENV=1), an infinite canvas where your terminal sits next to tiles and drawings the user also sees. Use before showing code/notes/HTML explainers/diagrams/changes on the canvas, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
+description: You are running inside easl (EASL_ENV=1), an infinite canvas where your terminal sits next to tiles and drawings the user also sees. Use before showing code/notes/HTML explainers/diagrams/changes on the canvas, reading or arranging what is on it, pointing the user at things, and talking to other agents. Answering a plain question or one about a mentioned item needs no skill.
 ---
 
-# Working in Easl
+# Working in easl
 
 Your terminal is one tile on an infinite canvas the user is looking at.
 Next to it live code tiles, changes (review) tiles, diagram tiles computed from the code, markdown notes, image tiles, browser tiles, sandboxed HTML tiles, and shapes/arrows/ink.
 You and the user read and change the same objects: the canvas is the shared working state; your transcript stays in your terminal.
 
-You are in Easl when `EASL_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
+You are in easl when `EASL_ENV=1`. omp, Claude Code (`claude`) and Codex (`codex`) started in a tile all get the integration
 (lifecycle, mentions, follow mode, this skill; `EASL_AGENT_HOOKS=0` turns it off for Claude and Codex).
 Your tile's environment also has `EASL_TILE_ID` (you), `EASL_BOARD_ID`, `EASL_BOARD_ROOT` (the directory this canvas belongs to: a repo's main checkout, whichever worktree you are in), and `EASL_SOCKET`.
 
@@ -183,13 +183,13 @@ A header "⚠ git failed: …" means git couldn't answer (cancelled, timed out, 
 - **Ranges stay on their code** as lines move (the app rewrites `range`), so don't retarget evidence tiles by hand; `easl get` → `rangeStatus` `stale` means the code is gone.
 
 Paths may point outside the board root (another repo, a worktree); a path or commit that doesn't exist is `not_found`. Every code-tile prop: `references/api.md` "Objects".
-Code navigation (Go to Definition, Find References, Outline) needs the language's server; if a panel says it wasn't found, answers are text search: tell the user where Easl looked (`references/ui.md` "Zoom and keys") rather than suggesting PATH edits.
+Code navigation (Go to Definition, Find References, Outline) needs the language's server; if a panel says it wasn't found, answers are text search: tell the user where easl looked (`references/ui.md` "Zoom and keys") rather than suggesting PATH edits.
 
 ### Changes tiles
 
 To show the user what you changed, create a changes tile instead of an HTML diff: `easl object.create --type changes --json '{"props":{},"size":"fit"}'`.
 Props: `base` (default `HEAD`: uncommitted work; `merge-base`: everything the branch changed, a PR's view; or a commit), optional `root` (another worktree of the board's repo, e.g. `"../wt-agent"`), `paths` and `title`. Creating it again with the same props returns your existing tile (`reused: true`).
-A branch's or PR's diff without checking it out: `{"base": "origin/main", "head": "<branch or pull/N/head>"}`, read-only from git objects (head vs its merge-base with base; renames and deletions shown; no Stage/Discard; a line click opens a code tile pinned to that side's commit). A ref the repo lacks shows the exact `git fetch` to run: Easl never fetches, so fetch first.
+A branch's or PR's diff without checking it out: `{"base": "origin/main", "head": "<branch or pull/N/head>"}`, read-only from git objects (head vs its merge-base with base; renames and deletions shown; no Stage/Discard; a line click opens a code tile pinned to that side's commit). A ref the repo lacks shows the exact `git fetch` to run: easl never fetches, so fetch first.
 `{"ref": "<branch>"}` instead of `root`: the worktree that has that branch checked out while one does (live, stageable), else its commits as with `head`; once the branch is deleted it keeps showing the last commit it read (`props.refSha`), marked `merged in <sha>` or `branch gone`.
 The user stages, unstages or discards per file, hunk, or selected lines; Stage/Unstage never change files: tell a user unsure of git so when they review your work.
 Read what they kept with `object.get` (`changes.files[].hunks[]` with `status` and `lines`; `props.reviewed[]`), no render needed. Every field: `references/api.md` "Objects".
@@ -311,12 +311,12 @@ easl agent.read --target reviewer --since prompt   # only what came after your l
 
 When `agent.prompt` returns `waitable`, call `agent.wait` right away: it waits for the work you just asked for, not the previous idle.
 Then `agent.read --since prompt` returns what followed your prompt (its echo, then the reply), and `agent.read --final true` only its last answer (`unavailable` mid-turn or for opencode: use `--since prompt`; `cutOff` means the turn died on that error: say so, don't treat it as done).
-A prompt sent while the agent is `working` joins that turn: `agent.wait` returns at its end. The last answer survives an app restart, and an agent that finished while Easl was closed comes back `done` with it.
+A prompt sent while the agent is `working` joins that turn: `agent.wait` returns at its end. The last answer survives an app restart, and an agent that finished while easl was closed comes back `done` with it.
 Hand over board objects instead of describing them: `agent.prompt` `mentions=[{"object": id}, {"object": code_id, "lines": {"start": 41, "end": 48}}]` reach the receiver as hidden context naming your terminal.
 Kind `omp`, `claude`, `codex`, `gemini` (before 0.60) or `opencode` reports a lifecycle (a Codex tile is `blocked` at launch while Codex asks whether to trust the folder, and `idle` once the user trusts it).
-Agents without an integration (aider via Easl's `aider` wrapper, any CLI's OSC 9/777 or bell) have their program as `kind` and `lifecycle.via: "notifications"`: `done` when they last said they wait, `unknown` after a prompt, never working/blocked; `agent.wait` returns at their next notification (give it `timeout_ms`), and `mentions` can't go to them.
+Agents without an integration (aider via easl's `aider` wrapper, any CLI's OSC 9/777 or bell) have their program as `kind` and `lifecycle.via: "notifications"`: `done` when they last said they wait, `unknown` after a prompt, never working/blocked; `agent.wait` returns at their next notification (give it `timeout_ms`), and `mentions` can't go to them.
 Kind `unknown` (a shell, another CLI) has none: `agent.wait` fails once 15 s pass without a first report, so poll `agent.read --since prompt`; `program` and `title` still hint at its state.
-A `conflict` saying the agent was working when Easl last closed and hasn't reported since (`lifecycle.restored`): omp and opencode report again within seconds of the app coming back, Claude Code, Codex and Gemini CLI at their next tool call; if it stays, read its screen (`agent.read --lines 40`) before deciding; never `force` it if the screen shows a question or approval.
+A `conflict` saying the agent was working when easl last closed and hasn't reported since (`lifecycle.restored`): omp and opencode report again within seconds of the app coming back, Claude Code, Codex and Gemini CLI at their next tool call; if it stays, read its screen (`agent.read --lines 40`) before deciding; never `force` it if the screen shows a question or approval.
 Don't prompt an agent that is `blocked`; it is waiting for its user. `agent.prompt` to one fails with `conflict` quoting what it waits on, and so does one whose foreground program isn't its agent (nvim, another tmux pane): tell the user.
 Never answer another agent's approval with `force: true`: it types into the dialog and presses Return, which in an approval menu picks the highlighted option (usually allow). Force only when you know the dialog is gone.
 
@@ -344,12 +344,12 @@ Give each branch's work its own region: a group titled with the branch (`props.k
 `easl board.list` shows every stored board, and a repository board's `worktrees` (path, branch, `live`: still checked out there).
 `easl board.export` writes a readable snapshot to `<root>/.easl/board.json` for committing when the user asks to save the board with the repo.
 
-## When the user asks how to use Easl
+## When the user asks how to use easl
 
-Help › Easl Basics ⌥⌘/ is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" and "which key?" from it, not from Easl's source.
+Help › easl Basics ⌥⌘/ is the user's legend of everything on screen (dots, rings, markers, follow tile, tray, keys); `references/ui.md` has the same text: answer "what is this?" and "which key?" from it, not from easl's source.
 ⌘P goes to any tile or opens a repo file (`core.py:120` opens at a line, `@name` finds a symbol); ⌥⌘-arrows (all four) move between tiles; Return gives the selected tile the keyboard, Esc gives it back (in a terminal or a web page Esc stays with the program or page: ⌘Esc leaves any tile).
 ⌘J goes to the next thing on this board that needs the user; ⌘[ / ⌘] go back and forward; ⌘9 fits everything; ⌘Z undoes the user's last change or an agent's, and a notice names what it undid.
 Hyper-click (⌃⌥⇧⌘-click) or Edit › Mention ⇧⌘M stages a mention for the terminal the tray shows ("→ name ▾" picks another); Hyper-V pastes staged mentions into the terminal the user is typing in (else that one), for agents without an integration.
 Mouse users: the wheel pans, ⌘-scroll zooms around the pointer, ⇧-scroll pans sideways; don't tell a user without a trackpad that zooming needs a pinch.
-On a PC keyboard ⌘ is the Windows key and does what Ctrl does elsewhere, ⌥ is Alt (`macos-option-as-alt = true` in their Ghostty config for Meta), and Hyper is Ctrl+Alt+Shift+Win: point them at Easl Basics' "Coming from Linux or Windows" section.
+On a PC keyboard ⌘ is the Windows key and does what Ctrl does elsewhere, ⌥ is Alt (`macos-option-as-alt = true` in their Ghostty config for Meta), and Hyper is Ctrl+Alt+Shift+Win: point them at easl Basics' "Coming from Linux or Windows" section.
 Every action is also in the menu bar (Help › search).

@@ -1,4 +1,4 @@
-// Replays input into an Easl instance launched with EASL_DEV_INPUT=1 (see docs/testing.md).
+// Replays input into an easl instance launched with EASL_DEV_INPUT=1 (see docs/testing.md).
 // Coordinates are window-content points with a top-left origin, matching `view.snapshot` pixels / 2.
 //
 //   dev-input <pid> click <x> <y> [--mods hyper|cmd|shift|opt|ctrl[+…]] [--clicks 2]

@@ -1,9 +1,9 @@
-# Easl shell integration for bash (docs/contracts.md "Terminal tile environment").
+# easl shell integration for bash (docs/contracts.md "Terminal tile environment").
 #
 # Terminal tiles export PROMPT_COMMAND='. <this file>', so bash runs it before each prompt, after
 # the user's startup files (which keep an inherited PROMPT_COMMAND when they add their own). The
-# first run puts Easl's bin back at the front of PATH, where those files may have put other
-# directories (e.g. ~/.local/bin, where Claude Code installs itself) that would shadow Easl's
+# first run puts easl's bin back at the front of PATH, where those files may have put other
+# directories (e.g. ~/.local/bin, where Claude Code installs itself) that would shadow easl's
 # claude and codex wrappers. Every run reports the directory as a percent-encoded file URL (OSC 7,
 # as macOS Terminal's own bashrc does), so `path:line` references in the tile resolve against
 # where the user cd'ed.

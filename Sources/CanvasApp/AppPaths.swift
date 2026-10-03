@@ -62,7 +62,7 @@ enum AppPaths {
     }()
 
     /// Where zmx writes each session's log (`<session>.log`): `$XDG_STATE_HOME/zmx/logs`, else
-    /// `~/.local/state/zmx/logs`. Easl deletes its sessions' logs (`Housekeeping`).
+    /// `~/.local/state/zmx/logs`. easl deletes its sessions' logs (`Housekeeping`).
     static let zmxLogs: URL = {
         let state = ProcessInfo.processInfo.environment["XDG_STATE_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/state", isDirectory: true)

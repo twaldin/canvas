@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         termination.resume()
         terminationSignal = termination
         DevInput.install()
-        // Easl's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
+        // easl's own leftovers: dead sessions' zmx logs, read Ghostty configs, old renders.
         Housekeeping.pruneAtLaunch()
         if let url = AppPaths.asset(DrawingStyle.fontAsset) { DrawingStyle.registerFonts(url) }
         registry.onEvent = { [weak self] board, event in
@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try server.start()
             self.server = server
         } catch {
-            NSLog("Easl: cannot listen on \(AppPaths.apiSocket): \(error)")
+            NSLog("easl: cannot listen on \(AppPaths.apiSocket): \(error)")
         }
         cmux.perform = { [weak self] board, object, command, driver in
             guard let tile = self?.controllers[board.id]?.canvas.tiles[object.id]?.content as? BrowserTile else {
@@ -152,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try cmuxServer.start()
             self.cmuxServer = cmuxServer
         } catch {
-            NSLog("Easl: cannot listen on \(AppPaths.cmuxSocket): \(error)")
+            NSLog("easl: cannot listen on \(AppPaths.cmuxSocket): \(error)")
         }
         hyper.install()
         let saved = Self.savedOpenBoards()
@@ -164,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let migration = registry.store.migrateToRepoBoards(knownRoots: saved + [Self.initialRoot()])
         if let report = migration, !report.repos.isEmpty || !report.unresolved.isEmpty {
             let temporary = report.repos.flatMap(\.legacy).filter { $0.temporary && $0.region != nil }.map { "\($0.label) (\($0.worktree ?? ""))" }
-            NSLog("Easl: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were)\(temporary.isEmpty ? "" : "; regions from temporary worktrees: " + temporary.joined(separator: ", ")); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
+            NSLog("easl: merged \(report.repos.reduce(0) { $0 + $1.legacy.count }) per-branch boards into \(report.repos.count) repository boards (\(report.unresolved.count) left as they were)\(temporary.isEmpty ? "" : "; regions from temporary worktrees: " + temporary.joined(separator: ", ")); report in \(AppPaths.boards.path)/\(RepoBoardMigration.backupFolder)/\(RepoBoardMigration.reportFile)")
         }
         let initial = open(root: Self.initialRoot())
         // The other boards that were open as tabs come back behind the initial one (one tab per
@@ -267,7 +267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Records the shown boards' roots in tab order (AppPaths.openBoards) for the next launch.
-    /// Closing the last board window quits Easl (`applicationShouldTerminateAfterLastWindowClosed`),
+    /// Closing the last board window quits easl (`applicationShouldTerminateAfterLastWindowClosed`),
     /// so that board stays recorded, as Quit keeps every tab.
     private func saveOpenBoards(closing: NSWindow? = nil) {
         guard !terminating else { return }
@@ -420,11 +420,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.keyEquivalentModifierMask = modifiers
             return item
         }
-        submenu("Easl", [
+        submenu("easl", [
             // Every browser tile's cookies, storage and caches (`BrowserProfile`), after a sheet.
             item("Clear Browsing Data…", #selector(clearBrowsingData(_:)), ""),
             .separator(),
-            item("Quit Easl", #selector(NSApplication.terminate(_:)), "q"),
+            item("Quit easl", #selector(NSApplication.terminate(_:)), "q"),
         ])
         submenu("File", [
             item("New Terminal", #selector(newTerminal(_:)), "t"),
@@ -564,7 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (`BasicsPanel`), ⌥⌘/ beside that search's ⌘?.
         NSApp.helpMenu = submenu("Help", [
             item("Get Started", #selector(toggleGetStarted(_:)), ""),
-            item("Easl Basics", #selector(toggleBasics(_:)), "/", [.option, .command]),
+            item("easl Basics", #selector(toggleBasics(_:)), "/", [.option, .command]),
         ])
         return main
     }

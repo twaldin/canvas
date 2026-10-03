@@ -1,7 +1,7 @@
 #!/bin/sh
-# Easl's aider wrapper: in an Easl terminal tile, runs the real aider with its notifications on
-# and sent to the terminal as an OSC 777 notification, which Easl reads as "aider waits for you"
-# (NotifyingAgent: the tab's dot, ⌘J, agent.wait), plus Easl's short guide as a read-only file.
+# easl's aider wrapper: in an easl terminal tile, runs the real aider with its notifications on
+# and sent to the terminal as an OSC 777 notification, which easl reads as "aider waits for you"
+# (NotifyingAgent: the tab's dot, ⌘J, agent.wait), plus easl's short guide as a read-only file.
 # The user's own arguments come last, so theirs win (--no-notifications, another
 # --notifications-command). Anywhere else, and with EASL_AGENT_HOOKS=0, it is the real aider,
 # untouched.

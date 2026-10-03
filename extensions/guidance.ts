@@ -7,30 +7,30 @@ import { dirname, resolve } from "node:path";
 
 export type GuidanceAgent = "omp" | "claude" | "codex" | "gemini" | "opencode";
 
-/** The skill shipped with Easl (skills/easl, beside extensions/ in the repo and the bundle). */
+/** The skill shipped with easl (skills/easl, beside extensions/ in the repo and the bundle). */
 export const SKILL_PATH = resolve(import.meta.dir, "../skills/easl/SKILL.md");
 
 export function canvasGuidance(agent: GuidanceAgent, tile: string): string {
   const socket = process.env.EASL_SOCKET ?? "";
   const board = process.env.EASL_BOARD_ID ?? "";
   return [
-    `You are running in an Easl terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>, with each item's location and excerpt.`,
+    `You are running in an easl terminal tile (${tile}). Mentions the user staged on the canvas arrive as <canvas-mentions>, with each item's location and excerpt.`,
     ...skillLines(agent),
     "Write code references as repo-relative `path:line` (`src/app.ts:42`, `src/app.ts:42-60`): the user ⌘-clicks them to open the code beside you.",
     "When your answer is something the user will come back to (a plan, a walkthrough across several files, a comparison), put it on the canvas or offer to; one-off answers stay in the terminal.",
-    "To show the user code, a page, or a diagram beside this terminal, use the canvas (skill, `easl` CLI, SDK). Never drive the Easl app with GUI automation (Computer Use, AppleScript) and never publish it elsewhere (artifacts, gists) instead.",
+    "To show the user code, a page, or a diagram beside this terminal, use the canvas (skill, `easl` CLI, SDK). Never drive the easl app with GUI automation (Computer Use, AppleScript) and never publish it elsewhere (artifacts, gists) instead.",
     ...browserLines(agent),
-    "Easl's scratch output (renders under $TMPDIR/easl-renders/, JSON payload files for the `easl` CLI) belongs in $TMPDIR, never in the repo: writing there is not touching the user's files, even under an instruction to stay in this directory.",
+    "easl's scratch output (renders under $TMPDIR/easl-renders/, JSON payload files for the `easl` CLI) belongs in $TMPDIR, never in the repo: writing there is not touching the user's files, even under an instruction to stay in this directory.",
     "Never answer another agent's approval with `agent.prompt` `force`: it types into whatever dialog is open and presses Return, which in an approval menu picks the highlighted option (usually allow). Tell the user it waits instead. `board.open` with `select: true` switches the user's tab: only when they asked to see that board.",
     ...connectionLines(agent, socket, tile, board),
   ].join("\n");
 }
 
-/** omp's `browser` drives Easl browser tiles here (the cmux backend), which it can't resize. */
+/** omp's `browser` drives easl browser tiles here (the cmux backend), which it can't resize. */
 function browserLines(agent: GuidanceAgent): string[] {
   if (agent !== "omp") return [];
   return [
-    "Your `browser` opens its page in an Easl browser tile beside you, and the tile is the viewport: `viewport`, `tab.setViewport` and `tab.emulate` don't change it and `tab.devices()` is unsupported. For a phone or tablet width, keep that tile (the user sees it; don't switch to a headless browser) and resize it: `easl object.update --id <tile> --json '{\"frame\":{\"w\":390,\"h\":902}}'` (w = the CSS width; h = the height + 58 for the title and address bars; the tile is your newest browser object in `easl board.get`), then read innerWidth again.",
+    "Your `browser` opens its page in an easl browser tile beside you, and the tile is the viewport: `viewport`, `tab.setViewport` and `tab.emulate` don't change it and `tab.devices()` is unsupported. For a phone or tablet width, keep that tile (the user sees it; don't switch to a headless browser) and resize it: `easl object.update --id <tile> --json '{\"frame\":{\"w\":390,\"h\":902}}'` (w = the CSS width; h = the height + 58 for the title and address bars; the tile is your newest browser object in `easl board.get`), then read innerWidth again.",
   ];
 }
 
@@ -46,7 +46,7 @@ function skillLines(agent: GuidanceAgent): string[] {
   const description = /^description:\s*(.+)$/m.exec(readFileSync(SKILL_PATH, "utf8"))?.[1]?.trim() ?? "";
   const how = agent === "omp" ? "with the read tool" : agent === "codex" ? "(e.g. `cat` it)" : "with your file-reading tool";
   return [
-    `Easl provides this skill for the session${agent === "omp" ? " (not reachable through skill://)" : ""}:`,
+    `easl provides this skill for the session${agent === "omp" ? " (not reachable through skill://)" : ""}:`,
     "<skills>",
     `- easl: ${description}`,
     "</skills>",
@@ -55,7 +55,7 @@ function skillLines(agent: GuidanceAgent): string[] {
 }
 
 function connectionLines(agent: GuidanceAgent, socket: string, tile: string, board: string): string[] {
-  const connection = `Easl connection: EASL_SOCKET=${socket} EASL_TILE_ID=${tile} EASL_BOARD_ID=${board}.`;
+  const connection = `easl connection: EASL_SOCKET=${socket} EASL_TILE_ID=${tile} EASL_BOARD_ID=${board}.`;
   if (agent === "omp") {
     // omp starts its eval Python kernel with an allowlisted environment (PATH, HOME, PYTHONPATH,
     // LC_/XDG_/PI_ …) that drops EASL_*, so the connection values are spelled out.

@@ -1,9 +1,9 @@
 #!/bin/sh
-# The bundle a development instance runs from: a copy of <app> at <home>/Easl.app that brings
+# The bundle a development instance runs from: a copy of <app> at <home>/easl.app that brings
 # its instance's environment with it, so however macOS relaunches it (logging back in, the Dock,
 # Finder, `open` with no environment) it runs on its own home, never on the user's default one
 # beside their live app (docs/testing.md "Development bundles"). Used by scripts/dev.sh and
-# scripts/perf-replica.sh; <app> itself (a release bundle, .build/Easl.app, a frozen copy) is
+# scripts/perf-replica.sh; <app> itself (a release bundle, .build/easl.app, a frozen copy) is
 # never changed.
 #
 #   scripts/dev-bundle.sh [--release-id] <app> <home> [KEY=VALUE…]   prints the copy's path
@@ -22,7 +22,7 @@ release_id=
 source="$1"; home="$2"; shift 2
 case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
 [ -f "$source/Contents/Info.plist" ] || { echo "scripts/dev-bundle.sh: $source is not an app bundle" >&2; exit 1; }
-copy="$home/Easl.app"
+copy="$home/easl.app"
 [ "$(cd "$source" && pwd -P)" != "$(mkdir -p "$copy" && cd "$copy" && pwd -P)" ] || { echo "scripts/dev-bundle.sh: $source is this home's own copy; pass the bundle it was made from" >&2; exit 1; }
 rm -rf "$copy"
 # A clone on APFS: no bytes copied.

@@ -2,7 +2,7 @@ import AppKit
 import CanvasCore
 import UserNotifications
 
-/// macOS notifications when an agent tile becomes `done` or `blocked` while Easl isn't
+/// macOS notifications when an agent tile becomes `done` or `blocked` while easl isn't
 /// frontmost. Clicking one brings its window forward and focuses the tile.
 ///
 /// Authorization is requested lazily, the first time there is something to say. With
@@ -51,7 +51,7 @@ final class AgentNotifier: NSObject, UNUserNotificationCenterDelegate {
         content.body = notice.message ?? (notice.blocked ? "Waiting for your answer." : "Finished and waiting for your next prompt.")
         content.userInfo = ["board": board.id, "tile": terminal.id]
         guard enabled else {
-            NSLog("Easl: notification suppressed (EASL_NO_ACTIVATE): %@ — %@", content.title, content.body)
+            NSLog("easl: notification suppressed (EASL_NO_ACTIVATE): %@ — %@", content.title, content.body)
             return
         }
         // One notification per tile: a newer state replaces the older one.

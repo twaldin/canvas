@@ -260,7 +260,7 @@ final class LanguageServiceTests: Sendable {
             models.map { $0.area() }.reduce(0, +)
         }
         """)
-        // Easl turns sourcekit-lsp's background indexing off; the index comes from the user's
+        // easl turns sourcekit-lsp's background indexing off; the index comes from the user's
         // own build, as it would for a repo someone works in.
         let build = Process()
         build.executableURL = URL(fileURLWithPath: "/usr/bin/swift")

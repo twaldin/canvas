@@ -1,5 +1,5 @@
 #!/bin/sh
-# A second Easl instance showing a copy of a dev board, for performance work on the testing
+# A second easl instance showing a copy of a dev board, for performance work on the testing
 # Space while the original stays in use. Terminal tiles are dropped so the copy never attaches to
 # the original's zmx sessions.
 #
@@ -25,7 +25,7 @@ window() { "$yabai" -m query --windows | python3 -c "import json,sys; print(next
 case "${1:-}" in
   start)
     need_yabai start
-    source="$2"; app="${3:-$repo/.build/Easl.app}"
+    source="$2"; app="${3:-$repo/.build/easl.app}"
     [ -f "$source" ] || source="$repo/.easl-home/boards/$source.json"
     board="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['id'])" "$source")"
     [ -z "$(pid || true)" ] || { echo "replica already running" >&2; exit 1; }
@@ -45,7 +45,7 @@ EOF
     # with a one-shot rule, removed once placed (see scripts/dev.sh launch).
     rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-    "$yabai" -m rule --add --one-shot label="$rule" app="^Easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
+    "$yabai" -m rule --add --one-shot label="$rule" app="^easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
     # PERF_MALLOC_STACKS=1 records allocation stacks for `malloc_history <pid> <address>`. The
     # replica runs from a copy that carries this environment (scripts/dev-bundle.sh).
     set -- EASL_NO_ACTIVATE=1 EASL_DEV_INPUT=1 EASL_DEV_PERF=1 EASL_ROOT="$root"

@@ -25,15 +25,15 @@ public enum LoginSession {
 
 extension LoginSession {
     /// A terminal tile's shell-integration variables for the app's resources at `resources`
-    /// (docs/contracts.md "Terminal tile environment"): Easl's `bin/` first on `PATH`, its
+    /// (docs/contracts.md "Terminal tile environment"): easl's `bin/` first on `PATH`, its
     /// `clients/python` on `PYTHONPATH`, `ZDOTDIR` its zsh integration with the user's own in
     /// `EASL_ZSH_ZDOTDIR`, and its bash integration in `PROMPT_COMMAND`, each before what the
     /// app inherited.
     ///
-    /// An app launched from inside an Easl tile (an agent's `scripts/dev.sh restart`, `open` in a
+    /// An app launched from inside an easl tile (an agent's `scripts/dev.sh restart`, `open` in a
     /// tile) inherits that tile's integration, possibly of another bundle: taken as the user's own,
-    /// its `ZDOTDIR` made every new tile source Easl's startup files instead of the user's
-    /// (`_canvas_finish: command not found`, no `~/.zshrc`). So every Easl integration found in
+    /// its `ZDOTDIR` made every new tile source easl's startup files instead of the user's
+    /// (`_canvas_finish: command not found`, no `~/.zshrc`). So every easl integration found in
     /// `inherited` is taken out first (`canvasResources`), and the user's `ZDOTDIR` is what that
     /// tile kept aside in `EASL_ZSH_ZDOTDIR`, else none (their startup files are in `HOME`).
     public static func tileShellIntegration(resources: String, inherited: [String: String]) -> [String: String] {
@@ -65,9 +65,9 @@ extension LoginSession {
     private static let zshDirectory = "/extensions/shell/zsh"
     private static let bashScript = "/extensions/shell/bash/easl.bash"
 
-    /// The resource directories of the Easl integrations `inherited` carries: a tile's
+    /// The resource directories of the easl integrations `inherited` carries: a tile's
     /// `ZDOTDIR` (kept by non-interactive shells and the programs they start), an `EASL_ZSH_ZDOTDIR`
-    /// an older Easl set from one, and `PROMPT_COMMAND`'s sourcing of `easl.bash` (kept by every
+    /// an older easl set from one, and `PROMPT_COMMAND`'s sourcing of `easl.bash` (kept by every
     /// shell), whichever are there.
     static func canvasResources(in inherited: [String: String]) -> Set<String> {
         var found = Set([inherited["ZDOTDIR"], inherited["EASL_ZSH_ZDOTDIR"]].compactMap { $0.flatMap(integrationRoot(zsh:)) })
@@ -77,7 +77,7 @@ extension LoginSession {
         return found
     }
 
-    /// `<resources>` when `dir` is `<resources>/extensions/shell/zsh`, Easl's zsh integration.
+    /// `<resources>` when `dir` is `<resources>/extensions/shell/zsh`, easl's zsh integration.
     static func integrationRoot(zsh dir: String) -> String? {
         let trimmed = dir.hasSuffix("/") ? String(dir.dropLast()) : dir
         guard trimmed.hasSuffix(zshDirectory), trimmed.count > zshDirectory.count else { return nil }

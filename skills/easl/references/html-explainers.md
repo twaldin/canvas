@@ -18,7 +18,7 @@ canvas.object.create(type="html", props={"title": "Restore path", "html": html})
     `bg-background text-foreground`, `bg-card`, `bg-muted text-muted-foreground`, `border-border`, `bg-accent text-accent-foreground`, `bg-code`, `text-warn`, `text-ok`, `font-sans`, `font-mono`.
     Avoid hard-coded hex colors.
   - **Mermaid**: `<pre class="mermaid">flowchart LR …</pre>` renders as a diagram.
-  - **Easl components** (below).
+  - **easl components** (below).
 - Optional page API: `window.canvasKit.openCode(path, {line | lines, symbol})`, `.excerpt(path, {lines, symbol})`, `.getState(key?)`, `.setState(key, value | null)`, `.onState(fn)`.
 
 ## Components

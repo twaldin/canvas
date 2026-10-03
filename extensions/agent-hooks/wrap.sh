@@ -1,8 +1,8 @@
-# Shared by Easl's agent wrappers bin/claude, bin/codex, bin/gemini, bin/opencode and bin/aider
+# Shared by easl's agent wrappers bin/claude, bin/codex, bin/gemini, bin/opencode and bin/aider
 # (docs/contracts.md "Agent integrations"): find the real agent binary and decide whether to
 # integrate.
 
-# The next <name> on PATH that isn't an Easl wrapper (this instance's or another's bin, which
+# The next <name> on PATH that isn't an easl wrapper (this instance's or another's bin, which
 # sits beside extensions/agent-hooks). Never recurses into a wrapper.
 canvas_real() {
   saved_ifs=$IFS
@@ -23,7 +23,7 @@ canvas_real() {
   return 1
 }
 
-# Plain: outside Easl, opted out (EASL_AGENT_HOOKS=0), or inside an agent this wrapper already
+# Plain: outside easl, opted out (EASL_AGENT_HOOKS=0), or inside an agent this wrapper already
 # integrated (EASL_AGENT is set: a nested agent must not report as the tile's agent).
 canvas_integrate() {
   [ "${EASL_ENV-}" = 1 ] && [ -n "${EASL_TILE_ID-}" ] && [ -n "${EASL_SOCKET-}" ] &&
@@ -32,7 +32,7 @@ canvas_integrate() {
 
 canvas_agent_real() {
   canvas_real "$1" && return 0
-  printf 'easl: %s is not installed (no %s on PATH besides Easl'"'"'s wrapper %s)\n' "$1" "$1" "$0" >&2
+  printf 'easl: %s is not installed (no %s on PATH besides easl'"'"'s wrapper %s)\n' "$1" "$1" "$0" >&2
   exit 127
 }
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# A development instance of Easl for this checkout, isolated from the installed app and from
+# A development instance of easl for this checkout, isolated from the installed app and from
 # other agents' instances (own EASL_HOME: socket, boards, log). See docs/testing.md.
 #
 #   scripts/dev.sh start [root]     build + bundle, launch without activating on the testing Space
@@ -22,7 +22,7 @@ set -eu
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 home="${EASL_DEV_HOME:-$repo/.easl-home}"
 case "$home" in /*) ;; *) home="$PWD/$home" ;; esac
-app="${EASL_DEV_APP:-$repo/.build/Easl.app}"
+app="${EASL_DEV_APP:-$repo/.build/easl.app}"
 # Window placement is optional and needs yabai (docs/testing.md, "Optional: a machine shared with
 # other agents"): YABAI, else ~/Applications/Yabai.app, else yabai on PATH.
 yabai="${YABAI:-$HOME/Applications/Yabai.app/Contents/MacOS/yabai}"
@@ -73,7 +73,7 @@ quit() {
   # A wedged instance must not outlive its pid file: restart would start a second one on the
   # same sockets and boards.
   if kill -0 "$pid" 2>/dev/null; then
-    echo "Easl $pid did not quit; killing it" >&2
+    echo "easl $pid did not quit; killing it" >&2
     kill -9 "$pid"
     while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
   fi
@@ -114,21 +114,21 @@ launch() {
   # yabai can't place a new window on another display's Space (it lands on the Space being
   # viewed), so a one-shot rule parks this launch's first window on an unviewed Space of the
   # built-in display, and it moves to the testing Space once it exists. One-shot and removed
-  # afterwards: a standing rule on app=Easl also grabbed every later window (tabs, other
+  # afterwards: a standing rule on app=easl also grabbed every later window (tabs, other
   # instances, the user's own boards) and hid them on the parking Space.
   rule="canvas-dev-$(printf %s "$home" | cksum | cut -d' ' -f1)"
   if [ -x "$yabai" ]; then
     "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-    "$yabai" -m rule --add --one-shot label="$rule" app="^Easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
+    "$yabai" -m rule --add --one-shot label="$rule" app="^easl$" space="$park" manage=off grid=1:1:0:0:1:1 >/dev/null
   fi
   open -g -n --stdout "$home/app.log" --stderr "$home/app.log" --env EASL_HOME="$home" "$@" "$bundle"
   i=0
   while [ ! -S "$EASL_SOCKET" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
-  [ -S "$EASL_SOCKET" ] || { echo "Easl did not open its socket; see $home/app.log" >&2; exit 1; }
+  [ -S "$EASL_SOCKET" ] || { echo "easl did not open its socket; see $home/app.log" >&2; exit 1; }
   # The socket's owner, not the newest process of this bundle: parallel launches of one bundle race.
   lsof -t "$EASL_SOCKET" | head -n 1 > "$home/pid"
   if [ ! -x "$yabai" ]; then
-    echo "Easl pid $(cat "$home/pid"), EASL_SOCKET=$EASL_SOCKET"
+    echo "easl pid $(cat "$home/pid"), EASL_SOCKET=$EASL_SOCKET"
     return
   fi
   target="$(test_space)"
@@ -139,7 +139,7 @@ launch() {
     [ -n "$wid" ] && "$yabai" -m window "$wid" --space "$target" && "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
   fi
   "$yabai" -m rule --remove "$rule" >/dev/null 2>&1 || true
-  echo "Easl pid $(cat "$home/pid") on Space $target, EASL_SOCKET=$EASL_SOCKET"
+  echo "easl pid $(cat "$home/pid") on Space $target, EASL_SOCKET=$EASL_SOCKET"
 }
 
 case "${1:-}" in
@@ -154,7 +154,7 @@ case "${1:-}" in
     need_yabai shot
     out="${2:-$home/shot.png}"
     wid="$(window_id)"
-    [ -n "$wid" ] || { echo "no Easl window" >&2; exit 1; }
+    [ -n "$wid" ] || { echo "no easl window" >&2; exit 1; }
     # Only a displayed Space is composited; anything else would be a stale frame.
     visible="$("$yabai" -m query --windows --window "$wid" | python3 -c "import json,sys; print(json.load(sys.stdin)['is-visible'])")"
     [ "$visible" = "True" ] || { echo "window $wid is not on a displayed Space; its pixels would be stale (scripts/dev.sh move)" >&2; exit 1; }
@@ -163,7 +163,7 @@ case "${1:-}" in
   move)
     need_yabai move
     wid="$(window_id)"
-    [ -n "$wid" ] || { echo "no Easl window" >&2; exit 1; }
+    [ -n "$wid" ] || { echo "no easl window" >&2; exit 1; }
     "$yabai" -m window "$wid" --space "${2:-$(test_space)}"
     "$yabai" -m window "$wid" --grid 1:1:0:0:1:1
     ;;

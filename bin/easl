@@ -1,4 +1,4 @@
 #!/bin/sh
-# easl CLI launcher (on PATH inside Easl terminal tiles). Requires bun.
+# easl CLI launcher (on PATH inside easl terminal tiles). Requires bun.
 here="$(cd "$(dirname "$0")/.." && pwd)"
 exec bun "$here/cli/easl.ts" "$@"

@@ -1,12 +1,12 @@
-// Easl integration for opencode, an opencode plugin that the opencode wrapper (bin/opencode)
+// easl integration for opencode, an opencode plugin that the opencode wrapper (bin/opencode)
 // adds for one session through OPENCODE_CONFIG_CONTENT (extensions/opencode/config.ts), only
-// inside an Easl terminal tile. Mirrors extensions/omp/easl.ts:
+// inside an easl terminal tile. Mirrors extensions/omp/easl.ts:
 //  - lifecycle (working / blocked on permission and question prompts / idle) and the session
 //    id for resume (`opencode --session <id>`)
 //  - the canvas-awareness block (extensions/guidance.ts) in the system prompt
 //  - the selection tray drained into the prompt you submit, as a hidden (synthetic) part
 //  - follow mode: files the agent reads, edits, and writes re-aim its follow tile
-// Every Easl call has a short timeout and its errors are swallowed: Easl being gone never
+// Every easl call has a short timeout and its errors are swallowed: easl being gone never
 // stalls opencode. Lifecycle reports it isn't there to take are spooled for it to replay
 // (agent-hooks/report.ts).
 import { resolve } from "node:path";
@@ -41,7 +41,7 @@ export const CanvasPlugin = async ({ directory }: Input) => {
    * answers, and events are delivered one at a time.
    */
   const children = new Set<string>();
-  /** The last report, said again when Easl comes back (it holds a restored one until then). */
+  /** The last report, said again when easl comes back (it holds a restored one until then). */
   let last: [state: "working" | "blocked" | "idle", message?: string, call?: string] = ["idle"];
 
   function report(state: "working" | "blocked" | "idle", message?: string, call?: string): void {

@@ -77,7 +77,7 @@ final class TerminalTile: NSView, TileContent {
         ]
         if let password = AppPaths.cmuxPassword { env["CMUX_SOCKET_PASSWORD"] = password }
         if let resources = AppPaths.resources {
-            // Shell integration (extensions/shell): after the user's startup files, Easl's bin
+            // Shell integration (extensions/shell): after the user's startup files, easl's bin
             // goes back to the front of PATH so its claude/codex wrappers aren't shadowed. An
             // integration the app inherited from a tile it was launched in is not the user's.
             env.merge(LoginSession.tileShellIntegration(resources: resources.path, inherited: ProcessInfo.processInfo.environment)) { _, new in new }
@@ -103,7 +103,7 @@ final class TerminalTile: NSView, TileContent {
         // instances) carry the same board and tile ids, so ids alone can't tell whose session it is.
         let labels = "canvas.board=\(board.id) canvas.tile=\(object.id) canvas.home=\(homeLabel)"
         let attach = ["/usr/bin/env"] + strip + [zmx, "attach", "--labels", labels, session] + start
-        let refusal = #"printf '\nThis terminal session (%s) belongs to another Easl instance (%s).\nNot attaching: this copy of the board can neither type into it nor end it.\n' "$2" "$owner"; exec sleep 2147483647"#
+        let refusal = #"printf '\nThis terminal session (%s) belongs to another easl instance (%s).\nNot attaching: this copy of the board can neither type into it nor end it.\n' "$2" "$owner"; exec sleep 2147483647"#
         let prologue = SessionReach.prologue() + ownerGuard(refusal: refusal)
         return quote(["/bin/sh", "-c", prologue + "shift 3\nexec \"$@\"", "canvas-attach", zmx, session, homeLabel] + attach)
     }
@@ -367,7 +367,7 @@ final class TerminalTile: NSView, TileContent {
         let answersKey = lastKeyAt.map { Date().timeIntervalSince($0) <= NotifyingAgent.bellAfterKey } ?? false
         let effect = board.terminalNotified(objectID, message: message, bell: bell, program: program, watched: isWatched, answersKey: answersKey)
         guard effect != .none else { return }
-        NSLog("Easl: terminal %@ %@: %@%@", objectID, bell ? "rang the bell" : "sent a notification", message, effect == .lifecycle ? " (its agent waits)" : "")
+        NSLog("easl: terminal %@ %@: %@%@", objectID, bell ? "rang the bell" : "sent a notification", message, effect == .lifecycle ? " (its agent waits)" : "")
     }
 
     /// BEL: named by what rang it (`TerminalCommand.bellMessage`).
@@ -380,7 +380,7 @@ final class TerminalTile: NSView, TileContent {
 
     /// What the shell is running, from the titles Ghostty's shell integration sets.
     fileprivate var commands = TerminalCommandTracker()
-    /// The commands the shell finished since Easl attached (Ghostty's shell integration: OSC
+    /// The commands the shell finished since easl attached (Ghostty's shell integration: OSC
     /// 133 D), which name their blocks in the terminal's text (`TerminalCommandLog`).
     private(set) var log = TerminalCommandLog()
     /// The last command the shell finished, and when.
@@ -403,7 +403,7 @@ final class TerminalTile: NSView, TileContent {
         onStatus?(command.status, (command.exit ?? 0) != 0, detail)
         guard (command.durationMs ?? 0) >= TerminalCommand.noticeAfterMs, !isWatched,
               board.raiseTerminalNotice(objectID, message: command.noticeMessage, bell: false) else { return }
-        NSLog("Easl: terminal %@ finished a long command: %@", objectID, command.noticeMessage)
+        NSLog("easl: terminal %@ finished a long command: %@", objectID, command.noticeMessage)
     }
 
     // MARK: Mentions
@@ -500,7 +500,7 @@ final class TerminalTile: NSView, TileContent {
                                              atPrompt: shell != nil && program == nil, last: lastCommand?.command)
         guard command?.exit != nil || command?.durationMs != nil else {
             // Starting at the very top of everything the terminal holds, with no prompt above:
-            // text from before Easl reattached to the session, which carries no marks.
+            // text from before easl reattached to the session, which carries no marks.
             if output.top == 0, (scrollbar?.offset ?? 0) == 0 { return nil }
             return (output.text, command)
         }
@@ -534,7 +534,7 @@ final class TerminalTile: NSView, TileContent {
         _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, none)
         _ = ghostty_surface_mouse_button(handle, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, none)
         ghostty_surface_mouse_pos(handle, -1, -1, none)
-        if ghostty_surface_has_selection(handle) { NSLog("Easl: terminal %@ kept a selection after reading a command block", objectID) }
+        if ghostty_surface_has_selection(handle) { NSLog("easl: terminal %@ kept a selection after reading a command block", objectID) }
         guard let output, !output.text.isEmpty, output.text != word?.text else { return nil }
         // `tl_px_y`: the first row's baseline, in points from the top; negative when that row is
         // above the viewport.
@@ -620,10 +620,10 @@ final class TerminalTile: NSView, TileContent {
     func block(_ index: Int) throws -> (command: TerminalCommand, output: String) {
         refreshProgram()
         guard !log.entries.isEmpty else {
-            throw ApiRouter.Failure("unavailable", "no command has finished in terminal \(objectID) since Easl attached to it (its shell needs Ghostty's shell integration; read with lines instead)")
+            throw ApiRouter.Failure("unavailable", "no command has finished in terminal \(objectID) since easl attached to it (its shell needs Ghostty's shell integration; read with lines instead)")
         }
         guard let entry = log[fromEnd: index] else {
-            throw ApiRouter.Failure("not_found", "terminal \(objectID) has \(log.entries.count) finished command\(log.entries.count == 1 ? "" : "s") since Easl attached to it: block goes back to -\(log.entries.count)")
+            throw ApiRouter.Failure("not_found", "terminal \(objectID) has \(log.entries.count) finished command\(log.entries.count == 1 ? "" : "s") since easl attached to it: block goes back to -\(log.entries.count)")
         }
         guard surface?.handle != nil, grid != nil else { throw ApiRouter.Failure("unavailable", "terminal \(objectID) isn't shown in a window") }
         if index == -1, let selected = selectedLastBlock() { return selected }
@@ -706,12 +706,12 @@ final class TerminalTile: NSView, TileContent {
             let running = await offPool { Self.sessionExists(session) }
             guard let self, self.board.objects[self.objectID] != nil else { return }
             if running {
-                NSLog("Easl: terminal %@ detached from a running session; reattaching", self.objectID)
+                NSLog("easl: terminal %@ detached from a running session; reattaching", self.objectID)
                 let controller = self.terminal.controller
                 self.terminal.controller = nil
                 self.terminal.controller = controller
             } else {
-                NSLog("Easl: terminal %@ exited; closing it", self.objectID)
+                NSLog("easl: terminal %@ exited; closing it", self.objectID)
                 self.board.transaction { try? self.board.delete(self.objectID) }
             }
         }
@@ -796,7 +796,7 @@ final class TerminalTile: NSView, TileContent {
             return
         }
         let opened = board.openCode(path: hit.file, lines: hit.lines, beside: objectID, newTile: newTile)
-        NSLog("Easl: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
+        NSLog("easl: terminal %@ opened %@%@ as %@ (%@)", objectID, hit.file, hit.lines.map { ":\($0.start)-\($0.end)" } ?? "", opened.id,
               opened.created ? (newTile ? "new tile" : "new preview") : opened.existing ? "existing" : "re-aimed preview")
         let source = grid.map { rects(hit.runs, grid: $0).reduce(NSRect.null) { $0.union($1) } } ?? .null
         onOpenedCode?(opened, source.isNull ? .null : underline.convert(source, to: nil))

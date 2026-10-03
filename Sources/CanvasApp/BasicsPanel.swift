@@ -1,7 +1,7 @@
 import AppKit
 import CanvasCore
 
-/// Help › Easl Basics: a floating panel inside the board window (an overlay like Go to, never
+/// Help › easl Basics: a floating panel inside the board window (an overlay like Go to, never
 /// modal) with the short legend in `CanvasBasics`: lifecycle dots, markers, the follow tile, the
 /// tray and Hyper-click, zoom and cards, the keyboard. It stays open while the canvas is used
 /// beside it, so the user can try what it says; ×, Esc while it has the keyboard, or the menu
@@ -28,11 +28,11 @@ final class BasicsPanel: NSVisualEffectView {
         layer?.borderColor = NSColor.separatorColor.cgColor
         isHidden = true
         setAccessibilityRole(.group)
-        setAccessibilityLabel("Easl Basics")
+        setAccessibilityLabel("easl Basics")
 
-        let title = NSTextField(labelWithString: "Easl Basics")
+        let title = NSTextField(labelWithString: "easl Basics")
         title.font = .systemFont(ofSize: 15, weight: .semibold)
-        let close = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close Easl Basics") ?? NSImage(), target: self, action: #selector(closeClicked))
+        let close = NSButton(image: NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close easl Basics") ?? NSImage(), target: self, action: #selector(closeClicked))
         close.isBordered = false
         close.contentTintColor = .secondaryLabelColor
         close.toolTip = "Close (Esc)"

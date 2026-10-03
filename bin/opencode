@@ -1,5 +1,5 @@
 #!/bin/sh
-# Easl's opencode wrapper: in an Easl terminal tile, runs the real opencode with the Easl plugin
+# easl's opencode wrapper: in an easl terminal tile, runs the real opencode with the easl plugin
 # (extensions/opencode/easl.ts, added through OPENCODE_CONFIG_CONTENT by
 # extensions/opencode/config.ts) for this session only, and without its self-update. Anywhere else,
 # and with EASL_AGENT_HOOKS=0, it is the real opencode, untouched.

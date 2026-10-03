@@ -3,7 +3,7 @@ import CanvasCore
 
 /// The list a browser tile's error badge opens, over the top right of its page: the page's
 /// errors newest first (uncaught errors, console errors, failed requests), each with where
-/// and when, then those of the page Easl released before this one loaded (`PageReport`).
+/// and when, then those of the page easl released before this one loaded (`PageReport`).
 /// A click on a row shows its whole message and its stack; a `file:line` that maps to a file
 /// under the board root (`PageSource`) opens it as a code tile at that line. A Hyper-click on
 /// a row mentions that entry (`BrowserTile.problemMention`).
@@ -77,8 +77,8 @@ final class PageProblemsView: NSView {
             let problems = previous.log.problems
             let none = problems.isEmpty ? ": no errors" : ""
             let label = reloaded
-                ? "Before Easl released the page at \(time) (out of view) and loaded it again\(none)"
-                : "Before Easl released the page at \(time) (out of view)\(none)"
+                ? "Before easl released the page at \(time) (out of view) and loaded it again\(none)"
+                : "Before easl released the page at \(time) (out of view)\(none)"
             items.append(SectionLabel(label))
             items += problems.prefix(Self.maxRows).map(row)
         }
@@ -152,7 +152,7 @@ final class PageProblemsView: NSView {
 
     @objc private func closeClicked() { onClose?() }
 
-    /// "Before Easl released the page at 14:16:38 …" over the released page's rows.
+    /// "Before easl released the page at 14:16:38 …" over the released page's rows.
     private final class SectionLabel: NSView {
         private let label: NSTextField
 

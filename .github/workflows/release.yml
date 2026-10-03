@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag like v0.5.0 to build Easl.app and attach Easl-0.5.0.zip to a GitHub release, with
+# Push a tag like v0.5.0 to build easl.app and attach easl-0.5.0.zip to a GitHub release, with
 # libintl's source (gettext-0.24.tar.gz) and THIRD_PARTY_NOTICES.md (docs/releasing.md).
 # With the signing secrets below the zip holds a Developer ID-signed, notarized and stapled app
 # (scripts/notarize.sh); without them, an ad-hoc signed one, and the signed path runs as a dry run
@@ -45,10 +45,10 @@ jobs:
           fi
           echo "EASL_VERSION=$version" >> "$GITHUB_ENV"
           echo "EASL_BUILD=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "ZIP=Easl-$version.zip" >> "$GITHUB_ENV"
+          echo "ZIP=easl-$version.zip" >> "$GITHUB_ENV"
       - name: Fetch libintl's source
         if: env.PUBLISH == 'true'
-        # Easl statically links GNU libintl (LGPL-2.1) inside libghostty, so every release carries
+        # easl statically links GNU libintl (LGPL-2.1) inside libghostty, so every release carries
         # its source next to the zip (THIRD_PARTY_NOTICES.md, "GNU libintl"). GNU's copy first, then
         # the identical one Ghostty builds from.
         env:
@@ -105,10 +105,10 @@ jobs:
         run: |
           scripts/bundle.sh release
           # A terminal tile imports the SDK from the bundle; that must leave the signature intact.
-          PYTHONPATH=.build/Easl.app/Contents/Resources/clients/python python3 -c 'import easl_sdk'
-          codesign --verify --deep --strict .build/Easl.app
+          PYTHONPATH=.build/easl.app/Contents/Resources/clients/python python3 -c 'import easl_sdk'
+          codesign --verify --deep --strict .build/easl.app
           # As scripts/notarize.sh zips: no AppleDouble `._*` entries.
-          ditto -c -k --norsrc --noextattr --noacl --keepParent .build/Easl.app "$ZIP"
+          ditto -c -k --norsrc --noextattr --noacl --keepParent .build/easl.app "$ZIP"
       - name: Dry run of the notarized build
         if: env.SIGNED != 'true'
         run: scripts/notarize.sh --dry-run "$RUNNER_TEMP/dry-run.zip"
@@ -132,7 +132,7 @@ jobs:
           fi
           # The version's CHANGELOG.md section, above GitHub's list of merged changes.
           scripts/release-notes.sh "$EASL_VERSION" > "$RUNNER_TEMP/notes.md"
-          gh release create "$GITHUB_REF_NAME" "$ZIP" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "Easl $EASL_VERSION" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
+          gh release create "$GITHUB_REF_NAME" "$ZIP" gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "easl $EASL_VERSION" --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
       - name: Remove the signing keychain
         if: always() && env.SIGNED == 'true'
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

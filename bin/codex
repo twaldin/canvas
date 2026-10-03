@@ -1,5 +1,5 @@
 #!/bin/sh
-# Easl's codex wrapper: in an Easl terminal tile, runs the real Codex with Easl's hooks
+# easl's codex wrapper: in an easl terminal tile, runs the real Codex with easl's hooks
 # (extensions/codex/config.ts → extensions/agent-hooks/hook.ts) as a `-c` override for this
 # session only. Anywhere else, and with EASL_AGENT_HOOKS=0, it is the real codex, untouched.
 here="$(cd "$(dirname "$0")/.." && pwd)"

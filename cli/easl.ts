@@ -11,8 +11,8 @@
 // extension) or, without it, to a new file under $TMPDIR/easl-renders/, and print the result
 // metadata with its `path`; so does `browser screenshot`. object.create/update print prop values
 // over 1 KB elided (`--full` prints them whole); what the app returns is unchanged.
-// Connection: EASL_SOCKET, EASL_TILE_ID, EASL_BOARD_ID (every Easl terminal tile sets them);
-// `browser`: CMUX_SOCKET_PATH (else cmux.sock beside the Easl socket), CMUX_SURFACE_ID,
+// Connection: EASL_SOCKET, EASL_TILE_ID, EASL_BOARD_ID (every easl terminal tile sets them);
+// `browser`: CMUX_SOCKET_PATH (else cmux.sock beside the easl socket), CMUX_SURFACE_ID,
 // CMUX_SOCKET_PASSWORD.
 // Errors print `code: message` to stderr and exit 1.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -42,7 +42,7 @@ type MethodSpec = { description: string; params: Schema; result: Schema };
 const methods = catalog.methods as Record<string, MethodSpec>;
 const definitions = catalog.definitions as Record<string, Schema>;
 
-/** The shipped skill: how to use Easl well, beside this file in the checkout and the app bundle. */
+/** The shipped skill: how to use easl well, beside this file in the checkout and the app bundle. */
 const SKILL = resolve(import.meta.dir, "../skills/easl/SKILL.md");
 /** Printed prop values longer than this (JSON bytes) are elided unless `--full`. */
 const ELIDE_BYTES = 1024;
@@ -68,7 +68,7 @@ function usage(help = false): never {
       "this terminal, `list` lists this board's, `close <tile>` closes one, any other verb sends browser.<verb> to <tile>",
       "(e.g. `easl browser snapshot obj_… --interactive`, `easl browser click obj_… --selector @e2`).",
       "",
-      `How to use Easl well (read before building on the board): ${SKILL}`,
+      `How to use easl well (read before building on the board): ${SKILL}`,
     );
   }
   (help ? console.log : console.error)(lines.join("\n"));
@@ -267,7 +267,7 @@ if (argv[0] === "methods") {
   else {
     for (const [name, spec] of Object.entries(methods)) console.log(`${name.padEnd(22)} ${spec.description}`);
     console.log("\n`easl methods <name>` shows a method's params and result, or a type's fields (e.g. CodeProps).");
-    console.log(`How to use Easl well: ${SKILL}`);
+    console.log(`How to use easl well: ${SKILL}`);
   }
   process.exit(0);
 }
@@ -316,11 +316,11 @@ async function browser(args: string[]): Promise<void> {
     await connected.promise;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    // As the Easl client does: a socket that exists but refuses this process is a sandbox (Codex's).
+    // As the easl client does: a socket that exists but refuses this process is a sandbox (Codex's).
     if (code === "EPERM" || code === "EACCES" || (code === "ENOENT" && existsSync(path))) {
       throw new CanvasError("unavailable", `cmux socket ${path} exists but connecting to it failed (${code}): a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it`);
     }
-    throw new CanvasError("unavailable", `cmux socket ${path}: ${(error as Error).message} (is Easl running? its terminal tiles set CMUX_SOCKET_PATH)`);
+    throw new CanvasError("unavailable", `cmux socket ${path}: ${(error as Error).message} (is easl running? its terminal tiles set CMUX_SOCKET_PATH)`);
   }
   socket.on("error", () => socket.destroy());
   const lines = createInterface({ input: socket, crlfDelay: Infinity });

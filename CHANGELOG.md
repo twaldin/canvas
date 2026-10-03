@@ -2,6 +2,23 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
+## 0.5.1
+
+The app's name is now written in lowercase: easl. The menu bar and menus (Quit easl, Help › easl Basics), windows, sheets, notifications, the CLI, the agent skill and the docs say easl; the app is `easl.app` and the release `easl-<version>.zip`. Nothing else changes: the bundle id (`net.waldin.easl`), `~/Library/Application Support/Easl`, `~/.easl`, the `EASL_*` variables, the `easl` CLI, `easl_sdk` and `@easl/client` stay as they were.
+
+### Upgrading from Easl 0.5.0
+
+1. Quit the app (its terminal sessions keep running), delete `/Applications/Easl.app`, unzip `easl-0.5.1.zip`, move `easl.app` to `/Applications`, clear its quarantine flag and open it:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/easl.app
+   ```
+   Your boards, open tabs, settings, window frames and browser logins stay: the bundle id and folders are the same, so nothing moves.
+2. omp: point the extension at the new path.
+   ```sh
+   ln -sf /Applications/easl.app/Contents/Resources/extensions/omp/easl.ts ~/.omp/agent/extensions/easl.ts
+   ```
+3. Terminals and agents carry on: their environment names `/Applications/Easl.app`, which macOS's default (case-insensitive) disk finds as `easl.app`. On a case-sensitive volume, restart the agents.
+
 ## 0.5.0
 
 Canvas is now Easl: the same app under a new name. Its first launch brings a Canvas install along (0.4, or 0.2 under its first name), or a Chalkwork 0.3 one.

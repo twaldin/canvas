@@ -186,7 +186,7 @@ public final class Board {
     public var terminalScreen: (@MainActor (ObjectID) async -> (text: String, scrolledBack: Int)?)?
     /// Which of a terminal tile's finished commands `command` is now, from the newest (-1, as
     /// `agent.read` `block` counts), for a mention of its block; nil when `agent.read` can't read
-    /// that block (older than Easl's attach, cleared, trimmed from the scrollback). Set by the app.
+    /// that block (older than easl's attach, cleared, trimmed from the scrollback). Set by the app.
     public var terminalBlockIndex: (@MainActor (ObjectID, TerminalCommand) -> Int?)?
     /// Terminal tiles that left the board for good, once the step that removed them is over:
     /// deleted by anyone (API, batch, UI, redo of a delete, undo of a create). A terminal a failed
@@ -218,7 +218,7 @@ public final class Board {
             }
             // Format 1 stored a tile's body; the title bar drew above it. Same box on screen.
             if format < 2, RenderMath.isTile(object.type) { object.frame.h += RenderMath.tileTitleHeight }
-            // A terminal saved `working` or `blocked` said so before Easl last closed: until its
+            // A terminal saved `working` or `blocked` said so before easl last closed: until its
             // agent reports again (live, or a spooled report replayed), that is only what it was.
             if object.type == .terminal, var props = object.props.object, var lifecycle = props["lifecycle"]?.object,
                let state = lifecycle["state"]?.string, state == LifecycleState.working.rawValue || state == LifecycleState.blocked.rawValue {
@@ -970,7 +970,7 @@ public final class Board {
     }
 
     /// `agent.report` as its params (schema `agent.report`): a report over the socket, or one an
-    /// integration spooled while Easl was away (`AgentReportSpool`).
+    /// integration spooled while easl was away (`AgentReportSpool`).
     public func reportLifecycle(params p: JSONValue) throws {
         guard let tile = p["tile"]?.string, let kind = p["kind"]?.string, let name = p["state"]?.string else {
             throw BoardError.invalidParams("agent.report needs tile, kind, and state")

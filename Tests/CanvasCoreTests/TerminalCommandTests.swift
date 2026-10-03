@@ -160,7 +160,7 @@ struct TerminalCommandTests {
     }
 
     @Test func aReattachedSessionsTitleIsTheProgramsNotACommandTheHeaderHides() {
-        // Easl relaunched: the session comes back titled by omp, which waits on a question.
+        // easl relaunched: the session comes back titled by omp, which waits on a question.
         var tracker = TerminalCommandTracker()
         let title = "π ! Add Per-Command Help"
         let started = tracker.title(title, at: Date(), promptTitle: "~/src/app")

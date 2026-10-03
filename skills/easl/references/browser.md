@@ -2,7 +2,7 @@
 
 How omp's browser tool, `easl browser`, and canvas browser tiles behave, beyond SKILL.md's summary.
 
-omp's `browser` tool (its cmux backend is on automatically inside Easl) opens a browser tile beside your terminal for each `browser.open({name})`;
+omp's `browser` tool (its cmux backend is on automatically inside easl) opens a browser tile beside your terminal for each `browser.open({name})`;
 `close` deletes it.
 
 - The tool doesn't return the tile id. Find it with `easl board.history --limit 5` (`agent:<your tile> created … browser <url>`)
@@ -53,7 +53,7 @@ Codex's sandbox blocks the socket: run `easl browser` escalated, like every easl
 - Tiles record what the page reports from its first line on: console messages, uncaught errors and unhandled rejections, and failed requests (HTTP 400 or more, network errors, images, scripts and styles that didn't load; the page's own document too).
   After an edit and reload, read them instead of assuming a clean page: `easl get <tile>` → `page.errors`, `page.entries` (`level`, `text`, `source` `url:line:column`, `status`).
   Keep `page.cursor` and pass `easl get <tile> --since <cursor>` next time to see only what came after (a reload returns all of the new page, `reloaded: true`).
-  A page Easl released keeps its last log in `page.previous` (`releasedAt`, `errors`, `entries`) until the page loads another document after coming back; `page.cursor` stays valid across the release.
+  A page easl released keeps its last log in `page.previous` (`releasedAt`, `errors`, `entries`) until the page loads another document after coming back; `page.cursor` stays valid across the release.
   omp's `tab.console()`, `tab.errors()`, `tab.requests()` (fetch/XHR answers plus failed loads as status 0) and `waitForResponse()` see page load too on tiles; `tab.clearConsole()` then reload is not needed.
 - The server half is in the terminal running the dev server (`easl agent.list`: its `program`, e.g. `next dev`, `vite`).
   After edits, read it too: `easl agent.read --target <that tile> --lines 40` (or its `lastCommand`); compile errors, SSR exceptions and 500s show there, not in the page.

@@ -236,7 +236,7 @@ extension ChangeSet {
     }
 
     /// What a tile says of a ref the repository doesn't have: the exact fetch that brings it
-    /// (`fetchCommand`). Easl itself never fetches.
+    /// (`fetchCommand`). easl itself never fetches.
     static func missing(_ ref: String, in toplevel: URL) async -> String {
         let remotes = (try? await GitRunner.shared.run(["remote"], in: toplevel)).map { String(decoding: $0, as: UTF8.self).split(separator: "\n").map(String.init) } ?? []
         return "no commit \(ref) here; fetch it: \(fetchCommand(for: ref, remotes: remotes))"

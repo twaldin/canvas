@@ -1,5 +1,5 @@
 // Prints the OPENCODE_CONFIG_CONTENT the opencode wrapper (bin/opencode) runs opencode with, so an
-// opencode session in an Easl tile loads the Easl plugin (extensions/opencode/easl.ts)
+// opencode session in an easl tile loads the easl plugin (extensions/opencode/easl.ts)
 // without touching ~/.config/opencode. opencode merges this inline config over the user's global
 // and project configs and concatenates plugin lists, so their own config keeps working; an inline
 // config the user already set (bin/opencode passes it) is kept, with the plugin added to it.

@@ -1,9 +1,9 @@
-// Easl integration for omp. Active only inside an Easl terminal tile (EASL_ENV=1).
+// easl integration for omp. Active only inside an easl terminal tile (EASL_ENV=1).
 //  - drains the selection tray into the prompt you submit (hidden context, two-phase so a
 //    cancelled prompt loses nothing)
 //  - reports lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
 //  - follow mode: forwards files the agent reads, edits, and writes to its follow tile
-//  - provides the shipped `easl` skill (skills/easl) to the agent, only inside Easl
+//  - provides the shipped `easl` skill (skills/easl) to the agent, only inside easl
 // Load explicitly with `omp -e /path/to/easl.ts`, or install into ~/.omp/agent/extensions.
 import { isAbsolute, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
@@ -62,7 +62,7 @@ export default function canvas(pi: ExtensionAPI): void {
     else void send();
   }
 
-  // A restarted Easl holds our last report as `restored` (and refuses prompts to a restored
+  // A restarted easl holds our last report as `restored` (and refuses prompts to a restored
   // `working`) until we report again: say where we are as soon as it is back.
   watchCanvasReturn(client.socketPath, publish);
 
@@ -128,7 +128,7 @@ export default function canvas(pi: ExtensionAPI): void {
     // A debounced idle still pending would land after the release (and replay after it).
     clearTimeout(idleTimer);
     if (reporting) void release(client, { tile: tile!, kind: "omp", source: SOURCE }, ++seq);
-    // Nothing reports for the released tile again (an Easl coming back) until a session starts.
+    // Nothing reports for the released tile again (an easl coming back) until a session starts.
     reporting = false;
   });
 

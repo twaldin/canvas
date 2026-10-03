@@ -1,16 +1,16 @@
-// Easl integration for Claude Code, Codex and Gemini CLI, run as their lifecycle hooks:
+// easl integration for Claude Code, Codex and Gemini CLI, run as their lifecycle hooks:
 //   bun hook.ts <claude|codex|gemini> <HookEvent>   (the agent's hook JSON on stdin)
 // and for opencode's plugin (extensions/opencode), `opencode SessionEnd` as opencode exits.
 // The claude/codex/gemini wrappers in bin/ install these hooks for one session (Claude: the
 // plugin in extensions/claude; Codex: `-c hooks=…` from extensions/codex/config.ts; Gemini: a
-// system settings layer from extensions/gemini/settings.ts) and only inside an Easl terminal
+// system settings layer from extensions/gemini/settings.ts) and only inside an easl terminal
 // tile. Mirrors extensions/omp/easl.ts:
 //  - lifecycle (working / blocked / idle), each turn's final answer, and session identity for resume
 //  - the canvas-awareness block (extensions/guidance.ts) as session context
 //  - the selection tray drained into the prompt you submit, as hidden context
 //  - follow mode: files the agent reads, edits, and writes re-aim its follow tile
-// A hook never fails or stalls the agent: every Easl call has a short timeout, errors are
-// swallowed, and the process exits by a hard deadline. Lifecycle reports Easl isn't there to
+// A hook never fails or stalls the agent: every easl call has a short timeout, errors are
+// swallowed, and the process exits by a hard deadline. Lifecycle reports easl isn't there to
 // take are spooled for it to replay (./report.ts).
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -40,7 +40,7 @@ if ((kind === "claude" || kind === "codex" || kind === "gemini" || kind === "ope
     const output = await handle(kind, tile, event, input);
     if (output) await Bun.write(Bun.stdout, output);
   } catch {
-    // Easl unreachable or unexpected input: the agent carries on as if there were no hook.
+    // easl unreachable or unexpected input: the agent carries on as if there were no hook.
   }
 }
 process.exit(0);
@@ -121,7 +121,7 @@ async function handle(kind: Kind, tile: string, event: string, input: Json): Pro
       return undefined;
     }
     case "PermissionRequest": {
-      // Easl keeps the tile blocked until this call finishes (its PostToolUse), whatever other
+      // easl keeps the tile blocked until this call finishes (its PostToolUse), whatever other
       // calls (parallel siblings, subagents) finish meanwhile. Codex asks one approval at a time,
       // so its new request is the one on screen: it replaces any earlier wait (`serial`), and the
       // bubble never names a request already answered. Claude Code also asks permission for its

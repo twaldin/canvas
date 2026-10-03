@@ -248,7 +248,7 @@ public enum LanguageServerStatus: Sendable, Equatable {
 
 public enum LSPError: Error, Equatable, LocalizedError {
     case unsupportedLanguage(String)
-    /// The server binary wasn't found (`LoginShell.locate`); the message says where Easl looked.
+    /// The server binary wasn't found (`LoginShell.locate`); the message says where easl looked.
     case unavailable(String)
     case startFailed(String)
     case unreadable(String)

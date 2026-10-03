@@ -29,7 +29,7 @@ extension CanvasView {
     }
 
     /// A file name for the selection: the title of the one object, or of the one group holding
-    /// it (a marquee around a group: `SelectionScope.namesake`), else "Easl selection"
+    /// it (a marquee around a group: `SelectionScope.namesake`), else "easl selection"
     /// (`ExportFile.name`).
     private func exportName(_ ext: String) -> String {
         let drawn = Set(selection.filter { [.shape, .arrow].contains(board.objects[$0]?.type) })
@@ -67,7 +67,7 @@ extension CanvasView {
                 do {
                     guard let data = try await contents() else { return }
                     try await Self.write(data, to: url)
-                    NSLog("Easl: saved %@ as %@", what, url.path)
+                    NSLog("easl: saved %@ as %@", what, url.path)
                 } catch {
                     self.exportFailed(action, error)
                 }
@@ -86,7 +86,7 @@ extension CanvasView {
                 pasteboard.declareTypes([.png, .tiff], owner: nil)
                 pasteboard.setData(png, forType: .png)
                 if let tiff = NSBitmapImageRep(data: png)?.tiffRepresentation { pasteboard.setData(tiff, forType: .tiff) }
-                NSLog("Easl: copied %d object(s) as a %d-byte PNG", self.selection.count, png.count)
+                NSLog("easl: copied %d object(s) as a %d-byte PNG", self.selection.count, png.count)
             } catch {
                 self.exportFailed("Copy as Image", error)
             }
@@ -116,7 +116,7 @@ extension CanvasView {
                 let html = try await tile.exportDocument()
                 try await Self.write(Data(html.utf8), to: url)
                 if CanvasApplication.neverActivate {
-                    NSLog("Easl: Open in Browser would open %@ (EASL_NO_ACTIVATE)", url.absoluteString)
+                    NSLog("easl: Open in Browser would open %@ (EASL_NO_ACTIVATE)", url.absoluteString)
                 } else {
                     NSWorkspace.shared.open(url)
                 }
@@ -132,7 +132,7 @@ extension CanvasView {
     func openPageInBrowser(_ id: ObjectID) {
         guard let url = (tiles[id]?.content as? BrowserTile)?.webAddress else { return }
         if CanvasApplication.neverActivate {
-            return NSLog("Easl: Open in Browser would open %@ (EASL_NO_ACTIVATE)", url.absoluteString)
+            return NSLog("easl: Open in Browser would open %@ (EASL_NO_ACTIVATE)", url.absoluteString)
         }
         guard url.isFileURL, let browser = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!) else {
             NSWorkspace.shared.open(url)
@@ -158,7 +158,7 @@ extension CanvasView {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(markdown, forType: .string)
-        NSLog("Easl: copied note %@ as %d characters of markdown", id, markdown.count)
+        NSLog("easl: copied note %@ as %d characters of markdown", id, markdown.count)
     }
 
     /// Save as Markdown… (a note's menu, File › Save Note as Markdown…): the same text in a
@@ -195,7 +195,7 @@ extension CanvasView {
                 let size = try await ObjectMeasure.size(type: .image, props: .object(props), width: source.frame.w, root: self.board.root)
                 let image = self.board.create(type: .image, props: .object(props), frame: self.board.place(width: Double(size.width), height: Double(size.height), near: id))
                 if let whereabouts = self.outOfView(image.id) { self.showNotice("Snapshot saved as an image \(whereabouts)") }
-                NSLog("Easl: snapshot of %@ saved as %@", id, url.path)
+                NSLog("easl: snapshot of %@ saved as %@", id, url.path)
             } catch {
                 self?.exportFailed("Snapshot to Image", error)
             }
@@ -214,7 +214,7 @@ extension CanvasView {
     /// A sheet saying what failed; never app-modal.
     private func exportFailed(_ action: String, _ error: Error) {
         let message = (error as? ExportFailure)?.message ?? (error as? ApiRouter.Failure)?.message ?? error.localizedDescription
-        NSLog("Easl: %@ failed: %@", action, message)
+        NSLog("easl: %@ failed: %@", action, message)
         guard let window else { return }
         let alert = NSAlert()
         alert.messageText = "\(action) failed"

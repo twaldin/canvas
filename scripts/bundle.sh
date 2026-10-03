@@ -1,9 +1,9 @@
 #!/bin/sh
-# Build Easl and assemble .build/Easl.app (ad-hoc signed) so macOS and window managers
+# Build easl and assemble .build/easl.app (ad-hoc signed) so macOS and window managers
 # treat it as a real application. Usage: scripts/bundle.sh [debug|release]
 # EASL_VERSION (default: the VERSION file) and EASL_BUILD (default 1) set the bundle version.
 # EASL_BUNDLE_APP assembles it elsewhere (a frozen copy for studies), leaving the bundle a
-# running dev instance launched from .build/Easl.app untouched.
+# running dev instance launched from .build/easl.app untouched.
 # Distribution signing (Developer ID, hardened runtime, notarization) is scripts/notarize.sh's.
 set -eu
 config="${1:-debug}"
@@ -13,7 +13,7 @@ build="${EASL_BUILD:-1}"
 cd "$repo"
 swift build -j 4 -c "$config" --product Easl
 bin="$(swift build -c "$config" --show-bin-path)"
-app="${EASL_BUNDLE_APP:-$repo/.build/Easl.app}"
+app="${EASL_BUNDLE_APP:-$repo/.build/easl.app}"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/clients/ts" "$app/Contents/Resources/clients/python"
 cp "$bin/Easl" "$app/Contents/MacOS/Easl"
@@ -46,7 +46,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleIdentifier</key><string>net.waldin.easl</string>
-  <key>CFBundleName</key><string>Easl</string>
+  <key>CFBundleName</key><string>easl</string>
+  <key>CFBundleDisplayName</key><string>easl</string>
   <key>CFBundleExecutable</key><string>Easl</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -55,9 +56,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>CanvasApp.CanvasApplication</string>
-  <key>NSAppleEventsUsageDescription</key><string>A program running in Easl wants to control another app.</string>
-  <key>NSMicrophoneUsageDescription</key><string>A program or page running in Easl wants to use the microphone.</string>
-  <key>NSCameraUsageDescription</key><string>A program or page running in Easl wants to use the camera.</string>
+  <key>NSAppleEventsUsageDescription</key><string>A program running in easl wants to control another app.</string>
+  <key>NSMicrophoneUsageDescription</key><string>A program or page running in easl wants to use the microphone.</string>
+  <key>NSCameraUsageDescription</key><string>A program or page running in easl wants to use the camera.</string>
 </dict>
 </plist>
 PLIST

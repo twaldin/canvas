@@ -1,13 +1,13 @@
 #!/bin/sh
-# Build Easl.app, sign it for distribution, notarize and staple it, and zip it (docs/releasing.md).
+# Build easl.app, sign it for distribution, notarize and staple it, and zip it (docs/releasing.md).
 #
 #   scripts/notarize.sh [--dry-run] <out.zip>
 #
 # Builds the release bundle (scripts/bundle.sh release) at EASL_BUNDLE_APP, default
-# .build/dist/Easl.app (never .build/Easl.app, which a dev instance may be running from).
+# .build/dist/easl.app (never .build/easl.app, which a dev instance may be running from).
 # Signs it inside out with EASL_SIGN_IDENTITY ("Developer ID Application: <Name> (<TEAMID>)",
 # default: the keychain's only Developer ID Application identity), the hardened runtime,
-# scripts/Easl.entitlements and a secure timestamp, and checks the signature. Submits it to
+# scripts/easl.entitlements and a secure timestamp, and checks the signature. Submits it to
 # the notary service and waits, staples the ticket, zips the stapled app, and checks the zip's
 # copy as a user unzips it. EASL_VERSION and EASL_BUILD set the bundle version (bundle.sh).
 #
@@ -31,7 +31,7 @@ dry=
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 out="$1"
 case "$out" in /*) ;; *) out="$PWD/$out" ;; esac
-app="${EASL_BUNDLE_APP:-$repo/.build/dist/Easl.app}"
+app="${EASL_BUNDLE_APP:-$repo/.build/dist/easl.app}"
 case "$app" in /*) ;; *) app="$PWD/$app" ;; esac
 fail() { echo "notarize.sh: $*" >&2; exit 1; }
 pack() { rm -f "$2"; ditto -c -k --norsrc --noextattr --noacl --keepParent "$1" "$2"; }
@@ -87,7 +87,7 @@ nested="$(find "$app/Contents" \( -name '*.framework' -o -name '*.xpc' -o -name 
 find "$app/Contents" -depth -type f ! -path "$app/Contents/MacOS/Easl" -print | while IFS= read -r file; do
   case "$(file -b "$file")" in Mach-O*) sign "$file" ;; esac
 done
-sign --entitlements "$repo/scripts/Easl.entitlements" "$app"
+sign --entitlements "$repo/scripts/easl.entitlements" "$app"
 
 # A terminal tile imports the SDK from the bundle; that must leave the signature intact (bundle.sh).
 PYTHONPATH="$app/Contents/Resources/clients/python" python3 -c 'import easl_sdk'
@@ -112,7 +112,7 @@ trap 'rm -rf "$work"' EXIT
 check_zip() {
   rm -rf "$work/unzipped"
   ditto -x -k "$out" "$work/unzipped"
-  codesign --verify --deep --strict "$work/unzipped/Easl.app"
+  codesign --verify --deep --strict "$work/unzipped/easl.app"
 }
 if [ -n "$dry" ]; then
   pack "$app" "$out"
@@ -136,9 +136,9 @@ xcrun notarytool log "$id" "$@" "$work/log.json" >/dev/null && cat "$work/log.js
 xcrun stapler staple "$app"
 pack "$app" "$out"
 check_zip
-xcrun stapler validate "$work/unzipped/Easl.app"
+xcrun stapler validate "$work/unzipped/easl.app"
 # Gatekeeper's verdict on what users get: "accepted", "source=Notarized Developer ID".
-verdict="$(spctl --assess --type execute -vvv "$work/unzipped/Easl.app" 2>&1)" || { echo "$verdict" >&2; fail "Gatekeeper rejects the notarized app"; }
+verdict="$(spctl --assess --type execute -vvv "$work/unzipped/easl.app" 2>&1)" || { echo "$verdict" >&2; fail "Gatekeeper rejects the notarized app"; }
 echo "$verdict" >&2
 case "$verdict" in *"source=Notarized Developer ID"*) ;; *) fail "Gatekeeper doesn't see the app as notarized" ;; esac
 echo "$out"

@@ -210,7 +210,7 @@ class ConnectionTest(unittest.TestCase):
             client.board.get()
         self.assertLess(time.monotonic() - started, 5, "no waiting for an app that is already there")
         self.assertEqual(raised.exception.code, "unavailable")
-        self.assertIn(f"Easl socket {self.path} exists", str(raised.exception))
+        self.assertIn(f"easl socket {self.path} exists", str(raised.exception))
         self.assertIn("a sandbox (e.g. Codex's) may be blocking", str(raised.exception))
 
     def test_a_socket_that_is_there_but_unseen_twice_names_a_sandbox_at_once(self) -> None:
@@ -225,7 +225,7 @@ class ConnectionTest(unittest.TestCase):
         with mock.patch.object(socket.socket, "connect", unseen), self.assertRaises(CanvasError) as raised:
             client.board.get()
         self.assertLess(time.monotonic() - started, 5, "no waiting for an app that is already there")
-        self.assertIn(f"Easl socket {self.path} exists but connecting to it failed (ENOENT)", str(raised.exception))
+        self.assertIn(f"easl socket {self.path} exists but connecting to it failed (ENOENT)", str(raised.exception))
 
     def test_connection_lost_after_sending_is_not_resent(self) -> None:
         app = self.serve()

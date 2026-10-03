@@ -194,7 +194,7 @@ final class LSPConnection: @unchecked Sendable {
     /// Titles of the server's background work in progress, e.g. ["Indexing"].
     var activity: [String] { lock.withLock { progress.values.sorted() } }
 
-    /// Server-to-client requests. Easl has no settings to offer and never applies edits, but
+    /// Server-to-client requests. easl has no settings to offer and never applies edits, but
     /// servers wait on these answers, so every request gets one.
     private func answer(id: JSONValue, method: String, params: JSONValue?) {
         var reply: [String: JSONValue] = ["jsonrpc": .string("2.0"), "id": id]

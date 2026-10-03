@@ -65,8 +65,8 @@ function resolveSocket(explicit: string | undefined): string {
   if (path) return path;
   throw new CanvasError(
     "unavailable",
-    `EASL_SOCKET is unset and the default socket ${DEFAULT_SOCKET} does not exist, so this process has no Easl connection (it did not inherit the terminal tile's environment). ` +
-      "In the Easl terminal run `echo $EASL_SOCKET $EASL_TILE_ID $EASL_BOARD_ID`, then pass those values: " +
+    `EASL_SOCKET is unset and the default socket ${DEFAULT_SOCKET} does not exist, so this process has no easl connection (it did not inherit the terminal tile's environment). ` +
+      "In the easl terminal run `echo $EASL_SOCKET $EASL_TILE_ID $EASL_BOARD_ID`, then pass those values: " +
       "`new CanvasClient({ socketPath, tile, board })` (Python: `easl_sdk.connect(socket=..., tile=..., board=...)`; CLI: export the three variables).",
   );
 }
@@ -84,7 +84,7 @@ function drainLines(buffer: string, onMessage: (message: WireMessage) => void): 
   return rest;
 }
 
-/** One persistent connection to the Easl API socket; the next call reconnects after an app restart. */
+/** One persistent connection to the easl API socket; the next call reconnects after an app restart. */
 export class CanvasClient {
   readonly socketPath: string;
   readonly tileId: string | undefined;
@@ -183,7 +183,7 @@ export class CanvasClient {
       connection.pending.get(id)!.timer = setTimeout(() => fail(connection, id, new CanvasError("timeout", `${method} timed out after ${this.#timeoutMs}ms`)), this.#timeoutMs);
     }
     connection.socket.write(line, (error) => {
-      if (error) fail(connection, id, new NotSent(`Easl socket ${this.socketPath}: ${error.message}`));
+      if (error) fail(connection, id, new NotSent(`easl socket ${this.socketPath}: ${error.message}`));
     });
     return promise;
   }
@@ -212,12 +212,12 @@ export class CanvasClient {
             continue;
           }
           throw new NotSent(
-            `Easl socket ${this.socketPath} exists but connecting to it failed (${code}): a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it`,
+            `easl socket ${this.socketPath} exists but connecting to it failed (${code}): a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it`,
           );
         }
         missedThere = false;
         if (Date.now() >= deadline) {
-          throw new NotSent(`Easl socket ${this.socketPath}: ${(error as Error).message}${waitMs ? ` after waiting ${waitMs / 1000}s for the app` : ""}`);
+          throw new NotSent(`easl socket ${this.socketPath}: ${(error as Error).message}${waitMs ? ` after waiting ${waitMs / 1000}s for the app` : ""}`);
         }
         await sleep(200);
       }
@@ -244,8 +244,8 @@ export class CanvasClient {
           connection,
           id,
           pending.end > flushed
-            ? new NotSent(`Easl socket ${this.socketPath}: connection closed`)
-            : new ReplyLost(`Easl connection lost after sending ${pending.method}; it may or may not have applied — re-read before retrying`),
+            ? new NotSent(`easl socket ${this.socketPath}: connection closed`)
+            : new ReplyLost(`easl connection lost after sending ${pending.method}; it may or may not have applied — re-read before retrying`),
         );
       }
     });
@@ -282,7 +282,7 @@ export async function subscribe(
   socket.setEncoding("utf8");
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   socket.once("connect", () => resolve());
-  socket.on("error", (error) => reject(new CanvasError("unavailable", `Easl socket ${path}: ${error.message}`)));
+  socket.on("error", (error) => reject(new CanvasError("unavailable", `easl socket ${path}: ${error.message}`)));
   await promise;
   let buffer = "";
   socket.on("data", (chunk: string) => {

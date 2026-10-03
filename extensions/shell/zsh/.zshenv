@@ -1,12 +1,12 @@
-# Easl shell integration for zsh (docs/contracts.md "Terminal tile environment").
+# easl shell integration for zsh (docs/contracts.md "Terminal tile environment").
 #
 # Terminal tiles start zsh with ZDOTDIR pointing here (the user's own ZDOTDIR, if any, in
 # EASL_ZSH_ZDOTDIR). Each of these startup files sources the user's file of the same name with
-# the user's ZDOTDIR in place, and the last one zsh reads puts Easl's bin back at the front of
+# the user's ZDOTDIR in place, and the last one zsh reads puts easl's bin back at the front of
 # PATH: the user's files may prepend directories (e.g. ~/.local/bin, where Claude Code installs
-# itself) that would shadow Easl's claude and codex wrappers.
+# itself) that would shadow easl's claude and codex wrappers.
 #
-# Interactive shells then get the user's ZDOTDIR back, as if Easl were not there. A tile that
+# Interactive shells then get the user's ZDOTDIR back, as if easl were not there. A tile that
 # runs a command first (`zsh -l -c '<command>; exec zsh -l'`, e.g. resuming an agent) keeps this
 # integration for the command and the shell that follows it.
 #
@@ -57,7 +57,7 @@ _canvas_report_cwd() {
   'builtin' 'printf' '\e]7;file://%s%s\a' "$HOST" "$_canvas_url"
 }
 
-# After the last startup file: Easl's bin first on PATH; interactive shells restore ZDOTDIR,
+# After the last startup file: easl's bin first on PATH; interactive shells restore ZDOTDIR,
 # report their directory before each prompt, and load Ghostty's shell integration.
 _canvas_finish() {
   'builtin' 'typeset' _canvas_bin="${_canvas_zdotdir:h:h:h}/bin"

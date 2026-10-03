@@ -14,7 +14,7 @@ do {
         if !migration.pending(defaults: UserDefaults.standard).isEmpty {
             let others = NSWorkspace.shared.runningApplications.filter { $0.processIdentifier != getpid() }.compactMap(\.bundleIdentifier)
             for line in migration.refusal(running: others).map({ [$0] }) ?? migration.run(defaults: UserDefaults.standard) {
-                NSLog("Easl: %@", line)
+                NSLog("easl: %@", line)
             }
         }
     } else if let fake = environment["HOME"].map({ URL(fileURLWithPath: $0, isDirectory: true).standardizedFileURL }), fake != account.standardizedFileURL,
@@ -24,7 +24,7 @@ do {
         // its default support directory. UserDefaults ignores HOME, so the migration reads and writes
         // that home's Library/Preferences plists itself, never the user's; no earlier app writes there.
         for line in LegacyMigration(home: fake).run(defaults: PreferenceFiles(home: fake)) {
-            NSLog("Easl (rehearsal on %@): %@", fake.path, line)
+            NSLog("easl (rehearsal on %@): %@", fake.path, line)
         }
     }
 }
@@ -37,17 +37,17 @@ guard let instanceLock = InstanceLock.acquire(at: AppPaths.instanceLock) else {
     if let root = AppDelegate.requestedRoot() {
         do {
             let reply = try InstanceLock.forward(root: root.standardizedFileURL.path, to: AppPaths.apiSocket)
-            if reply["ok"]?.bool != true { NSLog("Easl: the running instance could not open %@: %@", root.path, "\(reply)") }
+            if reply["ok"]?.bool != true { NSLog("easl: the running instance could not open %@: %@", root.path, "\(reply)") }
         } catch {
-            NSLog("Easl: could not hand %@ to the running instance (pid %@): %@", root.path, holder.map { "\($0)" } ?? "?", "\(error)")
+            NSLog("easl: could not hand %@ to the running instance (pid %@): %@", root.path, holder.map { "\($0)" } ?? "?", "\(error)")
         }
     }
-    // Only a running Easl: the pid may be a previous holder's, reused since (`holder`).
+    // Only a running easl: the pid may be a previous holder's, reused since (`holder`).
     if ProcessInfo.processInfo.environment["EASL_NO_ACTIVATE"] != "1", let holder, let running = NSRunningApplication(processIdentifier: holder),
        running.executableURL?.lastPathComponent == Bundle.main.executableURL?.lastPathComponent {
         running.activate()
     }
-    NSLog("Easl: another instance is running on %@; handed over to it", AppPaths.support.path)
+    NSLog("easl: another instance is running on %@; handed over to it", AppPaths.support.path)
     exit(0)
 }
 

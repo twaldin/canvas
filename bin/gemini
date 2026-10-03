@@ -1,5 +1,5 @@
 #!/bin/sh
-# Easl's gemini wrapper: in an Easl terminal tile, runs the real Gemini CLI with Easl's hooks
+# easl's gemini wrapper: in an easl terminal tile, runs the real Gemini CLI with easl's hooks
 # (extensions/gemini/settings.ts → extensions/agent-hooks/hook.ts) in a system settings layer for
 # this session only. Anywhere else, and with EASL_AGENT_HOOKS=0, it is the real gemini, untouched.
 here="$(cd "$(dirname "$0")/.." && pwd)"

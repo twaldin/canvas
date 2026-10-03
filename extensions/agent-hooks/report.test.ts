@@ -1,4 +1,4 @@
-// bun test extensions/agent-hooks — lifecycle reports while Easl is away (report.ts).
+// bun test extensions/agent-hooks — lifecycle reports while easl is away (report.ts).
 import { afterEach, expect, jest, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,9 +17,9 @@ function home(): string {
   return dir;
 }
 
-/** A client whose Easl is gone, as the real one reports it (`bun test` treats the socket's own ENOENT as uncaught). */
+/** A client whose easl is gone, as the real one reports it (`bun test` treats the socket's own ENOENT as uncaught). */
 function away(socketPath: string): CanvasClient {
-  const fail = () => Promise.reject(new CanvasError("unavailable", `Easl socket ${socketPath}: connect ENOENT (not sent)`));
+  const fail = () => Promise.reject(new CanvasError("unavailable", `easl socket ${socketPath}: connect ENOENT (not sent)`));
   return { socketPath, api: { agent: { report: fail, release: fail } } } as unknown as CanvasClient;
 }
 
@@ -30,7 +30,7 @@ function spooled(socket: string, tile: string): Array<{ seq: number; method: str
     .map((name) => JSON.parse(readFileSync(join(dir, name), "utf8")));
 }
 
-test("reports Easl isn't there to take wait beside its socket, in seq order, with their answer", async () => {
+test("reports easl isn't there to take wait beside its socket, in seq order, with their answer", async () => {
   const socket = join(home(), "easl.sock");
   const client = away(socket);
   await report(client, { tile: "obj_a1", kind: "codex", state: "working", seq: 1_700_000_000_000_001, source: "canvas-codex" });
@@ -46,7 +46,7 @@ test("reports Easl isn't there to take wait beside its socket, in seq order, wit
   expect(readdirSync(spoolDirectory(socket, "obj_a1")).some((name) => name.startsWith("."))).toBe(false);
 });
 
-test("a report Easl answered, even with an error, is not kept", async () => {
+test("a report easl answered, even with an error, is not kept", async () => {
   const socket = join(home(), "easl.sock");
   const server = Bun.listen({
     unix: socket,
@@ -77,7 +77,7 @@ test("a spool that can't be written costs the agent nothing", async () => {
   await expect(report(client, { tile: "obj_a1", kind: "omp", state: "idle", seq: 1, source: "canvas-omp" })).resolves.toBeUndefined();
 });
 
-test("a Codex Stop hook run while Easl is closed spools the turn's end with its answer", async () => {
+test("a Codex Stop hook run while easl is closed spools the turn's end with its answer", async () => {
   const socket = join(home(), "easl.sock");
   const hook = Bun.spawn(["bun", join(import.meta.dir, "hook.ts"), "codex", "Stop"], {
     stdin: new Blob([JSON.stringify({ session_id: "s1", cwd: "/tmp", last_assistant_message: "No blocking findings." })]),
@@ -90,7 +90,7 @@ test("a Codex Stop hook run while Easl is closed spools the turn's end with its 
   expect(entry.seq).toBe(entry.params.seq as number);
 });
 
-test("an integration hears Easl come back after a quit, and after a restart between two checks", () => {
+test("an integration hears easl come back after a quit, and after a restart between two checks", () => {
   const socket = join(home(), "easl.sock");
   const listen = () => Bun.listen({ unix: socket, socket: { data() {} } });
   let server = listen();

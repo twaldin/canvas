@@ -20,7 +20,7 @@ struct RepoBoardTests {
         return (repo, worktree)
     }
 
-    /// The id Easl gave a board opened at `root` before boards were per repository: git's
+    /// The id easl gave a board opened at `root` before boards were per repository: git's
     /// common dir and branch (or, detached, its top level), as the old `BoardStore` asked git.
     func legacyID(_ root: URL) async throws -> BoardID {
         let lines = try await TempRepo.run(["rev-parse", "--path-format=absolute", "--git-common-dir", "--abbrev-ref", "HEAD", "--show-toplevel"], in: root)

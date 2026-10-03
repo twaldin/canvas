@@ -2,7 +2,7 @@ import Foundation
 import Testing
 import CanvasCore
 
-/// Launch cleanup deletes only Easl's own leftovers (footprint study F7, F8: 343 dead Easl
+/// Launch cleanup deletes only easl's own leftovers (footprint study F7, F8: 343 dead easl
 /// zmx logs, 308 Ghostty config copies, 181 renders), never a file of another name beside them.
 struct HousekeepingTests {
     let now = Date(timeIntervalSince1970: 1_800_000_000)

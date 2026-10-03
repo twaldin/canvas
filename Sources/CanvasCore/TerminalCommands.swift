@@ -2,7 +2,7 @@ import Foundation
 
 /// A command a terminal tile's shell ran, as Ghostty's shell integration reports it when the
 /// command finishes (OSC 133 D: the exit status; Ghostty measures the duration from the
-/// command's start, OSC 133 C). `command` is the command line when Easl saw it: the title the
+/// command's start, OSC 133 C). `command` is the command line when easl saw it: the title the
 /// integration sets while it runs, or for an older block the prompt row above its output.
 public struct TerminalCommand: Codable, Equatable, Sendable {
     public var command: String?
@@ -184,7 +184,7 @@ public struct TerminalCommandTracker: Sendable {
 
     /// The terminal's title changed. `promptTitle`: the title the integration gives a prompt in
     /// the directory the shell reported (`~/src/app`). True when this title is the command the
-    /// shell just started. Before the first prompt since Easl attached, no title is: the title
+    /// shell just started. Before the first prompt since easl attached, no title is: the title
     /// a reattached session comes back with is the program's own (`π ! Add Per-Command Help…`),
     /// which the header shows, not a command line it hides.
     @discardableResult
@@ -361,7 +361,7 @@ public enum TerminalBlocks {
     public static let promptRows = 4
 
     /// `output` without what precedes its command's own line. A block Ghostty found no prompt
-    /// above (the first command after Easl reattached to the session: the prompt it ran from
+    /// above (the first command after easl reattached to the session: the prompt it ran from
     /// came back as plain text, without its mark) starts at the top of the scrollback, so the
     /// command's line, `❯ go test ./...`, is inside it: its output starts after that line.
     public static func output(_ output: String, after command: String?) -> String {
@@ -409,7 +409,7 @@ public enum TerminalBlocks {
     }
 }
 
-/// The commands a terminal's shell finished since Easl attached to it, oldest first. A block
+/// The commands a terminal's shell finished since easl attached to it, oldest first. A block
 /// is found by its command's line in the terminal's text (`positions`), so it keeps its command,
 /// exit status and duration after its prompt row scrolled out of view, and one `clear` wiped
 /// (`clear; cargo build`) is the text above the next command's line.

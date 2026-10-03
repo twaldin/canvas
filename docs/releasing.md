@@ -1,9 +1,9 @@
-# Releasing Easl
+# Releasing easl
 
-A release is `Easl-<version>.zip` holding `Easl.app`, plus `gettext-0.24.tar.gz` (the source of GNU libintl, which Easl links statically inside libghostty; the LGPL requires it) and `THIRD_PARTY_NOTICES.md`. Signed with a Developer ID Application certificate and notarized, it opens with a double-click; without the certificate it's ad-hoc signed and users clear the quarantine flag (README, Install).
+A release is `easl-<version>.zip` holding `easl.app`, plus `gettext-0.24.tar.gz` (the source of GNU libintl, which easl links statically inside libghostty; the LGPL requires it) and `THIRD_PARTY_NOTICES.md`. Signed with a Developer ID Application certificate and notarized, it opens with a double-click; without the certificate it's ad-hoc signed and users clear the quarantine flag (README, Install).
 
 - `scripts/bundle.sh release` builds and assembles the app, signed ad hoc.
-- `scripts/notarize.sh <zip>` makes the distribution zip from it: builds the bundle into `.build/dist/Easl.app`, signs it inside out with the Developer ID identity, the hardened runtime (`--options runtime`), `scripts/Easl.entitlements` and a secure timestamp, checks it (`codesign --verify --deep --strict`, the runtime flag, no `get-task-allow`, the Developer ID authority and timestamp, a Python SDK import leaving the signature intact, `spctl`'s verdict before notarization), zips it with `ditto`, submits it with `notarytool submit --wait`, prints the notary log, staples the ticket, zips the stapled app, and checks that zip's copy with `codesign`, `stapler validate` and `spctl` (`source=Notarized Developer ID`). Credentials it checks before building (`notarytool history`). `scripts/notarize.sh --dry-run <zip>` does all of it that needs neither the certificate nor Apple: it signs ad hoc with the hardened runtime and stops before submitting.
+- `scripts/notarize.sh <zip>` makes the distribution zip from it: builds the bundle into `.build/dist/easl.app`, signs it inside out with the Developer ID identity, the hardened runtime (`--options runtime`), `scripts/easl.entitlements` and a secure timestamp, checks it (`codesign --verify --deep --strict`, the runtime flag, no `get-task-allow`, the Developer ID authority and timestamp, a Python SDK import leaving the signature intact, `spctl`'s verdict before notarization), zips it with `ditto`, submits it with `notarytool submit --wait`, prints the notary log, staples the ticket, zips the stapled app, and checks that zip's copy with `codesign`, `stapler validate` and `spctl` (`source=Notarized Developer ID`). Credentials it checks before building (`notarytool history`). `scripts/notarize.sh --dry-run <zip>` does all of it that needs neither the certificate nor Apple: it signs ad hoc with the hardened runtime and stops before submitting.
 - `.github/workflows/release.yml` runs `notarize.sh` on a `v*` tag when the signing secrets exist; without them it makes the ad-hoc zip and runs `notarize.sh --dry-run`, so the signing path stays tested. It fetches `gettext-0.24.tar.gz` from GNU (or Ghostty's identical copy) and fails unless its SHA-256 matches. It fails when the tag isn't `v` + `VERSION`. When the tag's release already exists (one made from a Mac), it publishes nothing but the libintl source and the notices. Run by hand (`gh workflow run release.yml`), it builds the same zip from `VERSION`, signed when the secrets exist, and keeps it as the run's artifact instead of publishing.
 
 The version lives in `VERSION`, and its notes in `CHANGELOG.md`: a release's notes are its version's section (`scripts/release-notes.sh`) above GitHub's list of merged changes, so drop `(unreleased)` from the heading when you tag it. `scripts/bundle.sh` stamps it into Info.plist (`EASL_VERSION` overrides it), and `bun scripts/gen-clients.ts` writes it into the Python and TypeScript clients' manifests and the Claude Code plugin. To bump: edit `VERSION`, run `bun scripts/gen-clients.ts`, commit.
@@ -38,17 +38,17 @@ Once, by the Account Holder, after enrolling in the Apple Developer Program:
    rm "Developer ID.p12"
    ```
    With an API key instead of the password, set `EASL_NOTARY_KEY` (`base64 -i AuthKey_<KEYID>.p8 | gh secret set EASL_NOTARY_KEY`), `EASL_NOTARY_KEY_ID` and `EASL_NOTARY_ISSUER` (the issuer id above the keys in App Store Connect). CI signs when `EASL_CERT_P12` and either `EASL_NOTARY_KEY` or `EASL_NOTARY_PASSWORD` exist, preferring the key; until then a tag publishes an ad-hoc zip.
-7. Check it all without releasing: `scripts/notarize.sh /tmp/Easl-test.zip` notarizes a build from this Mac (the first `codesign` asks for the key: Always Allow), and `gh workflow run release.yml` does the same in CI, its zip kept as the run's artifact.
+7. Check it all without releasing: `scripts/notarize.sh /tmp/easl-test.zip` notarizes a build from this Mac (the first `codesign` asks for the key: Always Allow), and `gh workflow run release.yml` does the same in CI, its zip kept as the run's artifact.
 
 ## Release from this Mac
 
-Bump `VERSION` first (above). `notarize.sh` builds into `.build/dist`, never `.build/Easl.app` (a running dev instance's); `gh release create` makes the tag, and the Release workflow it starts leaves the release alone except for re-uploading the same libintl source and notices:
+Bump `VERSION` first (above). `notarize.sh` builds into `.build/dist`, never `.build/easl.app` (a running dev instance's); `gh release create` makes the tag, and the Release workflow it starts leaves the release alone except for re-uploading the same libintl source and notices:
 
 ```sh
-scripts/notarize.sh Easl-0.3.4.zip
+scripts/notarize.sh easl-0.3.4.zip
 curl -fLO https://ftp.gnu.org/gnu/gettext/gettext-0.24.tar.gz
 echo "c918503d593d70daf4844d175a13d816afacb667c06fba1ec9dcd5002c1518b7  gettext-0.24.tar.gz" | shasum -a 256 -c -
-gh release create v0.3.4 Easl-0.3.4.zip gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "Easl 0.3.4" --notes-file <(scripts/release-notes.sh 0.3.4) --generate-notes
+gh release create v0.3.4 easl-0.3.4.zip gettext-0.24.tar.gz THIRD_PARTY_NOTICES.md --title "easl 0.3.4" --notes-file <(scripts/release-notes.sh 0.3.4) --generate-notes
 ```
 
 `notarize.sh` signs with the keychain's only Developer ID Application identity (`EASL_SIGN_IDENTITY` picks one) and notarizes with the `easl-notary` profile (`EASL_NOTARY_PROFILE` names another; `EASL_NOTARY_KEY`, `_KEY_ID`, `_ISSUER` or `EASL_NOTARY_APPLE_ID`, `_PASSWORD`, `_TEAM_ID` pass credentials directly, as CI does). Notarization usually takes a few minutes. An Invalid submission fails with the notary log that says why. It ends with `spctl` saying `accepted` and `source=Notarized Developer ID`.
@@ -59,7 +59,7 @@ With the secrets set (One-time setup, step 6), bump `VERSION`, then push a `v*` 
 
 ### Renamed from Canvas
 
-The secrets, the keychain profile and the repository were set up under Canvas's name. Before the first Easl release (one-time):
+The secrets, the keychain profile and the repository were set up under Canvas's name. Before the first easl release (one-time):
 
 - Add whichever secrets above exist under their `EASL_` names (same values as the `CANVAS_` ones, which the workflow no longer reads), then delete the `CANVAS_` ones. Until they exist, a tag publishes an ad-hoc zip.
 - Store the notary credentials again as `easl-notary` (One-time setup), or keep the old profile with `EASL_NOTARY_PROFILE=canvas-notary`.
@@ -70,18 +70,18 @@ The secrets, the keychain profile and the repository were set up under Canvas's 
 After the first notarized release, replace steps 1 and 2 of the README's Install section with:
 
 ```markdown
-1. Download `Easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, move `Easl.app` to `/Applications` and open it. It's signed with a Developer ID and notarized by Apple, so it opens like any downloaded app.
+1. Download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, move `easl.app` to `/Applications` and open it. It's signed with a Developer ID and notarized by Apple, so it opens like any downloaded app.
 ```
 
-renumbering the steps after it, and drop "It's ad-hoc signed, not notarized: run `xattr -dr com.apple.quarantine /Applications/Easl.app`, or open it once and choose Open Anyway in System Settings › Privacy & Security." from that version's install line in `CHANGELOG.md`.
+renumbering the steps after it, and drop "It's ad-hoc signed, not notarized: run `xattr -dr com.apple.quarantine /Applications/easl.app`, or open it once and choose Open Anyway in System Settings › Privacy & Security." from that version's install line in `CHANGELOG.md`.
 
 ## Hardened runtime
 
-Notarization requires the hardened runtime on every executable. Easl's bundle has one, `Contents/MacOS/Easl`: libghostty (with libintl), tree-sitter and its grammars, swift-markdown and the rest are linked in statically, and `otool -L` lists only system libraries. zmx, bun, git, Python and language servers are the user's own, run as subprocesses; `bin/`, `cli/` and `extensions/` in `Contents/Resources` are scripts (sealed as resources, run by sh or bun). `notarize.sh` still signs any other Mach-O file it finds before the app, and stops on a nested framework, XPC service or app, which would need signing as a bundle.
+Notarization requires the hardened runtime on every executable. easl's bundle has one, `Contents/MacOS/Easl`: libghostty (with libintl), tree-sitter and its grammars, swift-markdown and the rest are linked in statically, and `otool -L` lists only system libraries. zmx, bun, git, Python and language servers are the user's own, run as subprocesses; `bin/`, `cli/` and `extensions/` in `Contents/Resources` are scripts (sealed as resources, run by sh or bun). `notarize.sh` still signs any other Mach-O file it finds before the app, and stops on a nested framework, XPC service or app, which would need signing as a bundle.
 
-Easl needs no runtime exception (`allow-jit`, `allow-unsigned-executable-memory`, `disable-library-validation`, `allow-dyld-environment-variables`): it loads no code at runtime, WebKit's JIT runs in its own WebContent process, and the JavaScriptCore context behind `browser.eval` only parses. Subprocesses inherit no entitlements and aren't restricted by Easl's runtime.
+easl needs no runtime exception (`allow-jit`, `allow-unsigned-executable-memory`, `disable-library-validation`, `allow-dyld-environment-variables`): it loads no code at runtime, WebKit's JIT runs in its own WebContent process, and the JavaScriptCore context behind `browser.eval` only parses. Subprocesses inherit no entitlements and aren't restricted by easl's runtime.
 
-They do inherit TCC responsibility: macOS attributes a privacy request from anything in a terminal tile, or from a browser tile's page, to Easl, and under the hardened runtime `tccd` won't ask the user unless Easl has the matching entitlement. So `scripts/Easl.entitlements` carries exactly three, each only letting macOS ask (the user still decides; `bundle.sh` writes the matching `NS…UsageDescription` into Info.plist):
+They do inherit TCC responsibility: macOS attributes a privacy request from anything in a terminal tile, or from a browser tile's page, to easl, and under the hardened runtime `tccd` won't ask the user unless easl has the matching entitlement. So `scripts/easl.entitlements` carries exactly three, each only letting macOS ask (the user still decides; `bundle.sh` writes the matching `NS…UsageDescription` into Info.plist):
 
 | Entitlement | Why |
 | --- | --- |
@@ -94,8 +94,8 @@ Contacts, calendars, photos and location are left out: a terminal program asking
 Try the hardened runtime without a certificate: `notarize.sh --dry-run` signs ad hoc the same way. Run that bundle as a separate instance (docs/testing.md):
 
 ```sh
-EASL_BUNDLE_APP=/tmp/hr/Easl.app scripts/notarize.sh --dry-run /tmp/hr/Easl.zip
-EASL_DEV_HOME=/tmp/hr/home EASL_DEV_APP=/tmp/hr/Easl.app scripts/dev.sh start <root>
+EASL_BUNDLE_APP=/tmp/hr/easl.app scripts/notarize.sh --dry-run /tmp/hr/easl.zip
+EASL_DEV_HOME=/tmp/hr/home EASL_DEV_APP=/tmp/hr/easl.app scripts/dev.sh start <root>
 ```
 
-`codesign -dvv <pid>` shows `flags=0x10002(adhoc,runtime)` for the running instance. `log show --last 5m --predicate 'process == "tccd" AND eventMessage CONTAINS "hardened runtime"'` shows any privacy request refused for a missing entitlement. Expect two that need nothing: when a browser tile's website data store opens, Spotlight (`mds`) checks whether Easl may see contacts and calendars (`kTCCServiceAddressBook`, `kTCCServiceCalendar`) and is refused without a prompt; pages load and work regardless.
+`codesign -dvv <pid>` shows `flags=0x10002(adhoc,runtime)` for the running instance. `log show --last 5m --predicate 'process == "tccd" AND eventMessage CONTAINS "hardened runtime"'` shows any privacy request refused for a missing entitlement. Expect two that need nothing: when a browser tile's website data store opens, Spotlight (`mds`) checks whether easl may see contacts and calendars (`kTCCServiceAddressBook`, `kTCCServiceCalendar`) and is refused without a prompt; pages load and work regardless.

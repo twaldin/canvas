@@ -26,7 +26,7 @@ enum BrowserProfile {
                            bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
     }
 
-    /// Easl › Clear Browsing Data…: says what goes, in a sheet (an app-modal alert would stall
+    /// easl › Clear Browsing Data…: says what goes, in a sheet (an app-modal alert would stall
     /// every socket request until answered), then removes all of it from `store`. Pages open now
     /// keep what they show until they reload. `done` runs once the data is gone.
     static func confirmClear(in window: NSWindow, done: @escaping @MainActor () -> Void) {
@@ -41,7 +41,7 @@ enum BrowserProfile {
             guard response == .alertSecondButtonReturn else { return }
             Task { @MainActor in
                 await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
-                NSLog("Easl: cleared browsing data")
+                NSLog("easl: cleared browsing data")
                 done()
             }
         }

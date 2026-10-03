@@ -1,5 +1,5 @@
 #!/bin/sh
-# Easl's claude wrapper: in an Easl terminal tile, runs the real Claude Code with the Easl
+# easl's claude wrapper: in an easl terminal tile, runs the real Claude Code with the easl
 # plugin (extensions/claude: lifecycle, resume, follow mode, mentions, easl skill) for this
 # session only. Anywhere else, and with EASL_AGENT_HOOKS=0, it is the real claude, untouched.
 here="$(cd "$(dirname "$0")/.." && pwd)"

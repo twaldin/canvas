@@ -1,4 +1,4 @@
-# Easl shell integration for zsh: see .zshenv here. Reached only from shells that kept this
+# easl shell integration for zsh: see .zshenv here. Reached only from shells that kept this
 # ZDOTDIR (non-interactive login shells); interactive ones restored the user's.
 if [[ -n "${EASL_ZSH_ZDOTDIR+X}" ]]; then
   [[ ! -r "$EASL_ZSH_ZDOTDIR/.zlogout" ]] || 'builtin' 'source' '--' "$EASL_ZSH_ZDOTDIR/.zlogout"

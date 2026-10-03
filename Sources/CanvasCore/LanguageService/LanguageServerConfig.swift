@@ -47,12 +47,12 @@ public struct LanguageServerConfig: Sendable, Equatable {
     /// shell profile sets it without putting the binary's directory on PATH.
     public var overrideVariable: String { "EASL_LSP_" + language.uppercased() }
 
-    /// Why the server can't run, for navigation panels: where Easl looked, how to install it,
-    /// and how to point Easl at a binary elsewhere.
+    /// Why the server can't run, for navigation panels: where easl looked, how to install it,
+    /// and how to point easl at a binary elsewhere.
     public var notFound: String {
         let places = ["on the login shell's PATH", "in " + (Self.toolDirectories + directories).joined(separator: ", ")] + locators.map { "with `\($0)`" }
         let looked = places.dropLast().joined(separator: ", ") + " and " + places.last!
-        return "\(command) not found (Easl looked \(looked)). " + (installHint.map { "\($0). " } ?? "") + "Or set \(overrideVariable) to its path in your shell profile."
+        return "\(command) not found (easl looked \(looked)). " + (installHint.map { "\($0). " } ?? "") + "Or set \(overrideVariable) to its path in your shell profile."
     }
 
     public static let defaults: [LanguageServerConfig] = [
@@ -61,7 +61,7 @@ public struct LanguageServerConfig: Sendable, Equatable {
         LanguageServerConfig(language: "swift", command: "sourcekit-lsp", languageIDs: ["swift": "swift"],
                              rootMarkers: ["Package.swift", "compile_commands.json", "buildServer.json"],
                              initializationOptions: .object(["backgroundIndexing": .bool(false)]),
-                             emptyResultHint: "Easl doesn't index Swift projects itself; sourcekit-lsp answers from the index your own builds write (swift build).",
+                             emptyResultHint: "easl doesn't index Swift projects itself; sourcekit-lsp answers from the index your own builds write (swift build).",
                              installHint: "It comes with Xcode or the Command Line Tools: xcode-select --install"),
         LanguageServerConfig(language: "python", command: "pyright-langserver", arguments: ["--stdio"], languageIDs: ["py": "python", "pyi": "python"],
                              rootMarkers: ["pyrightconfig.json", "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"],

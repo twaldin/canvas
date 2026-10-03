@@ -1,4 +1,4 @@
-"""Easl Python SDK.
+"""easl Python SDK.
 
 Recommended surface for agents with a persistent REPL:
 
@@ -7,7 +7,7 @@ Recommended surface for agents with a persistent REPL:
     canvas.object.create(type="note", props={"markdown": "# Hypothesis"})
 
 The connection comes from EASL_SOCKET / EASL_TILE_ID / EASL_BOARD_ID, which every
-Easl terminal tile sets. A process that did not inherit them (e.g. a REPL kernel started
+easl terminal tile sets. A process that did not inherit them (e.g. a REPL kernel started
 with a filtered environment) connects explicitly; `canvas` then uses that connection:
 
     from easl_sdk import connect
@@ -68,7 +68,7 @@ def _resolve_socket(explicit: str | os.PathLike[str] | None) -> str:
     raise CanvasError(
         "unavailable",
         f"EASL_SOCKET is unset and the default socket {DEFAULT_SOCKET} does not exist, so this process "
-        "has no Easl connection (it did not inherit the terminal tile's environment). In the Easl "
+        "has no easl connection (it did not inherit the terminal tile's environment). In the easl "
         "terminal run `echo $EASL_SOCKET $EASL_TILE_ID $EASL_BOARD_ID`, then connect with those "
         "values: `canvas = easl_sdk.connect(socket=..., tile=..., board=...)`.",
     )
@@ -90,13 +90,13 @@ def _sandboxed(path: str, error: OSError) -> bool:
 
 def _sandbox_message(path: str, error: OSError) -> str:
     return (
-        f"Easl socket {path} exists but connecting to it failed ({errno.errorcode.get(error.errno or 0, error)}): "
+        f"easl socket {path} exists but connecting to it failed ({errno.errorcode.get(error.errno or 0, error)}): "
         "a sandbox (e.g. Codex's) may be blocking Unix-socket connections; run this outside the sandbox or allow it"
     )
 
 
 class Easl(GeneratedApi):
-    """One persistent, thread-safe connection to the Easl API socket.
+    """One persistent, thread-safe connection to the easl API socket.
 
     `socket_path`, `tile`, `board`: explicit values win, then EASL_SOCKET / EASL_TILE_ID /
     EASL_BOARD_ID, then (socket only) the default path if it exists; otherwise CanvasError.
@@ -195,7 +195,7 @@ class Easl(GeneratedApi):
         except OSError as error:
             # A partial line is discarded by the app (requests are newline-framed).
             self.close()
-            raise _NotSent(f"Easl socket {self.socket_path}: {error}") from error
+            raise _NotSent(f"easl socket {self.socket_path}: {error}") from error
 
     def _receive(self, request_id: str, method: str) -> dict[str, Any]:
         try:
@@ -212,7 +212,7 @@ class Easl(GeneratedApi):
         except OSError as error:
             self.close()
             raise _ReplyLost(
-                f"Easl connection lost after sending {method} ({error}); it may or may not have applied — re-read before retrying",
+                f"easl connection lost after sending {method} ({error}); it may or may not have applied — re-read before retrying",
             ) from None
 
     def _open(self, wait: float) -> None:
@@ -235,7 +235,7 @@ class Easl(GeneratedApi):
                 missed_there = False
                 if time.monotonic() >= deadline:
                     waited = f" after waiting {wait:g}s for the app" if wait else ""
-                    raise _NotSent(f"Easl socket {self.socket_path}: {error.strerror or error}{waited}") from None
+                    raise _NotSent(f"easl socket {self.socket_path}: {error.strerror or error}{waited}") from None
                 time.sleep(0.2)
                 continue
             self._sock = sock

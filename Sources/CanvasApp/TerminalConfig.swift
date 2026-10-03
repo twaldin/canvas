@@ -4,7 +4,7 @@ import GhosttyKit
 import GhosttyTerminal
 
 /// The Ghostty configuration every terminal tile runs with: the user's own (`GhosttyConfig`:
-/// config files, includes, theme), validated line by line, over Easl's defaults, one text per
+/// config files, includes, theme), validated line by line, over easl's defaults, one text per
 /// color scheme. Renders and cards (`TerminalRender`) draw with the same colors, font and padding.
 @MainActor
 final class TerminalConfig {
@@ -26,7 +26,7 @@ final class TerminalConfig {
     let dark: Style
     /// The user's `font-family` values, in order.
     let fontFamilies: [String]
-    /// Chords the user bound to Ghostty window, tab and split actions, which Easl performs
+    /// Chords the user bound to Ghostty window, tab and split actions, which easl performs
     /// instead (`GhosttyConfig.remaps`; the keybinds themselves never reach the library).
     let remaps: [GhosttyConfig.KeyChord: GhosttyConfig.AppAction]
     /// Ghostty's shell integration for tiles to load (`TerminalShellIntegration`): nil when the
@@ -34,7 +34,7 @@ final class TerminalConfig {
     let shellIntegration: String?
 
     private init() {
-        // Easl's base: the library's defaults (14 pt, block cursor); without a user theme, its
+        // easl's base: the library's defaults (14 pt, block cursor); without a user theme, its
         // Alabaster (light) and Afterglow (dark) colors.
         let base = TerminalConfiguration.default.rendered
         // The controller initializes Ghostty's runtime, which the config API below needs.
@@ -48,7 +48,7 @@ final class TerminalConfig {
             guard let name else { return GhosttyConfig.parse(fallback.rendered) }
             guard let file = GhosttyConfig.themeFile(name, directories: themes, isFile: TerminalReferences.isFile),
                   let text = try? String(contentsOf: file, encoding: .utf8) else {
-                NSLog("Easl: Ghostty theme %@ not found (looked in %@)", name, themes.map(\.path).joined(separator: ", "))
+                NSLog("easl: Ghostty theme %@ not found (looked in %@)", name, themes.map(\.path).joined(separator: ", "))
                 return GhosttyConfig.parse(fallback.rendered)
             }
             return GhosttyConfig.parse(text)
@@ -59,13 +59,13 @@ final class TerminalConfig {
             TerminalConfiguration { builder in settings.forEach { builder.withCustom($0.key, $0.value) } }
         }
         if !controller.setTheme(TerminalTheme(light: configuration(lightSettings), dark: configuration(darkSettings))) || controller.lastConfigurationIssue != nil {
-            NSLog("Easl: Ghostty config rejected, tiles use the defaults: %@", controller.lastConfigurationIssue ?? "unknown")
+            NSLog("easl: Ghostty config rejected, tiles use the defaults: %@", controller.lastConfigurationIssue ?? "unknown")
         }
         light = Self.style(base: base, settings: lightSettings)
         dark = Self.style(base: base, settings: darkSettings)
         fontFamilies = GhosttyConfig.values("font-family", in: darkSettings)
         let loaded = GhosttyConfig.defaultFiles(home: home, environment: environment).filter { TerminalReferences.isFile($0.path) }.map(\.path)
-        NSLog("Easl: Ghostty config from %@: %d settings, theme %@ / %@, font %@ %.0f pt",
+        NSLog("easl: Ghostty config from %@: %d settings, theme %@ / %@, font %@ %.0f pt",
               loaded.isEmpty ? "(none)" : loaded.joined(separator: ", "), user.entries.count,
               user.lightTheme ?? "(default)", user.darkTheme ?? "(default)", fontFamilies.first ?? "(default)", Double(dark.fontSize))
         remaps = user.remaps
@@ -74,12 +74,12 @@ final class TerminalConfig {
             var directory: ObjCBool = false
             return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && directory.boolValue
         }
-        NSLog("Easl: shell integration %@", shellIntegration ?? (integrationSetting == "none" ? "off (shell-integration = none)" : "missing from the bundle"))
+        NSLog("easl: shell integration %@", shellIntegration ?? (integrationSetting == "none" ? "off (shell-integration = none)" : "missing from the bundle"))
         for keybind in user.appKeybinds {
             if let action = keybind.action, keybind.chord != nil {
-                NSLog("Easl: Ghostty keybind `%@` runs Easl's %@", keybind.entry.value, action == .newTerminal ? "New Terminal" : "Close Terminal")
+                NSLog("easl: Ghostty keybind `%@` runs easl's %@", keybind.entry.value, action == .newTerminal ? "New Terminal" : "Close Terminal")
             } else {
-                NSLog("Easl: dropped Ghostty keybind `%@`: %@", keybind.entry.value, keybind.action == nil ? "an app action Easl doesn't have" : "a key sequence Easl can't match")
+                NSLog("easl: dropped Ghostty keybind `%@`: %@", keybind.entry.value, keybind.action == nil ? "an app action easl doesn't have" : "a key sequence easl can't match")
             }
         }
     }
@@ -96,7 +96,7 @@ final class TerminalConfig {
         if diagnostics(base + "\n" + settings.map(\.line).joined(separator: "\n")).isEmpty { return settings }
         return settings.filter { entry in
             let problems = diagnostics(entry.line)
-            if !problems.isEmpty { NSLog("Easl: ignoring Ghostty setting `%@`: %@", entry.line, problems.joined(separator: "; ")) }
+            if !problems.isEmpty { NSLog("easl: ignoring Ghostty setting `%@`: %@", entry.line, problems.joined(separator: "; ")) }
             return problems.isEmpty
         }
     }

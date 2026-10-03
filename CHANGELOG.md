@@ -2,8 +2,9 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
-## Unreleased
+## 0.5.2
 
+- A new app icon, "Run-off": one board of tiles running off every edge, with one live tile showing a prompt and a green dot. It matches easl.sh. Older icons may linger in the Dock until macOS refreshes its icon cache (log out and in, or restart the Dock).
 - Asked to explain code, a change or a system (easl too), an agent answers on the board: code tiles at exact ranges with captions, groups and arrows (a walkthrough to step through with ⌥⌘→ when it has an order), a browser tile when a page makes the point, a note to keep, and a short answer in the terminal. HTML explainers are for comparisons, decisions, and a single page when you ask for one (the agent skill).
 - The skill, its references and the README say what excerpts do: a code tile's range and a note's fence follow their code as it moves and show it as it is now, stale only when it's gone; an HTML excerpt's `lines` don't follow it, `symbol=` does.
 

@@ -1,5 +1,5 @@
 {
   "name": "easl",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Easl integration: lifecycle, session resume, follow mode, selection-tray mentions, and the easl skill. Loaded by Easl's claude wrapper inside Easl terminal tiles only."
 }

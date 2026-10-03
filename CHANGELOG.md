@@ -2,7 +2,7 @@
 
 Each version's section is its GitHub release's notes (release.yml puts it above the list of merged changes).
 
-## Unreleased
+## 0.5.0
 
 Canvas is now Easl: the same app under a new name. Its first launch brings a Canvas install along (0.4, or 0.2 under its first name), or a Chalkwork 0.3 one.
 

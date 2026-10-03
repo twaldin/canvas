@@ -1,6 +1,6 @@
 **easl** · [easl.sh](https://easl.sh)
 
-# everything your agents work on, in one place.
+# the board your agents build on.
 
 one infinite board: agents in real terminals beside your code, call graphs, a browser, html pages and diagrams. click to reference anything in the next prompt.
 

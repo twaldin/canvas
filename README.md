@@ -2,35 +2,39 @@
 
 # the board your agents build on.
 
-one infinite board: agents in real terminals beside your code, call graphs, a browser, html pages and diagrams. click to reference anything in the next prompt.
+hold ⌃⌥⇧⌘ and click a box in a diagram, an element on a page or an item in a note, and your agent gets it with the next prompt. agents run in real terminals on one infinite board, beside your code, call graphs, a browser and html pages.
 
-![An easl board on a clone of the easl repository: a terminal that ran git and bun test, an arrow to a review of its uncommitted edit, four code tiles joined by numbered step arrows, a call graph, a note, two browser tiles and an HTML explainer. easl rendered it; a script laid out the tiles.](docs/media/board.webp)
+The diagram, the page and the note are each in another window. The answer scrolls away.
 
-- **real terminals.** Claude Code, Codex and any CLI agent run unmodified in terminals rendered by libghostty, with your Ghostty config.
-- **your code, with your language server.** The whole file with hover, go to definition and references, a git gutter against your branch, and live call graphs of who calls what.
-- **a browser your agents drive.** Claude Code, Codex and any CLI use `easl browser`; omp uses its `browser` tool. The page's errors show on the tile.
-- **notes and diagrams.** Notes whose code excerpts follow the lines they quote, HTML explainers, and the shapes and arrows an agent draws next to its terminal.
-- **Hyper-click anything into the next prompt.** Hold ⌃⌥⇧⌘ and click a line of code, a DOM element, a note paragraph or a command's output. It goes with your next prompt.
+![An easl board on a clone of the easl repository: a terminal that ran git and bun test, an arrow to a review of its uncommitted edit, four code tiles joined by numbered step arrows, a call graph, a note, two browser tiles and an HTML page. easl rendered it; a script laid out the tiles.](docs/media/board.webp)
+
+easl rendered this screenshot. A script laid out the tiles so they would fit the frame. Why I built easl, and a video of Claude Code explaining it on the board: [the launch post](https://tim.waldin.net/blog/2026-10-04-easl).
+
+- **click what you mean into the next prompt.** Hold ⌃⌥⇧⌘ and click a shape, a DOM element, a note paragraph or list item, a line of code or a command's output. It becomes a chip in the tray, and your next prompt in that terminal carries it. For an agent without easl hooks, ⌃⌥⇧⌘V pastes it.
+- **real terminals.** Your own `claude`, `codex` or any CLI, logged in as you, in a terminal libghostty draws with your Ghostty config. For Claude Code and Codex, a wrapper on the tile's PATH adds easl's hooks for that session only.
+- **your code, with your language server.** Read-only code tiles of the whole file, with hover, go to definition, references and a git gutter against your branch. Call graphs of who calls what, computed by your language server (it needs call hierarchy; sourcekit-lsp is verified).
+- **a browser your agents drive.** WebKit tiles. Claude Code, Codex and any CLI use `easl browser` (open, snapshot, click, type, eval, screenshot); omp uses its `browser` tool. The page's errors show on the tile.
+- **notes, html pages and drawing.** Notes whose code excerpts follow the lines they quote, sandboxed HTML pages agents write, and shapes, arrows and ink from you or the agent.
 - **agents keep running when you quit.** Terminals live in [zmx](https://github.com/neurosnap/zmx) sessions. Quit, crash or rebuild easl and they keep working.
 
-**works with** Claude Code, Codex, opencode and Gemini CLI (before 0.60) with no setup, [omp](https://github.com/can1357/oh-my-pi) with one symlink, and any other CLI.
+**works with** Claude Code, Codex, opencode and Gemini CLI (before 0.60) with no setup, [omp](https://github.com/can1357/oh-my-pi) with one symlink, and any other CLI through ⌃⌥⇧⌘V.
 
-A native Mac app. Free, MIT. Details on [easl.sh](https://easl.sh), in the [docs](https://easl.sh/docs/) and in the [guide](docs/guide.md).
+A native Mac app for macOS 14 or later on Apple silicon, with no AI of its own. Free, MIT. Details on [easl.sh](https://easl.sh), in the [docs](https://easl.sh/docs/) and in the [guide](docs/guide.md).
 
 ## install
 
 Requires macOS 14 or later on Apple silicon.
 
-1. Run the installer. It downloads the latest release from [Releases](https://github.com/twaldin/easl/releases), checks its SHA-256 and moves `easl.app` to `/Applications` ([read the script](https://easl.sh/install.txt)). curl sets no quarantine flag, so easl opens with no Gatekeeper prompt.
+1. Quit easl if it's running, then run the installer. It downloads the latest release from [Releases](https://github.com/twaldin/easl/releases), checks its SHA-256 and moves `easl.app` to `/Applications` (`~/Applications` if that isn't writable), with no sudo ([read the script](https://easl.sh/install.txt)). curl sets no quarantine flag, so easl opens with no Gatekeeper prompt.
    ```sh
    curl -fsSL https://easl.sh/install | sh
    ```
-2. Or download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, and move `easl.app` to `/Applications`. It's ad-hoc signed, not notarized, so Gatekeeper blocks the first launch. Clear the quarantine flag:
+2. Or download `easl-<version>.zip` from [Releases](https://github.com/twaldin/easl/releases), unzip it, and move `easl.app` to `/Applications`. It's ad-hoc signed, so Gatekeeper blocks the first launch. Clear the quarantine flag:
    ```sh
    xattr -dr com.apple.quarantine /Applications/easl.app
    ```
    Or open it once, then choose **Open Anyway** in System Settings › Privacy & Security. On macOS 14, right-clicking the app and choosing **Open** also works; macOS 15 removed that shortcut.
-3. Install the runtime tools. Terminal tiles need zmx. The `easl` CLI, the Claude Code and Codex hooks, and the omp extension need [bun](https://bun.sh).
+3. Install the runtime tools. Terminal tiles need zmx. The `easl` CLI and every agent integration need [bun](https://bun.sh).
    ```sh
    brew install neurosnap/tap/zmx oven-sh/bun/bun
    ```
